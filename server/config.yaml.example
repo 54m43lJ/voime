@@ -1,0 +1,46 @@
+server:
+  host: "127.0.0.1"
+  port: 9876
+
+asr:
+  backend: "faster_whisper"       # faster_whisper | whisper_cpp | openai_realtime
+  model: "base"                   # tiny | base | small | medium | large-v3
+  language: "zh"                  # zh | en | auto (auto-detect)
+  device: "cpu"                   # cpu | cuda | vulkan (vulkan only for whisper_cpp)
+  compute_type: "int8"            # int8 | float16 | float32 (only for faster_whisper)
+
+  # VAD settings
+  vad:
+    threshold: 0.5                # speech probability threshold
+    min_speech_duration: 0.3      # minimum speech duration in seconds
+    silence_duration: 1.0         # silence duration to trigger speech_end
+
+  # Streaming settings
+  streaming:
+    chunk_interval: 0.5           # run transcription every N seconds
+    stable_count: 2               # consecutive matches to mark as stable
+
+  # OpenAI Realtime API settings (only if backend == openai_realtime)
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "https://api.openai.com/v1"
+
+  # whisper.cpp settings (only if backend == whisper_cpp)
+  # whisper.cpp must be compiled with Vulkan for AMD GPU support:
+  #   git clone https://github.com/ggerganov/whisper.cpp
+  #   cd whisper.cpp && cmake -B build -DWHISPER_VULKAN=1 && cmake --build build
+  whisper_cpp:
+    binary: ""                    # path to whisper-cli binary (auto-detect if empty)
+    model_path: ""                # path to ggml model file (auto-detect if empty)
+    threads: 4
+
+llm:
+  enabled: false                  # enable AI polishing
+  backend: "openai_compat"        # openai_compat (Ollama/vLLM/OpenAI all supported)
+  base_url: "http://127.0.0.1:11434/v1"  # Ollama default
+  api_key: "ollama"               # dummy key for local services
+  model: "qwen3:4b"               # model name
+  timeout: 15                     # request timeout in seconds
+
+  system_prompt: "你是一个专业的文本校对助手，只修正错别字、听错词和标点符号，不改变原意和语气，不添加额外内容。"
+  user_prompt_template: "请修正以下语音输入文本：\n{text}"
