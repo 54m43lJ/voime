@@ -1,0 +1,17 @@
+# Voime POC Python 依赖（Python 3.12, .venv）
+# torch/torchaudio 需从 CPU 源安装:
+#   uv pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0
+torchaudio==2.11.0
+numpy==1.26.4
+transformers
+kaldiio
+kaldi_native_fbank
+sentencepiece
+soundfile
+sounddevice
+cn2an
+textgrid
+peft
+huggingface_hub
+psutil

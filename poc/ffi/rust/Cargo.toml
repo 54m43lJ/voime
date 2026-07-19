@@ -1,0 +1,16 @@
+[package]
+name = "voime_poc_core"
+version = "0.1.0"
+edition = "2021"
+description = "Voime POC-06: Rust core engine FFI validation (state machine, lock-free queue, Win32 event)"
+
+[lib]
+name = "voime_poc_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+crossbeam-queue = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true

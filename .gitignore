@@ -1,0 +1,42 @@
+# --- Toolchains & environments (workspace-local, not committed) ---
+.toolchain/
+.venv*/
+uv.exe
+
+# --- Model weights (downloaded on demand) ---
+models/
+
+# --- Third-party source checkouts ---
+poc/third_party/*
+!poc/third_party/VERSIONS.md
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# --- Rust ---
+target/
+Cargo.lock.bak
+
+# --- C/C++ build outputs ---
+build/
+*.o
+*.obj
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+
+# --- POC run artifacts ---
+poc/python/out/
+poc/ffi/out/
+
+# --- OS / editor ---
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
