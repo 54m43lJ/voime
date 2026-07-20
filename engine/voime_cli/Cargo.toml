@@ -1,0 +1,13 @@
+[package]
+name = "voime_cli"
+description = "Voime engine validation CLI (stage-2 test harness)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+voime_core = { path = "../voime_core" }
+clap = { version = "4", features = ["derive"] }
+hound = "3"
+anyhow = "1"
+serde_json.workspace = true

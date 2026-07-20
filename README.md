@@ -10,7 +10,8 @@
 
 ```
 voime/
-├── docs/            # 设计文档与 POC 报告（docs/poc/ 为阶段一交付物）
+├── docs/            # 设计文档与验证报告（docs/poc/ 阶段一，docs/stage2/ 阶段二）
+├── engine/          # 阶段二：Rust 核心引擎（voime_core cdylib + voime_cli + include/voime.h）
 ├── poc/             # 阶段一：POC 原型验证
 │   ├── python/      #   Python 逻辑线（POC-01 ~ POC-05）
 │   ├── ffi/         #   C++/Rust 通讯线（POC-06）
@@ -22,9 +23,21 @@ voime/
 
 ## 当前状态
 
-**阶段一（POC 原型验证）已完成（2026-07-19）** — POC-01~04、06 全部通过，POC-05 部分达标
-（中文 beam=1 端到端 483~491ms < 500ms 目标；改进路径见报告 §6）。
-验证报告（M1 交付物）见 `docs/poc/POC_REPORT.md`。
+- **阶段一（POC 原型验证）已完成（2026-07-19）**：POC-01~04、06 通过，POC-05 部分达标。
+  报告：`docs/poc/POC_REPORT.md`。
+- **阶段二（Rust 核心引擎）已完成（2026-07-20）**：RUST-01~08 全部通过。
+  交付 `voime_core.dll` + `engine/include/voime.h`；端到端 PTT 延迟 250~300ms（目标 <500ms），
+  模型内存 1.2GB（较阶段一 9.7GB 降 8×）。报告：`docs/stage2/RUST_ENGINE_REPORT.md`。
+
+### 引擎构建（阶段二）
+
+```powershell
+$env:PATH = "$PWD\.toolchain\mingw64\bin;$env:PATH"   # dlltool/as 依赖
+cargo build --workspace --release                     # engine/ 目录
+# 产物: engine/target/release/voime_core.dll, voime_cli.exe
+$env:VOIME_MODEL_DIR = "$PWD\models"
+.\engine\target\release\voime_cli.exe e2e poc\python\out\session_zh_3sent.wav
+```
 
 ### 复现环境搭建
 

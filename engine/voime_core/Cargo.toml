@@ -1,0 +1,21 @@
+[package]
+name = "voime_core"
+description = "Voime core engine: FireRedVAD/ASR2-CTC/Punc ONNX inference + FFI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "voime_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ort.workspace = true
+ndarray.workspace = true
+crossbeam-queue.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokenizers.workspace = true
+kaldi-native-fbank.workspace = true
+regex = "1"

@@ -5,7 +5,20 @@ Windows 离线语音输入法：C++ 前端 + Rust 核心引擎（FFI/C ABI），
 FireRedStreamVad → FireRedASR2-AED → FireRedPunc。目标延迟 <500ms，动态内存 <200MB（不含模型）。
 
 ## 当前阶段
-阶段一：POC 原型验证（POC-01 ~ POC-06），交付物为 `docs/poc/` 下的验证报告。
+- 阶段一（POC 原型验证）：已完成，报告 `docs/poc/POC_REPORT.md`。
+- 阶段二（Rust 核心引擎）：已完成，交付 `engine/`（voime_core.dll + include/voime.h），
+  报告 `docs/stage2/RUST_ENGINE_REPORT.md`。
+- 下一步：阶段三（C++ 前端 CPP-01~07）。
+
+## 阶段二关键约定（engine/）
+- ONNX 模型：`models/FireRedVAD-ONNX/`（官方）、`FireRedASR2-AED-CTC-ONNX/`（CTC int8）、
+  `FireRedPunc-ONNX/`（自研导出，`tools/export_punc_onnx.py` 可复现）。
+- ONNX Runtime 1.27.0 在 `.toolchain/onnxruntime/`；`ort` crate 用 `load-dynamic`，
+  经 `VOIME_ORT_DLL` 或同目录 onnxruntime.dll 定位。
+- 构建 Rust 必须先把工作区 MinGW 加入 PATH：`$env:PATH = "$PWD\.toolchain\mingw64\bin;$env:PATH"`
+  （rust-mingw 自含 dlltool 缺 as.exe，会导致 windows-sys 构建失败）。
+- 验证 CLI：`engine/target/release/voime_cli.exe {vad|asr|punc|e2e|bench} <wav>`；
+  FFI 验证：`tools/test_ffi_e2e.py`（ctypes）。
 
 ## 环境约定（重要）
 - **一切工具链安装在仓库内**：`.toolchain/`（uv、Python 3.12、rustup/cargo、mingw）、`.venv/`。
