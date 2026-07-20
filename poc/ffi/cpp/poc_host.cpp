@@ -265,6 +265,7 @@ static void test_finalizing_reject(void* engine) {
 
 // ---------------- main ----------------
 int main(int argc, char** argv) {
+    SetConsoleOutputCP(65001); 
     int seconds = 15;
     std::string mode = "synthetic"; // synthetic | wasapi
     bool verbose = false, overflow_test = false, finalizing_test = false, realtime = true;
