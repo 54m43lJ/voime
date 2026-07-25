@@ -10,7 +10,21 @@ FireRedStreamVad → FireRedASR2-AED → FireRedPunc。目标延迟 <500ms，动
   报告 `docs/stage2/RUST_ENGINE_REPORT.md`。
 - 阶段三（C++ 前端 CPP-01~08）：已完成，交付 `frontend/`（voime_input.exe + 自测版），
   报告 `docs/stage3/CPP_FRONTEND_REPORT.md`。
-- 下一步：阶段四（集成测试与产品化 QA-01~06）。
+- 阶段四（集成测试与产品化 QA-01~06）：已完成（M4 MVP 发布），
+  绿色版 `frontend/dist/voime_input-1.0.0-mvp-win64.zip`，报告 `docs/stage4/QA_REPORT.md`。
+- 下一步：阶段五（架构演进 TSF，EVOL-01~03）。
+
+## 阶段四关键约定（frontend/ 增量）
+- 首启模型下载向导：`models.{h,cpp}`（内嵌 8 文件清单+SHA-256 基线，对齐 engine/models.rs）
+  + `wizard.{h,cpp}`；完成后 `voime_load_models` 热加载。模型目标：`%APPDATA%/VoimeInput/models/`。
+- **向导/模态窗口禁用 `PostQuitMessage`**（会污染 App 主消息循环），用
+  `PostThreadMessage(WM_NULL)` 唤醒退出。
+- QA 自动化：`frontend/qa/qa0*.py`（.venv Python ctypes 驱动真实产品二进制）；
+  沙盒隔离运行 `%TEMP%\voime_qa_sandbox`（规避引擎"向上找仓库 models/"开发回退）。
+- 产品内建 QA 开关：`--audio-source <wav>` / `--wav-loop`（WAV 音源）、
+  `--auto-download-models`、`--models-url`、`--soak N`（浸泡）。
+- 打包：`powershell -ExecutionPolicy Bypass -File frontend\package.ps1`
+  （脚本必须 UTF-8 with BOM，否则 PS5.1 按 GBK 误读中文）；产物 `frontend/dist/`（gitignore）。
 
 ## 阶段三关键约定（frontend/）
 - 构建：`powershell -ExecutionPolicy Bypass -File frontend\build.ps1`（MinGW g++，
@@ -48,7 +62,7 @@ FireRedStreamVad → FireRedASR2-AED → FireRedPunc。目标延迟 <500ms，动
 - POC 运行产物：`poc/python/out/`（gitignore）。
 - 前端源码：`frontend/src/`，构建产物 `frontend/build/`（gitignore）。
 - 报告：`docs/poc/POC_REPORT.md`、`docs/stage2/RUST_ENGINE_REPORT.md`、
-  `docs/stage3/CPP_FRONTEND_REPORT.md`。
+  `docs/stage3/CPP_FRONTEND_REPORT.md`、`docs/stage4/QA_REPORT.md`。
 
 ## 提交规范
 - 中文提交信息，格式 `<范围>: <动作><描述>`，如 `poc: 新增 POC-01 模型加载脚本`。

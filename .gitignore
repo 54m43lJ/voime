@@ -40,3 +40,6 @@ Thumbs.db
 .DS_Store
 .idea/
 .vscode/
+
+# --- 阶段四打包产物 ---
+frontend/dist/

@@ -7,3 +7,6 @@ int run_selftest(const std::wstring& wav_path);
 
 // CPP-04 修复流程专项（真实下载 ~40MB，独立触发）
 int run_repair_selftest();
+
+// QA-05 浸泡测试：sessions 次完整会话，内存稳定性 + 延迟统计
+int run_soak_selftest(int sessions, const std::wstring& wav_path);

@@ -8,9 +8,9 @@ $OutDir = Join-Path $PSScriptRoot 'build'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $Sources = @(
-    'main.cpp', 'app.cpp', 'engine.cpp', 'config.cpp', 'deps.cpp',
+    'main.cpp', 'app.cpp', 'engine.cpp', 'config.cpp', 'deps.cpp', 'http.cpp',
     'resampler.cpp', 'audio_capture.cpp', 'hotkey.cpp', 'overlay.cpp',
-    'injector.cpp', 'selftest.cpp'
+    'injector.cpp', 'selftest.cpp', 'models.cpp', 'wizard.cpp', 'wav_source.cpp'
 ) | ForEach-Object { Join-Path $PSScriptRoot "src\$_" }
 
 $CommonArgs = @(
@@ -20,7 +20,7 @@ $CommonArgs = @(
     '-I', (Join-Path $FF 'include')
 ) + $Sources + @(
     '-lole32', '-luuid', '-lwinmm', '-lavrt', '-ld2d1', '-ldwrite', '-lwinhttp', '-lshell32',
-    '-lgdi32', '-lcomdlg32',
+    '-lgdi32', '-lcomdlg32', '-lcomctl32', '-lbcrypt',
     '-static', '-static-libgcc', '-static-libstdc++', '-lwinpthread'
 )
 

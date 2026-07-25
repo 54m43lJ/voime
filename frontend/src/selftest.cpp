@@ -15,10 +15,12 @@
 #include "overlay.h"
 #include "resampler.h"
 #include "util.h"
+#include "wav.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <psapi.h>
 #include <thread>
 #include <vector>
 
@@ -30,51 +32,6 @@ static void report(bool ok, const char* name, const std::string& detail) {
 static void skip(const char* name, const std::string& why) {
     printf("  [SKIP] %s %s\n", name, why.c_str());
     g_skip++;
-}
-
-// ---- 简易 WAV 读取（PCM16 / F32） ----
-struct Wav {
-    std::vector<int16_t> pcm; // s16 交错
-    int rate = 0, channels = 0;
-    bool ok = false;
-};
-static Wav read_wav16(const std::wstring& path) {
-    Wav w;
-    FILE* f = _wfopen(path.c_str(), L"rb");
-    if (!f) return w;
-    uint8_t hdr[12];
-    if (fread(hdr, 1, 12, f) != 12 || memcmp(hdr, "RIFF", 4) || memcmp(hdr + 8, "WAVE", 4)) {
-        fclose(f);
-        return w;
-    }
-    uint16_t fmt_tag = 0, ch = 0;
-    uint32_t rate = 0, bits = 0;
-    std::vector<uint8_t> data;
-    for (;;) {
-        uint8_t ch_hdr[8];
-        if (fread(ch_hdr, 1, 8, f) != 8) break;
-        uint32_t sz = *(uint32_t*)(ch_hdr + 4);
-        long next = ftell(f) + sz + (sz & 1);
-        if (!memcmp(ch_hdr, "fmt ", 4)) {
-            uint8_t buf[40]{};
-            fread(buf, 1, sz > 40 ? 40 : sz, f);
-            fmt_tag = *(uint16_t*)buf;
-            ch = *(uint16_t*)(buf + 2);
-            rate = *(uint32_t*)(buf + 4);
-            bits = *(uint16_t*)(buf + 14);
-        } else if (!memcmp(ch_hdr, "data", 4)) {
-            data.resize(sz);
-            fread(data.data(), 1, sz, f);
-        }
-        fseek(f, next, SEEK_SET);
-    }
-    fclose(f);
-    if (fmt_tag != 1 || bits != 16 || data.empty() || ch == 0) return w; // 仅收 PCM16
-    w.pcm.assign((int16_t*)data.data(), (int16_t*)(data.data() + data.size()));
-    w.rate = (int)rate;
-    w.channels = ch;
-    w.ok = true;
-    return w;
 }
 
 // ---- CPP-01：FFI ----
@@ -358,6 +315,105 @@ int run_repair_selftest() {
     report(r2.ok, "repair.verify", r2.detail);
     printf("==== 汇总: PASS=%d FAIL=%d SKIP=%d ====\n", g_pass, g_fail, g_skip);
     return g_fail > 0 ? 1 : 0;
+}
+
+// ---- QA-05：浸泡测试（内存稳定性 + 延迟统计 + 动态内存） ----
+struct MemInfo { double working_set_mb, private_mb; };
+static MemInfo mem_now() {
+    PROCESS_MEMORY_COUNTERS_EX pmc{};
+    pmc.cb = sizeof(pmc);
+    GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+    return { pmc.WorkingSetSize / 1048576.0, pmc.PrivateUsage / 1048576.0 };
+}
+
+int run_soak_selftest(int sessions, const std::wstring& wav_path) {
+    printf("==== QA-05 浸泡测试（%d 会话）====\n", sessions);
+    Engine engine;
+    std::wstring dll = exe_dir() + L"voime_core.dll";
+    if (!engine.load(dll.c_str()) || !engine.create()) {
+        printf("  [FAIL] 引擎初始化: %s\n", engine.last_error().c_str());
+        return 1;
+    }
+    if (!engine.model_ready()) {
+        printf("  [SKIP] 模型未就绪\n");
+        return 1;
+    }
+    Wav w = read_wav16(wav_path);
+    if (!w.ok || w.rate != 16000 || w.channels != 1) {
+        printf("  [FAIL] wav 无效（需 16k s16 mono）\n");
+        return 1;
+    }
+    MemInfo base = mem_now();
+    printf("  基线（模型已加载）: WS=%.0fMB Private=%.0fMB\n", base.working_set_mb, base.private_mb);
+
+    HANDLE ev = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    engine.register_event(ev);
+    std::vector<double> latencies;
+    std::vector<double> priv_series;
+    double peak_private = 0;
+    int fails = 0;
+    const size_t chunk = 480;
+
+    for (int s = 0; s < sessions; s++) {
+        if (engine.start() != 0) { printf("  [FAIL] 会话 %d start 非 0\n", s); fails++; break; }
+        // 实时节奏推送（PRD 延迟场景：松开时仅剩末句待处理）
+        auto next = std::chrono::steady_clock::now();
+        for (size_t off = 0; off + chunk <= w.pcm.size(); off += chunk) {
+            engine.push(w.pcm.data() + off, (uint32_t)chunk);
+            next += std::chrono::milliseconds(30);
+            std::this_thread::sleep_until(next);
+        }
+        auto t0 = std::chrono::steady_clock::now();
+        engine.stop();
+        // 等 final
+        bool got_final = false;
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (WaitForSingleObject(ev, 300) != WAIT_OBJECT_0) continue;
+            std::string json;
+            while (engine.poll(json)) {
+                if (json_get_string(json, "type") == "final") got_final = true;
+            }
+            if (got_final) break;
+        }
+        double lat = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (!got_final) { printf("  [FAIL] 会话 %d 超时未收到 final\n", s); fails++; break; }
+        latencies.push_back(lat);
+        MemInfo m = mem_now();
+        priv_series.push_back(m.private_mb);
+        if (m.private_mb > peak_private) peak_private = m.private_mb;
+        if (s < 3 || s == sessions - 1 || (s + 1) % 5 == 0)
+            printf("  会话 %2d: final 延迟 %5.0fms  WS=%6.0fMB Private=%6.0fMB\n",
+                   s + 1, lat, m.working_set_mb, m.private_mb);
+    }
+    CloseHandle(ev);
+
+    // 延迟统计
+    double sum = 0, mx = 0;
+    for (double l : latencies) { sum += l; mx = std::max(mx, l); }
+    double avg = latencies.empty() ? 0 : sum / latencies.size();
+    char d1[128];
+    snprintf(d1, sizeof(d1), "avg=%.0fms max=%.0fms (n=%zu, 目标<500ms)", avg, mx, latencies.size());
+    report(mx < 500 && mx > 0, "soak.latency", d1);
+
+    // 内存稳定性：跳过前 2 次预热后，末次相对第 3 次增长 < 50MB
+    if (priv_series.size() >= 4) {
+        double growth = priv_series.back() - priv_series[2];
+        char d2[128];
+        snprintf(d2, sizeof(d2), "预热后增长 %.1fMB (阈值<50MB)", growth);
+        report(growth < 50.0, "soak.memory_stable", d2);
+    } else {
+        skip("soak.memory_stable", "会话数不足");
+    }
+    // 动态内存（PRD <200MB，不含模型）：会话峰值相对基线增量
+    double dyn = peak_private - base.private_mb;
+    char d3[128];
+    snprintf(d3, sizeof(d3), "会话动态增量 %.1fMB (目标<200MB)", dyn);
+    report(dyn < 200.0, "soak.dynamic_mem", d3);
+
+    printf("==== 汇总: PASS=%d FAIL=%d SKIP=%d ====\n", g_pass, g_fail + fails, g_skip);
+    engine.destroy();
+    return (g_fail + fails) > 0 ? 1 : 0;
 }
 
 int run_selftest(const std::wstring& wav_path) {

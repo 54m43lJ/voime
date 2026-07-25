@@ -6,24 +6,31 @@
 #include "engine.h"
 #include "hotkey.h"
 #include "injector.h"
+#include "models.h"
 #include "overlay.h"
 #include "util.h"
+#include "wav_source.h"
+#include "wizard.h"
 
 #include <shellapi.h>
+#include <commctrl.h>
 #include <cstdarg>
 #include <cstdio>
 
 static const wchar_t* kMsgWndClass = L"VoimeMsgWnd";
 static const UINT WM_TRAY = WM_APP + 10;
+static const UINT WM_CAPTURE_ERROR = WM_APP + 11;
 static const UINT_PTR kWatchdogTimer = 2;   // 热键守护（5s）
 static const UINT_PTR kHideTimer = 3;       // 完成后淡出延时（900ms）
 
 struct App::Impl {
     HINSTANCE inst = nullptr;
     HWND msg_wnd = nullptr;
+    AppOptions opts;
     Config cfg;
     Engine engine;
     AudioCapture capture;
+    WavSource wav_source;
     Hotkey hotkey;
     Overlay overlay;
     HANDLE engine_event = nullptr;
@@ -31,8 +38,9 @@ struct App::Impl {
     bool tray_added = false;
     bool deps_ok = false;
     bool recording = false;
-    bool quitting = false;
-    std::wstring session_text; // 本会话已累积的 partial 文本
+    bool wav_mode = false;        // 当前会话是否 WAV 音源
+    std::string last_capture_err; // 采集线程 -> 主线程传递
+    std::wstring session_text;    // 本会话已累积的 partial 文本
     FILE* log_fp = nullptr;
 };
 
@@ -53,8 +61,9 @@ void App::log(const char* fmt, ...) {
     OutputDebugStringA("\n");
 }
 
-int App::run(HINSTANCE inst, bool with_console) {
+int App::run(HINSTANCE inst, const AppOptions& opts) {
     p_ = new Impl();
+    p_->opts = opts;
     int rc = 1;
     if (init(inst)) {
         rc = 0;
@@ -63,13 +72,13 @@ int App::run(HINSTANCE inst, bool with_console) {
     shutdown();
     delete p_;
     p_ = nullptr;
-    (void)with_console;
     return rc;
 }
 
 bool App::init(HINSTANCE inst) {
     p_->inst = inst;
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    InitCommonControls(); // 进度条等通用控件（模型下载向导）
 
     // 配置
     bool created = false;
@@ -131,13 +140,40 @@ bool App::init(HINSTANCE inst) {
     p_->engine.register_event(p_->engine_event);
 
     if (!p_->engine.model_ready()) {
-        std::wstring msg =
-            L"模型文件缺失或未加载。\n\n请将模型放入：\n%APPDATA%\\VoimeInput\\models\\\n"
-            L"或设置环境变量 VOIME_MODEL_DIR 指向模型目录，然后重启应用。";
-        MessageBoxW(nullptr, msg.c_str(), L"Voime 模型管理", MB_OK | MB_ICONWARNING);
-        log("模型未就绪（start_session 将返回 -4）");
+        // M4 首启模型下载向导（QA-03）：检测 -> 下载 -> 校验 -> 热加载
+        std::wstring mdir = models::models_dir();
+        std::string url = p_->opts.models_url.empty() ? p_->cfg.models_url : p_->opts.models_url;
+        log("模型未就绪，启动下载向导（%s）", url.c_str());
+        int wr = wizard::run(inst, url, mdir, p_->opts.auto_download_models);
+        if (wr == wizard::Ok) {
+            if (p_->engine.load_models(wide_to_utf8(mdir)) == 0 && p_->engine.model_ready()) {
+                log("模型下载并热加载成功");
+            } else {
+                MessageBoxW(nullptr, L"模型已下载但加载失败，请查看日志。", L"Voime 模型管理",
+                            MB_OK | MB_ICONERROR);
+                log("模型下载后加载失败");
+                return false;
+            }
+        } else if (wr == wizard::Failed) {
+            log("模型下载失败，退出");
+            return false;
+        } else {
+            log("用户取消模型下载，语音识别不可用（start_session 将返回 -4）");
+        }
     } else {
         log("模型已就绪");
+    }
+
+    // WAV 音源预加载（QA 自动化）
+    if (!p_->opts.audio_wav.empty()) {
+        if (!p_->wav_source.load(p_->opts.audio_wav)) {
+            std::wstring msg = L"WAV 音源加载失败（需 16k s16 mono）：\n" + p_->opts.audio_wav;
+            MessageBoxW(nullptr, msg.c_str(), L"Voime", MB_OK | MB_ICONERROR);
+            return false;
+        }
+        p_->wav_source.set_loop(p_->opts.wav_loop);
+        log("WAV 音源: %s%s", wide_to_utf8(p_->opts.audio_wav).c_str(),
+            p_->opts.wav_loop ? "（循环）" : "");
     }
 
     // CPP-05：全局热键
@@ -203,6 +239,7 @@ LRESULT App::on_message(UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == kHideTimer) { KillTimer(p_->msg_wnd, kHideTimer); p_->overlay.hide(); }
         return 0;
     }
+    if (msg == WM_CAPTURE_ERROR) { on_capture_error(); return 0; }
     if (msg == WM_TRAY) {
         if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU) {
             HMENU menu = CreatePopupMenu();
@@ -242,16 +279,10 @@ void App::on_ptt_press() {
         log("start_session rc=%d", rc);
         return;
     }
-    // 启动采集（FFmpeg 重采样在采集线程内完成）
+    // 启动音源（麦克风或 WAV；FFmpeg 重采样在采集线程内完成）
     std::string err;
-    bool started = p_->capture.start(
-        [this](const int16_t* d, size_t n) {
-            int prc = p_->engine.push(d, (uint32_t)n);
-            if (prc == -2) log("队列溢出丢帧(-2)");
-        },
-        [this](const std::string& e) { log("采集错误: %s", e.c_str()); }, &err);
-    if (!started) {
-        log("采集启动失败: %s", err.c_str());
+    if (!start_audio(&err)) {
+        log("音源启动失败: %s", err.c_str());
         p_->engine.stop();
         p_->overlay.show(L"无可用采集设备");
         SetTimer(p_->msg_wnd, kHideTimer, 1200, nullptr);
@@ -261,13 +292,49 @@ void App::on_ptt_press() {
     p_->session_text.clear();
     KillTimer(p_->msg_wnd, kHideTimer);
     p_->overlay.show(L"正在听...");
-    log("PTT 按下，开始录音（%s）", p_->capture.device_format().c_str());
+    log("PTT 按下，开始录音（%s）",
+        p_->wav_mode ? p_->wav_source.device_format().c_str()
+                     : p_->capture.device_format().c_str());
+}
+
+bool App::start_audio(std::string* err) {
+    auto on_pcm = [this](const int16_t* d, size_t n) {
+        int prc = p_->engine.push(d, (uint32_t)n);
+        if (prc == -2) log("队列溢出丢帧(-2)");
+    };
+    auto on_err = [this](const std::string& e) {
+        p_->last_capture_err = e;
+        PostMessageW(p_->msg_wnd, WM_CAPTURE_ERROR, 0, 0);
+    };
+    if (!p_->opts.audio_wav.empty()) {
+        p_->wav_mode = true;
+        return p_->wav_source.start(on_pcm, on_err, err);
+    }
+    p_->wav_mode = false;
+    return p_->capture.start(on_pcm, on_err, err);
+}
+
+void App::stop_audio() {
+    if (p_->wav_mode) p_->wav_source.stop();
+    else p_->capture.stop();
+}
+
+void App::on_capture_error() {
+    // 设备拔出/采集中断（QA-02）：停止会话，提示用户，不崩溃
+    log("采集中断: %s", p_->last_capture_err.c_str());
+    if (p_->recording) {
+        p_->recording = false;
+        stop_audio();
+        p_->engine.stop(); // 尽力收尾（Finalizing 结果经事件回报）
+        p_->overlay.set_status(L"采集设备中断");
+        SetTimer(p_->msg_wnd, kHideTimer, 1500, nullptr);
+    }
 }
 
 void App::on_ptt_release() {
     if (!p_->recording) return;
     p_->recording = false;
-    p_->capture.stop();
+    stop_audio();
     p_->engine.stop(); // 异步 Finalizing，结果经事件回报
     p_->overlay.set_status(L"识别中...");
     log("PTT 松开，进入 Finalizing");
@@ -286,9 +353,9 @@ void App::handle_result(const std::string& json) {
         p_->overlay.set_text(p_->session_text);
     } else if (type == "final") {
         std::wstring text = utf8_to_wide(json_get_string(json, "text"));
-        if (p_->recording) { // 60s 护栏自动收尾：停止采集
+        if (p_->recording) { // 60s 护栏自动收尾：停止音源
             p_->recording = false;
-            p_->capture.stop();
+            stop_audio();
         }
         p_->overlay.set_status(L"完成");
         p_->overlay.set_text(text);
@@ -311,6 +378,7 @@ void App::shutdown() {
     if (p_->tray_added) Shell_NotifyIconW(NIM_DELETE, &p_->tray);
     p_->hotkey.uninstall();
     p_->capture.stop();
+    p_->wav_source.stop();
     p_->overlay.destroy();
     if (p_->engine_event) CloseHandle(p_->engine_event);
     p_->engine.destroy();

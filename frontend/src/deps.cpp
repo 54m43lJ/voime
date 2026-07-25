@@ -1,10 +1,10 @@
 // deps.cpp — FFmpeg 依赖自检与下载修复实现
 #include "deps.h"
+#include "http.h"
 #include "resampler.h"
 #include "util.h"
 
 #include <windows.h>
-#include <winhttp.h>
 #include <cstdio>
 
 // FFmpeg 版本 -> swresample 主版本映射（PRD 硬编码 6.0 -> swr 4）
@@ -39,72 +39,6 @@ deps::CheckResult deps::check_ffmpeg(const std::string& expect_ffmpeg_version) {
     r.ok = true;
     r.detail = "FFmpeg 依赖正常: " + d + " (FFmpeg " + expect_ffmpeg_version + ")";
     return r;
-}
-
-// ---- WinHTTP 下载（跟随 302 重定向） ----
-static bool http_download(const std::string& url, const std::wstring& out_path, std::string& log) {
-    // 解析 URL（仅支持 https://host/path 形式）
-    URL_COMPONENTSW uc{};
-    wchar_t host[256]{}, path[2048]{};
-    uc.dwStructSize = sizeof(uc);
-    uc.lpszHostName = host; uc.dwHostNameLength = 255;
-    uc.lpszUrlPath = path; uc.dwUrlPathLength = 2047;
-    std::wstring wurl = utf8_to_wide(url);
-    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) {
-        log += "[deps] URL 解析失败: " + url + "\n";
-        return false;
-    }
-    HINTERNET ses = WinHttpOpen(L"VoimeInput/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!ses) { log += "[deps] WinHttpOpen 失败\n"; return false; }
-    bool ok = false;
-    HINTERNET con = WinHttpConnect(ses, host, uc.nPort, 0);
-    if (con) {
-        HINTERNET req = WinHttpOpenRequest(con, L"GET", path, nullptr, WINHTTP_NO_REFERER,
-                                           WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-        if (req) {
-            DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
-            WinHttpSetOption(req, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy));
-            if (WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA,
-                                   0, 0, 0) &&
-                WinHttpReceiveResponse(req, nullptr)) {
-                DWORD status = 0, sz = sizeof(status);
-                WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                    WINHTTP_HEADER_NAME_BY_INDEX, &status, &sz,
-                                    WINHTTP_NO_HEADER_INDEX);
-                if (status == 200) {
-                    FILE* f = _wfopen(out_path.c_str(), L"wb");
-                    if (f) {
-                        uint8_t buf[65536];
-                        DWORD got = 0;
-                        uint64_t total = 0;
-                        for (;;) {
-                            DWORD avail = 0;
-                            if (!WinHttpQueryDataAvailable(req, &avail)) break;
-                            if (avail == 0) { ok = true; break; }
-                            DWORD want = avail > sizeof(buf) ? sizeof(buf) : avail;
-                            if (!WinHttpReadData(req, buf, want, &got) || got == 0) break;
-                            fwrite(buf, 1, got, f);
-                            total += got;
-                        }
-                        fclose(f);
-                        log += "[deps] 下载 " + std::to_string(total / 1048576) + " MB -> " +
-                               wide_to_utf8(out_path) + "\n";
-                    } else {
-                        log += "[deps] 无法写入: " + wide_to_utf8(out_path) + "\n";
-                    }
-                } else {
-                    log += "[deps] HTTP 状态码 " + std::to_string(status) + "\n";
-                }
-            } else {
-                log += "[deps] 请求发送/响应失败, GetLastError=" + std::to_string(GetLastError()) + "\n";
-            }
-            WinHttpCloseHandle(req);
-        }
-        WinHttpCloseHandle(con);
-    }
-    WinHttpCloseHandle(ses);
-    return ok;
 }
 
 // 递归查找文件，返回完整路径（未找到返回空）
@@ -146,7 +80,7 @@ bool deps::repair_ffmpeg(const std::string& url, std::string& log) {
     std::wstring xdir = std::wstring(tmp) + L"voime_ffmpeg_x";
 
     log += "[deps] 开始下载 FFmpeg 修复包...\n";
-    if (!http_download(url, pkg, log)) {
+    if (!http_download(url, pkg, nullptr, log)) {
         log += "[deps] 下载失败\n";
         return false;
     }
