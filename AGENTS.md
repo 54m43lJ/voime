@@ -12,7 +12,33 @@ FireRedStreamVad → FireRedASR2-AED → FireRedPunc。目标延迟 <500ms，动
   报告 `docs/stage3/CPP_FRONTEND_REPORT.md`。
 - 阶段四（集成测试与产品化 QA-01~06）：已完成（M4 MVP 发布），
   绿色版 `frontend/dist/voime_input-1.0.0-mvp-win64.zip`，报告 `docs/stage4/QA_REPORT.md`。
-- 下一步：阶段五（架构演进 TSF，EVOL-01~03）。
+- 阶段五（TSF 架构演进 P5-01~07）：已完成（M5 TSF 架构集成），
+  绿色版 `frontend/dist/voime_input-1.1.0-tsf-win64.zip`，
+  报告 `docs/stage5/TSF_EVOL_REPORT.md`（含关键踩坑实录，维护必读）。
+- 下一步：阶段六（产品化与交付 P6-01~04）。
+
+## 阶段五关键约定（frontend/ + frontend/tsf/）
+- 架构（控制反转）：`voime_input.exe` = IPC 服务端（被动计算），`voime_tsf.dll`
+  = TSF 文本服务（ITfKeyEventSink 拦 PTT -> IPC 指令 -> commit_text 经
+  TF_ES_ASYNC 编辑会话 SetText 注入）。协议 `frontend/src/ipc_proto.h`
+  （JSON/消息模式管道 `\\.\pipe\VoimeInput.IPC`，SDDL 仅当前用户+SYSTEM）。
+- 构建产物 5 个：`voime_input.exe`（标准，无 SendInput/热键代码，objdump 可验）、
+  `voime_tsf.dll`、`voime_input_notsf.exe`（热键+SendInput 调试版）、
+  `voime_input_console.exe`（NOTSF 自测）、`tsf_harness.exe`（qa06/07 宿主）。
+  宏 `VOIME_NOTSF` 控制模式分离（P5-06）。
+- **Named Pipe 必须重叠 I/O**（同步句柄读写并发死锁；重叠句柄配 NULL
+  lpOverlapped 是 UB，见报告 §4.1/4.2）。
+- **TSF Profile 注册必须提权**（写 HKLM CTF\TIP；COM 类 HKCU 免提权）。
+  注册 `frontend/tsf/register_tsf.ps1`（自提权）；反复注册/注销会搞坏
+  ctfmon 缓存，激活走 Win+Space 语言栏路径最稳。
+- 编辑会话三禁：禁 TF_ES_SYNC（自死锁）、禁请求方提前 Release（永不派发）、
+  禁 DoEditSession 内 GetFocus/GetTop（串行锁死锁）。
+- PTT 组合须避开被其他软件 RegisterHotKey 占用的键（LL 钩子可见但 TSF
+  按键槽收不到）。
+- QA：`qa05_ipc`（IPC 全链路）、`qa06_tsf`（TSF E2E，临时把 PTT 改 F13 后还原）、
+  `qa07_uac` + `qa07_elevated_client`（提权跨 IL 会话）；qa01~04 跑 NOTSF 版
+  （qa_driver.APP 已指向 voime_input_notsf.exe）。qa06 默认保留 TIP 注册
+  （`QA_TSF_UNREGISTER=1` 才注销），手工注销用 unregister_tsf.ps1。
 
 ## 阶段四关键约定（frontend/ 增量）
 - 首启模型下载向导：`models.{h,cpp}`（内嵌 8 文件清单+SHA-256 基线，对齐 engine/models.rs）

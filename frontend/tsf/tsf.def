@@ -1,0 +1,6 @@
+; tsf.def — voime_tsf.dll 导出（COM 入口；保证 regsvr32 能找到无修饰名）
+EXPORTS
+    DllGetClassObject
+    DllCanUnloadNow
+    DllRegisterServer
+    DllUnregisterServer

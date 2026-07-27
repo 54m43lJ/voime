@@ -39,7 +39,7 @@ def main():
     # 恢复性：第二次 PTT 正常会话
     log1 = log_size()
     ptt_hold(3)
-    _, line = wait_log("PTT 按下，开始录音", timeout=10, since=log1)
+    _, line = wait_log("会话开始", timeout=10, since=log1)
     fails += 0 if report("qa02.recover", line is not None, "护栏后可再次会话") else 1
 
     app.kill()

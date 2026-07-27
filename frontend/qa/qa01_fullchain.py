@@ -44,7 +44,7 @@ def main():
 
     # 日志事件序列完整性
     seq_ok = True
-    for marker in ["PTT 按下，开始录音", '"type":"partial"', "PTT 松开，进入 Finalizing",
+    for marker in ["会话开始", '"type":"partial"', "会话结束，进入 Finalizing",
                    '"type":"final"', "已注入"]:
         if wait_log(marker, timeout=1, since=log0)[0] is None:
             seq_ok = False

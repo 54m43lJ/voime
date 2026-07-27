@@ -1,4 +1,7 @@
-// app.h — 应用编排：消息循环 + 各模块粘合（阶段三主流程，PRD 2.3 交互流程）
+// app.h — 应用编排：消息循环 + 各模块粘合
+// 阶段五控制反转（PRD 2.2）：
+//   标准模式（默认）  —— Agent 作为 IPC 服务端，被动响应 TSF DLL 的 start/stop 指令；
+//   NOTSF 调试模式    —— 本地全局热键主动触发 + SendInput 注入（无 TSF DLL 产物）。
 #pragma once
 #include <string>
 #include <windows.h>
@@ -25,8 +28,9 @@ private:
     static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT on_message(UINT msg, WPARAM wp, LPARAM lp);
 
-    void on_ptt_press();
-    void on_ptt_release();
+    // 统一触发入口：NOTSF=本地热键消息，标准=IPC 指令（返回值用于 IPC 应答 code）
+    int trigger_start();                // 0=成功；负值=依赖/引擎错误码
+    int trigger_stop();                 // 0=成功，-1=未在录音
     void on_capture_error();            // 采集线程错误（设备拔出等）
     bool start_audio(std::string* err); // 按选项选择麦克风/WAV 音源
     void stop_audio();

@@ -4,8 +4,13 @@
 #include "config.h"
 #include "deps.h"
 #include "engine.h"
+#ifdef VOIME_NOTSF
 #include "hotkey.h"
 #include "injector.h"
+#else
+#include "ipc_proto.h"
+#include "ipc_server.h"
+#endif
 #include "models.h"
 #include "overlay.h"
 #include "util.h"
@@ -20,8 +25,16 @@
 static const wchar_t* kMsgWndClass = L"VoimeMsgWnd";
 static const UINT WM_TRAY = WM_APP + 10;
 static const UINT WM_CAPTURE_ERROR = WM_APP + 11;
-static const UINT_PTR kWatchdogTimer = 2;   // 热键守护（5s）
-static const UINT_PTR kHideTimer = 3;       // 完成后淡出延时（900ms）
+static const UINT WM_IPC_CMD = WM_APP + 20;  // 标准模式：IPC 指令（lp=堆分配 IpcCmdMsg*）
+static const UINT_PTR kWatchdogTimer = 2;    // 热键守护（5s，仅 NOTSF）
+static const UINT_PTR kHideTimer = 3;        // 完成后淡出延时（900ms）
+
+// IPC 指令投递体（reader 线程 -> 主线程）
+struct IpcCmdMsg {
+    int client_id;
+    int kind; // 1=start_session 0=stop_session 2=client disconnected
+    std::string request_id;
+};
 
 struct App::Impl {
     HINSTANCE inst = nullptr;
@@ -31,7 +44,12 @@ struct App::Impl {
     Engine engine;
     AudioCapture capture;
     WavSource wav_source;
+#ifdef VOIME_NOTSF
     Hotkey hotkey;
+#else
+    IpcServer ipc;
+    int session_client = -1; // 发起当前会话的 TSF 客户端（commit_text 路由目标）
+#endif
     Overlay overlay;
     HANDLE engine_event = nullptr;
     NOTIFYICONDATAW tray{};
@@ -176,7 +194,8 @@ bool App::init(HINSTANCE inst) {
             p_->opts.wav_loop ? "（循环）" : "");
     }
 
-    // CPP-05：全局热键
+#ifdef VOIME_NOTSF
+    // CPP-05：全局热键（NOTSF 模式：Agent 主动触发）
     if (!p_->hotkey.install(p_->msg_wnd, p_->cfg.hotkey)) {
         std::wstring msg = L"全局热键注册失败：" + p_->cfg.hotkey +
                            L"\n请检查配置 hotkey 字段。";
@@ -184,6 +203,31 @@ bool App::init(HINSTANCE inst) {
         return false;
     }
     SetTimer(p_->msg_wnd, kWatchdogTimer, 5000, nullptr);
+#else
+    // P5-03：IPC 服务端（标准模式：控制反转，被动响应 TSF DLL 指令）
+    IpcServer::Events ev;
+    ev.on_message = [this](int client_id, const std::string& json) {
+        // reader 线程上下文：仅解析动作类型并转投主线程
+        std::string action = json_get_string(json, "action");
+        if (action == "start_session" || action == "stop_session") {
+            auto* m = new IpcCmdMsg{ client_id, action == "start_session" ? 1 : 0,
+                                     json_get_string(json, "request_id") };
+            PostMessageW(p_->msg_wnd, WM_IPC_CMD, 0, (LPARAM)m);
+        } else {
+            log("IPC 收到: %s", json.c_str()); // commit_text 应答等
+        }
+    };
+    ev.on_client_state = [this](int client_id, bool connected, const std::string& detail) {
+        log("IPC %s", detail.c_str());
+        if (!connected) {
+            auto* m = new IpcCmdMsg{ client_id, 2, "" };
+            PostMessageW(p_->msg_wnd, WM_IPC_CMD, 0, (LPARAM)m);
+        }
+    };
+    ev.on_log = [this](const std::string& line) { log("%s", line.c_str()); };
+    if (!p_->ipc.start(ev))
+        log("IPC 服务启动失败（管道被占用？），等待 TSF 触发将不可用");
+#endif
 
     // CPP-06：悬浮窗
     if (!p_->overlay.create(inst)) {
@@ -201,7 +245,12 @@ bool App::init(HINSTANCE inst) {
     wcscpy_s(p_->tray.szTip, L"Voime 语音输入");
     p_->tray_added = Shell_NotifyIconW(NIM_ADD, &p_->tray) != FALSE;
 
-    log("初始化完成，PTT=%s", wide_to_utf8(p_->cfg.hotkey).c_str());
+#ifdef VOIME_NOTSF
+    log("初始化完成（NOTSF 模式），PTT=%s", wide_to_utf8(p_->cfg.hotkey).c_str());
+#else
+    log("初始化完成（TSF 模式，等待 IPC 触发），PTT=%s（由 TSF DLL 拦截）",
+        wide_to_utf8(p_->cfg.hotkey).c_str());
+#endif
     return true;
 }
 
@@ -232,11 +281,34 @@ LRESULT CALLBACK App::wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT App::on_message(UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == Hotkey::WM_PRESS) { on_ptt_press(); return 0; }
-    if (msg == Hotkey::WM_RELEASE) { on_ptt_release(); return 0; }
+#ifdef VOIME_NOTSF
+    if (msg == Hotkey::WM_PRESS) { trigger_start(); return 0; }
+    if (msg == Hotkey::WM_RELEASE) { trigger_stop(); return 0; }
+#else
+    if (msg == WM_IPC_CMD) { // P5-04：TSF 指令 -> 统一触发入口 -> IPC 应答
+        auto* m = (IpcCmdMsg*)lp;
+        if (m->kind == 1) {
+            int rc = trigger_start();
+            p_->ipc.send(m->client_id, ipc::make_response(m->request_id, rc == 0, rc));
+            if (rc == 0) p_->session_client = m->client_id;
+            log("IPC start_session client=%d rc=%d", m->client_id, rc);
+        } else if (m->kind == 0) {
+            int rc = trigger_stop();
+            p_->ipc.send(m->client_id, ipc::make_response(m->request_id, rc == 0, rc));
+            log("IPC stop_session client=%d rc=%d", m->client_id, rc);
+        } else { // kind==2：客户端断开
+            if (p_->session_client == m->client_id) p_->session_client = -1;
+        }
+        delete m;
+        return 0;
+    }
+#endif
     if (msg == WM_TIMER) {
+#ifdef VOIME_NOTSF
         if (wp == kWatchdogTimer) p_->hotkey.watchdog_tick();
-        else if (wp == kHideTimer) { KillTimer(p_->msg_wnd, kHideTimer); p_->overlay.hide(); }
+        else
+#endif
+        if (wp == kHideTimer) { KillTimer(p_->msg_wnd, kHideTimer); p_->overlay.hide(); }
         return 0;
     }
     if (msg == WM_CAPTURE_ERROR) { on_capture_error(); return 0; }
@@ -257,27 +329,27 @@ LRESULT App::on_message(UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(p_->msg_wnd, msg, wp, lp);
 }
 
-void App::on_ptt_press() {
-    if (p_->recording) return;
+int App::trigger_start() {
+    if (p_->recording) return -1;
     if (!p_->deps_ok) {
         p_->overlay.show(L"音频组件缺失，语音录入已禁用");
         SetTimer(p_->msg_wnd, kHideTimer, 1200, nullptr);
-        return;
+        return -5;
     }
     int rc = p_->engine.start();
     if (rc == -3) {
         p_->overlay.show(L"正在收尾，请稍候...");
         SetTimer(p_->msg_wnd, kHideTimer, 900, nullptr);
-        return;
+        return -3;
     }
     if (rc == -4) {
         p_->overlay.show(L"模型未加载，无法识别");
         SetTimer(p_->msg_wnd, kHideTimer, 1200, nullptr);
-        return;
+        return -4;
     }
     if (rc != 0) {
         log("start_session rc=%d", rc);
-        return;
+        return rc;
     }
     // 启动音源（麦克风或 WAV；FFmpeg 重采样在采集线程内完成）
     std::string err;
@@ -286,15 +358,16 @@ void App::on_ptt_press() {
         p_->engine.stop();
         p_->overlay.show(L"无可用采集设备");
         SetTimer(p_->msg_wnd, kHideTimer, 1200, nullptr);
-        return;
+        return -6;
     }
     p_->recording = true;
     p_->session_text.clear();
     KillTimer(p_->msg_wnd, kHideTimer);
     p_->overlay.show(L"正在听...");
-    log("PTT 按下，开始录音（%s）",
+    log("会话开始（%s）",
         p_->wav_mode ? p_->wav_source.device_format().c_str()
                      : p_->capture.device_format().c_str());
+    return 0;
 }
 
 bool App::start_audio(std::string* err) {
@@ -331,13 +404,14 @@ void App::on_capture_error() {
     }
 }
 
-void App::on_ptt_release() {
-    if (!p_->recording) return;
+int App::trigger_stop() {
+    if (!p_->recording) return -1;
     p_->recording = false;
     stop_audio();
     p_->engine.stop(); // 异步 Finalizing，结果经事件回报
     p_->overlay.set_status(L"识别中...");
-    log("PTT 松开，进入 Finalizing");
+    log("会话结束，进入 Finalizing");
+    return 0;
 }
 
 void App::drain_results() {
@@ -360,8 +434,23 @@ void App::handle_result(const std::string& json) {
         p_->overlay.set_status(L"完成");
         p_->overlay.set_text(text);
         if (!text.empty()) {
+#ifdef VOIME_NOTSF
             injector::inject_text(text); // CPP-08
             log("已注入 %zu 字符", text.size());
+#else
+            // P5-05：标准模式经 IPC 提交给发起会话的 TSF 客户端注入
+            if (p_->session_client >= 0) {
+                std::string rid = ipc::new_request_id();
+                if (p_->ipc.send(p_->session_client,
+                                 ipc::make_commit_text(wide_to_utf8(text), rid)))
+                    log("commit_text 已发送 client=%d（%zu 字符）", p_->session_client,
+                        text.size());
+                else
+                    log("commit_text 发送失败 client=%d", p_->session_client);
+            } else {
+                log("无 TSF 客户端连接，commit_text 丢弃");
+            }
+#endif
         }
         SetTimer(p_->msg_wnd, kHideTimer, 900, nullptr);
     } else if (type == "warning") {
@@ -376,7 +465,11 @@ void App::shutdown() {
     if (!p_) return;
     log("==== Voime 退出 ====");
     if (p_->tray_added) Shell_NotifyIconW(NIM_DELETE, &p_->tray);
+#ifdef VOIME_NOTSF
     p_->hotkey.uninstall();
+#else
+    p_->ipc.stop();
+#endif
     p_->capture.stop();
     p_->wav_source.stop();
     p_->overlay.destroy();
