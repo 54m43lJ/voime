@@ -71,7 +71,7 @@
   </tr>
   <tr>
     <td>模型包（Model package）</td>
-    <td>由 <code>manifest.json</code> 描述的 ONNX 文件、词表、标签表与校验和的集合；权重不提交到仓库。</td>
+    <td>由项目安装脚本从 FireRed 官方权重生成的 ONNX 文件、词表、标签表与校验和集合；由 <code>manifest.json</code> 描述，权重不提交到仓库。</td>
   </tr>
   <tr>
     <td>ONNX Runtime</td>
@@ -98,7 +98,7 @@
   </tr>
   <tr>
     <td>本地性</td>
-    <td>所有边界调用都在本机完成；模型包、音频、剪贴板均不经过网络。运行期不存在 HTTP / WebSocket / D-Bus 依赖。</td>
+    <td>运行期所有边界调用都在本机完成；模型包、音频、剪贴板均不经过网络。安装脚本在首次安装时访问模型托管站点下载官方权重，该步骤不属于运行时边界。</td>
   </tr>
   <tr>
     <td>音频格式</td>
@@ -289,7 +289,7 @@ pub enum AudioError {
   <li>示例中的张量名是通用占位；实际名称由 <code>tools/export_models.py</code> 写入 manifest，运行期只以 manifest 为准。</li>
   <li><code>shape</code> 中的 <code>-1</code> 表示动态维度；会话建立后由 <code>infer::session::SessionFactory::build</code> 校验实际元数据。</li>
   <li><code>tokens.txt</code> 一行一个 token，行号即 id；<code>vocab.txt</code> 为 BERT WordPiece 词表；<code>labels.json</code> 为字符串数组，索引即标签 id。</li>
-  <li>模型来自 FireRed 官方权重，许可证为 Apache-2.0；权重文件不提交到仓库，分发与安装步骤在开发完成后写入 BUILD。</li>
+  <li>模型来自 FireRed 官方权重，许可证为 Apache-2.0；权重文件不提交到仓库。安装脚本负责下载、导出、量化、写 manifest 与 SHA-256，并原子替换模型目录；完整命令与参数在开发完成后写入 BUILD。</li>
 </ul>
 
 <table>

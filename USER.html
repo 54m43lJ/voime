@@ -42,6 +42,10 @@
     <td>本次运行中全部最终结果按产生顺序用换行符连接成的文本；每次最终结果产生后整体写入剪贴板。</td>
   </tr>
   <tr>
+    <td>模型包（Model package）</td>
+    <td>安装脚本从 FireRed 官方权重生成的 ONNX 权重、词表、标签与 <code>manifest.json</code> 集合。运行期只读，路径由 <code>--model-dir</code> 指定；目录与清单契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td>
+  </tr>
+  <tr>
     <td>Recording 标记</td>
     <td>结果区左侧固定栏中的红色圆点 <code>●</code>；仅在当前语音段处于采集状态时显示。</td>
   </tr>
@@ -79,6 +83,10 @@
   <tr>
     <td>模式固定</td>
     <td>运行模式由启动参数 <code>--mode</code> 唯一确定，运行期间不切换；没有快捷键或配置文件可以改变模式。</td>
+  </tr>
+  <tr>
+    <td>模型安装</td>
+    <td>首次使用前由用户手动运行 <code>scripts/install_models.sh</code>（Linux）或 <code>scripts/install_models.ps1</code>（Windows）；脚本完成官方权重下载、模型转换、校验与原子安装。TUI 运行时不下载或更新模型；安装脚本需要 Python 3.10+ 与网络，不属于运行时依赖。</td>
   </tr>
   <tr>
     <td>PTT 按键</td>
@@ -187,7 +195,7 @@
     <td><code>--model-dir</code></td>
     <td>目录路径</td>
     <td>Linux <code>$XDG_DATA_HOME/voime/models</code>；Windows <code>%LOCALAPPDATA%\voime\models</code></td>
-    <td>包含 <code>manifest.json</code> 的模型包目录；目录结构与校验见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td>
+    <td>包含 <code>manifest.json</code> 的模型包目录；默认由安装脚本写入，应用只读。目录结构与校验见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td>
   </tr>
   <tr>
     <td><code>--input-device</code></td>

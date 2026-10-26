@@ -23,7 +23,7 @@
 <p>
 Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框架或带 GPU 的推理环境。
 本项目希望用单个 Rust 可执行程序，在 AMD x86_64 CPU 上完成全部语音识别与标点，
-不联网、不上传音频、不注册系统输入法，只通过一个极简终端界面完成“说话 → 看到文字 → 粘贴”的闭环。
+运行时不联网、不上传音频、不注册系统输入法，只通过一个极简终端界面完成“说话 → 看到文字 → 粘贴”的闭环。
 </p>
 
 <h3>1.2 GOAL：什么算成功</h3>
@@ -34,6 +34,7 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
   <li>终端界面只有两个元素：红色 recording 标记与识别内容；最终结果按行累积，直到退出程序。</li>
   <li>每次识别完成，整段会话文本自动写入系统剪贴板；用户也可以直接用终端选择复制任意可见行。</li>
   <li>单个可执行程序加本地模型包即可运行；Linux 与 Windows 的 AMD x86_64 行为一致；运行时不需要网络、GPU 或 Python。</li>
+  <li>首次安装由项目提供的脚本完成；安装完成后 TUI 完全离线运行，不再访问网络。</li>
   <li>ASR 固定使用 FireRedASR2-AED；FireRedASR2-LLM 不在本项目范围内。</li>
 </ul>
 
@@ -41,7 +42,7 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
 <ul>
   <li>不监听全局热键，不向其他窗口模拟键盘输入，不注册 TSF / IBus / Fcitx 输入法。终端必须获得焦点。</li>
   <li>不提供 GUI、托盘、悬浮窗、设置界面或鼠标操作；所有运行参数在命令行确定。</li>
-  <li>不联网，不调用云 ASR、云标点或模型下载服务；模型文件由用户事先放到本地目录。</li>
+  <li>运行时不联网，不调用云 ASR、云标点服务，也不在 TUI 内下载或更新模型；模型由项目安装脚本在首次安装阶段生成。</li>
   <li>不支持 GPU、NPU、macOS、Linux ARM 或 Windows ARM；不承诺 Intel 平台上的性能与正确性，验收平台为 AMD x86_64。</li>
   <li>不保存音频或识别历史到磁盘；退出后只保留剪贴板中的会话文本。</li>
   <li>不做说话人分离、语种识别、翻译、文本润色或大模型改写。</li>
@@ -101,6 +102,11 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
     <td>退出</td>
     <td><code>q</code> 或 <code>Ctrl+C</code> 退出，恢复终端；剪贴板内容保留。</td>
     <td><a href="USER.html#u2">USER §2</a></td>
+  </tr>
+  <tr>
+    <td>安装模型</td>
+    <td>首次使用前手动运行 <code>scripts/install_models.sh</code>（Linux）或 <code>scripts/install_models.ps1</code>（Windows）安装模型包；安装需要网络与 Python 3.10+，完成后应用离线运行。应用启动时只校验与加载现有模型。</td>
+    <td><a href="CORE.html#c1">CORE §1</a> · <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a></td>
   </tr>
   <tr>
     <td>启动失败</td>

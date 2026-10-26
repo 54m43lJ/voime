@@ -67,15 +67,21 @@
 │   ├── <a href="#c4-18">ui.rs</a>                                TUI 初始化、绘制与恢复
 │   └── ui/
 │       └── <a href="#c4-19">theme.rs</a>                        终端颜色 token
+├── scripts/
+│   ├── install_models.sh                      Linux 安装入口：环境 / 下载 / 转换 / 安装
+│   └── install_models.ps1                     Windows 安装入口：同上
 ├── tools/
+│   ├── install_models.py                      安装编排：缓存、转换、量化、原子替换
 │   ├── export_models.py                       官方权重 → ONNX 模型包
-│   └── verify_models.py                       张量签名、形状与 SHA-256 校验
+│   ├── verify_models.py                       张量签名、形状与 SHA-256 校验
+│   └── requirements-export.txt                安装期 Python 依赖（固定版本）
 └── tests/
     ├── segmenter.rs                           端点与最大段长测试
     └── clipboard.rs                           会话文本拼接测试
 </code></pre>
 <ul class="note">
-  <li><code>models/</code> 只保留 <code>manifest.json</code> 的结构；权重由 <code>tools/export_models.py</code> 生成后放在本地，不进入版本库。</li>
+  <li><code>models/</code> 只保留 <code>manifest.json</code> 的结构；权重由安装脚本生成后放在本地，不进入版本库。</li>
+  <li><code>scripts/install_models.sh</code> / <code>install_models.ps1</code> 是安装入口，共享逻辑在 <code>tools/install_models.py</code>；三者只在安装期使用，不链接进 Rust 二进制。</li>
   <li>文件树按最终代码结构维护；文档、图表与样式不属于源码结构，不在此列出。</li>
   <li>模型包的目录、清单字段与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
 </ul>
@@ -92,6 +98,10 @@
   <tr>
     <td>采集常开</td>
     <td>音频流在启动后保持运行；PTT 模式通过 <code>StartSegment</code> / <code>FinishSegment</code> 命令决定是否收集样本，不反复启停设备。</td>
+  </tr>
+  <tr>
+    <td>安装期与运行期分离</td>
+    <td>Python / PyTorch / ONNX 导出 / 量化只存在于安装脚本的虚拟环境；Rust 二进制不依赖 Python，不包含下载器。安装脚本负责下载官方权重、生成 ONNX 模型包、写 manifest 与 SHA-256，并以原子替换方式写入模型目录。</td>
   </tr>
   <tr>
     <td>模型生命周期</td>
@@ -165,6 +175,7 @@
 </table>
 <ul class="note">
   <li>版本与许可证以 <code>Cargo.toml</code> / <code>Cargo.lock</code> 为准；本表只记录依赖在本项目中的职责。</li>
+  <li>安装脚本的 Python 依赖（PyTorch、onnx、onnxruntime、huggingface_hub 等）固定在 <code>tools/requirements-export.txt</code>，只用于安装期，不进入运行时 SBOM。</li>
   <li>ONNX Runtime 动态库由 <code>ort</code> 在构建时链接，其版本与许可证随发行包记录；不把 ONNX Runtime 的完整 API 复制进本文档。</li>
 </ul>
 
