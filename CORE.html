@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — Voime</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — Voime</h1>
+
+<p class="doc-links">
+<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="PROVIDER.html">PROVIDER</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>voime/
+├── Cargo.toml
+├── Cargo.lock
+├── rust-toolchain.toml
+├── .gitignore
+├── models/                                     运行时模型包（权重不提交）
+│   ├── manifest.json                           文件清单、张量名与校验和
+│   ├── vad/
+│   │   └── stream-vad.onnx                     FireRedVAD 流式模型
+│   ├── asr/
+│   │   ├── encoder.onnx                        FireRedASR2-AED 编码器
+│   │   ├── decoder.onnx                        FireRedASR2-AED 解码器
+│   │   └── tokens.txt                          输出词表
+│   └── punc/
+│       ├── model.onnx                          FireRedPunc
+│       ├── vocab.txt                           BERT 词表
+│       └── labels.json                         id → 标点符号
+├── src/
+│   ├── <a href="#c4-1">main.rs</a>                              进程入口与退出码
+│   ├── <a href="#c4-2">cli.rs</a>                               命令行参数与运行模式
+│   ├── <a href="#c4-3">config.rs</a>                            默认路径、线程数与模型目录解析
+│   ├── <a href="#c4-4">model.rs</a>                             模型包清单与文件校验
+│   ├── <a href="#c4-5">app.rs</a>                               应用状态、按键处理与事件循环
+│   ├── <a href="#c4-6">pipeline.rs</a>                          采集 → VAD → ASR → 标点调度
+│   ├── <a href="#c4-7">clipboard.rs</a>                         会话文本写入剪贴板
+│   ├── audio.rs                              音频模块声明
+│   ├── audio/
+│   │   ├── <a href="#c4-8">capture.rs</a>                       cpal 设备与输入流
+│   │   └── <a href="#c4-9">resample.rs</a>                     多声道 / 采样率 → 16 kHz 单声道
+│   ├── vad.rs                                VAD 模块声明
+│   ├── vad/
+│   │   ├── <a href="#c4-10">firered.rs</a>                      FireRedVAD ONNX 会话与逐帧概率
+│   │   └── <a href="#c4-11">segmenter.rs</a>                    语音段状态机与端点判定
+│   ├── asr.rs                                ASR 模块声明
+│   ├── asr/
+│   │   ├── <a href="#c4-12">features.rs</a>                     Kaldi 兼容 fbank
+│   │   ├── <a href="#c4-13">firered_aed.rs</a>                  FireRedASR2-AED 会话与转写
+│   │   ├── <a href="#c4-14">decoder.rs</a>                      编码器输出上的 beam search
+│   │   └── <a href="#c4-15">tokenizer.rs</a>                    词表加载与 token 拼接
+│   ├── punc.rs                              标点模块声明
+│   ├── punc/
+│   │   └── <a href="#c4-16">firered.rs</a>                      FireRedPunc 会话与标点插入
+│   ├── infer.rs                             推理模块声明
+│   ├── infer/
+│   │   └── <a href="#c4-17">session.rs</a>                      ONNX Runtime 环境与会话工厂
+│   ├── <a href="#c4-18">ui.rs</a>                                TUI 初始化、绘制与恢复
+│   └── ui/
+│       └── <a href="#c4-19">theme.rs</a>                        终端颜色 token
+├── tools/
+│   ├── export_models.py                       官方权重 → ONNX 模型包
+│   └── verify_models.py                       张量签名、形状与 SHA-256 校验
+└── tests/
+    ├── segmenter.rs                           端点与最大段长测试
+    └── clipboard.rs                           会话文本拼接测试
+</code></pre>
+<ul class="note">
+  <li><code>models/</code> 只保留 <code>manifest.json</code> 的结构；权重由 <code>tools/export_models.py</code> 生成后放在本地，不进入版本库。</li>
+  <li>文件树按最终代码结构维护；文档、图表与样式不属于源码结构，不在此列出。</li>
+  <li>模型包的目录、清单字段与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr>
+    <td>线程边界</td>
+    <td>主线程拥有终端、<code>App</code> 与 <code>ClipboardWriter</code>；cpal 回调只做格式转换并把 <code>AudioChunk</code> 送入有界通道；VAD / ASR / 标点全部在单个 pipeline 工作线程内串行执行。</td>
+  </tr>
+  <tr>
+    <td>采集常开</td>
+    <td>音频流在启动后保持运行；PTT 模式通过 <code>StartSegment</code> / <code>FinishSegment</code> 命令决定是否收集样本，不反复启停设备。</td>
+  </tr>
+  <tr>
+    <td>模型生命周期</td>
+    <td>启动时校验并加载三个模型包，会话对象常驻内存；每个语音段只重置解码状态，不重新加载权重。</td>
+  </tr>
+  <tr>
+    <td>单段串行</td>
+    <td>同一时刻只有一个语音段处于识别或收尾状态。最终识别优先于临时识别；已排队的临时任务在新最终任务到来时丢弃。</td>
+  </tr>
+  <tr>
+    <td>有界队列</td>
+    <td>continuous 模式下 VAD 持续运行，完成段进入容量 2 的待识别队列；队列满时丢弃最旧的未处理段，保证当前语音不被阻塞。PTT 模式不使用该队列。</td>
+  </tr>
+  <tr>
+    <td>音频格式</td>
+    <td>内部统一为 16 kHz、单声道、<code>f32</code> 样本；设备原生采样率与声道数在 <code>audio::resample</code> 中转换，混音取各声道平均。音频不落盘。</td>
+  </tr>
+  <tr>
+    <td>分段上限</td>
+    <td>语音段长度上限由 <code>MAX_SEGMENT_MS</code> 控制，推荐 20_000；不得超过 FireRedASR2-AED 的 60 s 硬上限。达到上限时由 <code>Segmenter::force_end</code> 结束当前段。</td>
+  </tr>
+  <tr>
+    <td>临时识别</td>
+    <td>每 <code>PARTIAL_INTERVAL</code>（推荐 800 ms）对当前段已采集样本执行一次 ASR，不加标点；若上一次临时任务未完成则跳过，同一时刻最多一个临时任务。</td>
+  </tr>
+  <tr>
+    <td>最终识别</td>
+    <td>语音段结束后对完整段执行一次 ASR，再对整段文本执行 FireRedPunc；空文本不产生结果行，也不修改剪贴板。</td>
+  </tr>
+  <tr>
+    <td>剪贴板</td>
+    <td>由主线程在收到 <code>PipelineEvent::Final</code> 后写入；内容为全部结果行以 <code>\n</code> 连接，无末尾换行。写入失败不影响结果行展示。</td>
+  </tr>
+  <tr>
+    <td>终端状态</td>
+    <td>进入 raw mode、备用屏幕、隐藏光标并禁用鼠标上报；<code>Tui</code> 的析构或显式 <code>restore</code> 必须在正常退出、错误退出与 panic 时恢复终端。</td>
+  </tr>
+  <tr>
+    <td>错误策略</td>
+    <td>进入 TUI 前的致命错误写 stderr 并以 1 退出；进入 TUI 后的单段推理失败丢弃该段并继续监听；音频流持续失败时恢复终端并以 1 退出。错误不进入 TUI 内容区。</td>
+  </tr>
+  <tr>
+    <td>无异步运行时</td>
+    <td>使用标准线程、<code>crossbeam-channel</code> 与 <code>crossterm::event::poll</code>；不引入 tokio/async-std。</td>
+  </tr>
+  <tr>
+    <td>路径与编码</td>
+    <td>路径使用 <code>std::path::PathBuf</code>；终端文本统一 UTF-8；不经过 shell，不拼命令行字符串。</td>
+  </tr>
+</table>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本项目中的作用</th></tr>
+  <tr><td><code>ratatui</code></td><td>终端布局、文本行渲染与滚动视图。</td></tr>
+  <tr><td><code>crossterm</code></td><td>raw mode、备用屏幕、键盘事件、终端尺寸与鼠标上报开关。</td></tr>
+  <tr><td><code>cpal</code></td><td>Linux（ALSA / PulseAudio / PipeWire）与 Windows（WASAPI）输入设备采集。</td></tr>
+  <tr><td><code>rubato</code></td><td>设备采样率到 16 kHz 的流式重采样。</td></tr>
+  <tr><td><code>kaldi-fbank</code></td><td>与 FireRed 模型训练一致的 fbank 特征提取。</td></tr>
+  <tr><td><code>ort</code></td><td>ONNX Runtime 的 Rust 绑定；加载三个 ONNX 模型并执行 CPU 推理。</td></tr>
+  <tr><td><code>tokenizers</code></td><td>FireRedPunc 的 BERT 分词与 token → id 映射。</td></tr>
+  <tr><td><code>arboard</code></td><td>Linux X11 / Wayland 与 Windows 剪贴板写入。</td></tr>
+  <tr><td><code>clap</code></td><td>命令行参数解析、帮助与版本输出。</td></tr>
+  <tr><td><code>crossbeam-channel</code></td><td>音频回调、pipeline 工作线程与 UI 线程之间的有界通道。</td></tr>
+  <tr><td><code>serde</code> / <code>serde_json</code></td><td>读取模型包 <code>manifest.json</code> 与标点标签表。</td></tr>
+  <tr><td><code>sha2</code></td><td>启动时校验模型文件 SHA-256。</td></tr>
+  <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>跨模块错误传播与边界错误类型定义。</td></tr>
+  <tr><td><code>unicode-width</code></td><td>按终端显示宽度换行，处理中英文混排。</td></tr>
+</table>
+<ul class="note">
+  <li>版本与许可证以 <code>Cargo.toml</code> / <code>Cargo.lock</code> 为准；本表只记录依赖在本项目中的职责。</li>
+  <li>ONNX Runtime 动态库由 <code>ort</code> 在构建时链接，其版本与许可证随发行包记录；不把 ONNX Runtime 的完整 API 复制进本文档。</li>
+</ul>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 src/main.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>fn main() -&gt; std::process::ExitCode;
+
+fn run(args: cli::Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+<ul class="note">
+  <li><code>main</code> 只负责调用 <code>run</code> 并把错误格式化到 stderr；进入 TUI 后的错误由 <code>run</code> 负责先恢复终端再返回。</li>
+</ul>
+
+<h3 id="c4-2">4.2 src/cli.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>use std::path::PathBuf;
+
+pub enum Mode {
+    Ptt,
+    Continuous,
+}
+
+pub struct Args {
+    pub mode: Mode,
+    pub model_dir: Option&lt;PathBuf&gt;,
+    pub input_device: Option&lt;String&gt;,
+    pub threads: Option&lt;usize&gt;,
+}
+
+pub fn parse() -&gt; Args;</code></pre>
+<ul class="note">
+  <li><code>--mode</code> 省略时为 <code>Mode::Ptt</code>；<code>--model-dir</code>、<code>--threads</code> 的默认值在 <code>config</code> 中解析。</li>
+  <li>参数非法由 <code>clap</code> 直接打印并以 2 退出，不进入 <code>run</code>。</li>
+</ul>
+
+<h3 id="c4-3">4.3 src/config.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>use std::path::PathBuf;
+
+pub struct Config {
+    pub mode: cli::Mode,
+    pub model_dir: PathBuf,
+    pub input_device: Option&lt;String&gt;,
+    pub threads: usize,
+    pub manifest: model::ModelManifest,
+}
+
+impl Config {
+    pub fn resolve(args: cli::Args) -&gt; anyhow::Result&lt;Self&gt;;
+}
+
+pub fn default_model_dir() -&gt; PathBuf;
+
+pub fn default_threads() -&gt; usize;        // 推荐值 min(4, 逻辑核心数)</code></pre>
+<ul class="note">
+  <li>Linux 默认目录为 <code>$XDG_DATA_HOME/voime/models</code>，未设置时 <code>~/.local/share/voime/models</code>；Windows 为 <code>%LOCALAPPDATA%\voime\models</code>。</li>
+  <li><code>resolve</code> 读取并校验 manifest，但不创建 ONNX 会话；会话由 pipeline 工作线程建立。</li>
+</ul>
+
+<h3 id="c4-4">4.4 src/model.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>use std::path::{Path, PathBuf};
+
+pub struct TensorSpec {
+    pub name: String,
+    pub dtype: String,
+    pub shape: Vec&lt;i64&gt;,
+}
+
+pub struct Artifact {
+    pub model: PathBuf,
+    pub sha256: String,
+    pub inputs: Vec&lt;TensorSpec&gt;,
+    pub outputs: Vec&lt;TensorSpec&gt;,
+}
+
+pub struct AsrArtifact {
+    pub encoder: Artifact,
+    pub decoder: Artifact,
+    pub tokens: PathBuf,
+}
+
+pub struct PuncArtifact {
+    pub model: Artifact,
+    pub vocab: PathBuf,
+    pub labels: PathBuf,
+}
+
+pub struct ModelManifest {
+    pub schema: u32,
+    pub sample_rate: u32,
+    pub vad: Artifact,
+    pub asr: AsrArtifact,
+    pub punc: PuncArtifact,
+}
+
+impl ModelManifest {
+    pub fn load(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn verify(&amp;self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
+}</code></pre>
+<ul class="note">
+  <li><code>verify</code> 校验文件存在性、SHA-256 与声明的张量名；形状在建立 ONNX 会话后由 <code>infer::session</code> 复核。</li>
+  <li>清单字段与目录结构的完整契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
+</ul>
+
+<h3 id="c4-5">4.5 src/app.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>use crossterm::event::KeyEvent;
+
+pub enum Control {
+    Continue,
+    Quit,
+}
+
+pub struct App {
+    pub mode: cli::Mode,
+    pub transcript: Vec&lt;String&gt;,
+    pub partial: String,
+    pub recording: bool,
+    pub finalizing: bool,
+    pub scroll: ScrollState,
+    pub clipboard: clipboard::ClipboardWriter,
+}
+
+pub fn run(mode: cli::Mode, pipeline: Pipeline, clipboard: clipboard::ClipboardWriter) -&gt; anyhow::Result&lt;()&gt;;
+
+impl App {
+    pub fn new(mode: cli::Mode, clipboard: clipboard::ClipboardWriter) -&gt; Self;
+    pub fn on_key(&amp;mut self, key: KeyEvent, pipeline: &amp;mut Pipeline) -&gt; Control;
+    pub fn on_pipeline(&amp;mut self, event: PipelineEvent);
+    pub fn push_final(&amp;mut self, line: String);
+    pub fn set_partial(&amp;mut self, text: String);
+}
+
+pub struct ScrollState {
+    pub offset: usize,
+    pub follow: bool,
+}
+
+impl ScrollState {
+    pub fn page_up(&amp;mut self, height: u16);
+    pub fn page_down(&amp;mut self, height: u16);
+    pub fn home(&amp;mut self);
+    pub fn end(&amp;mut self);
+}</code></pre>
+<ul class="note">
+  <li><code>on_key</code> 只处理 <code>q</code> / <code>Ctrl+C</code>、PTT 的 <code>Space</code> 与四个滚动键；continuous 模式下 <code>Space</code> 无动作。</li>
+  <li><code>on_pipeline</code> 收到 <code>Final</code> 时先追加结果行、清空临时行，再调用 <code>ClipboardWriter::set_transcript</code>；复制失败不回滚。</li>
+  <li>PTT 收到 <code>Recording(false)</code> 时置 <code>recording = false</code>、<code>finalizing = true</code>；continuous 只置 <code>recording = false</code>。</li>
+  <li><code>SegmentDropped</code> 只清除 <code>recording</code> / <code>finalizing</code> 状态，不新增结果行，也不修改剪贴板。</li>
+</ul>
+
+<h3 id="c4-6">4.6 src/pipeline.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>use std::thread::JoinHandle;
+
+pub enum PipelineCommand {
+    StartSegment,
+    FinishSegment,
+    Shutdown,
+}
+
+pub enum PipelineEvent {
+    Recording(bool),
+    Partial(String),
+    Final(String),
+    SegmentDropped,
+}
+
+pub struct Pipeline {
+    pub events: crossbeam_channel::Receiver&lt;PipelineEvent&gt;,
+    commands: crossbeam_channel::Sender&lt;PipelineCommand&gt;,
+    worker: JoinHandle&lt;()&gt;,
+}
+
+pub fn spawn(
+    config: &amp;Config,
+    factory: infer::session::SessionFactory,
+    audio_rx: crossbeam_channel::Receiver&lt;audio::capture::AudioChunk&gt;,
+) -&gt; anyhow::Result&lt;Pipeline&gt;;
+
+impl Pipeline {
+    pub fn start_segment(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn finish_segment(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn shutdown(self) -&gt; anyhow::Result&lt;()&gt;;
+}
+
+struct Worker {
+    mode: cli::Mode,
+    vad: vad::firered::FireRedVad,
+    segmenter: vad::segmenter::Segmenter,
+    asr: asr::firered_aed::FireRedAed,
+    punc: punc::firered::FireRedPunc,
+    resampler: audio::resample::StreamResampler,
+    ready: crossbeam_channel::Sender&lt;anyhow::Result&lt;()&gt;&gt;,
+    events: crossbeam_channel::Sender&lt;PipelineEvent&gt;,
+    queue: std::collections::VecDeque&lt;vad::segmenter::Segment&gt;,
+    last_partial: std::time::Instant,
+}
+
+impl Worker {
+    fn run(
+        self,
+        audio_rx: crossbeam_channel::Receiver&lt;audio::capture::AudioChunk&gt;,
+        commands: crossbeam_channel::Receiver&lt;PipelineCommand&gt;,
+    );
+    fn handle_audio(&amp;mut self, chunk: &amp;audio::capture::AudioChunk) -&gt; anyhow::Result&lt;()&gt;;
+    fn handle_command(&amp;mut self, command: PipelineCommand) -&gt; anyhow::Result&lt;bool&gt;;
+    fn emit_partial(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    fn finalize(&amp;mut self, segment: vad::segmenter::Segment) -&gt; anyhow::Result&lt;()&gt;;
+    fn drain_queue(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+}
+
+pub const PARTIAL_INTERVAL_MS: u64;        // 推荐值 800
+pub const PTT_AUTO_END_SILENCE_MS: u64;    // 推荐值 1_200
+pub const MAX_SEGMENT_MS: u64;             // 推荐值 20_000
+pub const SEGMENT_QUEUE_CAPACITY: usize;   // 推荐值 2</code></pre>
+<ul class="note">
+  <li><code>spawn</code> 创建内部事件通道，并在工作线程内建立 VAD / ASR / Punc 会话；<code>spawn</code> 等待 <code>ready</code> 信号后再返回，模型加载失败在进入 TUI 前返回错误。</li>
+  <li>工作线程串行处理命令与音频；临时识别任务可被新的最终任务取消，最终结果通过 <code>PipelineEvent::Final</code> 交给主线程。</li>
+  <li><code>queue</code> 只保存已完成的 continuous 语音段；队列满时丢弃最旧段，正在采集的语音段不受影响。</li>
+</ul>
+
+<h3 id="c4-7">4.7 src/clipboard.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct ClipboardWriter {
+    clipboard: arboard::Clipboard,
+}
+
+impl ClipboardWriter {
+    pub fn new() -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn set_transcript(&amp;mut self, lines: &amp;[String]) -&gt; anyhow::Result&lt;()&gt;;
+}
+
+pub fn join_transcript(lines: &amp;[String]) -&gt; String;   // 以 \n 连接，无末尾换行</code></pre>
+<ul class="note">
+  <li><code>new</code> 在启动时建立一次剪贴板句柄；不可用时启动失败，避免运行中静默丢失自动复制能力。</li>
+  <li><code>set_transcript</code> 每次整体覆盖；空切片不写入。</li>
+</ul>
+
+<h3 id="c4-8">4.8 src/audio/capture.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+pub struct AudioChunk {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub samples: Vec&lt;f32&gt;,              // 交织排列，已归一化到 [-1, 1]
+}
+
+pub struct CaptureHandle {
+    stream: cpal::Stream,
+}
+
+pub fn start(
+    device_name: Option&lt;&amp;str&gt;,
+    tx: crossbeam_channel::Sender&lt;AudioChunk&gt;,
+) -&gt; anyhow::Result&lt;CaptureHandle&gt;;
+
+impl CaptureHandle {
+    pub fn stop(self);
+}
+
+pub const AUDIO_CHANNEL_CAPACITY: usize;    // 推荐值 16</code></pre>
+<ul class="note">
+  <li>回调中只做样本格式转换与 <code>send</code>；通道满时丢弃当前块并立即返回，绝不阻塞音频线程。</li>
+  <li>设备名按 <code>DeviceTrait::name()</code> 精确匹配；未指定时使用 <code>default_input_device</code>。</li>
+</ul>
+
+<h3 id="c4-9">4.9 src/audio/resample.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct StreamResampler {
+    input_rate: u32,
+    channels: u16,
+    resampler: rubato::FastFixedIn&lt;f32&gt;,
+}
+
+impl StreamResampler {
+    pub fn new(input_rate: u32, channels: u16) -&gt; Self;
+    pub fn push(&amp;mut self, chunk: &amp;AudioChunk) -&gt; Vec&lt;f32&gt;;
+}
+
+pub const TARGET_SAMPLE_RATE: u32;    // 推荐值 16_000</code></pre>
+<ul class="note">
+  <li>先按声道求平均得到单声道，再流式重采样到 16 kHz；重采样器保留跨块状态，不按块独立处理。</li>
+  <li>目标采样率与模型包 manifest 的 <code>sample_rate</code> 不一致时启动失败。</li>
+</ul>
+
+<h3 id="c4-10">4.10 src/vad/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct VadConfig {
+    pub speech_threshold: f32,
+    pub min_speech_ms: u32,
+    pub min_silence_ms: u32,
+}
+
+pub struct VadFrame {
+    pub speech_prob: f32,
+    pub is_speech: bool,
+}
+
+pub struct FireRedVad {
+    session: ort::session::Session,
+    state: VadState,
+    config: VadConfig,
+}
+
+impl FireRedVad {
+    pub fn new(
+        artifact: &amp;model::Artifact,
+        factory: &amp;infer::session::SessionFactory,
+        config: VadConfig,
+    ) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn push(&amp;mut self, samples_16k: &amp;[f32]) -&gt; anyhow::Result&lt;Vec&lt;VadFrame&gt;&gt;;
+    pub fn reset(&amp;mut self);
+}
+
+pub const FRAME_SHIFT_MS: u32;    // 推荐值 10</code></pre>
+<ul class="note">
+  <li>内部维护流式状态张量；<code>reset</code> 在每个语音段结束后清空，避免跨段串音。</li>
+  <li>输入长度不是帧移整数倍时保留余量到下一次 <code>push</code>，不补零。</li>
+</ul>
+
+<h3 id="c4-11">4.11 src/vad/segmenter.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Segment {
+    pub samples: Vec&lt;f32&gt;,
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+pub enum SegmenterEvent {
+    SpeechStart,
+    SpeechEnd(Segment),
+}
+
+pub struct SegmenterConfig {
+    pub min_speech_ms: u32,
+    pub min_silence_ms: u32,
+    pub max_segment_ms: u32,
+    pub ptt_auto_end_ms: u32,
+}
+
+pub struct Segmenter {
+    config: SegmenterConfig,
+    active: Option&lt;Segment&gt;,
+}
+
+impl Segmenter {
+    pub fn new(config: SegmenterConfig) -&gt; Self;
+    pub fn push(&amp;mut self, frame: VadFrame, samples: &amp;[f32], mode: cli::Mode) -&gt; Option&lt;SegmenterEvent&gt;;
+    pub fn force_end(&amp;mut self) -&gt; Option&lt;Segment&gt;;
+    pub fn is_active(&amp;self) -&gt; bool;
+    pub fn active_samples(&amp;self) -&gt; &amp;[f32];
+    pub fn reset(&amp;mut self);
+}</code></pre>
+<ul class="note">
+  <li><code>push</code> 负责最短语音、最短静音、最大段长与 PTT 自动结束四类判定；返回值最多一个事件。</li>
+  <li><code>force_end</code> 用于第二次 <code>Space</code>；没有有效语音时返回 <code>None</code>，不产生结果行。</li>
+</ul>
+
+<h3 id="c4-12">4.12 src/asr/features.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct FbankConfig {
+    pub sample_rate: u32,
+    pub num_bins: usize,
+    pub frame_ms: u32,
+    pub shift_ms: u32,
+}
+
+pub struct Fbank {
+    extractor: kaldi_fbank::OnlineFbank,
+}
+
+impl Fbank {
+    pub fn new(config: FbankConfig) -&gt; Self;
+    pub fn compute(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;Vec&lt;Vec&lt;f32&gt;&gt;&gt;;
+}
+
+pub const NUM_BINS: usize;       // 推荐值 80
+pub const FRAME_MS: u32;         // 推荐值 25
+pub const SHIFT_MS: u32;         // 推荐值 10</code></pre>
+<ul class="note">
+  <li>参数必须与导出的 FireRed 模型训练配置一致；实际值由模型包 manifest 提供，常量只是推荐默认。</li>
+  <li>每个语音段新建提取器，段与段之间不共享 fbank 状态。</li>
+</ul>
+
+<h3 id="c4-13">4.13 src/asr/firered_aed.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct AedConfig {
+    pub beam_size: usize,
+    pub max_decode_len: usize,
+}
+
+pub struct AsrOutput {
+    pub text: String,
+    pub confidence: Option&lt;f32&gt;,
+}
+
+pub struct FireRedAed {
+    encoder: ort::session::Session,
+    decoder: ort::session::Session,
+    tokenizer: Tokenizer,
+    config: AedConfig,
+}
+
+impl FireRedAed {
+    pub fn new(
+        artifact: &amp;model::AsrArtifact,
+        factory: &amp;infer::session::SessionFactory,
+        config: AedConfig,
+    ) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;]) -&gt; anyhow::Result&lt;AsrOutput&gt;;
+}
+
+pub const BEAM_SIZE: usize;          // 推荐值 3
+pub const MAX_AUDIO_MS: u64;         // 推荐值 60_000（模型硬上限）</code></pre>
+<ul class="note">
+  <li><code>transcribe</code> 先运行编码器一次，再把编码结果交给 <code>asr::decoder::beam_search</code> 自回归解码。</li>
+  <li>输入超过 <code>MAX_AUDIO_MS</code> 时返回错误；调用方保证语音段不超过该上限。</li>
+</ul>
+
+<h3 id="c4-14">4.14 src/asr/decoder.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Hypothesis {
+    pub tokens: Vec&lt;u32&gt;,
+    pub score: f32,
+}
+
+pub fn beam_search(
+    decoder: &amp;mut ort::session::Session,
+    encoder_out: &amp;ort::value::Tensor&lt;f32&gt;,
+    config: &amp;AedConfig,
+) -&gt; anyhow::Result&lt;Vec&lt;Hypothesis&gt;&gt;;</code></pre>
+<ul class="note">
+  <li>只实现 FireRedASR2-AED 所需的单句 beam search；不引入通用序列解码框架。</li>
+  <li>返回按分数降序排列的候选；<code>FireRedAed::transcribe</code> 取第一个并拼接 token。</li>
+</ul>
+
+<h3 id="c4-15">4.15 src/asr/tokenizer.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Tokenizer {
+    vocab: Vec&lt;String&gt;,
+}
+
+impl Tokenizer {
+    pub fn load(path: &amp;std::path::Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn decode(&amp;self, ids: &amp;[u32]) -&gt; String;
+}</code></pre>
+<ul class="note">
+  <li>词表按行读取，行号即 token id；空行保留占位，保证 id 不偏移。</li>
+  <li><code>decode</code> 只做 token 拼接与特殊符号过滤，不做分词或语言模型重排。</li>
+</ul>
+
+<h3 id="c4-16">4.16 src/punc/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct PuncConfig {
+    pub max_tokens: usize,
+}
+
+pub struct FireRedPunc {
+    session: ort::session::Session,
+    tokenizer: tokenizers::Tokenizer,
+    labels: Vec&lt;String&gt;,
+    config: PuncConfig,
+}
+
+impl FireRedPunc {
+    pub fn new(
+        artifact: &amp;model::PuncArtifact,
+        factory: &amp;infer::session::SessionFactory,
+        config: PuncConfig,
+    ) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn punctuate(&amp;mut self, text: &amp;str) -&gt; anyhow::Result&lt;String&gt;;
+}
+
+pub const MAX_TOKENS: usize;    // 推荐值 400</code></pre>
+<ul class="note">
+  <li><code>labels</code> 从 <code>labels.json</code> 读取，id 0 约定为“无标点”；其余标签按模型包声明插入。</li>
+  <li>文本超过 <code>max_tokens</code> 时按标点 / 字符边界切块，逐块预测后拼接；不得截断丢弃尾部。</li>
+</ul>
+
+<h3 id="c4-17">4.17 src/infer/session.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct SessionFactory {
+    threads: usize,
+    env: ort::environment::Environment,
+}
+
+impl SessionFactory {
+    pub fn new(threads: usize) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn build(&amp;self, artifact: &amp;model::Artifact) -&gt; anyhow::Result&lt;ort::session::Session&gt;;
+}</code></pre>
+<ul class="note">
+  <li>只启用 CPU Execution Provider；<code>intra_threads</code> 取 <code>Config.threads</code>，不设置 inter-op 线程池。</li>
+  <li><code>build</code> 在会话创建后复核输入 / 输出张量名与形状，与 manifest 不符时返回错误。</li>
+</ul>
+
+<h3 id="c4-18">4.18 src/ui.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Tui {
+    terminal: ratatui::Terminal&lt;ratatui::backend::CrosstermBackend&lt;std::io::Stdout&gt;&gt;,
+}
+
+impl Tui {
+    pub fn init() -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn draw(&amp;mut self, app: &amp;App) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn restore(self);
+}
+
+pub const GUTTER_WIDTH: u16;      // 推荐值 2
+pub const MARKER: &amp;str = "●";     // recording 字形</code></pre>
+<ul class="note">
+  <li><code>init</code> 依次启用 raw mode、备用屏幕、隐藏光标并禁用鼠标上报；<code>restore</code> 按相反顺序恢复。</li>
+  <li>绘制只用 <code>Paragraph</code> / 自定义行；不添加边框、标题或状态栏。</li>
+</ul>
+
+<h3 id="c4-19">4.19 src/ui/theme.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>use ratatui::style::Color;
+
+pub const RECORDING: Color = Color::LightRed;
+pub const TEXT: Color = Color::Reset;
+pub const BACKGROUND: Color = Color::Reset;</code></pre>
+<ul class="note">
+  <li>颜色语义与终端主题边界见 <a href="USER.html#u5-1">USER §5.1</a>；本文件不引入其他颜色。</li>
+</ul>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 启动</h3>
+<pre><code>main::main()
+├── cli::parse()
+├── config::Config::resolve(args)
+│   ├── config::default_model_dir()
+│   └── model::ModelManifest::load(model_dir/manifest.json)
+│       └── model::ModelManifest::verify(model_dir)
+├── infer::session::SessionFactory::new(config.threads)
+├── pipeline::spawn(&amp;config, factory, audio_rx)
+│   ├── vad::firered::FireRedVad::new(...)
+│   ├── asr::firered_aed::FireRedAed::new(...)
+│   ├── punc::firered::FireRedPunc::new(...)
+│   └── std::thread::Builder::spawn(pipeline::Worker::run)
+├── audio::capture::start(config.input_device, audio_tx)
+├── clipboard::ClipboardWriter::new()
+└── app::run(config.mode, pipeline, clipboard)
+    └── ui::Tui::init()
+</code></pre>
+<ul class="note">
+  <li>模型校验、会话创建、音频流与剪贴板都在 <code>ui::Tui::init</code> 之前完成；任一步失败都不会进入备用屏幕。</li>
+  <li>pipeline 工作线程先于音频流启动，保证第一批 <code>AudioChunk</code> 不会落入无人接收的通道；<code>capture</code> 由 <code>main::run</code> 持有到退出。</li>
+</ul>
+
+<h3 id="c5-2">5.2 PTT 按键</h3>
+<pre><code>app::run()
+├── crossterm::event::poll(timeout)
+├── crossterm::event::read()
+└── app::App::on_key(key, &amp;mut pipeline)
+    ├── 判断 Ctrl+C / q → Control::Quit
+    ├── 判断 mode == Ptt 且 Space 且 !recording 且 !finalizing
+    │   ├── pipeline::Pipeline::start_segment()
+    │   │   └── crossbeam_channel::Sender::send(PipelineCommand::StartSegment)
+    │   │       └── pipeline::Worker::handle_command(StartSegment)
+    │   │           ├── vad::firered::FireRedVad::reset()
+    │   │           └── vad::segmenter::Segmenter::reset()
+    │   └── app::App::recording = true
+    ├── 判断 mode == Ptt 且 Space 且 recording
+    │   ├── pipeline::Pipeline::finish_segment()
+    │   │   └── crossbeam_channel::Sender::send(PipelineCommand::FinishSegment)
+    │   │       └── pipeline::Worker::handle_command(FinishSegment)
+    │   │           ├── vad::segmenter::Segmenter::force_end()
+    │   │           └── pipeline::Worker::finalize(segment)
+    │   └── app::App::finalizing = true
+    └── 判断 PageUp / PageDown / Home / End → app::ScrollState::page_up / page_down / home / end
+</code></pre>
+<ul class="note">
+  <li>第二次 <code>Space</code> 后 <code>recording</code> 立即置为 false，标记消失；最终结果到达前当前行保留最后一条临时文本。</li>
+  <li>最终结果未完成时再次按 <code>Space</code> 被忽略，避免并发使用同一个 ASR 会话。</li>
+  <li>PTT 下 VAD 静音自动结束也走 <code>Worker::finalize</code>，不进入 continuous 队列；界面回到等待下一次 <code>Space</code> 的空闲状态。</li>
+</ul>
+
+<h3 id="c5-3">5.3 Continuous 监听</h3>
+<pre><code>pipeline::Worker::run(self, audio_rx, commands)
+└── loop
+    ├── crossbeam_channel::Receiver::recv_timeout(50ms)
+    │   ├── 判断 AudioChunk → pipeline::Worker::handle_audio(chunk)
+    │   │   └── audio::resample::StreamResampler::push(chunk)
+    │   │       └── vad::firered::FireRedVad::push(samples_16k)
+    │   │           └── vad::segmenter::Segmenter::push(frame, samples, mode)
+    │   │               ├── 判断 SegmenterEvent::SpeechStart → PipelineEvent::Recording(true)
+    │   │               ├── 判断 PARTIAL_INTERVAL_MS 到期 → pipeline::Worker::emit_partial()
+    │   │               └── 判断 SegmenterEvent::SpeechEnd(segment)
+    │   │                   ├── PipelineEvent::Recording(false)
+    │   │                   └── queue.push_back(segment)
+    │   └── 判断 PipelineCommand → pipeline::Worker::handle_command(command)
+    ├── pipeline::Worker::drain_queue()
+    │   └── pipeline::Worker::finalize(segment)
+    └── 判断 Shutdown → break
+</code></pre>
+<ul class="note">
+  <li>continuous 模式下 VAD 与分段始终运行；PTT 模式下只有收到 <code>StartSegment</code> 后的音频进入分段器，其他帧仍被 VAD 消费但不累积为结果。</li>
+  <li>VAD 事件与音频块在同一工作线程串行处理，分段器不需要锁。</li>
+</ul>
+
+<h3 id="c5-4">5.4 临时识别</h3>
+<pre><code>pipeline::Worker::emit_partial()
+├── 判断 segmenter.is_active() 且 now - last_partial &gt;= PARTIAL_INTERVAL_MS
+├── asr::features::Fbank::compute(segmenter.active_samples())
+├── asr::firered_aed::FireRedAed::transcribe(features)
+├── 判断 text 非空 → PipelineEvent::Partial(text)
+└── last_partial = now
+</code></pre>
+<ul class="note">
+  <li>临时识别不加标点，不写剪贴板；同一时刻最多一个临时任务，<code>finalize</code> 到来时取消尚未开始的临时任务。</li>
+  <li>临时结果为空时保留上一行文本，避免界面闪烁；最终结果为空才丢弃整段。</li>
+</ul>
+
+<h3 id="c5-5">5.5 最终识别与标点</h3>
+<pre><code>pipeline::Worker::finalize(segment)
+├── asr::features::Fbank::compute(segment.samples)
+├── asr::firered_aed::FireRedAed::transcribe(features)
+├── 判断 asr.text 非空
+│   └── punc::firered::FireRedPunc::punctuate(asr.text)
+└── 判断 final_text 非空 → PipelineEvent::Final(final_text)
+</code></pre>
+<ul class="note">
+  <li>标点只执行一次，使用完整语音段的 ASR 文本；临时文本不参与。</li>
+  <li>ASR 或标点返回错误时发送 <code>SegmentDropped</code> 并继续监听，界面不新增结果行。</li>
+</ul>
+
+<h3 id="c5-6">5.6 剪贴板与退出</h3>
+<pre><code>app::App::on_pipeline(PipelineEvent::Final(line))
+├── app::App::push_final(line)
+└── clipboard::ClipboardWriter::set_transcript(&amp;app.transcript)
+
+main::run()
+├── app::run() → Control::Quit
+│   ├── ui::Tui::restore()
+│   └── pipeline::Pipeline::shutdown()
+│       ├── crossbeam_channel::Sender::send(PipelineCommand::Shutdown)
+│       └── std::thread::JoinHandle::join()
+├── audio::capture::CaptureHandle::stop(capture)
+└── return Ok(())
+</code></pre>
+<ul class="note">
+  <li><code>set_transcript</code> 失败不改变 <code>app.transcript</code>；下一次最终结果会再次整体写入。</li>
+  <li>退出顺序固定为恢复终端 → 停止工作线程 → 停止音频；未完成的语音段直接丢弃，不写入剪贴板。</li>
+</ul>
+
+</body>
+</html>

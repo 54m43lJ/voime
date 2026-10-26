@@ -1,0 +1,20 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+skinparam componentStyle rectangle
+left to right direction
+
+actor "用户" as User
+component "Voime" as App
+component "麦克风" as Mic
+component "终端" as Term
+component "剪贴板" as Clip
+component "本地模型包\nFireRedVAD / FireRedASR2-AED / FireRedPunc" as Models
+
+User --> App : 按键、说话
+App --> Term : 渲染标记与结果
+Term --> User : 显示
+Mic --> App : 16 kHz 单声道 PCM
+App --> Clip : 会话文本
+App --> Models : 加载模型权重
+@enduml

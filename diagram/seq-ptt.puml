@@ -1,0 +1,25 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+actor "用户" as User
+participant "Voime" as App
+participant "麦克风" as Mic
+participant "终端" as Term
+participant "剪贴板" as Clip
+
+User -> App : 按 Space
+App -> Term : 显示红色标记与新行
+App -> Mic : 开始本段采集
+loop 采集期间
+  Mic -> App : PCM 帧
+  App -> Term : 更新临时文本
+end
+User -> App : 再按 Space / 静音自动结束
+App -> Mic : 结束本段采集
+App -> Term : 隐藏标记
+App -> App : 内部处理\n最终识别与标点
+App -> Term : 固化结果行
+App -> Clip : 写入会话文本
+@enduml
