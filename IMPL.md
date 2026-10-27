@@ -140,7 +140,7 @@ Punc
 - VAD 推理按 100 ms 批处理（`VAD_BATCH_MS`）。逐 10 ms 调用 ONNX 时单次约 2.3 ms，批处理后每 10 ms 音频约 0.28 ms。
 - 两者都使用 80 bins、25 ms 窗、10 ms 帧移、`snip_edges=true`、`dither=0`、无 energy、log fbank、power 频谱。
 - 参数从 manifest 的 `fbank` 读取；默认值只是兼容旧包的 fallback。
-- VAD 的 10 ms 音频单元与 fbank 输出帧存在约 25 ms 的初始延迟，pipeline 用 `frame_audio` 队列把“第 i 帧”与“第 i 个 10 ms 音频块”配对。
+- VAD 的 10 ms 音频单元与 fbank 输出帧存在约 25 ms 的初始延迟；VAD 推理按 100 ms 批处理后，事件最多再晚约 100 ms 到达分段器。pipeline 用 `frame_audio` 队列把“第 i 帧”与“第 i 个 10 ms 音频块”配对，段边界重置时保留当前批次剩余音频。
 
 ## 4. VAD 与分段
 
@@ -164,7 +164,7 @@ Punc
 - 段尾静音不会裁剪，会原样送入 ASR。
 - `force_end` 只返回已经激活的段；不足 `min_speech_ms` 的 pending 语音被丢弃，不产生结果行。
 - `start_ms` / `end_ms` 以 10 ms 帧计算，`start_ms` 是首帧起点的近似值。
-- 段结束后 VAD 状态清零；continuous 的下一段重新开始，PTT 回到等待按键。
+- 段结束后 VAD 与 Segmenter 状态清零；continuous 的下一段重新开始，PTT 仅在静音结束或松键后回到等待。
 
 ### 4.3 错误处理
 
@@ -235,9 +235,9 @@ Punc
 
 ### 7.2 音频边界处理
 
-- `StartSegment` 命令执行前会丢弃音频通道里已排队的块，避免按下 Space 之前的音频进入新段。代价是如果工作线程正好积压，可能丢掉按下瞬间的少量音频。
-- `FinishSegment` 命令执行前会先消费音频通道中已排队的块，保证按键前采集的音频尽量进入最终段。
-- 重采样器/分段器的 pending 样本在 Start 时清理；段结束时只清 VAD 与帧配对队列，不强制 flush 重采样。
+- `StartSegment` 命令执行前会丢弃音频通道里已排队的块，避免按下 Space 之前的音频进入新段。代价是如果工作线程正好积压，会丢掉按下前尚未处理的音频；这些音频本来也不属于新段。
+- `FinishSegment` 命令执行前会先消费音频通道中已排队的块，保证按键前采集的音频尽量进入最终段；排空期间临时识别被抑制。
+- 重采样器/分段器的 pending 样本在 Start 时清理；段结束时重置 VAD 与 Segmenter 并清空帧配对队列，不强制 flush 重采样器。
 
 ### 7.3 临时识别
 
@@ -301,7 +301,7 @@ Punc
 
 - `cargo fmt --all --check`
 - `cargo clippy --all-targets`
-- `cargo test`：25 个单元测试 + 2 个 clipboard 测试 + 3 个 segmenter 测试
+- `cargo test`：26 个单元测试 + 2 个 clipboard 测试 + 3 个 segmenter 测试
 - `cargo build --release`，产物约 31 MB
 - 真实官方权重安装：下载、导出、int8 量化、内联、校验、原子安装
 - 真实模型包约 1.3 GB，路径为测试机上的 `/mnt/DATA/Work_linux/voime-dev-models`
@@ -316,14 +316,56 @@ Punc
 - 单可执行 + 静态 ONNX Runtime 已在 Linux 验证；Windows 若 `ort` 产出动态库，发布包需要同时携带该库。
 - 未实现真实 X11/Wayland 剪贴板内容回读；环境无剪贴板管理器时，进程退出后内容可能丢失，符合 PROVIDER §4.4 的说明。
 - VAD 没有官方 5 帧平滑和 pad_start；分段阈值是工程默认值，不是模型包声明值。
-- ASR decoder 没有 KV cache，beam search 会重跑完整前缀；长语音/低配 CPU 的延迟需要实测。测试机（4 intra-op 线程）10 s 段 encoder≈1.5 s、decoder≈0.8 s，整段≈2.5–3 s；20 s 段约 5–6 s（仅作放宽上限时的参考）；8 线程没有明显收益，属于当前 int8 CPU 模型的技术限制。
-- 临时识别同步执行且只覆盖段尾 6 s；最终识别同步执行，段边界仍会阻塞音频处理，依赖 2048 块音频缓冲兜底。彻底消除边界延迟需要把 ASR 移到独立工作线程。
+- ASR decoder 没有 KV cache，beam search 会重跑完整前缀；低配 CPU 的延迟仍需按实际硬件评估。测试机（4 intra-op 线程）10 s 段 encoder≈1.5 s、decoder≈0.8 s，整段≈2.5–3 s；20 s 段约 5–6 s（仅作放宽上限时的参考）；8 线程没有明显收益，属于当前 int8 CPU 模型的技术限制。
+- 临时识别同步执行且只覆盖段尾 6 s；最终识别同步执行，段边界仍会阻塞音频处理，依赖 2048 块音频缓冲兜底。彻底消除边界延迟需要把 ASR 移到独立工作线程。长语音卡顿的修复记录见 §10。
 - 默认 int8 量化只做了 ONNX Runtime 可加载性/形状校验，没有在固定验证集上评估 WER/F1；正式发布前应按 PROVIDER 的要求补充质量验证。
 - 安装脚本使用 GitHub `main` 分支源码和官方权重 URL，上游变化可能影响可复现性；需要固定时可加 commit / revision 参数。
 - manifest 只对主 ONNX 文件计算 SHA-256；external data 分片不在哈希范围内。
 - 当前仓库没有提交模型权重，也没有提交许可证文件；权重许可随模型包分发。
 
-## 10. 建议后续补入正式文档的内容
+## 10. 已修复：长语音识别卡顿
+
+### 10.1 现象
+
+长语音（约 10 s 以上）时 CPU 持续占用，但结果迟迟不出现，最终文本明显缺句。用 20 ms 音频块模拟采集时，30 s PTT 语音触发 67 次临时识别，丢弃 25.16 s 音频，松键后 32.9 s 才结束，最终只剩约 2 句；全程 CPU 约 255%。
+
+### 10.2 根因
+
+1. 临时识别被逐帧重复触发。旧 `emit_partial()` 在推理开始前更新 `last_partial`；长段的单次推理本身已超过 `PARTIAL_INTERVAL_MS`（800 ms），推理结束后下一帧音频立即再次满足 `now - last_partial >= 800 ms`，实际变成每 10 ms 音频触发一次临时识别。
+2. `FinishSegment` 排空音频通道时仍走 `handle_audio()`，没有关闭临时识别。松键时通道中的积压音频会逐帧触发临时识别，所以松键后还会继续卡。
+3. 临时识别和最终识别都在音频工作线程内同步执行。推理期间 VAD、分段和重采样全部停摆；旧音频通道只有 16 块（约 0.3 s），`try_send` 满后静默丢块。长段一旦丢音，分段器迟迟到不了段尾，最终结果必然缺内容。
+4. PTT 达到 `max_segment_ms` 后直接 `collecting = false`，用户继续按住 Space 说出的后续语音不会进入识别。
+5. 附带开销：VAD 每 10 ms 跑一次 ONNX；临时识别每次重算整段 fbank 和整段 ASR；beam search 每步对 8667 个词全排序；临时识别也使用 beam 3。
+
+### 10.3 处理
+
+- 临时识别只取当前段末尾 `PARTIAL_MAX_MS`（6 s），并使用 greedy（`PARTIAL_BEAM_SIZE=1`），单次成本不再随段长增长。
+- 下一次临时识别同时要求新增音频量至少 `max(PARTIAL_MIN_NEW_AUDIO_MS, 2 × 上次耗时)`，且距上次开始至少 `max(PARTIAL_INTERVAL_MS, 上次耗时)`；慢推理后不会在下一帧立刻重触发。
+- `FinishSegment` 排空音频通道期间设置 `suppress_partials`，积压音频只做 VAD/分段，不再触发临时识别。
+- VAD 改为 `VAD_BATCH_MS=100` 批处理；实测每 10 ms 音频的 VAD 开销从约 2.27 ms 降到约 0.28 ms。
+- 音频通道容量 16 → 2048，覆盖同步最终识别的积压；`run` 使用 `select_biased!` 让 `StartSegment` / `FinishSegment` / `Shutdown` 优先于音频。
+- `SegmenterEvent::SpeechEnd` 增加 `SegmentEndReason`；PTT 在 `MaxDuration` 后保持 `collecting`，把余下语音分成下一段，只有静音结束或松键才停止。
+- beam search 每步只取词表 top-k，用 `select_nth_unstable_by` 代替全排序。
+- 分段上限默认从 20 s 调整为 10 s，manifest、代码默认值、`verify_models.py` 与文档同步。
+
+### 10.4 验证
+
+| 场景 | 修复前 | 修复后 |
+|------|--------|--------|
+| 30 s PTT | 67 次临时识别，丢 25.16 s，松键后 32.9 s，最终约 2 句 | — |
+| 25 s PTT（10 s 分段） | — | 10 s + 10 s + 5 s，3 个 Final，丢 0 s，10 s 段最终识别约 2.4 s，总耗时约 25.95 s |
+| 12 s PTT | 21 次临时识别，丢 7.7 s，松键后 7.5 s | 7 次临时识别，丢 0 s，松键后约 3.1 s |
+
+测试使用 20 ms 音频块模拟 cpal 回调，测试音频为重复的 `hello_zh.wav`；修复前使用原始文件，修复后使用裁掉长静音的副本，避免 PTT 1.2 s 自动结束干扰长段测试。
+
+### 10.5 仍存在的限制
+
+- 最终识别仍在音频线程同步执行：10 s 段约 2.5–3 s，20 s 段约 5–6 s；段边界会有可感知延迟，但 2048 块缓冲下不再丢音。
+- 10 s 段实测 encoder≈1.5 s、decoder（beam 3）≈0.8 s，decoder 没有 KV cache；8 线程相对 4 线程没有明显收益，这是当前 int8 CPU 模型的技术限制。
+- 临时结果只覆盖段尾 6 s，长段会以 `…` 开头；最终结果仍覆盖完整段。
+- 如果硬件明显慢于测试机，或设备回调块非常小，2048 块缓冲仍可能溢出；彻底消除段边界阻塞需要把 ASR 移到独立工作线程。
+
+## 11. 建议后续补入正式文档的内容
 
 以下内容适合在后续维护中继续补入 PROVIDER / CORE（部分字段/结构本次已补，但仍缺少完整说明）：
 
