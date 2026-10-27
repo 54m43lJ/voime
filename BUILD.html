@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BUILD — Voime</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>BUILD — Voime</h1>
+
+<p class="doc-links">
+<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+</p>
+
+<h2 id="b1">1. 环境</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>要求</th></tr>
+  <tr><td>平台</td><td>AMD x86_64 Linux 或 Windows；验收平台为 AMD x86_64 CPU。</td></tr>
+  <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）。首次构建需要网络下载 crate 与 ONNX Runtime 预编译库。</td></tr>
+  <tr><td>Linux 构建依赖</td><td>ALSA 开发头文件；Arch：<code>alsa-lib</code>；Debian / Ubuntu：<code>libasound2-dev</code>。</td></tr>
+  <tr><td>Linux 安装依赖</td><td>Python 虚拟环境支持；Debian / Ubuntu 需要 <code>python3-venv</code>。</td></tr>
+  <tr><td>模型安装期</td><td>Python 3.10+、网络与磁盘空间；只用于 <code>scripts/install_models.*</code> 与 <code>tools/</code>，不进入运行时。</td></tr>
+  <tr><td>运行期</td><td>无需网络、GPU、Python 或系统输入法框架；需要 TTY、UTF-8、ANSI 转义与可用录音设备。</td></tr>
+</table>
+
+<h2 id="b2">2. 构建</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cargo build --release</code></pre>
+
+<table>
+  <tr><th>产物</th><th>说明</th></tr>
+  <tr><td><code>target/release/voime</code>（Windows <code>voime.exe</code>）</td><td>完整应用；ONNX Runtime 随 <code>ort</code> 构建时链接进可执行文件。</td></tr>
+  <tr><td>模型包</td><td>由安装脚本生成在用户数据目录，不进入版本库；应用只读。</td></tr>
+</table>
+<ul class="note">
+  <li>构建过程通过 <code>ort</code> 的 <code>download-binaries</code> 获取 ONNX Runtime；构建完成后运行期不联网。</li>
+  <li>发布时只需分发可执行文件与模型包；不要分发 <code>target/</code> 或安装虚拟环境。</li>
+  <li>若 ONNX 使用 external data，模型目录中的 <code>*.data</code> 或分片文件必须与 <code>.onnx</code> 一起复制，否则会话加载失败。</li>
+</ul>
+
+<h2 id="b3">3. 安装模型</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code># Linux
+scripts/install_models.sh
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1</code></pre>
+
+<table>
+  <tr><th>行为</th><th>契约</th></tr>
+  <tr><td>默认目录</td><td>Linux <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）；Windows <code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
+  <tr><td>虚拟环境</td><td>Linux <code>~/.cache/voime/venv</code>；Windows <code>%LOCALAPPDATA%\voime\cache\venv</code>。依赖见 <code>tools/requirements-export.txt</code>。</td></tr>
+  <tr><td>网络</td><td>下载 FireRed 官方权重与 FireRedASR2S 源码；完成后应用离线运行。</td></tr>
+  <tr><td>磁盘</td><td>下载缓存约 5 GB；默认 int8 模型包约 1.3 GB。FP32 导出包更大。</td></tr>
+  <tr><td>安装方式</td><td>在目标目录同盘创建临时目录，导出、校验、写 <code>manifest.json</code> 后原子替换。</td></tr>
+  <tr><td>量化</td><td>默认导出并动态量化为 int8；<code>--no-quantize</code> 可保留 FP32。</td></tr>
+</table>
+
+<pre><code># 常用参数
+scripts/install_models.sh --model-dir /path/to/models
+scripts/install_models.sh --source-dir /path/to/official/weights
+scripts/install_models.sh --no-quantize
+
+# 单独校验已有模型包（会重写 manifest.json）
+~/.cache/voime/venv/bin/python tools/verify_models.py --model-dir /path/to/models
+# Windows
+%LOCALAPPDATA%\voime\cache\venv\Scripts\python.exe tools\verify_models.py --model-dir C:\path\to\models</code></pre>
+
+<ul class="note">
+  <li><code>--source-dir</code> 目录需包含 <code>FireRedASR2-AED/</code> 与 <code>FireRedPunc/</code>；若同时提供 <code>FireRedVAD/pretrained_models/onnx_models/</code> 则跳过 VAD 下载。</li>
+  <li>需要从 HuggingFace 下载且未检测到 <code>HF_TOKEN</code> 时，安装脚本会警告并提示输入；直接回车或非交互环境会继续未认证下载。输入的 token 只用于当前进程，不写入磁盘。</li>
+  <li>模型包内容与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>；安装脚本不写入用户音频或识别历史。</li>
+</ul>
+
+<h2 id="b4">4. 运行</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>target/release/voime                       # PTT 模式
+target/release/voime --mode continuous     # 持续监听
+target/release/voime --input-device "USB Microphone"
+target/release/voime --threads 4</code></pre>
+
+<table>
+  <tr><th>现象</th><th>处理</th></tr>
+  <tr><td><code>模型清单格式错误</code> / <code>模型文件缺失</code> / <code>校验失败</code></td><td>重新运行安装脚本；确认 <code>--model-dir</code> 指向包含 <code>manifest.json</code> 的目录。</td></tr>
+  <tr><td><code>终端不可用</code></td><td>必须从真实终端启动；重定向 stdin / stdout 时不会进入 TUI。</td></tr>
+  <tr><td><code>没有可用输入设备</code> / <code>未找到输入设备</code></td><td>检查系统录音设备；设备名必须与操作系统暴露的名称完全一致。</td></tr>
+  <tr><td>剪贴板初始化失败</td><td>Linux 需要 X11 或支持 <code>wayland-data-control</code> 的 Wayland 合成器；无剪贴板环境时应用拒绝启动。</td></tr>
+</table>
+
+<h2 id="b5">5. 测试</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cargo test
+cargo clippy --all-targets
+cargo fmt --all --check
+~/.cache/voime/venv/bin/python tools/verify_models.py --model-dir &lt;DIR&gt; --no-write</code></pre>
+
+<ul class="note">
+  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长；<code>tests/clipboard.rs</code> 覆盖会话文本拼接。</li>
+  <li>模型包校验包含 SHA-256、张量名称、类型、形状与真实 ONNX Runtime 推理；不含音频内容。</li>
+  <li>开发中发现的文档未覆盖细节与实现差异见 <a href="IMPL.md">IMPL.md</a>。</li>
+</ul>
+
+<h2 id="b6">6. 发布检查</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cargo build --release
+target/release/voime --help
+target/release/voime --version
+scripts/install_models.sh</code></pre>
+
+<ul class="note">
+  <li>发布包应包含可执行文件、<code>scripts/</code>、<code>tools/</code> 与安装说明；模型权重由安装脚本按需下载。</li>
+  <li>运行验收：PTT 下一段识别、空语音段、静音自动结束、continuous 切分、剪贴板覆盖、滚动与退出终端恢复。</li>
+</ul>
+
+</body>
+</html>

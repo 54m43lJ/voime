@@ -14,6 +14,7 @@
 <a href="README.html">README</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
 </p>
 
 <h2 id="u1">1. TERMS</h2>
@@ -102,7 +103,7 @@
   </tr>
   <tr>
     <td>临时结果节奏</td>
-    <td>录音期间按固定间隔刷新当前行，间隔见 <a href="CORE.html#c4-6">CORE §4.6</a>；若上一次临时识别尚未完成则跳过本次刷新。临时结果只增不减地覆盖当前行文本，不写入剪贴板。</td>
+    <td>录音期间按动态间隔刷新当前行，间隔与单次长度上限见 <a href="CORE.html#c4-6">CORE §4.6</a>；长段只显示最近 6 s 的临时文本，截断时以 <code>…</code> 开头。临时结果覆盖当前行文本，不写入剪贴板；最终结果仍覆盖整段。</td>
   </tr>
   <tr>
     <td>最终结果</td>
@@ -142,7 +143,7 @@
   </tr>
   <tr>
     <td>分段上限</td>
-    <td>一个语音段的长度上限由 VAD 模型包声明，且不得超过 FireRedASR2-AED 的 60 s 输入上限。达到上限时强制结束当前段；continuous 模式下随后检测到的语音另起一段，PTT 模式下回到等待按键状态。</td>
+    <td>一个语音段的长度上限由模型包清单声明，且不得超过 FireRedASR2-AED 的 60 s 输入上限。达到上限时强制结束当前段；continuous 模式与仍按住 Space 的 PTT 模式都会把余下语音另起一段。</td>
   </tr>
   <tr>
     <td>无附加反馈</td>
@@ -309,7 +310,7 @@ recording 标记与识别内容两个元素。
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>行模型</td><td>每个语音段对应一个结果行；当前段在底部显示为临时行，最终结果产生后原位替换为最终文本。下一段另起一行。</td></tr>
-  <tr><td>临时文本</td><td>未加标点；按固定间隔整体覆盖当前行，不在行尾追加省略号或光标。间隔见 <a href="CORE.html#c4-6">CORE §4.6</a>。</td></tr>
+  <tr><td>临时文本</td><td>未加标点；按动态间隔整体覆盖当前行，不在行尾追加省略号或光标。长段截断时行首显示 <code>…</code>。间隔见 <a href="CORE.html#c4-6">CORE §4.6</a>。</td></tr>
   <tr><td>最终文本</td><td>已加标点；产生后不再变化，直到退出。</td></tr>
   <tr><td>换行</td><td>按终端显示宽度自动换行，续行保持第 3 列缩进；不水平滚动，不截断。</td></tr>
   <tr><td>行距</td><td>结果行之间不插入空行；一行的多个视觉行连续排列。</td></tr>

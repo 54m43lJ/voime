@@ -1,0 +1,14 @@
+/target/
+/models/*
+!/models/manifest.json
+!/models/.gitkeep
+
+*.onnx
+*.ark
+*.data
+*.part
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/

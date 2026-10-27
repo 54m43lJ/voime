@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "sample_rate": 16000,
+    "fbank": { "num_bins": 80, "frame_ms": 25, "shift_ms": 10 },
+  "max_segment_ms": 10000,
+  "vad": {
+    "model": "vad/stream-vad.onnx",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inputs": [
+      { "name": "feat", "dtype": "float32", "shape": [1, -1, 80] },
+      { "name": "caches_in", "dtype": "float32", "shape": [8, 1, 128, 19] }
+    ],
+    "outputs": [
+      { "name": "probs", "dtype": "float32", "shape": [1, -1, 1] },
+      { "name": "caches_out", "dtype": "float32", "shape": [8, 1, 128, 19] }
+    ]
+  },
+  "asr": {
+    "encoder": {
+      "model": "asr/encoder.onnx",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "inputs": [
+        { "name": "features", "dtype": "float32", "shape": [1, -1, 80] },
+        { "name": "input_lengths", "dtype": "int64", "shape": [1] }
+      ],
+      "outputs": [
+        { "name": "encoder_out", "dtype": "float32", "shape": [1, -1, -1] }
+      ]
+    },
+    "decoder": {
+      "model": "asr/decoder.onnx",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "inputs": [
+        { "name": "tokens", "dtype": "int64", "shape": [1, -1] },
+        { "name": "encoder_out", "dtype": "float32", "shape": [1, -1, -1] }
+      ],
+      "outputs": [
+        { "name": "logits", "dtype": "float32", "shape": [1, -1, -1] }
+      ]
+    },
+    "tokens": "asr/tokens.txt"
+  },
+  "punc": {
+    "model": {
+      "model": "punc/model.onnx",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "inputs": [
+        { "name": "input_ids", "dtype": "int64", "shape": [1, -1] },
+        { "name": "attention_mask", "dtype": "int64", "shape": [1, -1] },
+        { "name": "token_type_ids", "dtype": "int64", "shape": [1, -1] }
+      ],
+      "outputs": [
+        { "name": "logits", "dtype": "float32", "shape": [1, -1, -1] }
+      ]
+    },
+    "vocab": "punc/vocab.txt",
+    "labels": "punc/labels.json",
+    "max_tokens": 400
+  }
+}
