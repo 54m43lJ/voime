@@ -365,17 +365,263 @@ Punc
 - 临时结果只覆盖段尾 6 s，长段会以 `…` 开头；最终结果仍覆盖完整段。
 - 如果硬件明显慢于测试机，或设备回调块非常小，2048 块缓冲仍可能溢出；彻底消除段边界阻塞需要把 ASR 移到独立工作线程。
 
-## 11. 建议后续补入正式文档的内容
+## 11. 正式文档修订清单
 
-以下内容适合在后续维护中继续补入 PROVIDER / CORE（部分字段/结构本次已补，但仍缺少完整说明）：
+以下清单把 §1 记录的文档差异与 §10 的长语音修复整理成可执行的正式文档修订。重复项已合并；“不动”表示当前文档已经一致，或该章节由其它条目统一修改，避免同一段被多次覆盖。
 
-1. manifest 的 `fbank`、`max_segment_ms`、`punc.max_tokens` 字段语义与默认值；
-2. 实际 VAD/ASR/Punc ONNX 张量名、cache 形状、CMVN 融合方式；
-3. external data 与主文件 SHA-256 的边界；
-4. ASR encoder 不暴露 `input_lengths`、decoder 无 KV cache 的实现约束；
-5. Punc 的 CLS 对齐、`vocab.txt`、labels id 映射、英文修正；
-6. VAD 后处理/分段阈值与官方 Python 后处理的差异；
-7. 安装脚本的下载来源、HF_TOKEN 交互、缓存、磁盘占用、原子安装；
-8. Pipeline 的音频 Start/Finish 边界消费、同步临时识别、事件顺序；
-9. `SegmentDropped` 对临时行的处理；
-10. `Tui::draw` 的可变 App 与滚动状态更新方式。
+### 11.1 音频错误通道与错误计数
+
+**问题描述**
+
+`PROVIDER §3.1` 曾写“音频错误通过独立通道交给工作线程”，但 `CORE §4.8` 的采集接口只有音频数据通道。实际实现是把零长度 `AudioChunk` 作为错误标记写入同一有界通道，工作线程连续收到 3 次后以 `Fatal` 退出。
+
+**解决方法**
+
+- 错误回调写入零长度 `AudioChunk` 哨兵。
+- 工作线程维护 `audio_error_streak`，连续 3 次触发 `PipelineEvent::Fatal`。
+- 回调仍只用 `try_send`，不阻塞音频线程；通道满时错误标记可能被丢弃，连续错误计数存在低估可能。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| PROVIDER | §3.1 注 | 不动 | 已写明错误以零长度标记写入同一有界通道；不要改回“独立错误通道”。 |
+| CORE | §4.8 注 | 增 | 增加：错误回调写零长度 `AudioChunk`；工作线程连续 3 次触发 `Fatal`；通道满时标记可能丢失，计数可能低估。 |
+| PROVIDER | §4.6 `StreamLost` 行 | 不动 | 已有“连续失败 3 次后退出”，与实现一致。 |
+
+### 11.2 manifest 可选字段与分段上限
+
+**问题描述**
+
+对应 §1 #2、#13、#14。`PROVIDER §4.2` 曾声称 fbank 参数、帧移和分段上限由 manifest 声明，但示例没有这些字段；`CORE §4.6` 又把分段上限说成常量；`USER §2` 则写成“由 VAD 模型包声明”。实际实现使用 manifest 的 `fbank`、`max_segment_ms`、`punc.max_tokens`，旧包缺省值分别为 80/25/10、10000、400。
+
+**解决方法**
+
+- manifest 新增可选字段：`fbank { num_bins, frame_ms, shift_ms }`、`max_segment_ms`、`punc.max_tokens`。
+- 旧 manifest 不写时使用默认值 80/25/10、10000、400。
+- `max_segment_ms` 校验范围 1..=60000；运行期以 manifest 为准，`MAX_SEGMENT_MS` 只是推荐默认值。
+- 当前默认分段上限已从 20 s 调整为 10 s；`verify_models.py` 写 manifest 时也使用 10000。
+- PTT 在达到上限后继续收集的行为由条目 11.11 统一修改，本条不重复改事件结构。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| PROVIDER | §4.2 JSON 与注 | 改 | 保留现有字段；在注中补“三个字段可选，缺省 80/25/10、10000、400；`max_segment_ms` 范围 1..=60000；运行期以 manifest 为准”。 |
+| CORE | §4.4 注 | 增 | 补 `FbankManifest` 缺省 80/25/10、`ModelManifest.max_segment_ms` 缺省 10_000、`PuncArtifact.max_tokens` 缺省 400。 |
+| CORE | §4.6 常量 | 不动 | `MAX_SEGMENT_MS` 已标推荐值 10_000；注明运行时取 manifest，不再作为唯一来源。 |
+| USER | §2 分段上限 | 不动 | 已改为“由模型包清单声明”，并说明 PTT/continuous 余下语音另起一段。 |
+| CORE | §4.11 | 不动 | 事件结构由条目 11.11 统一修改，避免同一代码块被覆盖。 |
+
+### 11.3 CMVN 融合
+
+**问题描述**
+
+对应 §1 #3。模型包目录没有 `cmvn.ark`，但 FireRedVAD / FireRedASR2-AED 实际需要 CMVN，文档没有说明统计量在哪里应用。
+
+**解决方法**
+
+- VAD ONNX 导出时在模型图前融合 `Sub(mean)` / `Mul(istd)`。
+- ASR encoder 的导出包装器内部应用 `(features - mean) * istd`。
+- 运行期模型包不包含 `cmvn.ark`，只输入 fbank。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| PROVIDER | §4.2 注 | 不动 | 已有“CMVN 在导出时融合、运行期不读取 `cmvn.ark`”。 |
+| CORE | §4.10 注 | 增 | 补：VAD 的 CMVN 已融合进 ONNX 图，`FireRedVad` 运行期只处理 fbank。 |
+| CORE | §4.13 注 | 增 | 补：ASR encoder 包装器内部应用 CMVN；与条目 11.11 的 `transcribe_with_beam` 注并列追加。 |
+| BUILD | §3 | 不动 | 安装脚本负责导出与融合，用户不需要额外处理 `cmvn.ark`。 |
+
+### 11.4 FireRedPunc 导出契约
+
+**问题描述**
+
+对应 §1 #4、#5、#6。官方 FireRedPunc 的 `out_dict` 中 id 0 是 `<space>` 而不是空字符串；模型包只声明 `vocab.txt`，但官方还带 `tokenizer.json`；文档也没有说明 `[CLS]` 对齐、`token_type_ids` 和输出长度。
+
+**解决方法**
+
+- 导出脚本把官方 id 0 映射为 `""`；最终文本从 ASR 原文重建，英文词间空格不依赖 Punc 的 space 标签。
+- 运行期从 `vocab.txt` 构建 BERT WordPiece，并挂 `BertNormalizer` + `BertPreTokenizer`；实测与官方 `chinese-lert-base` 词表一致，不需要 `tokenizer.json`。
+- 导出包装器内部加 `[CLS]` 并从输出中去掉；运行期输入 `input_ids` / `attention_mask` / `token_type_ids`，输出长度与输入 token 数一致。
+- 标点按 tokenizer 的 byte offsets 插入原文本；超长文本按字符切块，仍超限时递归二分。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| PROVIDER | §4.2 注 | 改 | 在现有注中补：官方 id 0 `<space>` 导出映射为 `""`；运行期只需 `vocab.txt` 构建 WordPiece；`[CLS]` 由导出包装器加/去，输出长度等于输入 token 数。与条目 11.5 的 `tokens.txt` 注并列追加。 |
+| CORE | §4.16 注 | 增 | 补：WordPiece + `BertNormalizer` / `BertPreTokenizer`；`attention_mask` 全 1、`token_type_ids` 全 0；按 byte offsets 插入标点；超长文本切块后递归二分，不丢尾部。 |
+| CORE | §4.15 | 不动 | ASR tokenizer 与 Punc WordPiece 是两个对象；不要混改。 |
+
+### 11.5 ASR 特殊 token 的来源
+
+**问题描述**
+
+对应 §1 #7。文档没有说明 `<sos>` / `<eos>` / `<pad>` 的来源；实际运行时从 `tokens.txt` 查找，官方词表 id 为 `<blank>`=0、`<unk>`=1、`<pad>`=2、`<sos>`=3、`<eos>`=4，找不到时回退 1/2/0。
+
+**解决方法**
+
+- `Tokenizer::load` 按 token 字符串查找特殊 id，不硬编码官方 id。
+- `Tokenizer` 保存 `sos_id` / `eos_id` / `pad_id`，并提供 getter 与 `vocab_size`。
+- 解码时过滤 `<...>` / `[...]`，处理 SentencePiece `▁`、`<space>` 和 `<0xAB>` byte fallback。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| PROVIDER | §4.2 注 | 增 | 追加：`tokens.txt` 含 `<sos>` / `<eos>` / `<pad>`；运行期按 token 查找，官方 id 为 3/4/2；不要写死。与条目 11.4 的注并列。 |
+| CORE | §4.15 | 改 | 结构体补 `sos_id` / `eos_id` / `pad_id`；补 `sos_id()` / `eos_id()` / `pad_id()` / `vocab_size()`；注中写特殊 token 查找与 byte fallback。 |
+| CORE | §4.13 | 不动 | `AedConfig` 已包含 `sos_id` / `eos_id` / `pad_id`。 |
+
+### 11.6 external data 与量化模型
+
+**问题描述**
+
+对应 §1 #8。文档没有覆盖 ONNX >2 GiB 的 external data：安装脚本对量化模型优先内联；无法内联时保留分片；manifest 只校验主文件 SHA-256，分片不在哈希范围内。
+
+**解决方法**
+
+- 默认安装流程：导出 FP32 → int8 动态量化 → 尝试内联 → 清理未引用分片 → 校验、写 manifest、原子安装。
+- 无法内联时保留分片，分片必须与主 `.onnx` 一起复制。
+- `manifest` 只对主文件计算 SHA-256；分片不在校验范围，这是当前格式限制。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| PROVIDER | §4.2 注 | 不动 | 已有 external data 保留说明与“manifest 只声明主文件 SHA-256”。 |
+| BUILD | §3 安装方式/量化 | 改 | 补：量化后优先内联成单个 `.onnx`；无法内联时保留分片并随主文件复制，清理不再被引用的旧分片。 |
+| CORE | §4.4 注 | 增 | 补：`verify` 只校验主文件 SHA-256；external data 分片不在哈希范围，必须与主文件一起保留。 |
+
+### 11.7 SegmentDropped 与临时行残留
+
+**问题描述**
+
+对应 §1 #9。`CORE §4.5` 曾只说明 `SegmentDropped` 清除 `recording` / `finalizing`，会让临时行文本残留成假结果。
+
+**解决方法**
+
+- `SegmentDropped` 同时清空 `partial`。
+- 不新增结果行，不修改剪贴板。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| CORE | §4.5 注 | 不动 | 已写明清除 `recording` / `finalizing` 与临时行文本。 |
+| CORE | §5.6 | 不动 | 剪贴板只由 `Final` 写入；`SegmentDropped` 不触发写入，现有描述正确。 |
+| USER | §2 空语音段 | 不动 | 与“不产生结果行、剪贴板不变”一致。 |
+
+### 11.8 Pipeline / Tui 的签名所有权
+
+**问题描述**
+
+对应 §1 #10。`CORE` 曾把 `run` 写在 `main.rs`、`app::run` 写成按值接收 Pipeline、`Tui::draw` 写成接收 `&App`；实际入口在 `src/lib.rs::run`，`app::run` 接收 `&mut Pipeline`，`Tui::draw` 接收 `&mut App`。
+
+**解决方法**
+
+- `run` 放在库根，供二进制入口与集成测试共用。
+- `app::run(mode, &mut Pipeline, clipboard)`。
+- `Tui::draw(&mut App)`，以便把实际滚动偏移和终端高度写回 `App`。
+- 主线程负责关闭 Pipeline 再停止采集。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| CORE | §4.1、§4.5、§4.18、§5.6 | 不动 | 四处的签名与退出顺序已按上述实现更新；不要改回按值接收或 `&App`。 |
+
+### 11.9 依赖名称与 Python 版本范围
+
+**问题描述**
+
+对应 §1 #11、#12。README Credits 曾把 `kaldi-native-fbank` 写成 `kaldi-fbank`，且漏列 `tokenizers`；CORE SBOM 曾把 Python 依赖写成“固定版本”，实际使用版本范围以兼容 Python 3.10+。
+
+**解决方法**
+
+- README Credits 与 CORE SBOM 统一使用 `kaldi-native-fbank`，补列 `tokenizers`。
+- 安装期 Python 依赖在 `tools/requirements-export.txt` 使用版本范围，不进入运行时 SBOM。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| README | §3 Credits | 不动 | 已修正为 `kaldi-native-fbank` 并补 `tokenizers`。 |
+| CORE | §3 SBOM | 不动 | 已使用 `kaldi-native-fbank`、`tokenizers`；注明版本与许可证以 Cargo 清单为准。 |
+| CORE | §1 文件树、§3 注 | 不动 | 已写 `requirements-export.txt` 为安装期依赖，使用版本范围。 |
+
+### 11.10 BUILD 安装说明与 README Credits
+
+**问题描述**
+
+对应 §1 #15、#16。BUILD 曾缺少 HuggingFace 来源、缓存、token、磁盘占用和原子替换说明；README Credits 曾写错 crate 名称。
+
+**解决方法**
+
+- BUILD 补默认安装目录、虚拟环境、网络、磁盘、量化、原子替换。
+- 补 `HF_TOKEN` 交互：缺失时提示，非交互环境继续未认证下载；token 不落盘。
+- README Credits 修正 crate 名称并补齐依赖。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| BUILD | §3 安装模型 | 不动 | 已含默认目录、venv、网络、磁盘、原子替换、量化与 `HF_TOKEN` 注。 |
+| BUILD | §1 环境 | 不动 | 已写 Python 3.10+、网络与磁盘要求。 |
+| USER | §2 模型安装 | 不动 | 已说明由安装脚本完成下载/转换/校验，TUI 运行期不下载。 |
+| README | §3 Credits | 不动 | 与条目 11.9 重叠，保持现有修正即可。 |
+
+### 11.11 长语音识别卡顿与 10 s 分段
+
+**问题描述**
+
+对应 §10。长语音时临时识别被逐帧重复触发，`FinishSegment` 排空音频时也继续触发；同步 ASR 阻塞采集线程，旧 16 块音频通道静默丢块；PTT 达到 20 s 上限后停止收集；VAD 每 10 ms 跑一次 ONNX，临时识别重算整段，beam search 全词表排序。最终表现为 CPU 持续占用、结果迟迟不出、文本缺句。
+
+**解决方法**
+
+- 临时识别只取段尾 6 s，使用 greedy（beam=1）；按“新增音频量 + 上次耗时”动态调度；`FinishSegment` 排空期间抑制临时识别。
+- VAD 按 100 ms 批处理；`frame_audio` 保留当前批次剩余音频，段边界重置时不错位。
+- 音频通道 16 → 2048；命令优先于音频（`select_biased!`）。
+- `SegmenterEvent::SpeechEnd` 增加 `SegmentEndReason::{Silence, MaxDuration}`；PTT 在 `MaxDuration` 后继续收集，只有静音结束或松键才停止。
+- beam search 每步只取 top-k，使用 `select_nth_unstable_by`。
+- 分段上限默认 20 s → 10 s，manifest、代码默认值、`verify_models.py` 与文档同步。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| CORE | §2 单段串行 | 不动 | 已写明临时/最终识别串行、不重叠、不可取消。 |
+| CORE | §4.6 Worker 与常量 | 不动 | 已包含 `next_partial_at` / `next_partial_samples` / `suppress_partials`、批处理与临时识别常量。 |
+| CORE | §4.8 注 | 不动 | 容量已写 2048；错误标记细节由条目 11.1 补，不要重复改容量。 |
+| CORE | §4.11 | 改 | 把 `SpeechEnd(Segment)` 替换为 `SpeechEnd { segment, reason: SegmentEndReason }`；增加 `SegmentEndReason` 枚举；注中说明 `Silence` / `MaxDuration` 与 PTT 继续收集。 |
+| CORE | §4.13 | 增 | 增加 `pub fn transcribe_with_beam(&mut self, features: &[Vec<f32>], beam_size: usize) -> anyhow::Result<AsrOutput>;`；注中说明临时识别 beam=1、最终识别 beam=3。CMVN 注由条目 11.3 负责。 |
+| CORE | §4.14 | 增 | 注中补：每步用 top-k 选择，不对 8667 词全排序；decoder 无 KV cache，重跑完整前缀。 |
+| CORE | §5.2 | 增 | 在 PTT 注中补：达到 `max_segment_ms` 时保持 `collecting`，余下语音另起一段；只有静音自动结束或松键才回到等待。 |
+| CORE | §5.3、§5.4 | 不动 | 已更新命令优先、100 ms VAD 批处理与动态临时识别调度。 |
+| USER | §2 临时结果节奏、分段上限 | 不动 | 已写动态间隔、段尾 6 s、`…` 截断与 PTT/continuous 继续分段。 |
+| BUILD | §5 测试 | 改 | 把 `tests/segmenter.rs` 的覆盖说明改为“端点、静音自动结束、最大段长（`MaxDuration`）”。 |
+| BUILD | §6 发布检查 | 增 | 运行验收补一条：长语音（>10 s）应正常分成多段，PTT 按住期间不丢后续语音。 |
+| PROVIDER | §4.2 | 不动 | `max_segment_ms` 已为 10000；字段说明由条目 11.2 统一补，避免重复。 |
+
+### 11.12 落笔顺序
+
+真正需要修改的章节集中在：
+
+- `CORE.html`：§4.4、§4.8、§4.10、§4.11、§4.13、§4.14、§4.15、§4.16
+- `PROVIDER.html`：§4.2 注
+- `BUILD.html`：§3、§5、§6
+
+其余条目标“不动”，保持与实现一致。没有需要整段删除的内容；旧签名与旧描述通过“改”替换即可。
+
+## 12. 其他建议补入正式文档的内容
+
+以下内容未全部纳入 §11 的具体修订表；与 §11 重叠的条目以 §11 为准，其余仍建议后续补入 PROVIDER / CORE：
+
+1. 实际 VAD / ASR / Punc ONNX 张量名与 VAD cache 形状；
+2. ASR encoder 不暴露 `input_lengths`、decoder 无 KV cache 的实现约束；
+3. Punc 的英文文本修正规则（大小写、ASCII 标点、独立 `i`）；
+4. VAD 后处理与官方 Python 后处理的差异（5 帧平滑、`pad_start_frame`）；
+5. Pipeline 的音频 Start/Finish 边界消费与事件顺序；
+6. 安装脚本的下载来源、缓存目录与 `HF_TOKEN` 交互细节。
