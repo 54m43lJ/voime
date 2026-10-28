@@ -14,6 +14,7 @@
 <a href="README.html">README</a>
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
+<a href="BUILD.html">BUILD</a>
 </p>
 
 <h2 id="p1">1. TERMS</h2>
@@ -114,7 +115,7 @@
   </tr>
   <tr>
     <td>量化</td>
-    <td>模型包默认提供 int8 量化 ONNX；导出工具必须在固定验证集上确认识别与标点质量后再发布。运行时只加载 manifest 声明的精度，不在启动时做动态量化。</td>
+    <td>模型包默认提供 int8 量化 ONNX；导出工具必须在固定验证集上确认识别与标点质量后再发布。运行期只加载包内给出的精度，不在启动时做动态量化。</td>
   </tr>
   <tr>
     <td>清单权威</td>
@@ -134,7 +135,7 @@
   </tr>
   <tr>
     <td>剪贴板文本</td>
-    <td>只写 UTF-8 纯文本，行分隔符固定为 <code>\n</code>；不写 HTML、图片或多格式剪贴板对象。</td>
+    <td>只写 UTF-8 纯文本，行分隔符固定为 <code>\n</code>，无末尾换行；内容为当前会话的最终结果，不含临时结果、空行或错误信息；不写 HTML、图片或多格式剪贴板对象。</td>
   </tr>
   <tr>
     <td>终端能力</td>
@@ -157,7 +158,7 @@
 <div class="diagram"><img src="diagram/prov-audio.svg" alt="cpal 音频采集时序图"></div>
 <ul class="note">
   <li>回调只负责把设备样本转换为 <code>AudioChunk</code> 并入队；重采样与 VAD 在项目内部完成，不属于 cpal 边界。</li>
-  <li>错误回调与数据回调可能来自不同线程；错误通过独立通道交给工作线程，不在回调中恢复设备。</li>
+  <li>错误回调与数据回调可能来自不同线程；错误以零长度错误标记写入同一有界通道，由工作线程维护连续错误计数，不在回调中恢复设备。</li>
 </ul>
 
 <h3 id="p3-2">3.2 模型推理边界</h3>
@@ -170,7 +171,8 @@
 <h3 id="p3-3">3.3 剪贴板边界</h3>
 <div class="diagram"><img src="diagram/prov-clipboard.svg" alt="剪贴板写入时序图"></div>
 <ul class="note">
-  <li>每次最终结果后整体覆盖写入会话文本；不追加、不保留旧剪贴板内容。</li>
+  <li>每次最终结果后整体覆盖写入会话文本；写入时不追加、不保留旧剪贴板内容。</li>
+  <li>清空工作区（<code>Ctrl+X</code>）只清空应用内存与界面，不调用剪贴板写入；清空后的下一次最终结果把新会话整体覆盖写入剪贴板。</li>
   <li>X11 下剪贴板内容由本进程持有；程序退出后能否保留取决于桌面剪贴板管理器，见 <a href="#p4-4">§4.4</a>。</li>
 </ul>
 
@@ -234,6 +236,8 @@ pub enum AudioError {
 <pre><code>{
   "schema": 1,
   "sample_rate": 16000,
+  "fbank": { "num_bins": 80, "frame_ms": 25, "shift_ms": 10 },
+  "max_segment_ms": 10000,
   "vad": {
     "model": "vad/stream-vad.onnx",
     "sha256": "...",
@@ -282,13 +286,18 @@ pub enum AudioError {
       ]
     },
     "vocab": "punc/vocab.txt",
-    "labels": "punc/labels.json"
+    "labels": "punc/labels.json",
+    "max_tokens": 400
   }
 }</code></pre>
 <ul class="note">
   <li>示例中的张量名是通用占位；实际名称由 <code>tools/export_models.py</code> 写入 manifest，运行期只以 manifest 为准。</li>
+  <li><code>fbank</code>、<code>max_segment_ms</code> 与 <code>punc.max_tokens</code> 均为可选字段；旧包缺省时分别使用 80 / 25 / 10 ms、10000、400。运行期以 manifest 为准，<code>max_segment_ms</code> 允许范围 1..=60000。</li>
   <li><code>shape</code> 中的 <code>-1</code> 表示动态维度；会话建立后由 <code>infer::session::SessionFactory::build</code> 校验实际元数据。</li>
-  <li><code>tokens.txt</code> 一行一个 token，行号即 id；<code>vocab.txt</code> 为 BERT WordPiece 词表；<code>labels.json</code> 为字符串数组，索引即标签 id。</li>
+  <li><code>tokens.txt</code> 一行一个 token，行号即 id，并包含 <code>&lt;sos&gt;</code> / <code>&lt;eos&gt;</code> / <code>&lt;pad&gt;</code>；运行期按 token 查找特殊 id（官方词表为 3 / 4 / 2），不写死。 <code>vocab.txt</code> 为 BERT WordPiece 词表；<code>labels.json</code> 为字符串数组，索引即标签 id。</li>
+  <li>FireRedPunc 官方 <code>out_dict</code> 的 id 0 是 <code>&lt;space&gt;</code>，导出时映射为 <code>""</code>；运行期只需 <code>vocab.txt</code> 构建 WordPiece，不需要 <code>tokenizer.json</code>。导出包装器在输入前补 <code>[CLS]</code>、输出后去掉，输出长度与输入 token 数一致。</li>
+  <li>若 ONNX 导出使用 external data，模型旁的 <code>*.data</code> 或其它分片文件与主文件一起保留；<code>manifest.json</code> 只声明主文件与主文件 SHA-256。</li>
+  <li>FireRedVAD 与 FireRedASR2-AED 的 CMVN 统计在导出时融合进模型图；运行期只输入 fbank，不额外读取 <code>cmvn.ark</code>。</li>
   <li>模型来自 FireRed 官方权重，许可证为 Apache-2.0；权重文件不提交到仓库。安装脚本负责下载、导出、量化、写 manifest 与 SHA-256，并原子替换模型目录；完整命令与参数在开发完成后写入 BUILD。</li>
 </ul>
 
@@ -357,7 +366,7 @@ pub enum AudioError {
 <table>
   <tr><th>消费项</th><th>签名 / 类型</th><th>用途</th></tr>
   <tr><td>建立句柄</td><td><code>arboard::Clipboard::new() -&gt; Result&lt;Clipboard, arboard::Error&gt;</code></td><td>启动时建立一次；失败则启动失败。</td></tr>
-  <tr><td>写入文本</td><td><code>Clipboard::set_text&lt;T: Into&lt;String&gt;&gt;(&amp;mut self, text: T) -&gt; Result&lt;(), arboard::Error&gt;</code></td><td>每次最终结果后整体覆盖会话文本。</td></tr>
+  <tr><td>写入文本</td><td><code>Clipboard::set_text&lt;T: Into&lt;String&gt;&gt;(&amp;mut self, text: T) -&gt; Result&lt;(), arboard::Error&gt;</code></td><td>每次最终结果后整体覆盖会话文本；<code>Ctrl+X</code> 清空不调用。</td></tr>
 </table>
 
 <pre><code>pub enum ClipboardError {
@@ -366,7 +375,9 @@ pub enum AudioError {
     WriteFailed { detail: String },
 }</code></pre>
 <ul class="note">
-  <li>写入内容为 UTF-8 纯文本，行分隔符 <code>\n</code>，无末尾换行；空会话不写入。</li>
+  <li>写入 UTF-8 纯文本，内容为当前会话（最近一次 <code>Ctrl+X</code> 清空后）的全部最终结果，按产生顺序以 <code>\n</code> 连接，无末尾换行；不含临时结果、空行或错误信息，空会话不写入。</li>
+  <li>每次最终结果后整体覆盖写入；写入失败不影响结果行，下一次最终结果再次整体写入。</li>
+  <li>清空工作区（<code>Ctrl+X</code>）不写入也不清空剪贴板；清空后的下一次最终结果整体重写为只包含新结果的会话。</li>
   <li>Linux：X11 下本进程是剪贴板所有者，退出后若没有剪贴板管理器接管，内容可能丢失；Wayland 由合成器管理，行为随桌面环境而定。Wayland 构建需启用 arboard 的 <code>wayland-data-control</code> 特性。程序不启动后台常驻进程来维持剪贴板。</li>
   <li>Windows：剪贴板内容在进程退出后由系统保留；写入失败按 <a href="#p4-6">§4.6</a> 处理。</li>
 </ul>
@@ -375,7 +386,7 @@ pub enum AudioError {
 <table>
   <tr><th>消费项</th><th>签名 / 类型</th><th>用途</th></tr>
   <tr><td>TTY 检查</td><td><code>std::io::IsTerminal::is_terminal()</code></td><td>启动前确认 stdin / stdout 是终端。</td></tr>
-  <tr><td>raw mode</td><td><code>crossterm::terminal::enable_raw_mode()</code> / <code>disable_raw_mode()</code></td><td>逐键读取 <code>Space</code>、<code>q</code>、<code>Ctrl+C</code> 与滚动键。</td></tr>
+  <tr><td>raw mode</td><td><code>crossterm::terminal::enable_raw_mode()</code> / <code>disable_raw_mode()</code></td><td>逐键读取 <code>Space</code>、<code>q</code>、<code>Ctrl+C</code>、<code>Ctrl+X</code> 与滚动键。</td></tr>
   <tr><td>备用屏幕</td><td><code>EnterAlternateScreen</code> / <code>LeaveAlternateScreen</code></td><td>退出后恢复原终端内容。</td></tr>
   <tr><td>光标 / 鼠标</td><td><code>Hide</code> / <code>Show</code>，<code>DisableMouseCapture</code></td><td>隐藏光标，保留终端原生选择。</td></tr>
   <tr><td>尺寸</td><td><code>terminal::size() -&gt; Result&lt;(u16, u16), io::Error&gt;</code></td><td>布局与换行宽度。</td></tr>
@@ -414,7 +425,7 @@ pub enum AudioError {
   <tr><td><code>NotATty</code> / <code>Terminal Io</code></td><td>stdin / stdout 不是终端，或终端控制失败。</td><td>启动失败，stderr + 退出码 1；运行期恢复终端后退出。</td></tr>
 </table>
 <ul class="note">
-  <li>启动期错误一律在进入备用屏幕之前报告；运行期错误不写入 TUI 内容区，以保持界面只有两个元素。</li>
+  <li>启动期错误一律在进入备用屏幕之前报告；运行期错误不写入 TUI 内容区，内容区仍只保留 recording 标记与识别内容，底部快捷键提示不受影响。</li>
   <li>错误文本包含失败的文件、设备或张量名，便于定位；不输出模型权重或用户音频内容。</li>
 </ul>
 

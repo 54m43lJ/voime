@@ -70,6 +70,8 @@ div.diagram img { display: block; }
 /* ---------- USER §5：TUI 原型（示意图，非像素级还原） ---------- */
 .tui-proto-wrap { overflow-x: auto; margin: 0.8em 0; }
 .tui-proto {
+  display: flex;
+  flex-direction: column;
   width: 760px;
   min-height: 190px;
   padding: 14px 18px;
@@ -85,3 +87,4 @@ div.diagram img { display: block; }
 .tui-proto .rec { color: #e5484d; }
 .tui-proto .dim { color: #8b8b93; }
 .tui-proto .line { white-space: pre-wrap; }
+.tui-proto .hint { margin-top: auto; }

@@ -14,6 +14,7 @@
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
 </p>
 
 <h2 id="r1">1. WHAT &amp; WHY</h2>
@@ -31,8 +32,8 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
   <li>用户启动 <code>voime</code> 后，在终端里按一次 <code>Space</code> 开始说话、再按一次结束；
       连续模式下无需按键，按语音活动自动切分。</li>
   <li>语音链路固定为 FireRedVAD 切分 → FireRedASR2-AED 识别 → FireRedPunc 标点，全部在本机 CPU 上完成。</li>
-  <li>终端界面只有两个元素：红色 recording 标记与识别内容；最终结果按行累积，直到退出程序。</li>
-  <li>每次识别完成，整段会话文本自动写入系统剪贴板；用户也可以直接用终端选择复制任意可见行。</li>
+  <li>终端界面只保留 recording 标记、识别内容与底部一行快捷键提示；最终结果按行累积，直到按 <code>Ctrl+X</code> 清空或退出程序。</li>
+  <li>每次识别完成，自上次清空以来的整段会话文本自动写入系统剪贴板；<code>Ctrl+X</code> 只清空界面历史，不修改剪贴板。用户也可以直接用终端选择复制任意可见行。</li>
   <li>单个可执行程序加本地模型包即可运行；Linux 与 Windows 的 AMD x86_64 行为一致；运行时不需要网络、GPU 或 Python。</li>
   <li>首次安装由项目提供的脚本完成；安装完成后 TUI 完全离线运行，不再访问网络。</li>
   <li>ASR 固定使用 FireRedASR2-AED；FireRedASR2-LLM 不在本项目范围内。</li>
@@ -44,7 +45,7 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
   <li>不提供 GUI、托盘、悬浮窗、设置界面或鼠标操作；所有运行参数在命令行确定。</li>
   <li>运行时不联网，不调用云 ASR、云标点服务，也不在 TUI 内下载或更新模型；模型由项目安装脚本在首次安装阶段生成。</li>
   <li>不支持 GPU、NPU、macOS、Linux ARM 或 Windows ARM；不承诺 Intel 平台上的性能与正确性，验收平台为 AMD x86_64。</li>
-  <li>不保存音频或识别历史到磁盘；退出后只保留剪贴板中的会话文本。</li>
+  <li>不保存音频或识别历史到磁盘；识别历史只存在内存中，可用 <code>Ctrl+X</code> 清空，退出后只保留剪贴板中的会话文本。</li>
   <li>不做说话人分离、语种识别、翻译、文本润色或大模型改写。</li>
 </ul>
 
@@ -80,12 +81,17 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
   </tr>
   <tr>
     <td>最终结果</td>
-    <td>语音段结束后执行最终识别与标点，该行固化并保留到程序退出；下一次识别另起一行。</td>
+    <td>语音段结束后执行最终识别与标点，该行固化并保留到按 <code>Ctrl+X</code> 清空或程序退出；下一次识别另起一行。</td>
     <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u5-2">USER §5.2</a></td>
   </tr>
   <tr>
+    <td>清空工作区</td>
+    <td><code>Ctrl+X</code> 清空全部已完成结果行与内存会话文本；剪贴板保持不变。正在录音的段与临时行不受影响，清空后的下一次最终结果只把新结果写入剪贴板。</td>
+    <td><a href="USER.html#u2">USER §2</a> · <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a></td>
+  </tr>
+  <tr>
     <td>自动复制</td>
-    <td>每次最终结果产生后，把当前会话的全部最终结果按行拼接后写入剪贴板。</td>
+    <td>每次最终结果产生后，把自上次清空以来的全部最终结果按行拼接后写入剪贴板；<code>Ctrl+X</code> 不写入也不清空剪贴板。</td>
     <td><a href="USER.html#u2">USER §2</a> · <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a></td>
   </tr>
   <tr>
@@ -99,8 +105,13 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
     <td><a href="USER.html#u5-2">USER §5.2</a></td>
   </tr>
   <tr>
+    <td>快捷键提示</td>
+    <td>终端最后一行始终显示当前模式可用的快捷键；PTT 为 <code>Space 开始/结束&nbsp;&nbsp;Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code>，continuous 省略无动作的 <code>Space</code>。</td>
+    <td><a href="USER.html#u5-2-4">USER §5.2.4</a></td>
+  </tr>
+  <tr>
     <td>退出</td>
-    <td><code>q</code> 或 <code>Ctrl+C</code> 退出，恢复终端；剪贴板内容保留。</td>
+    <td><code>q</code> 或 <code>Ctrl+C</code> 退出，恢复终端；退出不修改剪贴板内容。</td>
     <td><a href="USER.html#u2">USER §2</a></td>
   </tr>
   <tr>
@@ -141,6 +152,11 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
     <td>C++ · MIT</td>
   </tr>
   <tr>
+    <td><a href="https://github.com/huggingface/tokenizers">tokenizers</a></td>
+    <td>FireRedPunc 的 BERT WordPiece 分词</td>
+    <td>Rust · Apache-2.0</td>
+  </tr>
+  <tr>
     <td><a href="https://github.com/ratatui/ratatui">ratatui</a> / <a href="https://github.com/crossterm-rs/crossterm">crossterm</a></td>
     <td>终端界面与输入事件</td>
     <td>Rust · MIT</td>
@@ -161,7 +177,7 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
     <td>Rust · MIT</td>
   </tr>
   <tr>
-    <td><a href="https://github.com/RustedBytes/kaldi-native-fbank">kaldi-fbank</a></td>
+    <td><a href="https://github.com/RustedBytes/kaldi-native-fbank">kaldi-native-fbank</a></td>
     <td>Kaldi 兼容 fbank 特征</td>
     <td>Rust · Apache-2.0</td>
   </tr>
