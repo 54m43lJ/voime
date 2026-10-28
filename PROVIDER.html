@@ -291,8 +291,10 @@ pub enum AudioError {
 }</code></pre>
 <ul class="note">
   <li>示例中的张量名是通用占位；实际名称由 <code>tools/export_models.py</code> 写入 manifest，运行期只以 manifest 为准。</li>
+  <li><code>fbank</code>、<code>max_segment_ms</code> 与 <code>punc.max_tokens</code> 均为可选字段；旧包缺省时分别使用 80 / 25 / 10 ms、10000、400。运行期以 manifest 为准，<code>max_segment_ms</code> 允许范围 1..=60000。</li>
   <li><code>shape</code> 中的 <code>-1</code> 表示动态维度；会话建立后由 <code>infer::session::SessionFactory::build</code> 校验实际元数据。</li>
-  <li><code>tokens.txt</code> 一行一个 token，行号即 id；<code>vocab.txt</code> 为 BERT WordPiece 词表；<code>labels.json</code> 为字符串数组，索引即标签 id。</li>
+  <li><code>tokens.txt</code> 一行一个 token，行号即 id，并包含 <code>&lt;sos&gt;</code> / <code>&lt;eos&gt;</code> / <code>&lt;pad&gt;</code>；运行期按 token 查找特殊 id（官方词表为 3 / 4 / 2），不写死。 <code>vocab.txt</code> 为 BERT WordPiece 词表；<code>labels.json</code> 为字符串数组，索引即标签 id。</li>
+  <li>FireRedPunc 官方 <code>out_dict</code> 的 id 0 是 <code>&lt;space&gt;</code>，导出时映射为 <code>""</code>；运行期只需 <code>vocab.txt</code> 构建 WordPiece，不需要 <code>tokenizer.json</code>。导出包装器在输入前补 <code>[CLS]</code>、输出后去掉，输出长度与输入 token 数一致。</li>
   <li>若 ONNX 导出使用 external data，模型旁的 <code>*.data</code> 或其它分片文件与主文件一起保留；<code>manifest.json</code> 只声明主文件与主文件 SHA-256。</li>
   <li>FireRedVAD 与 FireRedASR2-AED 的 CMVN 统计在导出时融合进模型图；运行期只输入 fbank，不额外读取 <code>cmvn.ark</code>。</li>
   <li>模型来自 FireRed 官方权重，许可证为 Apache-2.0；权重文件不提交到仓库。安装脚本负责下载、导出、量化、写 manifest 与 SHA-256，并原子替换模型目录；完整命令与参数在开发完成后写入 BUILD。</li>

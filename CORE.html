@@ -288,7 +288,8 @@ impl ModelManifest {
     pub fn rebase(&amp;mut self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
 }</code></pre>
 <ul class="note">
-  <li><code>verify</code> 校验文件存在性、SHA-256 与声明的张量名；形状在建立 ONNX 会话后由 <code>infer::session</code> 复核。</li>
+  <li><code>verify</code> 校验主文件存在性、SHA-256 与声明的张量名；external data 分片不在哈希范围，必须与主文件一起保留。形状在建立 ONNX 会话后由 <code>infer::session</code> 复核。</li>
+  <li><code>FbankManifest</code> 缺省为 80 bins / 25 ms 窗 / 10 ms 帧移；<code>ModelManifest.max_segment_ms</code> 缺省 10_000，允许范围 1..=60000；<code>PuncArtifact.max_tokens</code> 缺省 400。</li>
   <li>清单字段与目录结构的完整契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
 </ul>
 
@@ -473,6 +474,7 @@ impl CaptureHandle {
 pub const AUDIO_CHANNEL_CAPACITY: usize;    // 推荐值 2048</code></pre>
 <ul class="note">
   <li>回调中只做样本格式转换与 <code>try_send</code>；通道满时丢弃当前块并立即返回，绝不阻塞音频线程。2048 块按 10–20 ms 回调约覆盖 20–40 s 同步 ASR 积压。</li>
+  <li>流错误回调把零长度 <code>AudioChunk</code> 作为标记写入同一有界通道；工作线程连续收到 3 次后发送 <code>PipelineEvent::Fatal</code> 并退出。通道满时标记可能被丢弃，连续错误计数可能低估。</li>
   <li>设备名按 <code>DeviceTrait::name()</code> 精确匹配；未指定时使用 <code>default_input_device</code>。</li>
 </ul>
 
@@ -530,6 +532,7 @@ impl FireRedVad {
 pub const FRAME_SHIFT_MS: u32;    // 推荐值 10</code></pre>
 <ul class="note">
   <li>内部维护流式状态张量；<code>reset</code> 在每个语音段结束后清空，避免跨段串音。</li>
+  <li>FireRedVAD 的 CMVN 统计已融合进导出的 ONNX 图；运行期只把 fbank 送入 <code>FireRedVad</code>，不读取 <code>cmvn.ark</code>。</li>
   <li>输入长度不是帧移整数倍时保留余量到下一次 <code>push</code>，不补零。</li>
 </ul>
 
@@ -540,9 +543,17 @@ pub const FRAME_SHIFT_MS: u32;    // 推荐值 10</code></pre>
     pub end_ms: u64,
 }
 
+pub enum SegmentEndReason {
+    Silence,
+    MaxDuration,
+}
+
 pub enum SegmenterEvent {
     SpeechStart,
-    SpeechEnd(Segment),
+    SpeechEnd {
+        segment: Segment,
+        reason: SegmentEndReason,
+    },
 }
 
 pub struct SegmenterConfig {
@@ -567,6 +578,7 @@ impl Segmenter {
 }</code></pre>
 <ul class="note">
   <li><code>push</code> 负责最短语音、最短静音、最大段长与 PTT 自动结束四类判定；返回值最多一个事件。</li>
+  <li><code>SpeechEnd</code> 带结束原因：<code>Silence</code> 表示静音达到阈值，<code>MaxDuration</code> 表示达到 <code>max_segment_ms</code>。PTT 在 <code>MaxDuration</code> 后保持收集，余下语音另起一段；只有静音结束或松键才停止。</li>
   <li><code>force_end</code> 用于第二次 <code>Space</code>；没有有效语音时返回 <code>None</code>，不产生结果行。</li>
 </ul>
 
@@ -634,12 +646,15 @@ impl FireRedAed {
         config: AedConfig,
     ) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;]) -&gt; anyhow::Result&lt;AsrOutput&gt;;
+    pub fn transcribe_with_beam(&amp;mut self, features: &amp;[Vec&lt;f32&gt;], beam_size: usize) -&gt; anyhow::Result&lt;AsrOutput&gt;;
 }
 
 pub const BEAM_SIZE: usize;          // 推荐值 3
 pub const MAX_AUDIO_MS: u64;         // 推荐值 60_000（模型硬上限）</code></pre>
 <ul class="note">
   <li><code>transcribe</code> 先运行编码器一次，再把编码结果交给 <code>asr::decoder::beam_search</code> 自回归解码。</li>
+  <li><code>transcribe_with_beam</code> 允许调用方指定 beam；临时识别使用 <code>beam_size = 1</code>，最终识别使用默认 beam 3。</li>
+  <li>ASR encoder 导出包装器内部应用 CMVN（<code>(features - mean) * istd</code>），运行期只输入 fbank。</li>
   <li>输入超过 <code>MAX_AUDIO_MS</code> 时返回错误；调用方保证语音段不超过该上限。</li>
 </ul>
 
@@ -656,21 +671,30 @@ pub fn beam_search(
 ) -&gt; anyhow::Result&lt;Vec&lt;Hypothesis&gt;&gt;;</code></pre>
 <ul class="note">
   <li>只实现 FireRedASR2-AED 所需的单句 beam search；不引入通用序列解码框架。</li>
+  <li>解码器没有 KV cache：每生成一个 token 都把完整前缀重新送入 decoder；每步只取词表 top-k，用 <code>select_nth_unstable_by</code>，不对 8667 个词全排序。</li>
   <li>返回按分数降序排列的候选；<code>FireRedAed::transcribe</code> 取第一个并拼接 token。</li>
 </ul>
 
 <h3 id="c4-15">4.15 src/asr/tokenizer.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Tokenizer {
     vocab: Vec&lt;String&gt;,
+    sos_id: u32,
+    eos_id: u32,
+    pad_id: u32,
 }
 
 impl Tokenizer {
     pub fn load(path: &amp;std::path::Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn sos_id(&amp;self) -&gt; u32;
+    pub fn eos_id(&amp;self) -&gt; u32;
+    pub fn pad_id(&amp;self) -&gt; u32;
+    pub fn vocab_size(&amp;self) -&gt; usize;
     pub fn decode(&amp;self, ids: &amp;[u32]) -&gt; String;
 }</code></pre>
 <ul class="note">
   <li>词表按行读取，行号即 token id；空行保留占位，保证 id 不偏移。</li>
-  <li><code>decode</code> 只做 token 拼接与特殊符号过滤，不做分词或语言模型重排。</li>
+  <li><code>load</code> 按 token 字符串查找 <code>&lt;sos&gt;</code> / <code>&lt;eos&gt;</code> / <code>&lt;pad&gt;</code>，官方词表 id 为 3 / 4 / 2；找不到时回退 1 / 2 / 0，不硬编码官方 id。</li>
+  <li><code>decode</code> 过滤 <code>&lt;...&gt;</code> / <code>[...]</code> 特殊 token，处理 SentencePiece <code>▁</code>、<code>&lt;space&gt;</code> 与 <code>&lt;0xAB&gt;</code> byte fallback；不做分词或语言模型重排。</li>
 </ul>
 
 <h3 id="c4-16">4.16 src/punc/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -697,7 +721,9 @@ impl FireRedPunc {
 pub const MAX_TOKENS: usize;    // 推荐值 400</code></pre>
 <ul class="note">
   <li><code>labels</code> 从 <code>labels.json</code> 读取，id 0 约定为“无标点”；其余标签按模型包声明插入。</li>
-  <li>文本超过 <code>max_tokens</code> 时按标点 / 字符边界切块，逐块预测后拼接；不得截断丢弃尾部。</li>
+  <li>运行期从 <code>vocab.txt</code> 构建 BERT WordPiece，并启用 <code>BertNormalizer</code> 与 <code>BertPreTokenizer</code>；<code>attention_mask</code> 全 1、<code>token_type_ids</code> 全 0。</li>
+  <li>导出包装器在输入前补 <code>[CLS]</code>、输出后去掉，因此运行期 logits 与输入 token 一一对齐；标点按 tokenizer 的 byte offsets 插入原文本，不按 token 字符串重新拼接。</li>
+  <li>超长文本先按字符上限切块；切块后仍超过 <code>max_tokens</code> 时递归二分，不静默丢弃尾部。</li>
 </ul>
 
 <h3 id="c4-17">4.17 src/infer/session.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -796,6 +822,7 @@ pub const BACKGROUND: Color = Color::Reset;</code></pre>
   <li>第二次 <code>Space</code> 后 <code>recording</code> 立即置为 false，标记消失；最终结果到达前当前行保留最后一条临时文本。</li>
   <li>最终结果未完成时再次按 <code>Space</code> 被忽略，避免并发使用同一个 ASR 会话。</li>
   <li>PTT 下 VAD 静音自动结束也走 <code>Worker::finalize</code>，不进入 continuous 队列；界面回到等待下一次 <code>Space</code> 的空闲状态。</li>
+  <li>PTT 达到 <code>max_segment_ms</code> 时由 <code>Segmenter</code> 切段，但保持 <code>collecting</code>；余下按住期间的语音另起一段，只有静音自动结束或松键才回到等待。</li>
 </ul>
 
 <h3 id="c5-3">5.3 Continuous 监听</h3>

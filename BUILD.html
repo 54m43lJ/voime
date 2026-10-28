@@ -62,7 +62,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1</code></pre>
   <tr><td>网络</td><td>下载 FireRed 官方权重与 FireRedASR2S 源码；完成后应用离线运行。</td></tr>
   <tr><td>磁盘</td><td>下载缓存约 5 GB；默认 int8 模型包约 1.3 GB。FP32 导出包更大。</td></tr>
   <tr><td>安装方式</td><td>在目标目录同盘创建临时目录，导出、校验、写 <code>manifest.json</code> 后原子替换。</td></tr>
-  <tr><td>量化</td><td>默认导出并动态量化为 int8；<code>--no-quantize</code> 可保留 FP32。</td></tr>
+  <tr><td>量化</td><td>默认导出并动态量化为 int8；量化后优先把 external data 内联成单个 <code>.onnx</code>，无法内联时保留分片并随主文件一起复制，同时清理不再被引用的旧分片。<code>--no-quantize</code> 可保留 FP32。</td></tr>
 </table>
 
 <pre><code># 常用参数
@@ -106,7 +106,7 @@ cargo fmt --all --check
 ~/.cache/voime/venv/bin/python tools/verify_models.py --model-dir &lt;DIR&gt; --no-write</code></pre>
 
 <ul class="note">
-  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长；<code>tests/clipboard.rs</code> 覆盖会话文本拼接。</li>
+  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长（<code>MaxDuration</code>）；<code>tests/clipboard.rs</code> 覆盖会话文本拼接。</li>
   <li>模型包校验包含 SHA-256、张量名称、类型、形状与真实 ONNX Runtime 推理；不含音频内容。</li>
   <li>开发中发现的文档未覆盖细节与实现差异见 <a href="IMPL.md">IMPL.md</a>。</li>
 </ul>
@@ -122,6 +122,7 @@ scripts/install_models.sh</code></pre>
 <ul class="note">
   <li>发布包应包含可执行文件、<code>scripts/</code>、<code>tools/</code> 与安装说明；模型权重由安装脚本按需下载。</li>
   <li>运行验收：PTT 下一段识别、空语音段、静音自动结束、continuous 切分、剪贴板覆盖、滚动与退出终端恢复。</li>
+  <li>长语音（&gt;10 s）应正常分成多段；PTT 按住期间不丢后续语音。</li>
 </ul>
 
 </body>
