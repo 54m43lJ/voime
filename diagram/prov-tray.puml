@@ -1,0 +1,24 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Voime" as Voime
+participant "StatusNotifierWatcher" as Watcher
+participant "托盘宿主\nWaybar / Vicinae" as Host
+
+Voime -> Watcher : RegisterStatusNotifierItem
+Watcher -> Host : 新 item 可用
+Host -> Voime : 读取 IconPixmap / ToolTip / Menu
+Host -> Host : 显示图标
+
+Host -> Voime : DBusMenu.GetLayout
+Voime --> Host : 菜单项：退出
+Host -> Voime : DBusMenu.Event(1, clicked)
+Voime -> Voime : TrayEvent::Quit
+
+note over Voime, Host
+  没有 watcher / 宿主时返回 TrayUnavailable；
+  只记录 warning，daemon 继续运行。
+end note
+@enduml

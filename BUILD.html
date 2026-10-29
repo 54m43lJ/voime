@@ -15,6 +15,7 @@
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
+<a href="ASR.html">ASR</a>
 </p>
 
 <h2 id="b1">1. 环境</h2>
@@ -22,12 +23,14 @@
 
 <table>
   <tr><th>项目</th><th>要求</th></tr>
-  <tr><td>平台</td><td>AMD x86_64 Linux 或 Windows；验收平台为 AMD x86_64 CPU。</td></tr>
-  <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）。首次构建需要网络下载 crate 与 ONNX Runtime 预编译库。</td></tr>
-  <tr><td>Linux 构建依赖</td><td>ALSA 开发头文件；Arch：<code>alsa-lib</code>；Debian / Ubuntu：<code>libasound2-dev</code>。</td></tr>
-  <tr><td>Linux 安装依赖</td><td>Python 虚拟环境支持；Debian / Ubuntu 需要 <code>python3-venv</code>。</td></tr>
-  <tr><td>模型安装期</td><td>Python 3.10+、网络与磁盘空间；只用于 <code>scripts/install_models.*</code> 与 <code>tools/</code>，不进入运行时。</td></tr>
-  <tr><td>运行期</td><td>无需网络、GPU、Python 或系统输入法框架；需要 TTY、UTF-8、ANSI 转义与可用录音设备。</td></tr>
+  <tr><td>平台</td><td>AMD x86_64 Linux；桌面为 Hyprland / Wayland。X11 与 Windows 本版不实现。</td></tr>
+  <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）。首次构建需要网络下载 crate、协议 XML 与 ONNX Runtime 预编译库。</td></tr>
+  <tr><td>Linux 构建依赖</td><td>ALSA、Wayland、xkbcommon 与 D-Bus 开发头文件。Arch：<code>alsa-lib</code>、<code>wayland</code>、<code>libxkbcommon</code>、<code>dbus</code>；Debian / Ubuntu：<code>libasound2-dev</code>、<code>libwayland-dev</code>、<code>libxkbcommon-dev</code>、<code>libdbus-1-dev</code>。</td></tr>
+  <tr><td>运行期</td><td>Hyprland（≥ 0.52.1，支持 input-method-v2）、D-Bus session bus、可用录音设备；无需 Fcitx5 / IBus / xdg-desktop-portal / 网络 / GPU / Python。</td></tr>
+  <tr><td>输入法冲突</td><td>运行前必须停用 Fcitx5 / IBus。seat 只能有一个 input-method-v2 对象；<code>voimed</code> 收到 <code>unavailable</code> 会以 1 退出。</td></tr>
+  <tr><td>TUI</td><td><code>voime</code> 需要 TTY、UTF-8 与 ANSI 转义；<code>voimed</code> 不需要 TTY。</td></tr>
+  <tr><td>托盘</td><td>可选；需要 StatusNotifierWatcher / 宿主（Waybar、Vicinae 等）。缺失时只告警。</td></tr>
+  <tr><td>模型安装期</td><td>Python 3.10+、网络与磁盘空间；只用于 <code>scripts/install_models.sh</code> 与 <code>tools/</code>，不进入运行时。</td></tr>
 </table>
 
 <h2 id="b2">2. 构建</h2>
@@ -37,75 +40,88 @@
 
 <table>
   <tr><th>产物</th><th>说明</th></tr>
-  <tr><td><code>target/release/voime</code>（Windows <code>voime.exe</code>）</td><td>完整应用；ONNX Runtime 随 <code>ort</code> 构建时链接进可执行文件。</td></tr>
-  <tr><td>模型包</td><td>由安装脚本生成在用户数据目录，不进入版本库；应用只读。</td></tr>
+  <tr><td><code>target/release/voimed</code></td><td>常驻 daemon / 唯一输入法；拥有音频、模型、键盘抓取、上屏、IPC 与托盘。</td></tr>
+  <tr><td><code>target/release/voime</code></td><td>可选 TUI 与 <code>ctl</code> / <code>doctor</code> 客户端。</td></tr>
+  <tr><td>模型包</td><td>由安装脚本写入用户数据目录，不进入版本库；应用只读。</td></tr>
+  <tr><td><code>protocols/*.xml</code></td><td>input-method-unstable-v2 与 virtual-keyboard-unstable-v1，由 <code>voimed/build.rs</code> 经 <code>wayland-scanner</code> 生成绑定。</td></tr>
 </table>
 <ul class="note">
   <li>构建过程通过 <code>ort</code> 的 <code>download-binaries</code> 获取 ONNX Runtime；构建完成后运行期不联网。</li>
-  <li>发布时只需分发可执行文件与模型包；不要分发 <code>target/</code> 或安装虚拟环境。</li>
-  <li>若 ONNX 使用 external data，模型目录中的 <code>*.data</code> 或分片文件必须与 <code>.onnx</code> 一起复制，否则会话加载失败。</li>
+  <li>发布时只需分发两个可执行文件、<code>protocols/</code>（仅源码构建需要）、<code>scripts/</code>、<code>tools/</code> 与安装说明；不要分发 <code>target/</code> 或安装虚拟环境。</li>
+  <li>若 ONNX 使用 external data，模型目录中的 <code>*.data</code> 或分片文件必须与 <code>.onnx</code> 一起复制。</li>
+  <li><code>x11rb</code> 是可选 feature，只用于 XWayland 的 XTEST 粘贴兜底；默认构建不启用。</li>
 </ul>
 
 <h2 id="b3">3. 安装模型</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code># Linux
-scripts/install_models.sh
-
-# Windows (PowerShell)
-powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1</code></pre>
+<pre><code>scripts/install_models.sh</code></pre>
 
 <table>
   <tr><th>行为</th><th>契约</th></tr>
-  <tr><td>默认目录</td><td>Linux <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）；Windows <code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
-  <tr><td>虚拟环境</td><td>Linux <code>~/.cache/voime/venv</code>；Windows <code>%LOCALAPPDATA%\voime\cache\venv</code>。依赖见 <code>tools/requirements-export.txt</code>。</td></tr>
-  <tr><td>网络</td><td>下载 FireRed 官方权重与 FireRedASR2S 源码；完成后应用离线运行。</td></tr>
-  <tr><td>磁盘</td><td>下载缓存约 5 GB；默认 int8 模型包约 1.3 GB。FP32 导出包更大。</td></tr>
-  <tr><td>安装方式</td><td>在目标目录同盘创建临时目录，导出、校验、写 <code>manifest.json</code> 后原子替换。</td></tr>
-  <tr><td>量化</td><td>默认导出并动态量化为 int8；量化后优先把 external data 内联成单个 <code>.onnx</code>，无法内联时保留分片并随主文件一起复制，同时清理不再被引用的旧分片。<code>--no-quantize</code> 可保留 FP32。</td></tr>
+  <tr><td>默认目录</td><td><code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）。</td></tr>
+  <tr><td>虚拟环境</td><td><code>~/.cache/voime/venv</code>；依赖见 <code>tools/requirements-export.txt</code>。只用于 VAD / Punc 导出与校验。</td></tr>
+  <tr><td>网络</td><td>下载 FireRedASR2-CTC 官方 <code>.tar.bz2</code>、FireRedVAD / FireRedPunc 官方权重；完成后应用离线运行。</td></tr>
+  <tr><td>CTC</td><td>直接解出 <code>model.int8.onnx</code> 与 <code>tokens.txt</code>，不再为 CTC 运行 Python / PyTorch 导出。模型约 740 MiB。</td></tr>
+  <tr><td>磁盘</td><td>下载缓存与模型包占用量以安装脚本输出为准；默认 int8 模型包约 1 GB 量级。</td></tr>
+  <tr><td>安装方式</td><td>在目标目录同盘创建临时目录，下载 / 导出、校验、写 <code>manifest.json</code> 后原子替换。</td></tr>
 </table>
 
 <pre><code># 常用参数
 scripts/install_models.sh --model-dir /path/to/models
 scripts/install_models.sh --source-dir /path/to/official/weights
-scripts/install_models.sh --no-quantize
 
 # 单独校验已有模型包（会重写 manifest.json）
-~/.cache/voime/venv/bin/python tools/verify_models.py --model-dir /path/to/models
-# Windows
-%LOCALAPPDATA%\voime\cache\venv\Scripts\python.exe tools\verify_models.py --model-dir C:\path\to\models</code></pre>
+~/.cache/voime/venv/bin/python tools/verify_models.py --model-dir /path/to/models</code></pre>
 
 <ul class="note">
-  <li><code>--source-dir</code> 目录需包含 <code>FireRedASR2-AED/</code> 与 <code>FireRedPunc/</code>；若同时提供 <code>FireRedVAD/pretrained_models/onnx_models/</code> 则跳过 VAD 下载。</li>
-  <li>需要从 HuggingFace 下载且未检测到 <code>HF_TOKEN</code> 时，安装脚本会警告并提示输入；直接回车或非交互环境会继续未认证下载。输入的 token 只用于当前进程，不写入磁盘。</li>
+  <li><code>manifest.json</code> 使用 schema 2，<code>asr.kind</code> 默认为 <code>fire-red-ctc</code>；CTC 的 CMVN 参数存放在 ONNX metadata，不在 manifest 中。</li>
+  <li>需要从 HuggingFace 下载且未检测到 <code>HF_TOKEN</code> 时，安装脚本会警告并提示输入；输入的 token 只用于当前进程，不写入磁盘。</li>
   <li>模型包内容与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>；安装脚本不写入用户音频或识别历史。</li>
 </ul>
 
 <h2 id="b4">4. 运行</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code>target/release/voime                       # PTT 模式
-target/release/voime --mode continuous     # 持续监听
-target/release/voime --input-device "USB Microphone"
-target/release/voime --threads 4</code></pre>
+<pre><code># 一次性迁移：停用 Fcitx5 / IBus
+systemctl --user disable --now fcitx5
+# 或删除 Hyprland 配置中的 exec-once = fcitx5
+
+# 启动 daemon（推荐 Hyprland exec-once 或 systemd user service）
+voimed
+
+# 可选 TUI
+voime
+
+# 控制 / 诊断
+voime ctl status
+voime ctl quit
+voime doctor</code></pre>
 
 <table>
-  <tr><th>按键</th><th>行为</th></tr>
-  <tr><td><code>Space</code></td><td>PTT 模式开始 / 结束当前语音段；continuous 模式无动作。</td></tr>
-  <tr><td><code>Ctrl+X</code></td><td>清空全部已完成结果与内存会话文本；不修改剪贴板，也不影响正在录音的段或临时行。</td></tr>
-  <tr><td><code>q</code> / <code>Ctrl+C</code></td><td>退出并恢复终端；不修改剪贴板。</td></tr>
+  <tr><th>操作</th><th>行为</th></tr>
+  <tr><td><code>voime ctl start</code> / <code>stop</code> / <code>toggle</code></td><td>手动控制当前语音段；与 PTT 共用状态机。</td></tr>
+  <tr><td><code>voime ctl clear</code></td><td>清空 daemon 会话历史；剪贴板不变。</td></tr>
+  <tr><td><code>voime ctl quit</code></td><td>停止 daemon，取消当前段，不产生 Final。</td></tr>
+  <tr><td><code>Super+F2</code></td><td>按住说话；松开结束。可在 <code>voimed --hold-key</code> 修改。</td></tr>
+  <tr><td><code>Super+F3</code></td><td>按一下开始 / 再按一下结束。可在 <code>voimed --toggle-key</code> 修改。</td></tr>
+  <tr><td>托盘右键“退出”</td><td>与 <code>voime ctl quit</code> 相同。</td></tr>
 </table>
 <ul class="note">
-  <li>终端最后一行始终显示当前模式可用的快捷键：PTT 为 <code>Space 开始/结束&nbsp;&nbsp;Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code>，continuous 为 <code>Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code>。</li>
-  <li>清空后的下一次最终结果只把清空后产生的新会话写入剪贴板；清空动作本身不写入也不清空剪贴板。</li>
+  <li>PTT 组合键不得与 Hyprland <code>bind</code> / <code>bindr</code> 冲突；合成器会先消费已绑定的键。</li>
+  <li>普通按键由 daemon 透明转发；如果打字异常，先运行 <code>voime doctor</code> 检查 grab / keymap / virtual-keyboard。</li>
+  <li>PTT 硬上限 30 s；TUI 状态行显示 <code>● Remaining: xx s</code>，continuous 不显示。</li>
 </ul>
 
 <table>
   <tr><th>现象</th><th>处理</th></tr>
-  <tr><td><code>模型清单格式错误</code> / <code>模型文件缺失</code> / <code>校验失败</code></td><td>重新运行安装脚本；确认 <code>--model-dir</code> 指向包含 <code>manifest.json</code> 的目录。</td></tr>
-  <tr><td><code>终端不可用</code></td><td>必须从真实终端启动；重定向 stdin / stdout 时不会进入 TUI。</td></tr>
-  <tr><td><code>没有可用输入设备</code> / <code>未找到输入设备</code></td><td>检查系统录音设备；设备名必须与操作系统暴露的名称完全一致。</td></tr>
-  <tr><td>剪贴板初始化失败</td><td>Linux 需要 X11 或支持 <code>wayland-data-control</code> 的 Wayland 合成器；无剪贴板环境时应用拒绝启动。</td></tr>
+  <tr><td><code>ImUnavailable</code></td><td>停用 Fcitx5 / IBus 后重启 <code>voimed</code>；确认同一 seat 没有其他输入法。</td></tr>
+  <tr><td><code>GrabFailed</code> / <code>KeyForwardFailed</code></td><td>确认 Hyprland ≥ 0.52.1、virtual-keyboard 可用；查看 stderr 与 <code>voime doctor</code>。</td></tr>
+  <tr><td>PTT 无反应</td><td>检查组合键是否被 Hyprland 绑定；用 <code>voime ctl toggle</code> 验证录音链路。</td></tr>
+  <tr><td>模型清单错误 / 缺失 / 校验失败</td><td>重新运行安装脚本；确认 <code>--model-dir</code> 指向包含 <code>manifest.json</code> 的目录。</td></tr>
+  <tr><td>没有可用输入设备</td><td>检查系统录音设备；设备名必须与操作系统暴露的名称完全一致。</td></tr>
+  <tr><td>XWayland 粘贴失败</td><td>确认剪贴板可用；启用 <code>x11</code> feature 使用 XTEST 兜底。</td></tr>
+  <tr><td>TUI 连不上 daemon</td><td>先启动 <code>voimed</code>；确认两者 <code>--socket</code> 一致。</td></tr>
 </table>
 
 <h2 id="b5">5. 测试</h2>
@@ -117,24 +133,25 @@ cargo fmt --all --check
 ~/.cache/voime/venv/bin/python tools/verify_models.py --model-dir &lt;DIR&gt; --no-write</code></pre>
 
 <ul class="note">
-  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长（<code>MaxDuration</code>）；<code>tests/clipboard.rs</code> 覆盖会话文本拼接。</li>
-  <li><code>App::clear_history</code> 的单元测试覆盖：清空 <code>transcript</code> 与滚动复位、保留 <code>partial</code> / <code>recording</code> / <code>finalizing</code>、不调用剪贴板；清空后的第一次 <code>Final</code> 只产生新会话。</li>
-  <li>模型包校验包含 SHA-256、张量名称、类型、形状与真实 ONNX Runtime 推理；不含音频内容。</li>
+  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长；<code>tests/keyboard.rs</code> 覆盖 PTT 匹配、非 PTT 转发、keymap 变化与重复；<code>tests/ipc.rs</code> 覆盖握手、编解码与慢客户端；<code>tests/sink.rs</code> 覆盖 im / clipboard 选择。</li>
+  <li><code>tests/countdown.rs</code> 覆盖 30 s 计时、自动切段与 continuous 不显示；<code>tests/state.rs</code> 覆盖段所有权与清空。</li>
+  <li>模型包校验包含 SHA-256、张量名称、类型、形状与真实 ONNX Runtime 推理；CTC 另测 CMVN metadata、token id 与 greedy CTC。</li>
 </ul>
 
 <h2 id="b6">6. 发布检查</h2>
 <p><a href="#top">↑</a></p>
 
 <pre><code>cargo build --release
+target/release/voimed --help
 target/release/voime --help
-target/release/voime --version
 scripts/install_models.sh</code></pre>
 
 <ul class="note">
-  <li>发布包应包含可执行文件、<code>scripts/</code>、<code>tools/</code> 与安装说明；模型权重由安装脚本按需下载。</li>
-  <li>运行验收：PTT 下一段识别、空语音段、静音自动结束、continuous 切分、剪贴板覆盖、滚动与退出终端恢复。</li>
-  <li>快捷键验收：PTT 与 continuous 的底部提示文案正确且始终显示；<code>Ctrl+X</code> 清空结果但剪贴板不变，清空后的下一次最终结果只写入新会话；录音中清空不丢失当前段。</li>
-  <li>长语音（&gt;10 s）应正常分成多段；PTT 按住期间不丢后续语音。</li>
+  <li>发布包应包含两个可执行文件、<code>scripts/</code>、<code>tools/</code> 与安装说明；模型权重由安装脚本按需下载。</li>
+  <li>运行验收：停用 Fcitx5 后 daemon 启动、普通打字透明转发、hold / toggle PTT、原生 Wayland 提交、XWayland 粘贴、30 s 倒计时 / 自动切段、TUI detach、托盘退出。</li>
+  <li>冲突验收：Fcitx5 运行时 <code>voimed</code> 必须退出并提示 <code>ImUnavailable</code>；不得静默降级为纯粘贴。</li>
+  <li>剪贴板验收：原生提交不修改剪贴板；XWayland / 终端只写入单条 Final；清空不修改剪贴板。</li>
+  <li>键盘验收：布局切换、修饰键、死键、组合键、长按重复在转发后与未安装 Voime 时一致；无丢键、无重复。</li>
 </ul>
 
 </body>

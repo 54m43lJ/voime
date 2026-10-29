@@ -1,0 +1,33 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Voime" as Voime
+participant "Hyprland" as Compositor
+participant "text-input 应用" as App
+
+Voime -> Compositor : get_input_method(seat)
+Compositor --> Voime : zwp_input_method_v2
+Voime -> Compositor : grab_keyboard()
+Compositor --> Voime : keyboard grab
+Compositor --> Voime : keymap / repeat_info
+App -> Compositor : text-input focus
+Compositor -> Voime : activate
+Compositor -> Voime : surrounding_text / content_type / done
+
+loop 键盘事件
+  Compositor -> Voime : key / modifiers
+  Voime -> Voime : 内部处理
+end
+
+Voime -> Compositor : commit_string(text)
+Voime -> Compositor : commit(serial)
+Compositor -> App : 插入文本
+
+note over Voime, Compositor
+  seat 已被其他输入法占用时，
+  compositor 只发送 unavailable；
+  Voime 以 ImUnavailable 退出。
+end note
+@enduml

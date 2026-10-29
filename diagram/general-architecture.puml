@@ -5,16 +5,27 @@ skinparam componentStyle rectangle
 left to right direction
 
 actor "用户" as User
-component "Voime" as App
+component "物理键盘" as Keyboard
+component "Hyprland\nWayland 合成器" as Hyprland
+component "Voime\n唯一输入法 / daemon" as Voime
+component "原生 Wayland 应用\ntext-input-v3" as WaylandApp
+component "XWayland 应用\nX11" as XApp
 component "麦克风" as Mic
-component "终端" as Term
-component "剪贴板" as Clip
-component "本地模型包\nFireRedVAD / FireRedASR2-AED / FireRedPunc" as Models
+component "本地模型包\nFireRedVAD / FireRedASR2-CTC / FireRedPunc" as Models
+component "系统剪贴板" as Clip
+component "StatusNotifier 托盘宿主" as Tray
 
-User --> App : 按键、说话
-App --> Term : 渲染标记与结果
-Term --> User : 显示
-Mic --> App : 16 kHz 单声道 PCM
-App --> Clip : 会话文本
-App --> Models : 加载模型权重
+User --> Keyboard : 按键、说话
+Keyboard --> Hyprland : 输入事件
+Hyprland --> Voime : input-method-v2\ngrab key / modifiers
+Voime --> Hyprland : virtual-keyboard\n转发非 PTT 按键 / 粘贴键
+Voime --> Hyprland : input-method-v2\ncommit_string
+Hyprland --> WaylandApp : text-input-v3\n插入文本 / 转发按键
+Hyprland --> XApp : 转发按键 / X11 事件
+Voime --> Clip : 回退时写入单条 Final
+Voime --> XApp : XTest 粘贴兜底
+Mic --> Voime : 16 kHz 单声道 PCM
+Models --> Voime : 只读加载
+Tray --> Voime : 退出
+User --> Tray : 右键菜单
 @enduml

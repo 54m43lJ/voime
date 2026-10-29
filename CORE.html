@@ -15,77 +15,111 @@
 <a href="USER.html">USER</a>
 <a href="PROVIDER.html">PROVIDER</a>
 <a href="BUILD.html">BUILD</a>
+<a href="ASR.html">ASR</a>
 </p>
 
 <h2 id="c1">1. File tree</h2>
 <p><a href="#top">↑</a></p>
 
 <pre><code>voime/
-├── Cargo.toml
+├── Cargo.toml                                      workspace 根
 ├── Cargo.lock
 ├── rust-toolchain.toml
 ├── .gitignore
-├── models/                                     运行时模型包（权重不提交）
-│   ├── manifest.json                           文件清单、张量名与校验和
+├── models/                                         运行时模型包（权重不提交）
+│   ├── manifest.json                               schema 2 清单
 │   ├── vad/
-│   │   └── stream-vad.onnx                     FireRedVAD 流式模型
+│   │   └── stream-vad.onnx                         FireRedVAD
 │   ├── asr/
-│   │   ├── encoder.onnx                        FireRedASR2-AED 编码器
-│   │   ├── decoder.onnx                        FireRedASR2-AED 解码器
-│   │   └── tokens.txt                          输出词表
+│   │   ├── model.int8.onnx                         FireRedASR2-CTC
+│   │   └── tokens.txt                              token id 两列词表
 │   └── punc/
-│       ├── model.onnx                          FireRedPunc
-│       ├── vocab.txt                           BERT 词表
-│       └── labels.json                         id → 标点符号
-├── src/
-│   ├── <a href="#c4-1">main.rs</a>                              进程入口与退出码
-│   ├── lib.rs                                 crate 根：run 与模块声明
-│   ├── <a href="#c4-2">cli.rs</a>                               命令行参数与运行模式
-│   ├── <a href="#c4-3">config.rs</a>                            默认路径、线程数与模型目录解析
-│   ├── <a href="#c4-4">model.rs</a>                             模型包清单与文件校验
-│   ├── <a href="#c4-5">app.rs</a>                               应用状态、按键处理与事件循环
-│   ├── <a href="#c4-6">pipeline.rs</a>                          采集 → VAD → ASR → 标点调度
-│   ├── <a href="#c4-7">clipboard.rs</a>                         会话文本写入剪贴板
-│   ├── audio.rs                              音频模块声明
-│   ├── audio/
-│   │   ├── <a href="#c4-8">capture.rs</a>                       cpal 设备与输入流
-│   │   └── <a href="#c4-9">resample.rs</a>                     多声道 / 采样率 → 16 kHz 单声道
-│   ├── vad.rs                                VAD 模块声明
-│   ├── vad/
-│   │   ├── <a href="#c4-10">firered.rs</a>                      FireRedVAD ONNX 会话与逐帧概率
-│   │   └── <a href="#c4-11">segmenter.rs</a>                    语音段状态机与端点判定
-│   ├── asr.rs                                ASR 模块声明
-│   ├── asr/
-│   │   ├── <a href="#c4-12">features.rs</a>                     Kaldi 兼容 fbank
-│   │   ├── <a href="#c4-13">firered_aed.rs</a>                  FireRedASR2-AED 会话与转写
-│   │   ├── <a href="#c4-14">decoder.rs</a>                      编码器输出上的 beam search
-│   │   └── <a href="#c4-15">tokenizer.rs</a>                    词表加载与 token 拼接
-│   ├── punc.rs                              标点模块声明
-│   ├── punc/
-│   │   └── <a href="#c4-16">firered.rs</a>                      FireRedPunc 会话与标点插入
-│   ├── infer.rs                             推理模块声明
-│   ├── infer/
-│   │   └── <a href="#c4-17">session.rs</a>                      ONNX Runtime 环境与会话工厂
-│   ├── <a href="#c4-18">ui.rs</a>                                TUI 初始化、绘制与恢复
-│   └── ui/
-│       └── <a href="#c4-19">theme.rs</a>                        终端颜色 token
+│       ├── model.onnx                              FireRedPunc
+│       ├── vocab.txt                               BERT WordPiece 词表
+│       └── labels.json                             id → 标点符号
+├── protocols/                                      锁定的 wlroots 协议 XML
+│   ├── input-method-unstable-v2.xml
+│   └── virtual-keyboard-unstable-v1.xml
+├── crates/
+│   ├── voime-core/
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── <a href="#c4-1">lib.rs</a>                              crate 根与模块声明
+│   │       ├── <a href="#c4-2">config.rs</a>                           默认路径、线程数与运行配置
+│   │       ├── <a href="#c4-3">model.rs</a>                            模型清单、CTC artifact 与校验
+│   │       ├── audio.rs                              音频模块声明
+│   │       ├── <a href="#c4-4">audio/capture.rs</a>                     cpal 设备与输入流
+│   │       ├── <a href="#c4-5">audio/resample.rs</a>                    多声道 / 采样率 → 16 kHz 单声道
+│   │       ├── vad.rs                                VAD 模块声明
+│   │       ├── <a href="#c4-6">vad/firered.rs</a>                       FireRedVAD ONNX 会话与逐帧概率
+│   │       ├── <a href="#c4-7">vad/segmenter.rs</a>                     语音段状态机与端点判定
+│   │       ├── asr.rs                                ASR 模块声明
+│   │       ├── <a href="#c4-8">asr/engine.rs</a>                        final / partial 统一接口
+│   │       ├── <a href="#c4-9">asr/firered_ctc.rs</a>                   FireRedASR2-CTC 单 ONNX
+│   │       ├── <a href="#c4-10">asr/firered_aed.rs</a>                  legacy AED 后端
+│   │       ├── asr/decoder.rs                    AED beam search（legacy）
+│   │       ├── <a href="#c4-11">asr/features.rs</a>                     Kaldi 兼容 fbank
+│   │       ├── <a href="#c4-12">asr/tokenizer.rs</a>                    token id 两列词表与解码
+│   │       ├── punc.rs                               标点模块声明
+│   │       ├── <a href="#c4-13">punc/firered.rs</a>                     FireRedPunc 会话与标点插入
+│   │       ├── infer.rs                              推理模块声明
+│   │       ├── <a href="#c4-14">infer/session.rs</a>                    ONNX Runtime 环境与会话工厂
+│   │       └── <a href="#c4-15">pipeline.rs</a>                        采集 → VAD → ASR → 标点调度
+│   ├── voime-ipc/
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       └── <a href="#c4-16">lib.rs</a>                             协议消息、状态与 JSON 行编解码
+│   ├── voimed/
+│   │   ├── Cargo.toml
+│   │   ├── build.rs                                 wayland-scanner 生成协议绑定
+│   │   └── src/
+│   │       ├── <a href="#c4-17">main.rs</a>                             daemon 入口与退出码
+│   │       ├── <a href="#c4-18">daemon.rs</a>                          事件循环、状态机、投递与关停
+│   │       ├── <a href="#c4-19">state.rs</a>                            Phase、段所有权、历史与倒计时
+│   │       ├── <a href="#c4-20">ipc_server.rs</a>                      Unix socket 监听与订阅者
+│   │       ├── <a href="#c4-21">hotkey.rs</a>                           PTT 组合键解析与匹配
+│   │       ├── wayland.rs                           Wayland 模块声明
+│   │       ├── <a href="#c4-22">wayland/im.rs</a>                      input-method-v2 对象与键盘抓取
+│   │       ├── <a href="#c4-23">wayland/keyboard.rs</a>                grab key / modifiers → PTT 或转发
+│   │       ├── <a href="#c4-24">wayland/virtual_keyboard.rs</a>        VK keymap、转发与粘贴快捷键
+│   │       ├── <a href="#c4-25">sink.rs</a>                            im / clipboard 投递选择
+│   │       ├── <a href="#c4-26">sink/im.rs</a>                         input-method-v2 提交
+│   │       ├── <a href="#c4-27">sink/clipboard.rs</a>                  单条 Final 写入并粘贴
+│   │       ├── <a href="#c4-28">focus/hyprland.rs</a>                  activewindow 查询与终端识别
+│   │       ├── <a href="#c4-29">tray.rs</a>                            StatusNotifierItem 注册与退出
+│   │       ├── tray/sni.rs
+│   │       ├── tray/menu.rs
+│   │       └── tray/icon.rs
+│   └── voime/
+│       ├── Cargo.toml
+│       └── src/
+│           ├── <a href="#c4-30">main.rs</a>                            TUI 与 ctl 入口
+│           ├── <a href="#c4-31">cli.rs</a>                             TUI / ctl 参数
+│           ├── <a href="#c4-32">client.rs</a>                          连接 socket、快照与事件
+│           ├── <a href="#c4-33">app.rs</a>                             视图状态、按键与重连
+│           ├── <a href="#c4-34">ui.rs</a>                               TUI 绘制与终端恢复
+│           └── ui/theme.rs                         终端颜色 token
 ├── scripts/
-│   ├── install_models.sh                      Linux 安装入口：环境 / 下载 / 转换 / 安装
-│   └── install_models.ps1                     Windows 安装入口：同上
+│   └── install_models.sh                           Linux 安装入口
 ├── tools/
-│   ├── install_models.py                      安装编排：缓存、转换、量化、原子替换
-│   ├── export_models.py                       官方权重 → ONNX 模型包
-│   ├── verify_models.py                       张量签名、形状与 SHA-256 校验
-│   └── requirements-export.txt                安装期 Python 依赖（版本范围）
+│   ├── install_models.py                           安装编排：缓存、下载、校验、原子替换
+│   ├── export_models.py                            VAD / Punc 导出（CTC 直接下载）
+│   ├── verify_models.py                            张量签名、形状与 SHA-256 校验
+│   └── requirements-export.txt                     安装期 Python 依赖（版本范围）
 └── tests/
-    ├── segmenter.rs                           端点与最大段长测试
-    └── clipboard.rs                           会话文本拼接测试
+    ├── segmenter.rs                                端点与最大段长测试
+    ├── ipc.rs                                      握手、编解码与慢客户端
+    ├── keyboard.rs                                 PTT 匹配、转发与 keymap 变化
+    ├── sink.rs                                     投递选择
+    ├── tray.rs                                     托盘退出与无宿主
+    ├── asr_ctc.rs                                  CMVN、token id 与 greedy CTC
+    ├── countdown.rs                                30 s 计时与切段
+    └── state.rs                                    段所有权与清空
 </code></pre>
 <ul class="note">
-  <li><code>models/</code> 只保留 <code>manifest.json</code> 的结构；权重由安装脚本生成后放在本地，不进入版本库。</li>
-  <li><code>scripts/install_models.sh</code> / <code>install_models.ps1</code> 是安装入口，共享逻辑在 <code>tools/install_models.py</code>；三者只在安装期使用，不链接进 Rust 二进制。</li>
-  <li>文件树按最终代码结构维护；文档、图表与样式不属于源码结构，不在此列出。</li>
-  <li>模型包的目录、清单字段与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
+  <li><code>models/</code> 只提交 <code>manifest.json</code> 的结构；权重由安装脚本写入本地，不进入版本库。</li>
+  <li><code>protocols/*.xml</code> 来自固定版本的 wlroots，随仓库提交；<code>voimed/build.rs</code> 只从这两个文件生成绑定。</li>
+  <li>文档、图表与样式不属于源码结构，不在此列出。模型包的目录、清单字段与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -95,19 +129,47 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
     <td>线程边界</td>
-    <td>主线程拥有终端、<code>App</code> 与 <code>ClipboardWriter</code>；cpal 回调只做格式转换并把 <code>AudioChunk</code> 送入有界通道；VAD / ASR / 标点全部在单个 pipeline 工作线程内串行执行。</td>
+    <td>daemon 主线程拥有状态机、会话历史与投递；Wayland 线程独占 input-method-v2、keyboard grab、virtual-keyboard 与 xkb 状态；pipeline 工作线程独占 VAD / ASR / 标点会话；cpal 回调只做格式转换并入队；IPC 读写线程与托盘线程只通过 channel 与主线程通信；TUI 是独立进程。</td>
+  </tr>
+  <tr>
+    <td>状态所有权</td>
+    <td>daemon 拥有 mode、phase、recording、finalizing、partial、transcript、remaining_ms、IM 状态与键盘状态；TUI 只拥有滚动与视口；Wayland 线程只拥有键盘抓取和转发状态。</td>
+  </tr>
+  <tr>
+    <td>输入法唯一性</td>
+    <td>一个 seat 只创建一个 <code>zwp_input_method_v2</code>。启动期收到 <code>unavailable</code> 即失败退出；不重试、不降级为纯剪贴板；Fcitx5 / IBus 必须先停用。</td>
+  </tr>
+  <tr>
+    <td>键盘抓取</td>
+    <td>IM 对象创建后立即 <code>grab_keyboard</code>，整个 daemon 生命周期持有；<code>deactivate</code> 不释放。grab 的 keymap / key / modifiers / repeat_info 全部由 Wayland 线程处理。</td>
+  </tr>
+  <tr>
+    <td>透明转发</td>
+    <td>非 PTT 的 <code>key</code> / <code>modifiers</code> 立即转发到 <code>zwp_virtual_keyboard_v1</code>；不缓存、不延迟、不改变 keycode / state / time。转发失败视为 <code>KeyForwardFailed</code> 并退出，不能持有 grab 却不转发。</td>
+  </tr>
+  <tr>
+    <td>同连接</td>
+    <td>input-method-v2、keyboard grab 与 virtual-keyboard 必须创建在同一个 <code>wl_display</code> 上；Hyprland 通过客户端指针识别并忽略 IM 自己注入的按键，避免转发回环。</td>
+  </tr>
+  <tr>
+    <td>PTT 匹配</td>
+    <td>用 grab 的 xkb keymap 把 keycode + modifiers 转成 keysym；只比较 Shift / Ctrl / Alt / Super，忽略 CapsLock / NumLock / group。hold 按下按组合键匹配，松开按记下的 keycode 匹配；重复 press 一律忽略。</td>
+  </tr>
+  <tr>
+    <td>合成器优先级</td>
+    <td>Hyprland 先处理合成器键绑定，再交给 IM grab。PTT 组合键不得与 Hyprland <code>bind</code> / <code>bindr</code> 冲突。</td>
   </tr>
   <tr>
     <td>采集常开</td>
-    <td>音频流在启动后保持运行；PTT 模式通过 <code>StartSegment</code> / <code>FinishSegment</code> 命令决定是否收集样本，不反复启停设备。</td>
+    <td>音频流在启动后保持运行；PTT 模式通过 <code>StartSegment</code> / <code>FinishSegment</code> 决定是否收集样本，不反复启停设备。</td>
   </tr>
   <tr>
     <td>安装期与运行期分离</td>
-    <td>Python / PyTorch / ONNX 导出 / 量化只存在于安装脚本的虚拟环境；Rust 二进制不依赖 Python，不包含下载器。安装脚本负责下载官方权重、生成 ONNX 模型包、写 manifest 与 SHA-256，并以原子替换方式写入模型目录。</td>
+    <td>下载与模型导出只存在于安装脚本；Rust 二进制不依赖 Python，不包含下载器。CTC 直接下载官方包，VAD / Punc 的导出与校验在安装期完成。</td>
   </tr>
   <tr>
     <td>模型生命周期</td>
-    <td>启动时校验并加载三个模型包，会话对象常驻内存；每个语音段只重置解码状态，不重新加载权重。</td>
+    <td>启动时校验并加载 VAD / CTC / Punc，会话对象常驻内存；每个语音段只重置解码与 VAD 状态，不重新加载权重。</td>
   </tr>
   <tr>
     <td>单段串行</td>
@@ -115,43 +177,51 @@
   </tr>
   <tr>
     <td>有界队列</td>
-    <td>continuous 模式下 VAD 持续运行，完成段进入容量 2 的待识别队列；队列满时丢弃最旧的未处理段，保证当前语音不被阻塞。PTT 模式不使用该队列。</td>
+    <td>continuous 模式下 VAD 持续运行，完成段进入容量 2 的待识别队列；队列满时丢弃最旧的未处理段。PTT 模式不使用该队列。</td>
   </tr>
   <tr>
     <td>音频格式</td>
-    <td>内部统一为 16 kHz、单声道、<code>f32</code> 样本；设备原生采样率与声道数在 <code>audio::resample</code> 中转换，混音取各声道平均。音频不落盘。</td>
+    <td>内部统一为 16 kHz、单声道、<code>f32</code> 样本；设备原生采样率与声道数在 <code>audio::resample</code> 中转换。音频不落盘。</td>
   </tr>
   <tr>
     <td>分段上限</td>
-    <td>语音段长度上限由 manifest 的 <code>max_segment_ms</code> 控制，默认 10_000；不得超过 FireRedASR2-AED 的 60 s 硬上限。达到上限时 <code>Segmenter::push</code> 返回带 <code>MaxDuration</code> 的 <code>SpeechEnd</code>；PTT 保持收集，余下语音进入下一段。</td>
+    <td>PTT 硬上限固定 30_000 ms；continuous 使用 manifest 的 <code>max_segment_ms</code>，同样不超过 30_000 ms。达到上限时当前段进入 Finalizing；若 PTT 仍按住，final 完成后立即开始新段，音频进入有界缓冲。</td>
   </tr>
   <tr>
     <td>临时识别</td>
-    <td>按动态间隔对当前段末尾最多 6 s 音频执行 greedy ASR，不加标点；间隔同时受新增音频量与上次耗时约束，避免慢推理后逐帧重复触发。</td>
+    <td>按动态间隔对当前段末尾最多 6 s 音频执行 greedy CTC，不加标点；间隔同时受新增音频量与上次耗时约束，避免慢推理后逐帧重复触发。</td>
   </tr>
   <tr>
     <td>最终识别</td>
-    <td>语音段结束后对完整段执行一次 ASR，再对整段文本执行 FireRedPunc；空文本不产生结果行，也不修改剪贴板。</td>
+    <td>语音段结束后对完整段执行 CTC 识别，再对整段文本执行 FireRedPunc；空文本不产生结果行，也不投递。</td>
   </tr>
   <tr>
-    <td>剪贴板</td>
-    <td>由主线程在收到 <code>PipelineEvent::Final</code> 后写入；内容为当前会话（最近一次 <code>Ctrl+X</code> 清空后）的全部结果行以 <code>\n</code> 连接，无末尾换行。写入失败不影响结果行展示。</td>
+    <td>投递链</td>
+    <td><code>auto</code> 按 <code>im</code> → <code>clipboard</code> 顺序选择；<code>im</code> 仅在 IM active 时可用；<code>clipboard</code> 写单条 Final 后经 virtual-keyboard 发送粘贴键，XWayland 失败时用 XTest 兜底。显式指定 sink 时失败不自动切换。</td>
   </tr>
   <tr>
     <td>清空工作区</td>
-    <td><code>Ctrl+X</code> 只清空 <code>App.transcript</code> 与界面结果行，并把滚动状态复位为跟随；不修改 <code>partial</code>、<code>recording</code>、<code>finalizing</code>，不向 pipeline 发送命令，也不调用 <code>ClipboardWriter</code>。清空后下一次 <code>Final</code> 只把新会话写入剪贴板。</td>
+    <td><code>ClearHistory</code> 只清空 daemon 的 transcript，并把广播 <code>HistoryCleared</code>；不修改 partial、recording、finalizing、remaining_ms、IM 状态或剪贴板。</td>
   </tr>
   <tr>
-    <td>终端状态</td>
-    <td>进入 raw mode、备用屏幕、隐藏光标并禁用鼠标上报；<code>Tui</code> 的析构或显式 <code>restore</code> 必须在正常退出、错误退出与 panic 时恢复终端。</td>
+    <td>IPC 背压</td>
+    <td>每个 subscriber 一个有界队列；队列满时断开该客户端，不阻塞 daemon。协议版本不匹配返回 <code>Error</code> 后断开。</td>
+  </tr>
+  <tr>
+    <td>托盘</td>
+    <td>托盘线程只发 <code>TrayEvent::Quit</code>，不持有 daemon 状态；没有 StatusNotifierWatcher / 宿主时只记录 warning。</td>
+  </tr>
+  <tr>
+    <td>关停顺序</td>
+    <td>停止采集 → 取消当前段 → 关闭托盘 → 销毁 keyboard grab → 销毁 virtual-keyboard → 销毁 input-method-v2 → 关闭 IPC socket；所有退出路径复用同一条 shutdown。</td>
   </tr>
   <tr>
     <td>错误策略</td>
-    <td>进入 TUI 前的致命错误写 stderr 并以 1 退出；进入 TUI 后的单段推理失败丢弃该段并继续监听；音频流持续失败时恢复终端并以 1 退出。错误不进入 TUI 内容区。</td>
+    <td>启动期致命错误写 stderr 并以 1 退出；单段推理失败丢弃该段并继续监听；IM / grab / VK / 音频流持续失败时关闭 daemon。运行期错误不进入 TUI 内容区。</td>
   </tr>
   <tr>
     <td>无异步运行时</td>
-    <td>使用标准线程、<code>crossbeam-channel</code> 与 <code>crossterm::event::poll</code>；不引入 tokio/async-std。</td>
+    <td>使用标准线程、<code>crossbeam-channel</code> 与 Wayland 事件队列；不引入 tokio / async-std。D-Bus 使用 <code>ksni</code> 的 blocking API。</td>
   </tr>
   <tr>
     <td>路径与编码</td>
@@ -163,85 +233,89 @@
 <p><a href="#top">↑</a></p>
 
 <table>
-  <tr><th>依赖</th><th>在本项目中的作用</th></tr>
-  <tr><td><code>ratatui</code></td><td>终端布局、文本行渲染与滚动视图。</td></tr>
-  <tr><td><code>crossterm</code></td><td>raw mode、备用屏幕、键盘事件、终端尺寸与鼠标上报开关。</td></tr>
-  <tr><td><code>cpal</code></td><td>Linux（ALSA / PulseAudio / PipeWire）与 Windows（WASAPI）输入设备采集。</td></tr>
-  <tr><td><code>rubato</code></td><td>设备采样率到 16 kHz 的流式重采样。</td></tr>
-  <tr><td><code>kaldi-native-fbank</code></td><td>与 FireRed 模型训练一致的 fbank 特征提取。</td></tr>
-  <tr><td><code>ort</code></td><td>ONNX Runtime 的 Rust 绑定；加载三个 ONNX 模型并执行 CPU 推理。</td></tr>
-  <tr><td><code>tokenizers</code></td><td>FireRedPunc 的 BERT 分词与 token → id 映射。</td></tr>
-  <tr><td><code>arboard</code></td><td>Linux X11 / Wayland 与 Windows 剪贴板写入。</td></tr>
-  <tr><td><code>clap</code></td><td>命令行参数解析、帮助与版本输出。</td></tr>
-  <tr><td><code>crossbeam-channel</code></td><td>音频回调、pipeline 工作线程与 UI 线程之间的有界通道。</td></tr>
-  <tr><td><code>serde</code> / <code>serde_json</code></td><td>读取模型包 <code>manifest.json</code> 与标点标签表。</td></tr>
-  <tr><td><code>sha2</code></td><td>启动时校验模型文件 SHA-256。</td></tr>
-  <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>跨模块错误传播与边界错误类型定义。</td></tr>
-  <tr><td><code>unicode-width</code></td><td>按终端显示宽度换行，处理中英文混排。</td></tr>
+  <tr><th>依赖</th><th>所属 crate</th><th>在本项目中的作用</th></tr>
+  <tr><td><code>cpal</code></td><td><code>voime-core</code></td><td>Linux ALSA / PulseAudio / PipeWire 输入设备采集。</td></tr>
+  <tr><td><code>rubato</code></td><td><code>voime-core</code></td><td>设备采样率到 16 kHz 的流式重采样。</td></tr>
+  <tr><td><code>kaldi-native-fbank</code></td><td><code>voime-core</code></td><td>与 FireRed 模型训练一致的 fbank 特征提取。</td></tr>
+  <tr><td><code>ort</code></td><td><code>voime-core</code></td><td>ONNX Runtime 的 Rust 绑定；加载 VAD / CTC / Punc 并执行 CPU 推理。</td></tr>
+  <tr><td><code>tokenizers</code></td><td><code>voime-core</code></td><td>FireRedPunc 的 BERT 分词与 token → id 映射。</td></tr>
+  <tr><td><code>serde</code> / <code>serde_json</code></td><td><code>voime-core</code> / <code>voime-ipc</code></td><td>模型清单、标点标签与 IPC JSON 行。</td></tr>
+  <tr><td><code>sha2</code></td><td><code>voime-core</code></td><td>启动时校验模型文件 SHA-256。</td></tr>
+  <tr><td><code>wayland-client</code> / <code>wayland-backend</code></td><td><code>voimed</code></td><td>Wayland 连接、registry、seat 与事件队列。</td></tr>
+  <tr><td><code>wayland-scanner</code></td><td><code>voimed</code>（build）</td><td>从 <code>protocols/*.xml</code> 生成 input-method-v2 / virtual-keyboard 绑定。</td></tr>
+  <tr><td><code>xkbcommon</code></td><td><code>voimed</code></td><td>解析 grab keymap、keycode + modifiers → keysym、组合键匹配。</td></tr>
+  <tr><td><code>arboard</code></td><td><code>voimed</code></td><td>XWayland / 终端的回退剪贴板写入。</td></tr>
+  <tr><td><code>x11rb</code>（可选 feature）</td><td><code>voimed</code></td><td>XWayland 的 XTest 粘贴兜底。</td></tr>
+  <tr><td><code>ksni</code></td><td><code>voimed</code></td><td>StatusNotifierItem + DBusMenu 托盘；blocking API。</td></tr>
+  <tr><td><code>clap</code></td><td><code>voimed</code> / <code>voime</code></td><td>命令行参数解析、帮助与版本输出。</td></tr>
+  <tr><td><code>crossbeam-channel</code></td><td><code>voimed</code></td><td>音频、Wayland、pipeline、IPC 与托盘线程之间的有界通道。</td></tr>
+  <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>所有 crate</td><td>跨模块错误传播与边界错误类型定义。</td></tr>
+  <tr><td><code>ratatui</code> / <code>crossterm</code></td><td><code>voime</code></td><td>仅 TUI：布局、文本行渲染、raw mode、终端事件。</td></tr>
+  <tr><td><code>unicode-width</code></td><td><code>voime</code></td><td>按终端显示宽度换行，处理中英文混排。</td></tr>
 </table>
 <ul class="note">
-  <li>版本与许可证以 <code>Cargo.toml</code> / <code>Cargo.lock</code> 为准；本表只记录依赖在本项目中的职责。</li>
-  <li>安装脚本的 Python 依赖（PyTorch、onnx、onnxruntime、huggingface_hub 等）声明在 <code>tools/requirements-export.txt</code>，只用于安装期，不进入运行时 SBOM。</li>
-  <li>ONNX Runtime 由 <code>ort</code> 在构建时链接，其版本与许可证随发行包记录；不把 ONNX Runtime 的完整 API 复制进本文档。</li>
+  <li>版本与许可证以 <code>Cargo.toml</code> / <code>Cargo.lock</code> 为准；本表只记录依赖职责。</li>
+  <li><code>ksni</code> 使用 blocking feature，不启动 tokio；其内部 D-Bus 依赖不单独列入本表。</li>
+  <li>安装脚本的 Python 依赖声明在 <code>tools/requirements-export.txt</code>，只用于安装期，不进入运行时 SBOM。</li>
 </ul>
 
 <h2 id="c4">4. Internal types &amp; method signatures</h2>
 <p><a href="#top">↑</a></p>
 
-<h3 id="c4-1">4.1 src/main.rs / src/lib.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>fn main() -&gt; std::process::ExitCode;
+<h3 id="c4-1">4.1 voime-core/src/lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod audio;
+pub mod asr;
+pub mod config;
+pub mod infer;
+pub mod model;
+pub mod pipeline;
+pub mod punc;
+pub mod vad;
 
-pub fn run(args: cli::Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+pub const PTT_MAX_SEGMENT_MS: u64;         // 推荐值 30_000
+pub const CONTINUOUS_MAX_SEGMENT_MS: u64;  // 推荐值 30_000</code></pre>
 <ul class="note">
-  <li><code>main</code> 只负责调用 <code>run</code> 并把错误格式化到 stderr；进入 TUI 后的错误由 <code>run</code> 负责先恢复终端再返回。</li>
-  <li><code>run</code> 放在库根，供二进制入口与集成测试共用；启动顺序保持“配置 → 会话工厂 → pipeline → 音频 → 剪贴板 → TUI”。</li>
+  <li>core 不依赖 TUI、socket、Wayland 或热键类型；所有前端只消费 <code>PipelineEvent</code> 与模型查询接口。</li>
+  <li>两个上限都是硬上限；实际值还受 manifest <code>max_segment_ms</code> 约束，取两者较小值。</li>
 </ul>
 
-<h3 id="c4-2">4.2 src/cli.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>use std::path::PathBuf;
-
-pub enum Mode {
-    Ptt,
-    Continuous,
-}
-
-pub struct Args {
-    pub mode: Mode,
-    pub model_dir: Option&lt;PathBuf&gt;,
-    pub input_device: Option&lt;String&gt;,
-    pub threads: Option&lt;usize&gt;,
-}
-
-pub fn parse() -&gt; Args;</code></pre>
-<ul class="note">
-  <li><code>--mode</code> 省略时为 <code>Mode::Ptt</code>；<code>--model-dir</code>、<code>--threads</code> 的默认值在 <code>config</code> 中解析。</li>
-  <li>参数非法由 <code>clap</code> 直接打印并以 2 退出，不进入 <code>run</code>。</li>
-</ul>
-
-<h3 id="c4-3">4.3 src/config.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-2">4.2 voime-core/src/config.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>use std::path::PathBuf;
 
 pub struct Config {
-    pub mode: cli::Mode,
+    pub mode: Mode,
     pub model_dir: PathBuf,
     pub input_device: Option&lt;String&gt;,
     pub threads: usize,
+    pub sink: SinkChoice,
+    pub hotkey: HotkeyChoice,
+    pub hold_key: Option&lt;String&gt;,
+    pub toggle_key: Option&lt;String&gt;,
+    pub terminal_classes: Vec&lt;String&gt;,
+    pub socket: PathBuf,
+    pub preedit: bool,
+    pub tray: bool,
     pub manifest: model::ModelManifest,
 }
+
+pub enum Mode { Ptt, Continuous }
+pub enum SinkChoice { Auto, Im, Clipboard }
+pub enum HotkeyChoice { Im, None }
 
 impl Config {
     pub fn resolve(args: cli::Args) -&gt; anyhow::Result&lt;Self&gt;;
 }
 
 pub fn default_model_dir() -&gt; PathBuf;
-
+pub fn default_socket_path() -&gt; PathBuf;
 pub fn default_threads() -&gt; usize;        // 推荐值 min(4, 逻辑核心数)</code></pre>
 <ul class="note">
-  <li>Linux 默认目录为 <code>$XDG_DATA_HOME/voime/models</code>，未设置时 <code>~/.local/share/voime/models</code>；Windows 为 <code>%LOCALAPPDATA%\voime\models</code>。</li>
+  <li>Linux 默认目录为 <code>$XDG_DATA_HOME/voime/models</code>，未设置时 <code>~/.local/share/voime/models</code>。</li>
   <li><code>resolve</code> 读取并校验 manifest，但不创建 ONNX 会话；会话由 pipeline 工作线程建立。</li>
+  <li><code>Mode</code> / <code>SinkChoice</code> / <code>HotkeyChoice</code> 与 <code>voime-ipc</code> 的同名公开类型保持一致；IPC 是它们的唯一序列化表示。</li>
 </ul>
 
-<h3 id="c4-4">4.4 src/model.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-3">4.3 voime-core/src/model.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>use std::path::{Path, PathBuf};
 
 pub struct TensorSpec {
@@ -257,10 +331,16 @@ pub struct Artifact {
     pub outputs: Vec&lt;TensorSpec&gt;,
 }
 
-pub struct AsrArtifact {
-    pub encoder: Artifact,
-    pub decoder: Artifact,
-    pub tokens: PathBuf,
+pub enum AsrArtifact {
+    FireRedCtc {
+        model: Artifact,
+        tokens: PathBuf,
+    },
+    FireRedAed {
+        encoder: Artifact,
+        decoder: Artifact,
+        tokens: PathBuf,
+    },
 }
 
 pub struct PuncArtifact {
@@ -292,173 +372,13 @@ impl ModelManifest {
     pub fn rebase(&amp;mut self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
 }</code></pre>
 <ul class="note">
-  <li><code>verify</code> 校验主文件存在性、SHA-256 与声明的张量名；external data 分片不在哈希范围，必须与主文件一起保留。形状在建立 ONNX 会话后由 <code>infer::session</code> 复核。</li>
-  <li><code>FbankManifest</code> 缺省为 80 bins / 25 ms 窗 / 10 ms 帧移；<code>ModelManifest.max_segment_ms</code> 缺省 10_000，允许范围 1..=60000；<code>PuncArtifact.max_tokens</code> 缺省 400。</li>
-  <li>清单字段与目录结构的完整契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
+  <li><code>schema</code> 固定为 2；CTC 与 AED 用 tagged enum 区分，默认 <code>FireRedCtc</code>。</li>
+  <li><code>verify</code> 校验主文件存在性与 SHA-256；external data 分片不在哈希范围，必须与主文件一起保留。</li>
+  <li><code>FbankManifest</code> 缺省为 80 bins / 25 ms 窗 / 10 ms 帧移；<code>max_segment_ms</code> 缺省 30_000，允许范围 1..=30_000。</li>
 </ul>
 
-<h3 id="c4-5">4.5 src/app.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>use crossterm::event::KeyEvent;
-
-pub enum Control {
-    Continue,
-    Quit,
-}
-
-pub struct App {
-    pub mode: cli::Mode,
-    pub transcript: Vec&lt;String&gt;,
-    pub partial: String,
-    pub recording: bool,
-    pub finalizing: bool,
-    pub scroll: ScrollState,
-    pub clipboard: clipboard::ClipboardWriter,
-    pub fatal: Option&lt;String&gt;,
-    pub viewport_height: u16,
-}
-
-pub fn run(mode: cli::Mode, pipeline: &amp;mut Pipeline, clipboard: clipboard::ClipboardWriter) -&gt; anyhow::Result&lt;()&gt;;
-
-impl App {
-    pub fn new(mode: cli::Mode, clipboard: clipboard::ClipboardWriter) -&gt; Self;
-    pub fn on_key(&amp;mut self, key: KeyEvent, pipeline: &amp;mut Pipeline) -&gt; Control;
-    pub fn on_pipeline(&amp;mut self, event: PipelineEvent);
-    pub fn push_final(&amp;mut self, line: String);
-    pub fn set_partial(&amp;mut self, text: String);
-    pub fn clear_history(&amp;mut self);
-}
-
-pub struct ScrollState {
-    pub offset: usize,
-    pub follow: bool,
-}
-
-impl ScrollState {
-    pub fn page_up(&amp;mut self, height: u16);
-    pub fn page_down(&amp;mut self, height: u16);
-    pub fn home(&amp;mut self);
-    pub fn end(&amp;mut self);
-}</code></pre>
-<ul class="note">
-  <li><code>on_key</code> 处理 <code>q</code> / <code>Ctrl+C</code>、<code>Ctrl+X</code>、PTT 的 <code>Space</code> 与四个滚动键；continuous 模式下 <code>Space</code> 无动作。</li>
-  <li><code>clear_history</code> 执行 <code>self.transcript.clear()</code> 并把 <code>scroll</code> 重置为默认的跟随状态；保留 <code>partial</code>、<code>recording</code>、<code>finalizing</code> 与剪贴板内容。它不经过 pipeline，因此不会取消当前语音段或正在进行的最终识别。</li>
-  <li><code>on_pipeline</code> 收到 <code>Final</code> 时先追加结果行、清空临时行，再调用 <code>ClipboardWriter::set_transcript</code>；复制失败不回滚。清空后的第一次 <code>Final</code> 只把新结果写入剪贴板。</li>
-  <li>PTT 收到 <code>Recording(false)</code> 时置 <code>recording = false</code>、<code>finalizing = true</code>；continuous 只置 <code>recording = false</code>。</li>
-  <li><code>SegmentDropped</code> 清除 <code>recording</code> / <code>finalizing</code> 与临时行文本，不新增结果行，也不修改剪贴板。</li>
-</ul>
-
-<h3 id="c4-6">4.6 src/pipeline.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>use std::thread::JoinHandle;
-
-pub enum PipelineCommand {
-    StartSegment,
-    FinishSegment,
-    Shutdown,
-}
-
-pub enum PipelineEvent {
-    Recording(bool),
-    Partial(String),
-    Final(String),
-    SegmentDropped,
-    Fatal(String),
-}
-
-pub struct Pipeline {
-    pub events: crossbeam_channel::Receiver&lt;PipelineEvent&gt;,
-    commands: crossbeam_channel::Sender&lt;PipelineCommand&gt;,
-    worker: Option&lt;std::thread::JoinHandle&lt;()&gt;&gt;,
-}
-
-pub fn spawn(
-    config: &amp;Config,
-    factory: infer::session::SessionFactory,
-    audio_rx: crossbeam_channel::Receiver&lt;audio::capture::AudioChunk&gt;,
-) -&gt; anyhow::Result&lt;Pipeline&gt;;
-
-impl Pipeline {
-    pub fn start_segment(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
-    pub fn finish_segment(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
-    pub fn shutdown(self) -&gt; anyhow::Result&lt;()&gt;;
-}
-
-struct Worker {
-    mode: cli::Mode,
-    vad: vad::firered::FireRedVad,
-    segmenter: vad::segmenter::Segmenter,
-    asr: asr::firered_aed::FireRedAed,
-    punc: punc::firered::FireRedPunc,
-    resampler: Option&lt;audio::resample::StreamResampler&gt;,
-    events: crossbeam_channel::Sender&lt;PipelineEvent&gt;,
-    queue: std::collections::VecDeque&lt;vad::segmenter::Segment&gt;,
-    next_partial_at: std::time::Instant,
-    next_partial_samples: usize,
-    suppress_partials: bool,
-    collecting: bool,
-    frame_audio: std::collections::VecDeque&lt;Vec&lt;f32&gt;&gt;,
-    resample_pending: Vec&lt;f32&gt;,
-    audio_error_streak: u32,
-    fbank: asr::features::FbankConfig,
-}
-
-impl Worker {
-    fn run(
-        self,
-        audio_rx: crossbeam_channel::Receiver&lt;audio::capture::AudioChunk&gt;,
-        commands: crossbeam_channel::Receiver&lt;PipelineCommand&gt;,
-    );
-    fn handle_audio(&amp;mut self, chunk: &amp;audio::capture::AudioChunk) -&gt; anyhow::Result&lt;()&gt;;
-    fn process_pending_audio(&amp;mut self, flush: bool) -&gt; anyhow::Result&lt;()&gt;;
-    fn process_vad_batch(&amp;mut self, batch: &amp;[f32], frame_samples: usize) -&gt; anyhow::Result&lt;()&gt;;
-    fn handle_frame(&amp;mut self, frame: vad::firered::VadFrame, audio: &amp;[f32]) -&gt; anyhow::Result&lt;()&gt;;
-    fn prepare_command(&amp;mut self, command: PipelineCommand, audio_rx: &amp;crossbeam_channel::Receiver&lt;audio::capture::AudioChunk&gt;) -&gt; anyhow::Result&lt;()&gt;;
-    fn handle_command(&amp;mut self, command: PipelineCommand) -&gt; anyhow::Result&lt;bool&gt;;
-    fn emit_partial(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
-    fn finish_partial_schedule(&amp;mut self, started: std::time::Instant);
-    fn reset_partial_schedule(&amp;mut self);
-    fn finalize(&amp;mut self, segment: vad::segmenter::Segment) -&gt; anyhow::Result&lt;()&gt;;
-    fn reset_after_segment(&amp;mut self);
-    fn enqueue(&amp;mut self, segment: vad::segmenter::Segment);
-    fn drain_queue(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
-    fn frame_samples(&amp;self) -&gt; usize;
-    fn vad_batch_samples(&amp;self) -&gt; usize;
-    fn samples_for_ms(&amp;self, ms: u64) -&gt; usize;
-}
-
-pub const PARTIAL_INTERVAL_MS: u64;        // 推荐值 800
-pub const PARTIAL_MIN_NEW_AUDIO_MS: u64;   // 推荐值 800
-pub const PARTIAL_MAX_MS: u64;             // 推荐值 6_000
-pub const PARTIAL_BEAM_SIZE: usize;        // 推荐值 1
-pub const VAD_BATCH_MS: u64;               // 推荐值 100
-pub const PTT_AUTO_END_SILENCE_MS: u64;    // 推荐值 1_200
-pub const MAX_SEGMENT_MS: u64;             // 推荐值 10_000
-pub const SEGMENT_QUEUE_CAPACITY: usize;   // 推荐值 2</code></pre>
-<ul class="note">
-  <li><code>spawn</code> 创建内部事件通道，并在工作线程内建立 VAD / ASR / Punc 会话；<code>spawn</code> 等待 <code>ready</code> 信号后再返回，模型加载失败在进入 TUI 前返回错误。</li>
-  <li>工作线程串行处理命令与音频；命令优先于音频，临时识别与最终识别在同一线程串行执行，最终结果通过 <code>PipelineEvent::Final</code> 交给主线程。</li>
-  <li><code>queue</code> 只保存已完成的 continuous 语音段；队列满时丢弃最旧段，正在采集的语音段不受影响。</li>
-</ul>
-
-<h3 id="c4-7">4.7 src/clipboard.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct ClipboardWriter {
-    clipboard: arboard::Clipboard,
-}
-
-impl ClipboardWriter {
-    pub fn new() -&gt; anyhow::Result&lt;Self&gt;;
-    pub fn set_transcript(&amp;mut self, lines: &amp;[String]) -&gt; anyhow::Result&lt;()&gt;;
-}
-
-pub fn join_transcript(lines: &amp;[String]) -&gt; String;   // 以 \n 连接，无末尾换行</code></pre>
-<ul class="note">
-  <li><code>new</code> 在启动时建立一次剪贴板句柄；不可用时启动失败，避免运行中静默丢失自动复制能力。</li>
-  <li><code>set_transcript</code> 每次整体覆盖；空切片不写入。</li>
-</ul>
-
-<h3 id="c4-8">4.8 src/audio/capture.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
-pub struct AudioChunk {
+<h3 id="c4-4">4.4 voime-core/src/audio/capture.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct AudioChunk {
     pub sample_rate: u32,
     pub channels: u16,
     pub samples: Vec&lt;f32&gt;,              // 交织排列，已归一化到 [-1, 1]
@@ -479,12 +399,12 @@ impl CaptureHandle {
 
 pub const AUDIO_CHANNEL_CAPACITY: usize;    // 推荐值 2048</code></pre>
 <ul class="note">
-  <li>回调中只做样本格式转换与 <code>try_send</code>；通道满时丢弃当前块并立即返回，绝不阻塞音频线程。2048 块按 10–20 ms 回调约覆盖 20–40 s 同步 ASR 积压。</li>
-  <li>流错误回调把零长度 <code>AudioChunk</code> 作为标记写入同一有界通道；工作线程连续收到 3 次后发送 <code>PipelineEvent::Fatal</code> 并退出。通道满时标记可能被丢弃，连续错误计数可能低估。</li>
-  <li>设备名按 <code>DeviceTrait::name()</code> 精确匹配；未指定时使用 <code>default_input_device</code>。</li>
+  <li>回调只做样本格式转换与 <code>try_send</code>；通道满时丢弃当前块，绝不阻塞音频线程。</li>
+  <li>流错误回调把零长度 <code>AudioChunk</code> 作为标记写入同一有界通道；工作线程连续收到 3 次后发送 <code>PipelineEvent::Fatal</code>。</li>
+  <li>设备名按 <code>DeviceTrait::name()</code> 精确匹配；未指定时使用默认输入设备。</li>
 </ul>
 
-<h3 id="c4-9">4.9 src/audio/resample.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-5">4.5 voime-core/src/audio/resample.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct StreamResampler {
     input_rate: u32,
     channels: u16,
@@ -499,11 +419,11 @@ impl StreamResampler {
 
 pub const TARGET_SAMPLE_RATE: u32;    // 推荐值 16_000</code></pre>
 <ul class="note">
-  <li>先按声道求平均得到单声道，再流式重采样到 16 kHz；重采样器保留跨块状态，不按块独立处理。</li>
-  <li>目标采样率与模型包 manifest 的 <code>sample_rate</code> 不一致时启动失败。</li>
+  <li>先按声道求平均得到单声道，再流式重采样到 16 kHz；重采样器保留跨块状态。</li>
+  <li>目标采样率与 manifest 的 <code>sample_rate</code> 不一致时启动失败。</li>
 </ul>
 
-<h3 id="c4-10">4.10 src/vad/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-6">4.6 voime-core/src/vad/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct VadConfig {
     pub speech_threshold: f32,
     pub min_speech_ms: u32,
@@ -538,11 +458,10 @@ impl FireRedVad {
 pub const FRAME_SHIFT_MS: u32;    // 推荐值 10</code></pre>
 <ul class="note">
   <li>内部维护流式状态张量；<code>reset</code> 在每个语音段结束后清空，避免跨段串音。</li>
-  <li>FireRedVAD 的 CMVN 统计已融合进导出的 ONNX 图；运行期只把 fbank 送入 <code>FireRedVad</code>，不读取 <code>cmvn.ark</code>。</li>
-  <li>输入长度不是帧移整数倍时保留余量到下一次 <code>push</code>，不补零。</li>
+  <li>FireRedVAD 的 CMVN 统计已融合进导出的 ONNX 图；运行期只把 fbank 送入 VAD。</li>
 </ul>
 
-<h3 id="c4-11">4.11 src/vad/segmenter.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-7">4.7 voime-core/src/vad/segmenter.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Segment {
     pub samples: Vec&lt;f32&gt;,
     pub start_ms: u64,
@@ -576,7 +495,7 @@ pub struct Segmenter {
 
 impl Segmenter {
     pub fn new(config: SegmenterConfig) -&gt; Self;
-    pub fn push(&amp;mut self, frame: VadFrame, samples: &amp;[f32], mode: cli::Mode) -&gt; Option&lt;SegmenterEvent&gt;;
+    pub fn push(&amp;mut self, frame: VadFrame, samples: &amp;[f32], mode: Mode) -&gt; Option&lt;SegmenterEvent&gt;;
     pub fn force_end(&amp;mut self) -&gt; Option&lt;Segment&gt;;
     pub fn is_active(&amp;self) -&gt; bool;
     pub fn active_samples(&amp;self) -&gt; &amp;[f32];
@@ -584,11 +503,86 @@ impl Segmenter {
 }</code></pre>
 <ul class="note">
   <li><code>push</code> 负责最短语音、最短静音、最大段长与 PTT 自动结束四类判定；返回值最多一个事件。</li>
-  <li><code>SpeechEnd</code> 带结束原因：<code>Silence</code> 表示静音达到阈值，<code>MaxDuration</code> 表示达到 <code>max_segment_ms</code>。PTT 在 <code>MaxDuration</code> 后保持收集，余下语音另起一段；只有静音结束或松键才停止。</li>
-  <li><code>force_end</code> 用于第二次 <code>Space</code>；没有有效语音时返回 <code>None</code>，不产生结果行。</li>
+  <li><code>MaxDuration</code> 后 PTT 保持收集，余下语音另起一段；只有静音结束或松键才停止。</li>
+  <li><code>force_end</code> 用于 PTT 结束操作；没有有效语音时返回 <code>None</code>。</li>
 </ul>
 
-<h3 id="c4-12">4.12 src/asr/features.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-8">4.8 voime-core/src/asr/engine.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum AsrEngine {
+    FireRedCtc(asr::firered_ctc::FireRedCtc),
+    FireRedAed(asr::firered_aed::FireRedAed),
+}
+
+impl AsrEngine {
+    pub fn new(artifact: &amp;model::AsrArtifact, factory: &amp;infer::session::SessionFactory, config: &amp;Config) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;]) -&gt; anyhow::Result&lt;AsrOutput&gt;;
+}</code></pre>
+<ul class="note">
+  <li>final 与尾部 partial 都走同一个 <code>AsrEngine</code> 实例；默认构建 <code>FireRedCtc</code>，AED 只作为 legacy 编译选项。</li>
+  <li>引擎不负责分段、标点或投递；调用方提供已经切好的完整段或尾部窗口。</li>
+</ul>
+
+<h3 id="c4-9">4.9 voime-core/src/asr/firered_ctc.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct CtcConfig {
+    pub fbank: asr::features::FbankConfig,
+}
+
+pub struct FireRedCtc {
+    session: ort::session::Session,
+    tokenizer: asr::tokenizer::Tokenizer,
+    cmvn_mean: Vec&lt;f32&gt;,
+    cmvn_inv_stddev: Vec&lt;f32&gt;,
+    config: CtcConfig,
+}
+
+impl FireRedCtc {
+    pub fn new(
+        artifact: &amp;model::AsrArtifact,
+        factory: &amp;infer::session::SessionFactory,
+        config: CtcConfig,
+    ) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;]) -&gt; anyhow::Result&lt;AsrOutput&gt;;
+}</code></pre>
+<ul class="note">
+  <li>单 ONNX 图输入 <code>x</code> / <code>x_lens</code>，输出 <code>log_probs</code> / <code>log_probs_len</code>；CMVN 从 ONNX metadata 读取。</li>
+  <li>greedy CTC：逐帧 argmax，合并连续重复，过滤 blank 0；<code>▁</code> 转空格并合并重复空格。</li>
+  <li>详细预处理、实测与验收见 <a href="ASR.html">ASR</a>。</li>
+</ul>
+
+<h3 id="c4-10">4.10 voime-core/src/asr/firered_aed.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct AedConfig {
+    pub beam_size: usize,
+    pub max_decode_len: usize,
+    pub sos_id: u32,
+    pub eos_id: u32,
+    pub pad_id: u32,
+    pub fbank: asr::features::FbankConfig,
+}
+
+pub struct FireRedAed {
+    encoder: ort::session::Session,
+    decoder: ort::session::Session,
+    tokenizer: asr::tokenizer::Tokenizer,
+    config: AedConfig,
+}
+
+impl FireRedAed {
+    pub fn new(
+        artifact: &amp;model::AsrArtifact,
+        factory: &amp;infer::session::SessionFactory,
+        config: AedConfig,
+    ) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;]) -&gt; anyhow::Result&lt;AsrOutput&gt;;
+}
+
+pub const MAX_AUDIO_MS: u64;         // 推荐值 60_000（模型硬上限）</code></pre>
+<ul class="note">
+  <li>legacy 后端只在构建时显式启用；默认产物不加载 AED，也不要求模型包包含 encoder / decoder。</li>
+  <li>AED 的 beam search 保留在 <code>asr/decoder.rs</code>，只被 legacy 后端调用；CTC 使用 greedy 解码。</li>
+  <li>保留该实现是为了在真实麦克风数据上对比 CTC 质量，不进入默认验收路径。</li>
+</ul>
+
+<h3 id="c4-11">4.11 voime-core/src/asr/features.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct FbankConfig {
     pub sample_rate: u32,
     pub num_bins: usize,
@@ -618,92 +612,26 @@ pub const NUM_BINS: usize;       // 推荐值 80
 pub const FRAME_MS: u32;         // 推荐值 25
 pub const SHIFT_MS: u32;         // 推荐值 10</code></pre>
 <ul class="note">
-  <li>参数必须与导出的 FireRed 模型训练配置一致；实际值由模型包 manifest 提供，常量只是推荐默认。</li>
-  <li>每个语音段新建提取器，段与段之间不共享 fbank 状态。</li>
-  <li>VAD 使用 <code>StreamingFbank</code>：每次只保留一个 25 ms 窗口，连续监听不会累积全部音频特征。</li>
+  <li>参数必须与导出的 FireRed 模型训练配置一致；实际值由 manifest 提供。</li>
+  <li>每个语音段新建提取器，段与段之间不共享 fbank 状态；VAD 使用 <code>StreamingFbank</code>。</li>
 </ul>
 
-<h3 id="c4-13">4.13 src/asr/firered_aed.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct AedConfig {
-    pub beam_size: usize,
-    pub max_decode_len: usize,
-    pub sos_id: u32,
-    pub eos_id: u32,
-    pub pad_id: u32,
-    pub fbank: asr::features::FbankConfig,
-}
-
-pub struct AsrOutput {
-    pub text: String,
-    pub confidence: Option&lt;f32&gt;,
-}
-
-pub struct FireRedAed {
-    encoder: ort::session::Session,
-    decoder: ort::session::Session,
-    tokenizer: Tokenizer,
-    config: AedConfig,
-}
-
-impl FireRedAed {
-    pub fn new(
-        artifact: &amp;model::AsrArtifact,
-        factory: &amp;infer::session::SessionFactory,
-        config: AedConfig,
-    ) -&gt; anyhow::Result&lt;Self&gt;;
-    pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;]) -&gt; anyhow::Result&lt;AsrOutput&gt;;
-    pub fn transcribe_with_beam(&amp;mut self, features: &amp;[Vec&lt;f32&gt;], beam_size: usize) -&gt; anyhow::Result&lt;AsrOutput&gt;;
-}
-
-pub const BEAM_SIZE: usize;          // 推荐值 3
-pub const MAX_AUDIO_MS: u64;         // 推荐值 60_000（模型硬上限）</code></pre>
-<ul class="note">
-  <li><code>transcribe</code> 先运行编码器一次，再把编码结果交给 <code>asr::decoder::beam_search</code> 自回归解码。</li>
-  <li><code>transcribe_with_beam</code> 允许调用方指定 beam；临时识别使用 <code>beam_size = 1</code>，最终识别使用默认 beam 3。</li>
-  <li>ASR encoder 导出包装器内部应用 CMVN（<code>(features - mean) * istd</code>），运行期只输入 fbank。</li>
-  <li>输入超过 <code>MAX_AUDIO_MS</code> 时返回错误；调用方保证语音段不超过该上限。</li>
-</ul>
-
-<h3 id="c4-14">4.14 src/asr/decoder.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct Hypothesis {
-    pub tokens: Vec&lt;u32&gt;,
-    pub score: f32,
-}
-
-pub fn beam_search(
-    decoder: &amp;mut ort::session::Session,
-    encoder_out: &amp;ort::value::Tensor&lt;f32&gt;,
-    config: &amp;AedConfig,
-) -&gt; anyhow::Result&lt;Vec&lt;Hypothesis&gt;&gt;;</code></pre>
-<ul class="note">
-  <li>只实现 FireRedASR2-AED 所需的单句 beam search；不引入通用序列解码框架。</li>
-  <li>解码器没有 KV cache：每生成一个 token 都把完整前缀重新送入 decoder；每步只取词表 top-k，用 <code>select_nth_unstable_by</code>，不对 8667 个词全排序。</li>
-  <li>返回按分数降序排列的候选；<code>FireRedAed::transcribe</code> 取第一个并拼接 token。</li>
-</ul>
-
-<h3 id="c4-15">4.15 src/asr/tokenizer.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-12">4.12 voime-core/src/asr/tokenizer.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Tokenizer {
     vocab: Vec&lt;String&gt;,
-    sos_id: u32,
-    eos_id: u32,
-    pad_id: u32,
 }
 
 impl Tokenizer {
     pub fn load(path: &amp;std::path::Path) -&gt; anyhow::Result&lt;Self&gt;;
-    pub fn sos_id(&amp;self) -&gt; u32;
-    pub fn eos_id(&amp;self) -&gt; u32;
-    pub fn pad_id(&amp;self) -&gt; u32;
     pub fn vocab_size(&amp;self) -&gt; usize;
     pub fn decode(&amp;self, ids: &amp;[u32]) -&gt; String;
 }</code></pre>
 <ul class="note">
-  <li>词表按行读取，行号即 token id；空行保留占位，保证 id 不偏移。</li>
-  <li><code>load</code> 按 token 字符串查找 <code>&lt;sos&gt;</code> / <code>&lt;eos&gt;</code> / <code>&lt;pad&gt;</code>，官方词表 id 为 3 / 4 / 2；找不到时回退 1 / 2 / 0，不硬编码官方 id。</li>
-  <li><code>decode</code> 过滤 <code>&lt;...&gt;</code> / <code>[...]</code> 特殊 token，处理 SentencePiece <code>▁</code>、<code>&lt;space&gt;</code> 与 <code>&lt;0xAB&gt;</code> byte fallback；不做分词或语言模型重排。</li>
+  <li>兼容 <code>token id</code> 两列词表；id 0 固定为 CTC blank。</li>
+  <li><code>decode</code> 过滤特殊 token，处理 SentencePiece <code>▁</code>、空格与 byte fallback；不做分词或语言模型重排。</li>
 </ul>
 
-<h3 id="c4-16">4.16 src/punc/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-13">4.13 voime-core/src/punc/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct PuncConfig {
     pub max_tokens: usize,
 }
@@ -726,13 +654,11 @@ impl FireRedPunc {
 
 pub const MAX_TOKENS: usize;    // 推荐值 400</code></pre>
 <ul class="note">
-  <li><code>labels</code> 从 <code>labels.json</code> 读取，id 0 约定为“无标点”；其余标签按模型包声明插入。</li>
-  <li>运行期从 <code>vocab.txt</code> 构建 BERT WordPiece，并启用 <code>BertNormalizer</code> 与 <code>BertPreTokenizer</code>；<code>attention_mask</code> 全 1、<code>token_type_ids</code> 全 0。</li>
-  <li>导出包装器在输入前补 <code>[CLS]</code>、输出后去掉，因此运行期 logits 与输入 token 一一对齐；标点按 tokenizer 的 byte offsets 插入原文本，不按 token 字符串重新拼接。</li>
-  <li>超长文本先按字符上限切块；切块后仍超过 <code>max_tokens</code> 时递归二分，不静默丢弃尾部。</li>
+  <li><code>labels.json</code> 的 id 0 约定为“无标点”；其余标签按模型包声明插入。</li>
+  <li>运行期从 <code>vocab.txt</code> 构建 BERT WordPiece；超长文本按字符上限切块，切块后仍超过 <code>max_tokens</code> 时递归二分。</li>
 </ul>
 
-<h3 id="c4-17">4.17 src/infer/session.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-14">4.14 voime-core/src/infer/session.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct SessionFactory {
     threads: usize,
     env: std::sync::Arc&lt;ort::environment::Environment&gt;,
@@ -747,7 +673,435 @@ impl SessionFactory {
   <li><code>build</code> 在会话创建后复核输入 / 输出张量名与形状，与 manifest 不符时返回错误。</li>
 </ul>
 
-<h3 id="c4-18">4.18 src/ui.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-15">4.15 voime-core/src/pipeline.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum PipelineCommand {
+    StartSegment,
+    FinishSegment,
+    Shutdown,
+}
+
+pub enum PipelineEvent {
+    Recording(bool),
+    Partial(String),
+    Final(String),
+    SegmentDropped,
+    Fatal(String),
+}
+
+pub struct Pipeline {
+    pub events: crossbeam_channel::Receiver&lt;PipelineEvent&gt;,
+    commands: crossbeam_channel::Sender&lt;PipelineCommand&gt;,
+    worker: Option&lt;std::thread::JoinHandle&lt;()&gt;&gt;,
+}
+
+pub fn spawn(
+    config: &amp;Config,
+    factory: infer::session::SessionFactory,
+    audio_rx: crossbeam_channel::Receiver&lt;audio::capture::AudioChunk&gt;,
+) -&gt; anyhow::Result&lt;Pipeline&gt;;
+
+impl Pipeline {
+    pub fn start_segment(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn finish_segment(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn shutdown(self) -&gt; anyhow::Result&lt;()&gt;;
+}
+
+struct Worker {
+    mode: Mode,
+    vad: vad::firered::FireRedVad,
+    segmenter: vad::segmenter::Segmenter,
+    asr: asr::engine::AsrEngine,
+    punc: punc::firered::FireRedPunc,
+    resampler: Option&lt;audio::resample::StreamResampler&gt;,
+    events: crossbeam_channel::Sender&lt;PipelineEvent&gt;,
+    queue: std::collections::VecDeque&lt;vad::segmenter::Segment&gt;,
+    next_partial_at: std::time::Instant,
+    next_partial_samples: usize,
+    suppress_partials: bool,
+    collecting: bool,
+    frame_audio: std::collections::VecDeque&lt;Vec&lt;f32&gt;&gt;,
+    resample_pending: Vec&lt;f32&gt;,
+    audio_error_streak: u32,
+    fbank: asr::features::FbankConfig,
+}
+
+impl Worker {
+    fn run(self, audio_rx: crossbeam_channel::Receiver&lt;audio::capture::AudioChunk&gt;, commands: crossbeam_channel::Receiver&lt;PipelineCommand&gt;);
+    fn handle_audio(&amp;mut self, chunk: &amp;audio::capture::AudioChunk) -&gt; anyhow::Result&lt;()&gt;;
+    fn process_pending_audio(&amp;mut self, flush: bool) -&gt; anyhow::Result&lt;()&gt;;
+    fn handle_frame(&amp;mut self, frame: vad::firered::VadFrame, audio: &amp;[f32]) -&gt; anyhow::Result&lt;()&gt;;
+    fn handle_command(&amp;mut self, command: PipelineCommand) -&gt; anyhow::Result&lt;bool&gt;;
+    fn emit_partial(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    fn finalize(&amp;mut self, segment: vad::segmenter::Segment) -&gt; anyhow::Result&lt;()&gt;;
+    fn enqueue(&amp;mut self, segment: vad::segmenter::Segment);
+    fn drain_queue(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    fn reset_after_segment(&amp;mut self);
+    fn frame_samples(&amp;self) -&gt; usize;
+    fn samples_for_ms(&amp;self, ms: u64) -&gt; usize;
+}
+
+pub const PARTIAL_INTERVAL_MS: u64;        // 推荐值 800
+pub const PARTIAL_MIN_NEW_AUDIO_MS: u64;   // 推荐值 800
+pub const PARTIAL_MAX_MS: u64;             // 推荐值 6_000
+pub const VAD_BATCH_MS: u64;               // 推荐值 100
+pub const PTT_AUTO_END_SILENCE_MS: u64;    // 推荐值 1_200
+pub const SEGMENT_QUEUE_CAPACITY: usize;   // 推荐值 2</code></pre>
+<ul class="note">
+  <li><code>spawn</code> 在工作线程内建立 VAD / ASR / Punc 会话；模型加载失败在进入 daemon 事件循环前返回错误。</li>
+  <li>工作线程串行处理命令与音频；命令优先于音频，临时识别与最终识别在同一线程串行执行。</li>
+  <li>PTT 达到 30 s 时由 daemon 定时器触发 <code>FinishSegment</code>；若仍按住，pipeline 完成 final 后 daemon 立即再发 <code>StartSegment</code>，音频缓冲不丢。</li>
+</ul>
+
+<h3 id="c4-16">4.16 voime-ipc/src/lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const PROTOCOL_VERSION: u32;      // 推荐值 1
+
+// ClientRole / Mode / TriggerSource / Phase / ImStatus / SinkKind /
+// Delivery / KeyboardStatus / Snapshot / ClientMessage / ServerMessage
+// 的字段与语义见 USER §4.2；本文不重复定义。</code></pre>
+<ul class="note">
+  <li>本 crate 只负责协议类型的 serde 表示、JSON 行编解码与版本常量；外部契约以 <a href="USER.html#u4-2">USER §4.2</a> 为准。</li>
+  <li>一行一个 JSON，最大 1 MiB；<code>Hello</code> 是第一条消息，版本不匹配时返回 <code>Error</code> 并断开。</li>
+</ul>
+
+<h3 id="c4-17">4.17 voimed/src/main.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>fn main() -&gt; std::process::ExitCode;
+
+fn run(args: cli::Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+<ul class="note">
+  <li><code>main</code> 只负责调用 <code>run</code> 并把错误格式化到 stderr；不要求 stdin / stdout 是 TTY。</li>
+  <li>启动顺序为“配置 → 模型校验 → Wayland IM / grab / VK → pipeline → 音频 → IPC → 托盘”。</li>
+</ul>
+
+<h3 id="c4-18">4.18 voimed/src/daemon.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Daemon { /* state, wayland, pipeline, sink, subscribers, tray */ }
+
+impl Daemon {
+    pub fn new(config: Config) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn run(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn on_hotkey(&amp;mut self, event: HotkeyEvent) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn on_im(&amp;mut self, event: ImEvent) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn on_pipeline(&amp;mut self, event: PipelineEvent) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn on_client(&amp;mut self, client: ClientId, msg: ClientMessage) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn on_tray(&amp;mut self, event: TrayEvent) -&gt; anyhow::Result&lt;()&gt;;
+    fn start_segment(&amp;mut self, source: TriggerSource) -&gt; anyhow::Result&lt;()&gt;;
+    fn finish_segment(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    fn deliver(&amp;mut self, text: &amp;str) -&gt; Delivery;
+    fn shutdown(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+}</code></pre>
+<ul class="note">
+  <li>主循环用 <code>crossbeam_channel::select</code> 汇总 <code>HotkeyEvent</code>、<code>ImEvent</code>、<code>PipelineEvent</code>、<code>ClientMessage</code>、<code>TrayEvent</code> 与 100 ms tick。</li>
+  <li>tick 更新 <code>remaining_ms</code> 并广播 <code>State</code>；达到 30 s 时结束当前段。</li>
+  <li><code>deliver</code> 读取当前 <code>im_active</code> 与焦点，选择 <code>SinkKind</code> 并返回 <code>Delivery</code>。</li>
+</ul>
+
+<h3 id="c4-19">4.19 voimed/src/state.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum Phase { Idle, Recording, Finalizing }
+
+pub enum SegmentOwner { ImHold, ImToggle, Tui, Cli, Continuous }
+
+pub struct Transcript {
+    lines: Vec&lt;String&gt;,
+}
+
+impl Transcript {
+    pub fn push(&amp;mut self, line: String);
+    pub fn clear(&amp;mut self);
+    pub fn snapshot(&amp;self) -&gt; Vec&lt;String&gt;;
+}
+
+pub struct PttTimer {
+    started: Option&lt;std::time::Instant&gt;,
+    max_ms: u64,
+}
+
+impl PttTimer {
+    pub fn start(&amp;mut self);
+    pub fn stop(&amp;mut self);
+    pub fn remaining_ms(&amp;self) -&gt; Option&lt;u32&gt;;
+    pub fn expired(&amp;self) -&gt; bool;
+}</code></pre>
+<ul class="note">
+  <li><code>remaining_ms</code> 是 <code>max_ms - elapsed</code> 的截断值；TUI 每秒从 <code>State</code> 刷新，不自行计时。</li>
+  <li><code>Transcript</code> 只存在内存；建议上限 10_000 行或 1 MiB，超过时丢弃最旧行。</li>
+  <li>段所有权决定 TUI 断开时是否取消当前段；PTT 段继续，TUI 段随客户端断开取消。</li>
+</ul>
+
+<h3 id="c4-20">4.20 voimed/src/ipc_server.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub type ClientId = u64;
+
+pub enum IpcEvent {
+    Connected(ClientId, ClientRole),
+    Message(ClientId, ClientMessage),
+    Disconnected(ClientId),
+}
+
+pub struct IpcServer { /* listener, subscribers */ }
+
+impl IpcServer {
+    pub fn bind(path: &amp;std::path::Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn events(&amp;self) -&gt; crossbeam_channel::Receiver&lt;IpcEvent&gt;;
+    pub fn broadcast(&amp;self, msg: &amp;ServerMessage);
+    pub fn send(&amp;self, client: ClientId, msg: &amp;ServerMessage);
+    pub fn shutdown(self);
+}
+
+pub const IPC_MAX_LINE_BYTES: usize;      // 推荐值 1 MiB
+pub const IPC_QUEUE_CAPACITY: usize;      // 推荐值 64</code></pre>
+<ul class="note">
+  <li>socket 目录 0700、文件 0600；第二次 bind 失败视为已有 daemon；陈旧 socket 在连接失败后清理。</li>
+  <li>每个客户端一个写线程与有界队列；队列满时移除该客户端，不影响主循环。</li>
+</ul>
+
+<h3 id="c4-21">4.21 voimed/src/hotkey.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum HotkeyEvent {
+    HoldPressed,
+    HoldReleased,
+    TogglePressed,
+}
+
+pub struct KeyCombo {
+    pub keysym: xkb::Keysym,
+    pub mods: xkb::ModMask,
+}
+
+pub struct HotkeyMatcher {
+    hold: Option&lt;KeyCombo&gt;,
+    toggle: Option&lt;KeyCombo&gt;,
+}
+
+impl HotkeyMatcher {
+    pub fn parse(hold: Option&lt;&amp;str&gt;, toggle: Option&lt;&amp;str&gt;) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn matches(&amp;self, keysym: xkb::Keysym, mods: xkb::ModMask) -&gt; Option&lt;HotkeyEvent&gt;;
+}
+
+pub const MOD_SUPER: &amp;str;      // SUPER
+pub const MOD_CTRL: &amp;str;       // CTRL
+pub const MOD_ALT: &amp;str;        // ALT
+pub const MOD_SHIFT: &amp;str;      // SHIFT</code></pre>
+<ul class="note">
+  <li>解析 <code>SUPER+F2</code>、<code>CTRL+ALT+Space</code> 等组合；key 名使用 xkb keysym；<code>none</code> 表示禁用。</li>
+  <li>匹配只比较 Shift / Ctrl / Alt / Super；CapsLock / NumLock / group 不参与。组合键必须包含一个非修饰键。</li>
+</ul>
+
+<h3 id="c4-22">4.22 voimed/src/wayland/im.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct InputMethod { /* IM + grab + VK stay on one thread */ }
+
+pub enum ImEvent {
+    Activated,
+    Deactivated,
+    Unavailable,
+}
+
+impl InputMethod {
+    pub fn connect() -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn is_active(&amp;self) -&gt; bool;
+    pub fn grab_keyboard(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn commit(&amp;mut self, text: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn set_preedit(&amp;mut self, text: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn clear_preedit(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn dispatch(&amp;mut self) -&gt; anyhow::Result&lt;Vec&lt;ImEvent&gt;&gt;;
+    pub fn destroy(self);
+}</code></pre>
+<ul class="note">
+  <li><code>connect</code> 创建 <code>zwp_input_method_v2</code>；<code>unavailable</code> 作为第一个事件返回。</li>
+  <li><code>commit</code> 先写 <code>commit_string</code>，再以已收到的 <code>done</code> 数调用 <code>commit(serial)</code>；单次文本不超过 4000 字节。</li>
+  <li>Wayland 对象不能跨线程移动；<code>InputMethod</code> 只在 Wayland 线程使用。</li>
+</ul>
+
+<h3 id="c4-23">4.23 voimed/src/wayland/keyboard.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct KeyboardForwarder { /* grab + virtual-keyboard + xkb state */ }
+
+impl KeyboardForwarder {
+    pub fn new(vk: VirtualKeyboard, matcher: HotkeyMatcher) -&gt; Self;
+    pub fn set_ptt_enabled(&amp;mut self, enabled: bool);
+    pub fn on_keymap(&amp;mut self, format: u32, fd: OwnedFd, size: u32) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn on_key(&amp;mut self, time: u32, key: u32, state: KeyState) -&gt; anyhow::Result&lt;Option&lt;HotkeyEvent&gt;&gt;;
+    pub fn on_modifiers(&amp;mut self, depressed: u32, latched: u32, locked: u32, group: u32);
+    pub fn on_repeat_info(&amp;mut self, rate: i32, delay: i32);
+}</code></pre>
+<ul class="note">
+  <li><code>on_key</code> 先按已锁存的 hold / toggle keycode 处理重复 press 与 release，再匹配新组合键；未匹配事件立即发往 VK。</li>
+  <li>hold release 不依赖松开时的 modifiers：按下时记录 keycode，松开时按 keycode 结束。</li>
+  <li><code>on_keymap</code> 同时更新 xkb state 与 VK keymap；未收到 keymap 前不转发任何 key。</li>
+</ul>
+
+<h3 id="c4-24">4.24 voimed/src/wayland/virtual_keyboard.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct VirtualKeyboard { /* zwp_virtual_keyboard_v1 */ }
+
+pub enum PasteTarget { Gui, Terminal }
+
+impl VirtualKeyboard {
+    pub fn create(seat: &amp;wl_seat::WlSeat) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn update_keymap(&amp;mut self, format: u32, fd: BorrowedFd&lt;'_&gt;, size: u32) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn key(&amp;mut self, time: u32, key: u32, state: KeyState) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn modifiers(&amp;mut self, depressed: u32, latched: u32, locked: u32, group: u32) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn paste(&amp;mut self, target: PasteTarget) -&gt; anyhow::Result&lt;()&gt;;
+}</code></pre>
+<ul class="note">
+  <li><code>create</code> 必须与 InputMethod 使用同一个 <code>wl_display</code>；否则 Hyprland 无法抑制转发回环。</li>
+  <li><code>paste</code> 发送 <code>Ctrl+V</code> 或 <code>Ctrl+Shift+V</code> 的 key / modifiers 序列，不逐字输入文本。</li>
+  <li>发送失败映射为 <code>KeyForwardFailed</code>；daemon 停止持有 grab 并退出。</li>
+</ul>
+
+<h3 id="c4-25">4.25 voimed/src/sink.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct SinkContext {
+    pub im_active: bool,
+    pub focus: FocusInfo,
+}
+
+pub trait TextSink {
+    fn deliver(&amp;mut self, text: &amp;str, ctx: &amp;SinkContext) -&gt; Delivery;
+}
+
+pub enum SinkKind { Im, ClipboardPaste }
+
+pub struct Delivery {
+    pub kind: SinkKind,
+    pub ok: bool,
+    pub error: Option&lt;String&gt;,
+}
+
+pub struct Sink { /* im + clipboard + vk */ }
+
+impl Sink {
+    pub fn deliver(&amp;mut self, text: &amp;str, ctx: &amp;SinkContext) -&gt; Delivery;
+}</code></pre>
+<ul class="note">
+  <li><code>auto</code> 先看 <code>im_active</code>；inactive 时写剪贴板并粘贴。显式 sink 只尝试指定后端。</li>
+  <li><code>Delivery</code> 通过 IPC <code>Final</code> 广播给 TUI，也写入日志供 <code>voime doctor</code> 查看。</li>
+</ul>
+
+<h3 id="c4-26">4.26 voimed/src/sink/im.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct ImSink { /* handle to Wayland IM thread */ }
+
+impl TextSink for ImSink {
+    fn deliver(&amp;mut self, text: &amp;str, ctx: &amp;SinkContext) -&gt; Delivery;
+}</code></pre>
+<ul class="note">
+  <li>只有 <code>ctx.im_active</code> 为真时调用 <code>InputMethod::commit</code>；否则直接返回失败，不写入输入法状态。</li>
+  <li>提交命令通过 channel 发往 Wayland 线程；主线程不直接持有 Wayland 对象。</li>
+</ul>
+
+<h3 id="c4-27">4.27 voimed/src/sink/clipboard.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct ClipboardSink {
+    clipboard: Option&lt;arboard::Clipboard&gt;,
+}
+
+impl ClipboardSink {
+    pub fn new() -&gt; Self;
+}
+
+impl TextSink for ClipboardSink {
+    fn deliver(&amp;mut self, text: &amp;str, ctx: &amp;SinkContext) -&gt; Delivery;
+}
+
+pub fn paste_target(focus: &amp;FocusInfo) -&gt; PasteTarget;</code></pre>
+<ul class="note">
+  <li>先 <code>set_text(final)</code>，再请求 Wayland 线程经 VK 发送粘贴键；XWayland 失败时用 XTest 重试一次。</li>
+  <li>写入内容为单条 Final，不含会话前缀；不恢复用户原剪贴板。终端的 <code>Ctrl+Shift+V</code> 由 <code>FocusInfo.terminal</code> 决定。</li>
+</ul>
+
+<h3 id="c4-28">4.28 voimed/src/focus/hyprland.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct FocusInfo {
+    pub class: String,
+    pub title: String,
+    pub xwayland: bool,
+    pub terminal: bool,
+}
+
+pub fn active_window(extra_terminals: &amp;[String]) -&gt; anyhow::Result&lt;FocusInfo&gt;;
+
+pub const TERMINAL_CLASSES: &amp;[&amp;str];    // kitty / foot / Alacritty / wezterm / ghostty / XTerm</code></pre>
+<ul class="note">
+  <li>通过 Hyprland IPC <code>j/activewindow</code> 查询；<code>xwayland</code> 与终端 class 用于选择粘贴键。</li>
+  <li>查询失败返回 <code>NoFocusedWindow</code>；投递仍把文本留在剪贴板。</li>
+</ul>
+
+<h3 id="c4-29">4.29 voimed/src/tray.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum TrayEvent { Quit }
+
+pub struct TrayService { /* ksni handle + event sender */ }
+
+impl TrayService {
+    pub fn spawn(tx: crossbeam_channel::Sender&lt;TrayEvent&gt;) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn shutdown(self);
+}</code></pre>
+<ul class="note">
+  <li>菜单只有“退出”；左键无动作。没有 StatusNotifierWatcher / 宿主时返回 <code>TrayUnavailable</code>，daemon 只记录 warning。</li>
+  <li><code>tray/sni.rs</code>、<code>tray/menu.rs</code> 与 <code>tray/icon.rs</code> 分别负责 item 注册、DBusMenu 与内嵌图标，不持有 daemon 状态。</li>
+</ul>
+
+<h3 id="c4-30">4.30 voime/src/main.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>fn main() -&gt; std::process::ExitCode;
+
+fn run(args: cli::Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+<ul class="note">
+  <li><code>voime</code> 无子命令时进入 TUI；<code>voime ctl</code> 与 <code>voime doctor</code> 走一次性客户端路径，不进入备用屏幕。</li>
+  <li>TUI 连接失败时写 stderr 并以 1 退出；不尝试启动 daemon。</li>
+</ul>
+
+<h3 id="c4-31">4.31 voime/src/cli.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Args {
+    pub socket: Option&lt;std::path::PathBuf&gt;,
+    pub command: Command,
+}
+
+pub enum Command {
+    Tui,
+    Ctl(CtlCommand),
+    Doctor,
+}
+
+pub enum CtlCommand {
+    Start,
+    Stop,
+    Toggle,
+    Status,
+    Clear,
+    Quit,
+}</code></pre>
+<ul class="note">
+  <li><code>--socket</code> 省略时使用与 daemon 相同的默认路径；<code>voime ctl</code> 的 source 固定为 <code>TriggerSource::Cli</code>。</li>
+</ul>
+
+<h3 id="c4-32">4.32 voime/src/client.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Client { /* socket + reader */ }
+
+impl Client {
+    pub fn connect(path: &amp;Path, role: ClientRole) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn snapshot(&amp;self) -&gt; &amp;Snapshot;
+    pub fn next_event(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
+    pub fn send(&amp;mut self, msg: ClientMessage) -&gt; anyhow::Result&lt;()&gt;;
+}</code></pre>
+<ul class="note">
+  <li>握手发送 <code>Hello</code> 并等待 <code>Snapshot</code>；版本不匹配直接报错。</li>
+  <li>TUI 断线后提示重连；不缓存未确认命令，避免重复触发录音。</li>
+</ul>
+
+<h3 id="c4-33">4.33 voime/src/app.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct App {
+    pub snapshot: Snapshot,
+    pub partial: String,
+    pub scroll: ScrollState,
+    pub status: Option&lt;String&gt;,
+    pub viewport_height: u16,
+}
+
+impl App {
+    pub fn new(snapshot: Snapshot) -&gt; Self;
+    pub fn on_key(&amp;mut self, key: KeyEvent, client: &amp;mut Client) -&gt; Control;
+    pub fn on_event(&amp;mut self, event: ServerMessage);
+    pub fn clear_view(&amp;mut self);
+}
+
+pub enum Control { Continue, Detach }</code></pre>
+<ul class="note">
+  <li><code>Space</code> 仅在 PTT 模式发送 <code>Start</code> / <code>Stop</code>；<code>q</code> / <code>Ctrl+C</code> 只返回 <code>Detach</code>，不发送 <code>Quit</code>。</li>
+  <li><code>Ctrl+X</code> 发送 <code>ClearHistory</code>；历史清空由 daemon 广播，TUI 不单独修改 daemon 状态。</li>
+  <li>滚动只修改本地 <code>ScrollState</code>；<code>on_event</code> 更新 partial / transcript / remaining_ms。</li>
+</ul>
+
+<h3 id="c4-34">4.34 voime/src/ui.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Tui {
     terminal: Option&lt;ratatui::Terminal&lt;ratatui::backend::CrosstermBackend&lt;std::io::Stdout&gt;&gt;&gt;,
     restored: bool,
@@ -763,21 +1117,11 @@ pub const GUTTER_WIDTH: u16;      // 推荐值 2
 pub const MARKER: &amp;str = "●";     // recording 字形
 pub const HINT_HEIGHT: u16;       // 底部快捷键提示固定占 1 行
 
-pub fn hint_text(mode: cli::Mode) -&gt; &amp;'static str;</code></pre>
+pub fn hint_text(mode: Mode, hold: &amp;str, toggle: &amp;str) -&gt; String;</code></pre>
 <ul class="note">
   <li><code>init</code> 依次启用 raw mode、备用屏幕、隐藏光标并禁用鼠标上报；<code>restore</code> 按相反顺序恢复。</li>
-  <li>绘制只用 <code>Paragraph</code> / 自定义行；不添加边框或标题。除底部固定一行快捷键提示外，不添加状态栏。</li>
-  <li>内容区高度为终端高度减 <code>HINT_HEIGHT</code>；<code>hint_text</code> 在 PTT 返回 <code>Space 开始/结束&nbsp;&nbsp;Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code>，continuous 返回 <code>Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code>。提示行始终绘制，包括空状态。</li>
-</ul>
-
-<h3 id="c4-19">4.19 src/ui/theme.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>use ratatui::style::Color;
-
-pub const RECORDING: Color = Color::LightRed;
-pub const TEXT: Color = Color::Reset;
-pub const BACKGROUND: Color = Color::Reset;</code></pre>
-<ul class="note">
-  <li>颜色语义与终端主题边界见 <a href="USER.html#u5-1">USER §5.1</a>；本文件不引入其他颜色。</li>
+  <li>绘制只使用 <code>Paragraph</code> / 自定义行；除底部固定提示与 PTT 倒计时行外，不添加状态栏。</li>
+  <li><code>hint_text</code> 在 PTT 返回默认组合键与 <code>Ctrl+X</code> / 退出；continuous 省略 PTT 组合键。</li>
 </ul>
 
 <h2 id="c5">5. Call stack tree</h2>
@@ -791,71 +1135,99 @@ pub const BACKGROUND: Color = Color::Reset;</code></pre>
 │   └── model::ModelManifest::load(model_dir/manifest.json)
 │       └── model::ModelManifest::verify(model_dir)
 ├── infer::session::SessionFactory::new(config.threads)
-├── pipeline::spawn(&amp;config, factory, audio_rx)
-│   ├── vad::firered::FireRedVad::new(...)
-│   ├── asr::firered_aed::FireRedAed::new(...)
-│   ├── punc::firered::FireRedPunc::new(...)
-│   └── std::thread::Builder::spawn(pipeline::Worker::run)
-├── audio::capture::start(config.input_device, audio_tx)
-├── clipboard::ClipboardWriter::new()
-└── app::run(config.mode, pipeline, clipboard)
-    └── ui::Tui::init()
+├── daemon::Daemon::new(config)
+│   ├── wayland::im::InputMethod::connect()
+│   │   ├── zwp_input_method_manager_v2.get_input_method(seat)
+│   │   ├── zwp_input_method_v2.grab_keyboard()
+│   │   └── wayland::virtual_keyboard::VirtualKeyboard::create(seat)
+│   ├── hotkey::HotkeyMatcher::parse(config.hold_key, config.toggle_key)
+│   ├── crossbeam_channel::bounded(AUDIO_CHANNEL_CAPACITY)
+│   ├── pipeline::spawn(&amp;config, factory, audio_rx)
+│   │   ├── vad::firered::FireRedVad::new(...)
+│   │   ├── asr::engine::AsrEngine::new(...)
+│   │   ├── punc::firered::FireRedPunc::new(...)
+│   │   └── std::thread::Builder::spawn(pipeline::Worker::run)
+│   ├── audio::capture::start(config.input_device, audio_tx)
+│   ├── ipc_server::IpcServer::bind(config.socket)
+│   └── tray::TrayService::spawn(tray_tx)
+└── daemon::Daemon::run()
 </code></pre>
 <ul class="note">
-  <li>模型校验、会话创建、音频流与剪贴板都在 <code>ui::Tui::init</code> 之前完成；任一步失败都不会进入备用屏幕。</li>
-  <li>pipeline 工作线程先于音频流启动，保证第一批 <code>AudioChunk</code> 不会落入无人接收的通道；<code>capture</code> 由 <code>main::run</code> 持有到退出。</li>
+  <li>模型校验、会话创建、Wayland 对象、音频流与 IPC 都在进入事件循环前完成；任一步失败都不会创建托盘或监听 socket。</li>
+  <li>pipeline 工作线程先于音频流启动，保证第一批 <code>AudioChunk</code> 不会落入无人接收的通道。</li>
+  <li>Wayland 线程在 <code>InputMethod::connect</code> 后接管 IM / grab / VK；主线程只通过 channel 发送 commit / paste 命令。</li>
 </ul>
 
-<h3 id="c5-2">5.2 按键处理</h3>
-<pre><code>app::run()
-├── crossterm::event::poll(timeout)
-├── crossterm::event::read()
-└── app::App::on_key(key, &amp;mut pipeline)
-    ├── 判断 Ctrl+C / q → Control::Quit
-    ├── 判断 Ctrl+X → app::App::clear_history()
-    ├── 判断 mode == Ptt 且 Space 且 !recording 且 !finalizing
-    │   ├── pipeline::Pipeline::start_segment()
-    │   │   └── crossbeam_channel::Sender::send(PipelineCommand::StartSegment)
-    │   │       └── pipeline::Worker::handle_command(StartSegment)
-    │   │           ├── vad::firered::FireRedVad::reset()
-    │   │           └── vad::segmenter::Segmenter::reset()
-    │   └── app::App::recording = true
-    ├── 判断 mode == Ptt 且 Space 且 recording
+<h3 id="c5-2">5.2 键盘事件与 PTT 匹配</h3>
+<pre><code>wayland::im::InputMethod::dispatch()
+├── wayland::keyboard::KeyboardForwarder::on_keymap(format, fd, size)
+│   ├── xkb::Keymap::new_from_fd(...)
+│   └── wayland::virtual_keyboard::VirtualKeyboard::update_keymap(...)
+├── wayland::keyboard::KeyboardForwarder::on_modifiers(depressed, latched, locked, group)
+│   ├── xkb_state_update_mask(...)
+│   └── wayland::virtual_keyboard::VirtualKeyboard::modifiers(...)
+└── wayland::keyboard::KeyboardForwarder::on_key(time, key, state)
+    ├── 判断 hold_active 且 key == hold_keycode 且 state == pressed → 消费并忽略
+    ├── 判断 hold_active 且 key == hold_keycode 且 state == released
+    │   ├── hotkey::HotkeyEvent::HoldReleased
+    │   └── crossbeam_channel::Sender::send(HotkeyEvent::HoldReleased)
+    ├── 判断 toggle_latched 且 key == toggle_keycode 且 state == released → 消费并清除
+    ├── hotkey::HotkeyMatcher::matches(keysym, mods)
+    │   ├── 判断 HoldPressed → crossbeam_channel::Sender::send(HotkeyEvent::HoldPressed)
+    │   └── 判断 TogglePressed → crossbeam_channel::Sender::send(HotkeyEvent::TogglePressed)
+    ├── 判断 ImEvent::Activated / Deactivated → crossbeam_channel::Sender::send(ImEvent)
+    ├── 判断 ImEvent::Unavailable → crossbeam_channel::Sender::send(ImEvent::Unavailable)
+    └── wayland::virtual_keyboard::VirtualKeyboard::key(time, key, state)
+</code></pre>
+<ul class="note">
+  <li>PTT 匹配只在 <code>ptt_enabled</code> 为真时启用；continuous 与 <code>--hotkey none</code> 下所有按键都走转发。</li>
+  <li>HotkeyEvent 通过有界 channel 进入 daemon 主循环，由 <code>Daemon::on_hotkey</code> 消费；Wayland 线程不直接修改 daemon 状态。</li>
+  <li>转发路径不等待 ASR；Wayland 线程只做 keymap / key / modifiers 与 VK 发送。</li>
+  <li>未收到 keymap、VK 创建失败或发送失败都会终止 daemon，不能继续持有 grab。</li>
+</ul>
+
+<h3 id="c5-3">5.3 PTT 开始与结束</h3>
+<pre><code>daemon::Daemon::on_hotkey(HoldPressed / TogglePressed)
+├── 判断 phase != Idle → 忽略
+├── daemon::Daemon::start_segment(source)
+│   ├── state::PttTimer::start()
+│   ├── pipeline::Pipeline::start_segment()
+│   │   └── crossbeam_channel::Sender::send(PipelineCommand::StartSegment)
+│   ├── state::Phase::Recording
+│   └── ipc_server::IpcServer::broadcast(State)
+└── daemon::Daemon::on_hotkey(HoldReleased / TogglePressed)
+    ├── 判断 phase == Recording
+    ├── daemon::Daemon::finish_segment()
     │   ├── pipeline::Pipeline::finish_segment()
     │   │   └── crossbeam_channel::Sender::send(PipelineCommand::FinishSegment)
-    │   │       └── pipeline::Worker::handle_command(FinishSegment)
-    │   │           ├── vad::segmenter::Segmenter::force_end()
-    │   │           └── pipeline::Worker::finalize(segment)
-    │   └── app::App::finalizing = true
-    └── 判断 PageUp / PageDown / Home / End → app::ScrollState::page_up / page_down / home / end
+    │   ├── state::PttTimer::stop()
+    │   ├── state::Phase::Finalizing
+    │   └── ipc_server::IpcServer::broadcast(State)
+    └── 判断 HoldPressed 仍按住 → 等待 Final 后重新 start_segment
 </code></pre>
 <ul class="note">
-  <li>第二次 <code>Space</code> 后 <code>recording</code> 立即置为 false，标记消失；最终结果到达前当前行保留最后一条临时文本。</li>
-  <li>最终结果未完成时再次按 <code>Space</code> 被忽略，避免并发使用同一个 ASR 会话。</li>
-  <li>PTT 下 VAD 静音自动结束也走 <code>Worker::finalize</code>，不进入 continuous 队列；界面回到等待下一次 <code>Space</code> 的空闲状态。</li>
-  <li>PTT 达到 <code>max_segment_ms</code> 时由 <code>Segmenter</code> 切段，但保持 <code>collecting</code>；余下按住期间的语音另起一段，只有静音自动结束或松键才回到等待。</li>
-  <li><code>Ctrl+X</code> 在两种模式下都映射到 <code>App::clear_history</code>；它只修改 UI 内存状态，不经过 pipeline，录音中按下也不会丢弃当前段。</li>
+  <li>第二次开始操作在 Recording / Finalizing 期间被忽略，避免并发使用同一个 ASR 会话。</li>
+  <li>静音自动结束走同一条 <code>finish_segment</code>；松开事件幂等，不重复产生 Final。</li>
+  <li>30 s tick 到期时执行 <code>finish_segment</code>；若 hold 仍按住，Final 完成后立即开始下一段，<code>PttTimer</code> 重置为 30 s。</li>
 </ul>
 
-<h3 id="c5-3">5.3 Continuous 监听</h3>
+<h3 id="c5-4">5.4 Continuous 监听</h3>
 <pre><code>pipeline::Worker::run(self, audio_rx, commands)
 └── loop
     ├── crossbeam_channel::select_biased!（命令优先，50 ms 超时）
-    │   ├── 判断 PipelineCommand → pipeline::Worker::prepare_command(command, audio_rx)
-    │   │   └── pipeline::Worker::handle_command(command)
+    │   ├── 判断 PipelineCommand → pipeline::Worker::handle_command(command)
     │   └── 判断 AudioChunk → pipeline::Worker::handle_audio(chunk)
     │       ├── audio::resample::StreamResampler::push(chunk)
     │       └── pipeline::Worker::process_pending_audio(false)
-    │           └── pipeline::Worker::process_vad_batch(batch, frame_samples)
-    │               └── vad::firered::FireRedVad::push(batch)
-    │                   └── pipeline::Worker::handle_frame(frame, audio)
-    │                       └── vad::segmenter::Segmenter::push(frame, samples, mode)
-    │                           ├── 判断 SegmenterEvent::SpeechStart → PipelineEvent::Recording(true)
-    │                           ├── 判断临时识别门槛到期 → pipeline::Worker::emit_partial()
-    │                           └── 判断 SegmenterEvent::SpeechEnd { segment, reason }
-    │                               ├── PipelineEvent::Recording(false)
-    │                               ├── 判断 MaxDuration 且 PTT → 继续收集
-    │                               └── 判断 Continuous → queue.push_back(segment)
+    │           └── vad::firered::FireRedVad::push(batch)
+    │               └── pipeline::Worker::handle_frame(frame, audio)
+    │                   └── vad::segmenter::Segmenter::push(frame, samples, mode)
+    │                       ├── 判断 SpeechStart → PipelineEvent::Recording(true)
+    │                       ├── 判断临时识别门槛到期 → pipeline::Worker::emit_partial()
+    │                       └── 判断 SpeechEnd { segment, reason }
+    │                           ├── PipelineEvent::Recording(false)
+    │                           ├── 判断 MaxDuration 且 PTT → 继续收集
+    │                           └── 判断 Continuous → queue.push_back(segment)
     ├── pipeline::Worker::drain_queue()
     │   └── pipeline::Worker::finalize(segment)
     └── 判断 Shutdown → break
@@ -865,60 +1237,92 @@ pub const BACKGROUND: Color = Color::Reset;</code></pre>
   <li>VAD 事件与音频块在同一工作线程串行处理，分段器不需要锁。</li>
 </ul>
 
-<h3 id="c5-4">5.4 临时识别</h3>
+<h3 id="c5-5">5.5 临时识别（CTC）</h3>
 <pre><code>pipeline::Worker::emit_partial()
 ├── 判断 segmenter.is_active()
 ├── 截取 active_samples() 末尾 PARTIAL_MAX_MS
 ├── asr::features::Fbank::compute(tail)
-├── asr::firered_aed::FireRedAed::transcribe_with_beam(features, PARTIAL_BEAM_SIZE)
+├── asr::engine::AsrEngine::transcribe(features)
 ├── 判断 text 非空 → PipelineEvent::Partial(text)，截断时加 “…”
 └── pipeline::Worker::finish_partial_schedule(started)
     ├── next_partial_samples = 当前样本数 + max(PARTIAL_MIN_NEW_AUDIO_MS, 2 × 本次耗时)
-    └── next_partial_at = now + max(PARTIAL_INTERVAL_MS, 本次耗时)
-</code></pre>
+    └── next_partial_at = now + max(PARTIAL_INTERVAL_MS, 本次耗时)</code></pre>
 <ul class="note">
-  <li>临时识别不加标点，不写剪贴板；它与最终识别串行执行，正在执行的临时识别不会被取消。</li>
-  <li>临时结果为空时保留上一行文本，避免界面闪烁；最终结果为空才丢弃整段。</li>
+  <li>临时识别与 final 共用 CTC 模型，不加标点、不写剪贴板、不进入会话历史。</li>
   <li><code>FinishSegment</code> 排空音频通道时设置 <code>suppress_partials</code>，不会把积压音频逐帧变成临时识别。</li>
 </ul>
 
-<h3 id="c5-5">5.5 最终识别与标点</h3>
+<h3 id="c5-6">5.6 最终识别与标点</h3>
 <pre><code>pipeline::Worker::finalize(segment)
 ├── asr::features::Fbank::compute(segment.samples)
-├── asr::firered_aed::FireRedAed::transcribe(features)
+├── asr::engine::AsrEngine::transcribe(features)
 ├── 判断 asr.text 非空
 │   └── punc::firered::FireRedPunc::punctuate(asr.text)
-└── 判断 final_text 非空 → PipelineEvent::Final(final_text)
-</code></pre>
+└── 判断 final_text 非空 → PipelineEvent::Final(final_text)</code></pre>
 <ul class="note">
-  <li>标点只执行一次，使用完整语音段的 ASR 文本；临时文本不参与。</li>
-  <li>ASR 或标点返回错误时发送 <code>SegmentDropped</code> 并继续监听，界面不新增结果行。</li>
+  <li>标点只执行一次，使用完整语音段的 CTC 文本；临时文本不参与。</li>
+  <li>ASR 或标点返回错误时发送 <code>SegmentDropped</code> 并继续监听，不新增结果行。</li>
 </ul>
 
-<h3 id="c5-6">5.6 剪贴板、清空与退出</h3>
-<pre><code>app::App::on_key(KeyEvent Ctrl+X)
-└── app::App::clear_history()
-    ├── app.transcript.clear()
-    ├── app.scroll = ScrollState::default()
-    └── 不调用 clipboard::ClipboardWriter
+<h3 id="c5-7">5.7 最终文本投递</h3>
+<pre><code>daemon::Daemon::on_pipeline(PipelineEvent::Final(text))
+├── state::Transcript::push(text)
+├── daemon::Daemon::deliver(&amp;text)
+│   ├── focus::hyprland::active_window(config.terminal_classes)
+│   ├── sink::Sink::deliver(text, SinkContext)
+│   │   ├── 判断 im_active → sink::im::ImSink::deliver(text)
+│   │   │   └── wayland::im::InputMethod::commit(text)
+│   │   └── 判断 !im_active → sink::clipboard::ClipboardSink::deliver(text)
+│   │       ├── arboard::Clipboard::set_text(text)
+│   │       ├── wayland::virtual_keyboard::VirtualKeyboard::paste(target)
+│   │       └── 判断 XWayland 失败 → x11rb::XTest 粘贴兜底
+│   └── 判断 Delivery.ok == false → 记录 DeliveryFailed
+├── ipc_server::IpcServer::broadcast(Final { text, delivery })
+└── state::Phase::Idle</code></pre>
+<ul class="note">
+  <li>原生 Wayland 提交不碰剪贴板；只有 inactive / 显式 clipboard sink 才写单条 Final。</li>
+  <li>投递只看 Final 产生时的 <code>im_active</code> 与焦点；录音期间切换窗口不会回到旧窗口。</li>
+  <li>粘贴快捷键由 VK 发送，XWayland 才用 XTest；终端按 <code>Ctrl+Shift+V</code>。</li>
+</ul>
 
-app::App::on_pipeline(PipelineEvent::Final(line))
-├── app::App::push_final(line)
-└── clipboard::ClipboardWriter::set_transcript(&amp;app.transcript)
+<h3 id="c5-8">5.8 TUI 连接与清空</h3>
+<pre><code>voime::client::Client::connect(path, ClientRole::Tui)
+├── send(Hello)
+├── wait(Snapshot)
+└── app::App::new(snapshot)
 
-main::run()
-├── app::run(mode, &amp;mut pipeline, clipboard) → Result
-│   └── ui::Tui::restore()
-├── pipeline::Pipeline::shutdown()
-│   ├── crossbeam_channel::Sender::send(PipelineCommand::Shutdown)
-│   └── std::thread::JoinHandle::join()
-├── audio::capture::CaptureHandle::stop(capture)
-└── return
+app::App::on_key(Ctrl+X, &amp;mut client)
+├── client.send(ClearHistory)
+└── daemon::Daemon::on_client(ClearHistory)
+    ├── state::Transcript::clear()
+    ├── ipc_server::IpcServer::broadcast(HistoryCleared)
+    └── 不调用 sink / clipboard
+
+app::App::on_key(q / Ctrl+C, &amp;mut client)
+└── Control::Detach
 </code></pre>
 <ul class="note">
-  <li><code>Ctrl+X</code> 清空不调用 <code>set_transcript</code>，因此剪贴板保持最后一次写入的内容；清空后的下一次 <code>Final</code> 用新的 <code>transcript</code> 覆盖写入，剪贴板只包含清空后的结果。</li>
-  <li><code>set_transcript</code> 失败不改变 <code>app.transcript</code>；下一次最终结果会再次整体写入。</li>
-  <li>退出顺序固定为恢复终端 → 停止工作线程 → 停止音频；未完成的语音段直接丢弃，不写入剪贴板。</li>
+  <li>TUI 退出只 detach；daemon 的 PTT、普通打字与上屏继续运行。</li>
+  <li>清空只修改 daemon transcript，不取消当前段、不修改 partial / remaining_ms / 剪贴板。</li>
+</ul>
+
+<h3 id="c5-9">5.9 托盘退出与关停</h3>
+<pre><code>tray::TrayService::spawn(tray_tx)
+└── ksni::TrayService::spawn(...)
+    └── DBusMenu activate → tray_tx.send(TrayEvent::Quit)
+
+daemon::Daemon::on_tray(TrayEvent::Quit)
+└── daemon::Daemon::shutdown()
+    ├── audio::capture::CaptureHandle::stop(capture)
+    ├── pipeline::Pipeline::shutdown()
+    ├── tray::TrayService::shutdown()
+    ├── wayland::im::InputMethod::destroy()
+    ├── ipc_server::IpcServer::shutdown()
+    └── std::fs::remove_file(socket)</code></pre>
+<ul class="note">
+  <li><code>voime ctl quit</code> 与托盘退出走同一条 <code>shutdown</code>。</li>
+  <li>录音中退出直接取消当前段，不等待 ASR，不写剪贴板。</li>
+  <li>grab / VK / IM 的销毁顺序固定；托盘缺失不阻塞 shutdown。</li>
 </ul>
 
 </body>

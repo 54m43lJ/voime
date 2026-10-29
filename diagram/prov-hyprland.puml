@@ -1,0 +1,19 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Voime" as Voime
+participant "Hyprland IPC" as Ipc
+participant "当前窗口" as Window
+
+Voime -> Ipc : j/activewindow
+Ipc --> Voime : class / title / xwayland
+
+note over Voime
+  class 命中终端列表时用 Ctrl+Shift+V，
+  其余用 Ctrl+V；XWayland 或终端走剪贴板回退。
+  普通原生 Wayland 应用不查询窗口，
+  直接使用 input-method 提交。
+end note
+@enduml

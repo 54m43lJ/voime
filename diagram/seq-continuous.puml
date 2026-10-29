@@ -4,28 +4,28 @@ skinparam shadowing false
 hide footbox
 
 actor "用户" as User
-participant "Voime" as App
+participant "Voime\ndaemon" as Voime
+participant "TUI\n可选" as Tui
 participant "麦克风" as Mic
-participant "终端" as Term
-participant "剪贴板" as Clip
+participant "目标应用" as App
 
-User -> App : 启动 --mode continuous
+User -> Voime : voimed --mode continuous
 loop 持续监听
-  Mic -> App : PCM 帧
-  App -> App : 内部处理\nVAD 切分
+  Mic -> Voime : PCM 帧
+  Voime -> Voime : VAD 切分
   alt 检测到语音段
-    App -> Term : 显示红色标记与新行
+    Voime -> Tui : State(recording)
     loop 语音期间
-      Mic -> App : PCM 帧
-      App -> Term : 更新临时文本
+      Mic -> Voime : PCM 帧
+      Voime -> Tui : Partial(text)
     end
-    App -> Term : 隐藏标记
-    App -> App : 内部处理\n最终识别与标点
-    App -> Term : 追加结果行
-    App -> Clip : 写入会话文本
+    Voime -> Voime : 最终识别 + 标点
+    Voime -> Tui : Final(text)
+    Voime -> App : 按 §3.5 投递\ncommit_string 或粘贴
   else 静音
-    App -> Term : 隐藏标记
+    Voime -> Tui : State(recording=false)
   end
 end
-User -> App : q / Ctrl+C
+User -> Voime : voime ctl quit / 托盘退出
+Voime -> Tui : Bye
 @enduml

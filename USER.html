@@ -15,6 +15,7 @@
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
 <a href="BUILD.html">BUILD</a>
+<a href="ASR.html">ASR</a>
 </p>
 
 <h2 id="u1">1. TERMS</h2>
@@ -28,19 +29,19 @@
   </tr>
   <tr>
     <td>临时结果（Partial）</td>
-    <td>语音段尚未结束时，对已采集音频执行的一次阶段性识别结果。临时结果不加标点，只用于当前行的动态展示，不写入剪贴板，也不进入会话文本。</td>
+    <td>语音段尚未结束时，对已采集音频执行的一次阶段性识别结果。临时结果不加标点，只在 TUI 当前行显示，不写入剪贴板，也不进入会话历史。</td>
   </tr>
   <tr>
     <td>最终结果（Final）</td>
-    <td>语音段结束后，对完整语音段执行识别并加注标点得到的一行文本。最终结果一旦产生就不再变化，直到按 <code>Ctrl+X</code> 清空或程序退出。</td>
+    <td>语音段结束后，对完整语音段执行识别并加注标点得到的一行文本。最终结果一旦产生就不再变化，直到清空或 daemon 退出。</td>
   </tr>
   <tr>
     <td>结果行（Result line）</td>
-    <td>终端中承载一个最终结果的文本行；长文本按终端宽度换行，逻辑上仍是一行。结果行按产生顺序自上而下排列。</td>
+    <td>TUI 中承载一个最终结果的文本行；长文本按终端宽度换行，逻辑上仍是一行。结果行按产生顺序自上而下排列。</td>
   </tr>
   <tr>
-    <td>会话文本（Session transcript）</td>
-    <td>自最近一次 <code>Ctrl+X</code> 清空以来产生的全部最终结果，按产生顺序用换行符连接成的文本；每次最终结果产生后整体写入剪贴板。清空只丢弃内存中的会话文本，不修改剪贴板。</td>
+    <td>会话历史（Session history）</td>
+    <td>daemon 内存中自最近一次清空以来产生的全部最终结果。TUI 重连时从 daemon 恢复；daemon 退出后丢失，不写磁盘。</td>
   </tr>
   <tr>
     <td>模型包（Model package）</td>
@@ -48,35 +49,83 @@
   </tr>
   <tr>
     <td>Recording 标记</td>
-    <td>结果区左侧固定栏中的红色圆点 <code>●</code>；仅在当前语音段处于采集状态时显示。</td>
+    <td>TUI 结果区左侧固定栏中的红色圆点 <code>●</code>；仅在当前语音段处于采集状态时显示。</td>
   </tr>
   <tr>
     <td>PTT 模式</td>
-    <td>手动界定语音段的模式：按一次 <code>Space</code> 开始采集，再按一次结束；语音后长时间静音也会自动结束。终端必须保持焦点。</td>
+    <td>由 PTT 组合键或 TUI <code>Space</code> 手动界定语音段的模式；按住组合键说话，松开结束，静音超时也会自动结束。</td>
+  </tr>
+  <tr>
+    <td>PTT 组合键</td>
+    <td>由修饰键与非修饰键组成的按键组合。默认按住说话为 <code>Super+F2</code>，按一下切换为 <code>Super+F3</code>；可在 <code>voimed</code> 命令行修改。PTT 组合键不转发给应用。</td>
+  </tr>
+  <tr>
+    <td>按住说话（Hold）</td>
+    <td>PTT 语义之一：组合键按下开始采集，松开结束当前语音段。</td>
+  </tr>
+  <tr>
+    <td>按一下切换（Toggle）</td>
+    <td>PTT 语义之一：第一次按下开始采集，第二次按下结束；收尾期间的重复按下被忽略。</td>
   </tr>
   <tr>
     <td>Continuous 模式</td>
-    <td>持续监听模式：麦克风始终采集，VAD 自动切分语音段，不需要按键；仅在退出时停止。</td>
+    <td>持续监听模式：麦克风始终采集，VAD 自动切分语音段，PTT 组合键在该模式下按普通按键转发。</td>
   </tr>
   <tr>
     <td>静音自动结束</td>
-    <td>PTT 模式下，已经检测到语音且随后静音超过阈值时，自动结束当前语音段；用于防止用户忘记再次按键。</td>
+    <td>PTT 模式下，已经检测到语音且随后静音超过阈值时，自动结束当前语音段；用于防止用户忘记松开或再次按键。</td>
   </tr>
   <tr>
     <td>单段串行</td>
-    <td>同一时刻只允许一个语音段处于识别或收尾状态。PTT 模式下此时新的开始按键被忽略；continuous 模式下已完成的语音段进入有界队列，队列满时丢弃最旧段，具体调度见 <a href="CORE.html#c2">CORE §2</a>。</td>
+    <td>同一时刻只允许一个语音段处于识别或收尾状态。PTT 模式下此时新的开始操作被忽略；continuous 模式下已完成的语音段进入有界队列，队列满时丢弃最旧段，具体调度见 <a href="CORE.html#c2">CORE §2</a>。</td>
   </tr>
   <tr>
-    <td>输入焦点</td>
-    <td>终端窗口接收键盘事件的状态。PTT 的开始 / 结束按键、清空、滚动与退出都只在终端获得焦点时生效。</td>
+    <td>目标输入框</td>
+    <td>最终结果产生时拥有键盘焦点、并且支持 text-input 的应用输入区域。原生 Wayland 应用通过输入法协议接收文本；不支持 text-input 或属于 XWayland 的应用使用粘贴回退。</td>
+  </tr>
+  <tr>
+    <td>输入法 active / inactive</td>
+    <td>有 text-input 焦点时输入法处于 active，可以提交文本；焦点在终端、XWayland 或无 text-input 的窗口时处于 inactive，最终文本只能走粘贴回退。</td>
+  </tr>
+  <tr>
+    <td>键盘抓取（Keyboard grab）</td>
+    <td>Voime 作为唯一输入法接收 seat 键盘事件的状态。普通按键在匹配 PTT 之后被原样转发，不改变用户正常打字。</td>
+  </tr>
+  <tr>
+    <td>普通按键转发</td>
+    <td>PTT 组合键以外的按键、修饰键与按键重复由 Voime 透明交还给当前应用；应用看到的字符与快捷键应与未安装 Voime 时一致。</td>
+  </tr>
+  <tr>
+    <td>上屏（Commit）</td>
+    <td>把最终结果写入目标输入框的动作。原生 Wayland 使用输入法提交协议；XWayland / 无 text-input 使用剪贴板 + 粘贴快捷键。</td>
+  </tr>
+  <tr>
+    <td>粘贴回退</td>
+    <td>输入法 inactive 时，先写入单条最终文本到系统剪贴板，再向当前窗口发送 <code>Ctrl+V</code> 或 <code>Ctrl+Shift+V</code>。不保证 preedit、临时结果或光标位置。</td>
+  </tr>
+  <tr>
+    <td>daemon</td>
+    <td><code>voimed</code> 进程；拥有音频、模型、输入法、键盘抓取、上屏、会话历史与托盘。它不要求 TTY，生命周期独立于 TUI。</td>
+  </tr>
+  <tr>
+    <td>TUI</td>
+    <td><code>voime</code> 进程；可选终端监视器，通过 Unix socket 连接 daemon，显示状态与历史并发送控制命令。关闭 TUI 只 detach。</td>
+  </tr>
+  <tr>
+    <td>托盘</td>
+    <td>daemon 持有的 StatusNotifierItem 图标，右键菜单只有“退出”；没有托盘宿主时静默降级。</td>
+  </tr>
+  <tr>
+    <td>PTT 倒计时</td>
+    <td>PTT 录音时显示在 TUI 当前临时行上方的独立状态行 <code>● Remaining: xx s</code>；连续模式不显示。</td>
   </tr>
   <tr>
     <td>快捷键提示（Shortcut hint）</td>
-    <td>终端最底部固定显示的一行按键说明。PTT 模式列出 <code>Space</code>、<code>Ctrl+X</code> 与 <code>q</code> / <code>Ctrl+C</code>；continuous 模式不列出无动作的 <code>Space</code>。提示不随结果滚动，也不进入会话文本或剪贴板。</td>
+    <td>TUI 最底部固定显示的一行按键说明；显示当前模式可用的 TUI 按键与默认 PTT 组合键。</td>
   </tr>
   <tr>
     <td>终端选择</td>
-    <td>终端模拟器自身的鼠标选择 / 复制能力；应用不捕获鼠标，因此用户可以直接选取屏幕上的任意结果行。</td>
+    <td>终端模拟器自身的鼠标选择 / 复制能力；TUI 不捕获鼠标，因此用户可以直接选取屏幕上的任意结果行。</td>
   </tr>
 </table>
 
@@ -86,20 +135,36 @@
 <table>
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
+    <td>输入法唯一性</td>
+    <td>一个 seat 只允许一个 input-method-v2 对象。运行 <code>voimed</code> 前必须停用 Fcitx5 / IBus；seat 被占用时 daemon 以启动失败退出，不降级为纯粘贴工具。</td>
+  </tr>
+  <tr>
     <td>模式固定</td>
-    <td>运行模式由启动参数 <code>--mode</code> 唯一确定，运行期间不切换；没有快捷键或配置文件可以改变模式。</td>
+    <td>运行模式由 <code>--mode</code> 唯一确定，运行期间不切换；没有快捷键或配置文件可以改变模式。</td>
   </tr>
   <tr>
-    <td>模型安装</td>
-    <td>首次使用前由用户手动运行 <code>scripts/install_models.sh</code>（Linux）或 <code>scripts/install_models.ps1</code>（Windows）；脚本完成官方权重下载、模型转换、校验与原子安装。TUI 运行时不下载或更新模型；安装脚本需要 Python 3.10+ 与网络，不属于运行时依赖。</td>
+    <td>PTT 组合键</td>
+    <td>默认按住说话 <code>Super+F2</code>、按一下切换 <code>Super+F3</code>；可用 <code>--hold-key</code> / <code>--toggle-key</code> 修改，设为 <code>none</code> 表示禁用。组合键必须包含一个非修饰键，两者不能相同。</td>
   </tr>
   <tr>
-    <td>PTT 按键</td>
-    <td><code>Space</code> 是唯一开始 / 结束键。第一次按下开始采集并显示 recording 标记；第二次按下结束采集。按键重复事件忽略。</td>
+    <td>PTT 与 Hyprland 绑定</td>
+    <td>Hyprland 先处理自身 <code>bind</code> / <code>bindr</code>，再交给 Voime。PTT 组合键不得与 Hyprland 键绑定冲突；冲突时以合成器绑定为准，Voime 收不到该键。</td>
+  </tr>
+  <tr>
+    <td>PTT 语义</td>
+    <td>按住说话：按下开始、松开结束；松开按物理 keycode 匹配，不依赖松开时的修饰键。按一下切换：第一次按下开始、第二次按下结束；重复按下与自动重复均忽略。</td>
+  </tr>
+  <tr>
+    <td>普通按键</td>
+    <td>除 PTT 组合键外，所有按键与修饰键都透明转发。CapsLock / NumLock / 布局切换不影响 PTT 匹配；PTT 匹配只比较 Shift / Ctrl / Alt / Super。</td>
+  </tr>
+  <tr>
+    <td>TUI 手动 PTT</td>
+    <td>PTT 模式下，TUI 获得焦点时按 <code>Space</code> 发送 Start / Stop；Recording / Finalizing 期间 Start 被忽略。continuous 模式下 <code>Space</code> 无动作。</td>
   </tr>
   <tr>
     <td>PTT 自动结束</td>
-    <td>检测到语音后，若连续静音超过静音自动结束阈值，自动结束当前语音段；阈值见 <a href="CORE.html#c4-6">CORE §4.6</a>。结束后的下一次 <code>Space</code> 开始新的一行。</td>
+    <td>检测到语音后，若连续静音超过阈值，自动结束当前语音段；阈值见 <a href="CORE.html#c2">CORE §2</a>。结束后的下一次开始操作另起一行。</td>
   </tr>
   <tr>
     <td>Continuous 切分</td>
@@ -110,28 +175,24 @@
     <td>录音期间按动态间隔刷新当前行，间隔与单次长度上限见 <a href="CORE.html#c4-6">CORE §4.6</a>；长段只显示最近 6 s 的临时文本，截断时以 <code>…</code> 开头。临时结果覆盖当前行文本，不写入剪贴板；最终结果仍覆盖整段。</td>
   </tr>
   <tr>
-    <td>最终结果</td>
-    <td>语音段结束后对完整音频执行一次最终识别，再执行标点预测；结果追加为新的结果行。临时行在最终结果产生时被同一段文本替换，不额外保留副本。</td>
+    <td>最终结果与投递</td>
+    <td>语音段结束后对完整音频执行一次最终识别，再执行标点预测；结果追加为新的会话结果。目标输入框处于 active 时提交到光标处；否则写剪贴板并粘贴。录音期间切换焦点时，文本进入 Final 产生时的焦点。</td>
   </tr>
   <tr>
     <td>结果保留</td>
-    <td>最终结果保留到按 <code>Ctrl+X</code> 清空或程序退出，不自动消失；再次识别另起一行。终端回滚区不保留应用内容，退出后屏幕恢复。</td>
+    <td>最终结果保留在 daemon 内存中，直到清空或 daemon 退出；TUI 重连后从 daemon 恢复历史。TUI 退出不丢失历史，daemon 退出后历史丢失。</td>
   </tr>
   <tr>
     <td>清空工作区</td>
-    <td><code>Ctrl+X</code> 清空全部已完成的最终结果行，并把内存中的会话文本置空；剪贴板保持原内容不变。正在录音的语音段、临时行和等待中的最终识别不受影响；当前段完成后作为清空后的第一条新结果显示，且只把清空后产生的结果写入剪贴板。没有最终结果时只复位滚动状态，不清除临时行。</td>
+    <td>TUI 中 <code>Ctrl+X</code> 清空全部已完成结果与会话历史；剪贴板保持原内容不变。正在录音的语音段、临时行和等待中的最终识别不受影响；当前段完成后作为清空后的第一条新结果显示。</td>
+  </tr>
+  <tr>
+    <td>剪贴板</td>
+    <td>只有粘贴回退会写入剪贴板，内容为单条最终文本，不含会话前缀；写入后保留，不恢复用户原内容。原生 Wayland 提交不修改剪贴板；TUI 不自动复制整段会话。</td>
   </tr>
   <tr>
     <td>空语音段</td>
     <td>PTT 按下后未检测到有效语音即结束，或最终结果为空时，不产生结果行，剪贴板保持不变。</td>
-  </tr>
-  <tr>
-    <td>剪贴板写入</td>
-    <td>每次最终结果产生后，自动把当前会话文本写入系统剪贴板；<code>Ctrl+X</code> 清空不修改剪贴板。具体写入格式与生命周期见 <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a>。</td>
-  </tr>
-  <tr>
-    <td>手动复制</td>
-    <td>应用不实现复制快捷键，也不接管鼠标；用户使用终端自身的鼠标选择与复制。由于应用禁用鼠标上报，选择行为与普通终端文本一致。自动写入剪贴板会覆盖刚手动复制的内容；需要保留时先粘贴到目标位置或退出应用。</td>
   </tr>
   <tr>
     <td>滚动</td>
@@ -139,27 +200,35 @@
   </tr>
   <tr>
     <td>快捷键提示</td>
-    <td>终端最后一行始终显示当前模式可用的快捷键。PTT 模式为 <code>Space 开始/结束&nbsp;&nbsp;Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code>；continuous 模式为 <code>Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code>。提示固定显示，不随结果滚动，也不写入剪贴板。</td>
+    <td>TUI 最后一行始终显示当前模式可用的快捷键；PTT 模式显示默认 PTT 组合键、<code>Ctrl+X</code> 与退出键，continuous 只显示 <code>Ctrl+X</code> 与退出键。提示固定显示，不随结果滚动，也不写入剪贴板。</td>
   </tr>
   <tr>
     <td>连续模式积压</td>
     <td>识别速度跟不上语音产生速度时，最早的未处理语音段会被丢弃；界面不显示积压或丢失提示，结果可能缺少较早的段。调度细节见 <a href="CORE.html#c2">CORE §2</a>。</td>
   </tr>
   <tr>
-    <td>退出</td>
-    <td><code>q</code> 或 <code>Ctrl+C</code> 退出；退出前停止采集、丢弃未完成的语音段，并恢复终端状态。退出不清空剪贴板，已有的会话文本不回滚。</td>
+    <td>关闭 TUI</td>
+    <td><code>q</code> 或 <code>Ctrl+C</code> 只 detach：恢复终端并退出 <code>voime</code>；daemon、PTT、普通打字与上屏继续运行。</td>
   </tr>
   <tr>
-    <td>终端焦点</td>
-    <td>PTT、清空与滚动按键只在终端获得焦点时送达；终端未获得焦点时按键不会送达，因此不会开始新的语音段或清空结果。continuous 模式仍继续监听，结果照常追加。</td>
+    <td>停止 daemon</td>
+    <td><code>voime ctl quit</code> 或托盘右键“退出”停止 daemon；停止前取消当前语音段，不产生最终结果，不写剪贴板。</td>
   </tr>
   <tr>
-    <td>分段上限</td>
-    <td>一个语音段的长度上限由模型包清单声明，且不得超过 FireRedASR2-AED 的 60 s 输入上限。达到上限时强制结束当前段；continuous 模式与仍按住 Space 的 PTT 模式都会把余下语音另起一段。</td>
+    <td>托盘</td>
+    <td>托盘只负责退出；图标静态、不随录音状态变化，左键无动作。没有 StatusNotifierWatcher / 宿主时不显示图标，daemon 继续运行。</td>
+  </tr>
+  <tr>
+    <td>启动失败</td>
+    <td>模型缺失 / 校验失败、没有输入设备、Wayland / input-method-v2 / 键盘抓取 / virtual-keyboard 初始化失败、Fcitx5 占用 seat 时，在进入 TUI 前写 stderr 并以 1 退出。</td>
   </tr>
   <tr>
     <td>无附加反馈</td>
-    <td>没有声音提示、桌面通知、标题栏状态、进度条或错误行。启动前的错误写 stderr；运行期识别失败只影响当前语音段，内容区仍只保留 recording 标记与识别内容，底部快捷键提示不受影响。</td>
+    <td>没有声音提示、桌面通知、标题栏状态或进度条。启动前的错误写 stderr；运行期上屏失败写日志并可通过 <code>voime doctor</code> 查看，TUI 内容区不显示错误行。</td>
+  </tr>
+  <tr>
+    <td>隐私</td>
+    <td>Voime 与 Fcitx5 一样处于键盘信任边界内，能看到普通按键；不记录按键、不写磁盘、不联网。识别历史只存在 daemon 内存。</td>
   </tr>
 </table>
 
@@ -169,82 +238,177 @@
 <h3 id="u3-1">3.1 总体架构</h3>
 <div class="diagram"><img src="diagram/general-architecture.svg" alt="总体架构组件图"></div>
 <ul class="note">
-  <li>Voime 只通过终端与用户交互；文字交付依赖系统剪贴板，不向其他应用注入按键。</li>
-  <li>麦克风输入与模型推理都在本机完成；模型文件是只读数据，不访问网络。</li>
-  <li>模型边界与剪贴板协议分别见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a> 与 <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a>。</li>
+  <li>Voime 作为唯一输入法接收键盘事件，并在同一个输入法对象上完成 PTT 匹配与文本提交。</li>
+  <li>普通按键经 virtual-keyboard 透明转发；原生 Wayland 应用接收提交文本，XWayland / 无 text-input 的应用接收粘贴回退。</li>
+  <li>麦克风输入与模型推理都在本机完成；模型文件只读，不访问网络。</li>
+  <li>模型边界、输入法协议与剪贴板契约分别见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>、<a href="PROVIDER.html#p4-7">PROVIDER §4.7</a> 与 <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a>。</li>
 </ul>
 
-<h3 id="u3-2">3.2 PTT 识别流程</h3>
+<h3 id="u3-2">3.2 键盘抓取、PTT 与普通按键转发</h3>
+<div class="diagram"><img src="diagram/seq-input-method.svg" alt="键盘抓取、PTT 匹配与普通按键转发时序图"></div>
+<ul class="note">
+  <li>PTT 组合键被输入法消费，不再发送给应用；其他按键与修饰键经 virtual-keyboard 原样转发。</li>
+  <li>Hyprland 先处理合成器键绑定，再交给输入法；PTT 组合键不能与 Hyprland 绑定冲突。</li>
+  <li>输入法与 virtual-keyboard 必须使用同一个 Wayland 连接，避免注入按键被再次送回输入法。</li>
+</ul>
+
+<h3 id="u3-3">3.3 PTT 识别流程</h3>
 <div class="diagram"><img src="diagram/seq-ptt.svg" alt="PTT 识别流程时序图"></div>
 <ul class="note">
-  <li>第一次 <code>Space</code> 开始采集；第二次 <code>Space</code> 或静音自动结束触发最终识别。</li>
-  <li>录音期间的临时文本只更新当前行；最终结果产生后才写入剪贴板。</li>
-  <li>识别与标点的内部分解见 <a href="CORE.html#c5-5">CORE §5.5</a>。</li>
+  <li>按住组合键开始采集；松开、静音自动结束或达到 30 s 上限触发最终识别。</li>
+  <li>录音期间的临时文本只更新 TUI 当前行；最终结果产生后才提交或写剪贴板。</li>
+  <li>识别与标点的内部分解见 <a href="CORE.html#c5-5">CORE §5.5</a> 与 <a href="CORE.html#c5-6">CORE §5.6</a>。</li>
 </ul>
 
-<h3 id="u3-3">3.3 Continuous 识别流程</h3>
+<h3 id="u3-4">3.4 Continuous 识别流程</h3>
 <div class="diagram"><img src="diagram/seq-continuous.svg" alt="持续监听识别流程时序图"></div>
 <ul class="note">
-  <li>语音段的起止完全由 VAD 决定；用户不需要按键，终端失焦也不影响监听。</li>
-  <li>每个语音段结束后追加一行并刷新剪贴板；识别较慢时语音段在有界队列中排队，调度见 <a href="CORE.html#c5-3">CORE §5.3</a>。</li>
-  <li>录音标记只表示“当前有语音段正在采集”，不表示后台是否仍在识别。</li>
+  <li>语音段的起止完全由 VAD 决定；PTT 组合键在该模式下不消费，按普通按键转发。</li>
+  <li>每个语音段结束后追加一行并投递；识别较慢时语音段在有界队列中排队，调度见 <a href="CORE.html#c5-4">CORE §5.4</a>。</li>
+  <li>recording 标记只表示“当前有语音段正在采集”，不表示后台是否仍在识别。</li>
+</ul>
+
+<h3 id="u3-5">3.5 最终文本投递</h3>
+<div class="diagram"><img src="diagram/act-delivery.svg" alt="最终文本投递决策活动图"></div>
+<ul class="note">
+  <li>有 text-input 焦点时直接提交；输入法 inactive 时只能写剪贴板并发送粘贴快捷键。</li>
+  <li>粘贴快捷键优先经 virtual-keyboard 发送；XWayland 失败时用 XTest 兜底。</li>
+  <li>投递失败时文本仍留在剪贴板，用户可手动粘贴。</li>
+</ul>
+
+<h3 id="u3-6">3.6 XWayland 粘贴回退</h3>
+<div class="diagram"><img src="diagram/seq-xwayland.svg" alt="XWayland 粘贴回退时序图"></div>
+<ul class="note">
+  <li>XWayland 不使用 text-input-v3，最终文本不能通过输入法提交。</li>
+  <li>PTT 与普通按键转发不受影响；只有最终文本投递改走剪贴板。</li>
+  <li>终端使用 <code>Ctrl+Shift+V</code>，普通应用使用 <code>Ctrl+V</code>；终端识别列表见 <a href="PROVIDER.html#p4-9">PROVIDER §4.9</a>。</li>
+</ul>
+
+<h3 id="u3-7">3.7 TUI 连接与 detach</h3>
+<div class="diagram"><img src="diagram/seq-tui-attach.svg" alt="TUI 连接与 detach 时序图"></div>
+<ul class="note">
+  <li>TUI 是可选客户端；daemon 不依赖终端，也不要求 TTY。</li>
+  <li>TUI 关闭只 detach；PTT、普通打字、上屏与托盘继续运行。</li>
+  <li><code>voime ctl quit</code> 才是停止 daemon 的入口。</li>
+</ul>
+
+<h3 id="u3-8">3.8 托盘退出</h3>
+<div class="diagram"><img src="diagram/seq-tray.svg" alt="托盘注册与退出时序图"></div>
+<ul class="note">
+  <li>托盘由 daemon 持有，与 TUI 无关；没有宿主时只记录 warning。</li>
+  <li>右键菜单只有“退出”，左键无动作；图标不表示录音状态。</li>
 </ul>
 
 <h2 id="u4">4. INTERFACES</h2>
 <p><a href="#top">↑</a></p>
 
 <h3 id="u4-1">4.1 命令行</h3>
-<pre><code>voime [--mode &lt;ptt|continuous&gt;] [--model-dir &lt;DIR&gt;] [--input-device &lt;NAME&gt;] [--threads &lt;N&gt;]</code></pre>
+<pre><code>voimed [--mode &lt;ptt|continuous&gt;]
+       [--model-dir &lt;DIR&gt;]
+       [--input-device &lt;NAME&gt;]
+       [--threads &lt;N&gt;]
+       [--sink &lt;auto|im|clipboard&gt;]
+       [--hotkey &lt;im|none&gt;]
+       [--hold-key &lt;COMBO&gt;]
+       [--toggle-key &lt;COMBO&gt;]
+       [--terminal-class &lt;CLASS&gt;]
+       [--socket &lt;PATH&gt;]
+       [--preedit]
+       [--no-tray]
+       [--verbose]
+
+voime [--socket &lt;PATH&gt;]
+voime ctl &lt;start|stop|toggle|status|clear|quit&gt; [--socket &lt;PATH&gt;]
+voime doctor [--socket &lt;PATH&gt;]</code></pre>
 
 <table>
   <tr><th>参数</th><th>取值</th><th>默认</th><th>说明</th></tr>
-  <tr>
-    <td><code>--mode</code></td>
-    <td><code>ptt</code> · <code>continuous</code></td>
-    <td><code>ptt</code></td>
-    <td>运行模式；只影响语音段如何开始与结束，不改变识别链路。</td>
-  </tr>
-  <tr>
-    <td><code>--model-dir</code></td>
-    <td>目录路径</td>
-    <td>Linux <code>$XDG_DATA_HOME/voime/models</code>；Windows <code>%LOCALAPPDATA%\voime\models</code></td>
-    <td>包含 <code>manifest.json</code> 的模型包目录；默认由安装脚本写入，应用只读。目录结构与校验见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td>
-  </tr>
-  <tr>
-    <td><code>--input-device</code></td>
-    <td>设备名，按精确字符串匹配</td>
-    <td>系统默认输入设备</td>
-    <td>未找到指定设备时启动失败；设备名由操作系统提供。</td>
-  </tr>
-  <tr>
-    <td><code>--threads</code></td>
-    <td>正整数</td>
-    <td><code>min(4, 逻辑核心数)</code></td>
-    <td>ONNX Runtime 的 intra-op 线程数；不改变模型精度。</td>
-  </tr>
-  <tr>
-    <td><code>--help</code> / <code>--version</code></td>
-    <td>—</td>
-    <td>—</td>
-    <td>打印到 stdout 后退出，不进入 TUI。</td>
-  </tr>
+  <tr><td><code>--mode</code></td><td><code>ptt</code> · <code>continuous</code></td><td><code>ptt</code></td><td>运行模式；只影响语音段如何开始与结束，不改变识别链路。</td></tr>
+  <tr><td><code>--model-dir</code></td><td>目录路径</td><td><code>$XDG_DATA_HOME/voime/models</code></td><td>包含 <code>manifest.json</code> 的模型包目录；应用只读。目录与校验见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td></tr>
+  <tr><td><code>--input-device</code></td><td>设备名，按精确字符串匹配</td><td>系统默认输入设备</td><td>未找到指定设备时启动失败。</td></tr>
+  <tr><td><code>--threads</code></td><td>正整数</td><td><code>min(4, 逻辑核心数)</code></td><td>ONNX Runtime 的 intra-op 线程数；不改变模型精度。</td></tr>
+  <tr><td><code>--sink</code></td><td><code>auto</code> · <code>im</code> · <code>clipboard</code></td><td><code>auto</code></td><td><code>auto</code> 先尝试提交，再回退粘贴；显式指定时失败不自动切换，便于测试。</td></tr>
+  <tr><td><code>--hotkey</code></td><td><code>im</code> · <code>none</code></td><td><code>im</code></td><td><code>im</code> 在键盘抓取中匹配 PTT；<code>none</code> 仍抓取并转发普通按键，但关闭 PTT 匹配，仅用于调试。</td></tr>
+  <tr><td><code>--hold-key</code></td><td><code>MOD+KEY</code> 或 <code>none</code></td><td><code>SUPER+F2</code></td><td>按住说话组合键；<code>MOD</code> 支持 <code>SUPER</code> / <code>CTRL</code> / <code>ALT</code> / <code>SHIFT</code>，<code>KEY</code> 使用 xkb keysym 名。</td></tr>
+  <tr><td><code>--toggle-key</code></td><td><code>MOD+KEY</code> 或 <code>none</code></td><td><code>SUPER+F3</code></td><td>按一下切换组合键；与 hold 键不能相同。</td></tr>
+  <tr><td><code>--terminal-class</code></td><td>窗口 class，可重复</td><td>内建终端列表</td><td>追加识别为终端的窗口 class；影响粘贴键选择。</td></tr>
+  <tr><td><code>--socket</code></td><td>路径</td><td><code>$XDG_RUNTIME_DIR/voime/voimed.sock</code></td><td>Unix socket 路径；daemon 与 TUI / ctl 必须一致。</td></tr>
+  <tr><td><code>--preedit</code></td><td>开关</td><td>关闭</td><td>Phase 2：把临时结果作为 preedit 显示在输入框；v1 不启用。</td></tr>
+  <tr><td><code>--no-tray</code></td><td>开关</td><td>关闭</td><td>不创建 StatusNotifierItem；不影响 <code>voime ctl quit</code>。</td></tr>
+  <tr><td><code>--verbose</code></td><td>开关</td><td>关闭</td><td>输出调试日志到 stderr。</td></tr>
+  <tr><td><code>--help</code> / <code>--version</code></td><td>—</td><td>—</td><td>打印到 stdout 后退出，不连接 Wayland。</td></tr>
 </table>
 
 <table>
-  <tr><th>退出码</th><th>含义</th></tr>
-  <tr><td><code>0</code></td><td>用户正常退出（<code>q</code> / <code>Ctrl+C</code>）。</td></tr>
-  <tr><td><code>1</code></td><td>启动或运行期致命错误：模型缺失 / 校验失败、没有输入设备、终端不可用、音频流无法建立。</td></tr>
-  <tr><td><code>2</code></td><td>命令行参数非法（由参数解析器返回）。</td></tr>
+  <tr><th>进程</th><th>退出码</th><th>含义</th></tr>
+  <tr><td><code>voimed</code></td><td><code>0</code></td><td>正常退出 / 已有一个 daemon 在运行（幂等启动）。</td></tr>
+  <tr><td><code>voimed</code></td><td><code>1</code></td><td>启动或运行期致命错误：模型、音频、Wayland、input-method-v2、键盘抓取、virtual-keyboard、socket 初始化失败。</td></tr>
+  <tr><td><code>voimed</code></td><td><code>2</code></td><td>命令行参数非法。</td></tr>
+  <tr><td><code>voime</code></td><td><code>0</code></td><td>TUI detach 或命令成功。</td></tr>
+  <tr><td><code>voime</code></td><td><code>1</code></td><td>连接不上 daemon、协议版本不匹配或运行期错误。</td></tr>
 </table>
 <ul class="note">
-  <li>TUI 占用 stdout；<code>--help</code> / <code>--version</code> 与启动错误使用 stdout / stderr 的常规约定。</li>
+  <li><code>--sink auto</code> 是默认值：按 im → clipboard 的顺序回退；显式指定 <code>im</code> / <code>clipboard</code> 时只使用该后端。</li>
+  <li><code>--hotkey none</code> 仍抓取键盘并转发普通按键，只是不匹配 PTT；没有 PTT 时仍可用 TUI <code>Space</code> 或 <code>voime ctl</code>。</li>
   <li>模式与设备在启动时固定，运行期不能通过网络、配置文件或快捷键改变。</li>
 </ul>
 
-<h3 id="u4-2">4.2 对外 API</h3>
-<p>
-除命令行与剪贴板外，本应用不暴露 API、socket、D-Bus 服务或文件输出，也不接受其他软件的控制命令。
-</p>
+<h3 id="u4-2">4.2 对外 API：Unix socket</h3>
+<pre><code>socket: $XDG_RUNTIME_DIR/voime/voimed.sock
+目录 0700，socket 0600；仅同 UID 可连接
+framing: 一行一个 JSON；最大 1 MiB；UTF-8
+握手: Hello { role, version }；版本不匹配返回 Error 并断开
+
+ClientMessage =
+  | Hello { role: Tui | Control, version: u32 }
+  | Start { source: TriggerSource }
+  | Stop  { source: TriggerSource }
+  | Toggle { source: TriggerSource }
+  | ClearHistory
+  | Status
+  | Quit
+
+ServerMessage =
+  | Snapshot { mode, phase, partial, transcript, im, keyboard, remaining_ms? }
+  | State { recording, finalizing, remaining_ms? }
+  | Partial { text }
+  | Final { text, delivery }
+  | Delivery { kind, ok, error? }
+  | HistoryCleared
+  | Status { ... }
+  | Error { code, message }
+  | Bye
+
+TriggerSource = ImHold | ImToggle | Tui | Cli | Continuous</code></pre>
+
+<table>
+  <tr><th>消息</th><th>方向</th><th>语义</th></tr>
+  <tr><td><code>Hello</code></td><td>client → daemon</td><td>声明角色与协议版本；daemon 回 <code>Snapshot</code>。</td></tr>
+  <tr><td><code>Start</code> / <code>Stop</code> / <code>Toggle</code></td><td>client → daemon</td><td>手动触发；与 PTT 共用同一状态机；Recording / Finalizing 时 Start 被忽略。</td></tr>
+  <tr><td><code>ClearHistory</code></td><td>client → daemon</td><td>清空已完成 transcript；保留 partial / recording / finalizing；不碰剪贴板。</td></tr>
+  <tr><td><code>Quit</code></td><td>Control → daemon</td><td>停止 daemon；TUI 的 <code>q</code> 不发送 Quit，只 Detach。</td></tr>
+  <tr><td><code>Snapshot</code></td><td>daemon → client</td><td>连接时全量状态；新 TUI 不需要回放事件。</td></tr>
+  <tr><td><code>State</code></td><td>daemon → client</td><td><code>recording</code> / <code>finalizing</code> / <code>remaining_ms</code>；PTT 录音时每秒更新，continuous 为 <code>None</code>。</td></tr>
+  <tr><td><code>Final</code></td><td>daemon → client</td><td>已尝试投递的最终文本；<code>delivery</code> 说明走的是 im / clipboard / failed。</td></tr>
+  <tr><td><code>HistoryCleared</code></td><td>daemon → client</td><td>任一客户端清空后广播；所有 TUI 同步清空本地 transcript 视图。</td></tr>
+  <tr><td><code>Bye</code></td><td>daemon → client</td><td>daemon 关闭时发送；TUI 收到后恢复终端并退出。</td></tr>
+</table>
+
+<table>
+  <tr><th>错误码</th><th>触发条件</th><th>建议动作</th></tr>
+  <tr><td><code>ImUnavailable</code></td><td>seat 已被 Fcitx5 / 其他输入法占用。</td><td>停用其他输入法后重启 <code>voimed</code>。</td></tr>
+  <tr><td><code>GrabFailed</code></td><td>键盘抓取失败或启动后未收到 keymap。</td><td>检查合成器 / 协议支持；查看 stderr。</td></tr>
+  <tr><td><code>KeyForwardFailed</code></td><td>普通按键转发失败。</td><td>daemon 退出；重启前先确认 virtual-keyboard 可用。</td></tr>
+  <tr><td><code>NoFocusedWindow</code></td><td>Final 产生时没有可投递焦点。</td><td>文本留在剪贴板；切换焦点后手动粘贴。</td></tr>
+  <tr><td><code>PasteFailed</code> / <code>ClipboardFailed</code></td><td>粘贴快捷键或剪贴板写入失败。</td><td>文本可能仍在剪贴板；检查剪贴板 / XWayland。</td></tr>
+  <tr><td><code>WaylandProtocol</code></td><td>协议版本或对象状态异常。</td><td>升级 / 回退 Hyprland 后重试；查看 <code>voime doctor</code>。</td></tr>
+  <tr><td><code>TrayUnavailable</code></td><td>没有 StatusNotifierWatcher / 宿主。</td><td>只告警；使用 <code>voime ctl quit</code> 退出。</td></tr>
+</table>
+<ul class="note">
+  <li>慢客户端使用每个 subscriber 一个的有界队列；队列满时断开该客户端，不阻塞 daemon。</li>
+  <li>socket 只监听 Unix domain，不开 TCP；安全依赖文件系统权限。</li>
+  <li>若 <code>XDG_RUNTIME_DIR</code> 未设置，回退到 <code>/tmp/voime-$UID/</code>，目录仍为 0700。</li>
+</ul>
 
 <h2 id="u5">5. UI</h2>
 <p><a href="#top">↑</a></p>
@@ -261,7 +425,7 @@ TUI 只使用终端自身的背景色与前景色，另加一个红色语义色�
     <td><span class="palette-swatch" style="background:#E5484D"></span></td>
     <td><code>recording</code></td>
     <td>ANSI bright red（SGR 91）；真彩色终端回退 <code>#E5484D</code></td>
-    <td>仅用于 recording 标记的圆点。</td>
+    <td>仅用于 recording 标记与 PTT 倒计时行首的圆点。</td>
   </tr>
   <tr>
     <td><span class="palette-swatch" style="background:#101014"></span></td>
@@ -273,18 +437,19 @@ TUI 只使用终端自身的背景色与前景色，另加一个红色语义色�
     <td><span class="palette-swatch" style="background:#E6E6E6"></span></td>
     <td><code>text</code></td>
     <td>终端默认前景</td>
-    <td>临时结果、最终结果与底部快捷键提示文本；应用不设置前景色。</td>
+    <td>临时结果、最终结果、倒计时文本与底部快捷键提示；应用不设置前景色。</td>
   </tr>
 </table>
 <ul class="note">
   <li>上表的预览色仅用于文档示意；实际颜色由终端主题决定，唯一固定的是 recording 的红色语义。</li>
-  <li>底部快捷键提示使用 <code>text</code> token，与识别内容同色，不引入新的颜色语义。</li>
-  <li>不使用加粗、斜体、下划线、反色或闪烁来表达状态；recording 只由圆点是否存在表达。</li>
+  <li>底部快捷键提示与倒计时文本使用 <code>text</code> token，不引入新的颜色语义。</li>
+  <li>不使用加粗、斜体、下划线、反色或闪烁来表达状态。</li>
 </ul>
 
 <h3 id="u5-2">5.2 视觉呈现</h3>
 <p>
-以下尺寸以终端单元格为单位。界面占满整个终端，不设边框、标题或状态栏；可见内容由 recording 标记、识别内容与底部一行快捷键提示组成。快捷键提示固定在最后一行，不随结果滚动。
+以下尺寸以终端单元格为单位。界面占满整个终端，不设边框、标题或状态栏；可见内容由 recording 标记、
+PTT 倒计时状态行、识别内容与底部一行快捷键提示组成。快捷键提示固定在最后一行。
 </p>
 
 <h4 id="u5-2-1">5.2.1 布局</h4>
@@ -296,29 +461,35 @@ TUI 只使用终端自身的背景色与前景色，另加一个红色语义色�
   <tr><td>内容区</td><td>除最后一行外的全部行；滚动只作用于内容区，底部提示行固定。</td></tr>
   <tr><td>快捷键提示</td><td>占终端最后一行，从第 1 列开始，整行左对齐；不绘制分隔线、背景或边框。文本超出宽度时在右边缘截断。</td></tr>
   <tr><td>空状态</td><td>识别内容区空白，不显示欢迎语、模式名、设备名或错误提示；底部快捷键提示仍然显示。</td></tr>
-  <tr><td>最小终端</td><td>至少 2 列宽即可渲染内容；更窄时仅显示标记栏，内容被截断。高度为 1 时只显示底部快捷键提示；高度不足时内容区只显示最后一行。</td></tr>
+  <tr><td>最小终端</td><td>至少 2 列宽即可渲染内容；更窄时仅显示标记栏，内容被截断。高度为 1 时只显示底部快捷键提示。</td></tr>
 </table>
 
-<h4 id="u5-2-2">5.2.2 Recording 标记</h4>
+<h4 id="u5-2-2">5.2.2 Recording 标记与 PTT 倒计时</h4>
 <table>
   <tr><th>项目</th><th>契约</th></tr>
-  <tr><td>字形</td><td><code>●</code>（U+25CF，BLACK CIRCLE）。</td></tr>
-  <tr><td>位置</td><td>当前活动语音段所在结果行的第 1 列；右侧第 2 列留空。</td></tr>
-  <tr><td>可见条件</td><td>仅当语音段正在采集音频时显示。PTT 按下瞬间显示；结束采集或 VAD 报告语音终点后立即隐藏。</td></tr>
-  <tr><td>动态</td><td>常亮，不闪烁、不旋转、不变色；不随临时结果刷新而移动。</td></tr>
+  <tr><td>Recording 字形</td><td><code>●</code>（U+25CF，BLACK CIRCLE）。</td></tr>
+  <tr><td>Recording 位置</td><td>当前活动语音段所在结果行的第 1 列；右侧第 2 列留空。</td></tr>
+  <tr><td>Recording 可见条件</td><td>仅当语音段正在采集音频时显示。PTT 按下瞬间显示；结束采集或 VAD 报告语音终点后立即隐藏。</td></tr>
+  <tr><td>倒计时行</td><td>PTT 录音时在 partial 行上方增加独立状态行 <code>● Remaining: xx s</code>；圆点使用 recording 红色，文本使用默认色；continuous 不显示。</td></tr>
+  <tr><td>倒计时取值</td><td><code>ceil(remaining_ms / 1000)</code>，范围 0–30，每秒刷新；30 s 到时自动结束当前段并立即开始下一段。</td></tr>
+  <tr><td>倒计时结束</td><td>状态行消失，partial 行原位替换为 final 文本；正文始终从第 3 列开始，不因倒计时左右跳动。</td></tr>
   <tr><td>非活动行</td><td>最终结果行与等待最终识别的行在标记栏留空。</td></tr>
 </table>
+<ul class="note">
+  <li>倒计时行不参与结果行、不进入会话历史、不写剪贴板；约 17 列宽，终端更窄时从右端截断，至少保留红点。</li>
+  <li>内容区高度不足 2 行时倒计时行优先，partial 可能暂不可见。</li>
+</ul>
 
 <h4 id="u5-2-3">5.2.3 识别内容</h4>
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>行模型</td><td>每个语音段对应一个结果行；当前段在底部显示为临时行，最终结果产生后原位替换为最终文本。下一段另起一行。</td></tr>
   <tr><td>临时文本</td><td>未加标点；按动态间隔整体覆盖当前行，不在行尾追加省略号或光标。长段截断时行首显示 <code>…</code>。间隔见 <a href="CORE.html#c4-6">CORE §4.6</a>。</td></tr>
-  <tr><td>最终文本</td><td>已加标点；产生后不再变化，直到按 <code>Ctrl+X</code> 清空或退出。</td></tr>
+  <tr><td>最终文本</td><td>已加标点；产生后不再变化，直到清空或 daemon 退出。</td></tr>
   <tr><td>换行</td><td>按终端显示宽度自动换行，续行保持第 3 列缩进；不水平滚动，不截断。</td></tr>
   <tr><td>行距</td><td>结果行之间不插入空行；一行的多个视觉行连续排列。</td></tr>
   <tr><td>滚动跟随</td><td>视图在底部时，新临时文本与最终结果自动保持底部可见；用户上翻后停止跟随，直到按 <code>End</code>。</td></tr>
-  <tr><td>清空</td><td><code>Ctrl+X</code> 立即移除全部已完成结果行并重置滚动跟随；当前临时行、recording 标记和剪贴板保持不变。清空后内容区只保留当前临时行（如有），直到当前段完成或开始下一段。</td></tr>
+  <tr><td>清空</td><td><code>Ctrl+X</code> 立即移除全部已完成结果行并重置滚动跟随；当前临时行、recording 标记、倒计时与剪贴板保持不变。</td></tr>
   <tr><td>选择</td><td>禁用鼠标上报，保留终端原生选择；不绘制选择高亮，不实现应用内复制。</td></tr>
 </table>
 
@@ -326,35 +497,58 @@ TUI 只使用终端自身的背景色与前景色，另加一个红色语义色�
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>位置</td><td>终端最后一行，从第 1 列开始；内容区高度为终端高度减 1。</td></tr>
-  <tr><td>文案（PTT）</td><td><code>Space 开始/结束&nbsp;&nbsp;Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code></td></tr>
-  <tr><td>文案（continuous）</td><td><code>Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code>；<code>Space</code> 在该模式无动作，因此不显示。</td></tr>
+  <tr><td>文案（PTT）</td><td><code>Super+F2 按住说话&nbsp;&nbsp;Super+F3 切换&nbsp;&nbsp;Ctrl+X 清空&nbsp;&nbsp;q 退出</code></td></tr>
+  <tr><td>文案（continuous）</td><td><code>Ctrl+X 清空&nbsp;&nbsp;q 退出</code>；PTT 组合键在该模式按普通按键转发，因此不显示。</td></tr>
   <tr><td>可见性</td><td>始终显示，包括空状态、录音中、等待最终识别与滚动时；文案不随结果或录音状态变化。</td></tr>
   <tr><td>样式</td><td>使用 <code>text</code> token（终端默认前景色）；不加粗、不反色、不加背景，不绘制分隔线。</td></tr>
   <tr><td>截断</td><td>终端宽度不足时从右端截断，不换行、不水平滚动。</td></tr>
 </table>
 <ul class="note">
-  <li>提示文案按启动模式确定，运行期不切换；<code>q</code> 与 <code>Ctrl+C</code> 都是退出键，因此写作 <code>q / Ctrl+C</code>。</li>
-  <li>提示行不是结果行，不参与滚动、不进入会话文本，也不写入剪贴板。</li>
+  <li>提示文案按启动模式与配置的 PTT 组合键确定，运行期不切换；未配置的 PTT 项不显示。</li>
+  <li>提示行不是结果行，不参与滚动、不进入会话历史，也不写入剪贴板。</li>
 </ul>
 
 <h4 id="u5-2-5">5.2.5 原型</h4>
 <p>
-原型只示意内容区与底部快捷键提示的空间关系；颜色、字体和终端边框由实际终端决定，不要求与下图逐像素一致。
+原型只示意内容区、PTT 倒计时行与底部快捷键提示的空间关系；颜色、字体和终端边框由实际终端决定。
 </p>
 
 <div class="tui-proto-wrap">
 <div class="tui-proto">
 <div class="line"><span class="dim">  </span>今天下午三点开会。</div>
-<div class="line"><span class="dim">  </span>请把会议纪要发给我。</div>
-<div class="line"><span class="rec">●</span> 明天的日程帮我确认一</div>
-<div class="line hint">Space 开始/结束  Ctrl+X 清空  q / Ctrl+C 退出</div>
+<div class="line"><span class="rec">●</span> Remaining: 27 s</div>
+<div class="line"><span class="dim">  </span>明天的日程帮我确认一</div>
+<div class="line hint">Super+F2 按住说话  Super+F3 切换  Ctrl+X 清空  q 退出</div>
 </div>
 </div>
 <ul class="note">
-  <li>前两行是已固化的最终结果；最后一行是正在录音的临时行，左侧红点即 recording 标记；底部固定一行快捷键提示。</li>
-  <li>最终结果产生后，红点消失，最后一行替换为带标点的最终文本；下一次识别在下方新增一行。</li>
-  <li>除底部快捷键提示外，界面没有模式名、计时器、进度或错误提示文字；模式只能从启动命令得知。</li>
-  <li>结果行保留到按 <code>Ctrl+X</code> 清空或程序退出；退出时备用屏幕恢复，屏幕上的结果随进程结束而清空。</li>
+  <li>第一行是已固化的最终结果；第二行是 PTT 倒计时；第三行是正在录音的临时行；底部固定一行快捷键提示。</li>
+  <li>最终结果产生后，倒计时行消失，临时行原位替换为带标点的最终文本；下一次识别在下方新增一行。</li>
+  <li>除底部快捷键提示外，界面没有模式名、进度或错误提示文字；模式只能从启动命令得知。</li>
+</ul>
+
+<h3 id="u5-3">5.3 托盘</h3>
+<p>
+托盘由 <code>voimed</code> 持有，不是 TUI 的一部分。它只承担一件事：在没有终端、没有 TUI 的情况下，
+让用户通过图标右键菜单退出 daemon。除此之外不显示状态、不提供设置、不触发录音。
+</p>
+
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>协议</td><td>StatusNotifierItem + DBusMenu，走 D-Bus session bus；由 <code>ksni</code> 的 blocking API 实现。</td></tr>
+  <tr><td>图标</td><td>32×32 ARGB32 <code>IconPixmap</code>（网络字节序）的麦克风剪影，带对比描边，编译进二进制；静态图标，不随录音状态变化。</td></tr>
+  <tr><td>Tooltip</td><td>标题 <code>Voime</code>；描述 <code>语音输入法</code>。不显示设备名、模式或错误。</td></tr>
+  <tr><td>右键菜单</td><td>DBusMenu 根菜单只有一项“退出”；无子菜单、无分隔线、无设置项、无“显示 TUI”。</td></tr>
+  <tr><td>左键</td><td>无动作（<code>ItemIsMenu = false</code>）；只有右键菜单。</td></tr>
+  <tr><td>退出</td><td>菜单项 activate 发送 <code>TrayEvent::Quit</code> 到 daemon 事件循环；与 <code>voime ctl quit</code> 走同一条 shutdown 路径。</td></tr>
+  <tr><td>宿主缺失</td><td>没有 <code>StatusNotifierWatcher</code> / 宿主时不显示图标，daemon 继续运行；只记录 warning。<code>--no-tray</code> 可显式关闭。</td></tr>
+  <tr><td>与 TUI 的关系</td><td>完全独立：TUI 退出不删除托盘；托盘退出会让已连接的 TUI 收到 <code>Bye</code> / socket EOF 并恢复终端退出。</td></tr>
+  <tr><td>录音中退出</td><td>取消当前语音段，不产生 Final，不写剪贴板，不等待 ASR；然后关闭 grab / VK / IM / socket。</td></tr>
+</table>
+
+<ul class="note">
+  <li>托盘图标不是录音状态指示器；“正在录音”只在 TUI 当前行与目标输入框（未来 preedit）中体现。</li>
+  <li>最基础版不保证宿主重启后自动恢复图标；重启 <code>voimed</code> 可恢复。自动重注册放到后续增强。</li>
 </ul>
 
 </body>

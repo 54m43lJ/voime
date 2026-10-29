@@ -15,6 +15,7 @@
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
 <a href="BUILD.html">BUILD</a>
+<a href="ASR.html">ASR</a>
 </p>
 
 <h2 id="r1">1. WHAT &amp; WHY</h2>
@@ -22,31 +23,38 @@
 
 <h3>1.1 IDEAL：要解决的问题</h3>
 <p>
-Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框架或带 GPU 的推理环境。
-本项目希望用单个 Rust 可执行程序，在 AMD x86_64 CPU 上完成全部语音识别与标点，
-运行时不联网、不上传音频、不注册系统输入法，只通过一个极简终端界面完成“说话 → 看到文字 → 粘贴”的闭环。
+Hyprland / Wayland 上的语音输入通常要依赖云服务、GPU，或者在 Fcitx5 旁边再挂一个剪贴板工具。
+本项目用一个常驻 daemon 取代 Fcitx5 的输入法位置：它和普通输入法一样接管键盘、在任意窗口响应全局
+PTT、把识别结果直接写进当前输入框，同时把非 PTT 按键原样交还给应用。全部识别与标点都在本机 CPU
+上完成，运行时不联网、不上传音频。
 </p>
 
 <h3>1.2 GOAL：什么算成功</h3>
 <ul>
-  <li>用户启动 <code>voime</code> 后，在终端里按一次 <code>Space</code> 开始说话、再按一次结束；
-      连续模式下无需按键，按语音活动自动切分。</li>
-  <li>语音链路固定为 FireRedVAD 切分 → FireRedASR2-AED 识别 → FireRedPunc 标点，全部在本机 CPU 上完成。</li>
-  <li>终端界面只保留 recording 标记、识别内容与底部一行快捷键提示；最终结果按行累积，直到按 <code>Ctrl+X</code> 清空或退出程序。</li>
-  <li>每次识别完成，自上次清空以来的整段会话文本自动写入系统剪贴板；<code>Ctrl+X</code> 只清空界面历史，不修改剪贴板。用户也可以直接用终端选择复制任意可见行。</li>
-  <li>单个可执行程序加本地模型包即可运行；Linux 与 Windows 的 AMD x86_64 行为一致；运行时不需要网络、GPU 或 Python。</li>
-  <li>首次安装由项目提供的脚本完成；安装完成后 TUI 完全离线运行，不再访问网络。</li>
-  <li>ASR 固定使用 FireRedASR2-AED；FireRedASR2-LLM 不在本项目范围内。</li>
+  <li>停用 Fcitx5 后，<code>voimed</code> 成为该 seat 上唯一的输入法；启动失败时明确提示冲突，不静默降级。</li>
+  <li>用户在任意窗口按住 <code>Super+F2</code>（可配置）说话、松开结束；再提供一个“按一下开始 / 再按一下结束”组合键。</li>
+  <li>普通键盘输入不受影响：除 PTT 组合键外，字符、修饰键、快捷键、组合键和长按重复都保持原有行为。</li>
+  <li>原生 Wayland 应用通过输入法协议在光标处插入最终文本；中文、英文、标点和 emoji 都按 UTF-8 原样提交。</li>
+  <li>XWayland 应用与没有 text-input 的应用通过剪贴板 + 粘贴回退，保证“能输入”。</li>
+  <li>PTT 每次录音硬上限 30 s；TUI 显示 <code>● Remaining: xx s</code>，达到上限自动结束当前句并立即开始下一段。</li>
+  <li>daemon 与 TUI 分离：<code>voimed</code> 拥有音频、模型、输入法、键盘抓取、上屏与会话历史；<code>voime</code> 只是可选监视器。</li>
+  <li>TUI 关闭、崩溃或从未启动时，PTT、普通打字与上屏仍然工作。</li>
+  <li>提供最小托盘：图标 + 右键菜单，菜单只有“退出”；没有托盘宿主时静默降级。</li>
+  <li>识别链路为 FireRedVAD → FireRedASR2-CTC → FireRedPunc，全部在本机 CPU 上完成。</li>
+  <li>单个 daemon 加本地模型包即可运行；运行时不需要网络、GPU、Python 或云服务。</li>
+  <li>首次安装由项目脚本完成；安装完成后运行期完全离线。</li>
 </ul>
 
 <h3>1.3 非目标</h3>
 <ul>
-  <li>不监听全局热键，不向其他窗口模拟键盘输入，不注册 TSF / IBus / Fcitx 输入法。终端必须获得焦点。</li>
-  <li>不提供 GUI、托盘、悬浮窗、设置界面或鼠标操作；所有运行参数在命令行确定。</li>
-  <li>运行时不联网，不调用云 ASR、云标点服务，也不在 TUI 内下载或更新模型；模型由项目安装脚本在首次安装阶段生成。</li>
-  <li>不支持 GPU、NPU、macOS、Linux ARM 或 Windows ARM；不承诺 Intel 平台上的性能与正确性，验收平台为 AMD x86_64。</li>
-  <li>不保存音频或识别历史到磁盘；识别历史只存在内存中，可用 <code>Ctrl+X</code> 清空，退出后只保留剪贴板中的会话文本。</li>
-  <li>不做说话人分离、语种识别、翻译、文本润色或大模型改写。</li>
+  <li>不实现拼音、形码、候选词、云输入或屏幕软键盘；Voime 只负责语音文本上屏。</li>
+  <li>不与 Fcitx5 / IBus 共存为两个输入法，也不实现 Fcitx5 插件；运行 <code>voimed</code> 前必须停用其他输入法。</li>
+  <li>不实现 X11 与 Windows 后端；本版只支持 Hyprland / Wayland，XWayland 仅做兼容回退。</li>
+  <li>不保证 XWayland 的 preedit、临时结果或光标位置；XWayland 只保证最终文本能粘贴进去。</li>
+  <li>不保存音频或识别历史到磁盘；daemon 退出后会话历史丢失。</li>
+  <li>不自动把整段会话写入剪贴板；剪贴板只在回退粘贴时承载单条最终文本。</li>
+  <li>不提供设置界面、悬浮窗、通知或托盘菜单之外的 GUI；所有配置在命令行完成。</li>
+  <li>不调用云 ASR、云标点，不做说话人分离、语种识别、翻译、润色或大模型改写。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -55,73 +63,73 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
 <table>
   <tr><th>场景</th><th>行为</th><th>详细契约</th></tr>
   <tr>
-    <td>启动（PTT）</td>
-    <td><code>voime --mode ptt</code>；<code>--mode</code> 省略时默认 <code>ptt</code>。进入全屏 TUI，等待按键。</td>
+    <td>启动 daemon</td>
+    <td>停用 Fcitx5 后启动 <code>voimed</code>；它可以由 Hyprland <code>exec-once</code> 或 systemd user service 拉起，不要求终端。</td>
     <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u4-1">USER §4.1</a></td>
   </tr>
   <tr>
-    <td>启动（持续监听）</td>
-    <td><code>voime --mode continuous</code>。进入 TUI 后立即开始监听，语音段自动切分。</td>
+    <td>启动 TUI</td>
+    <td><code>voime</code> 连接 daemon，显示会话与录音状态；TUI 是可选监视器，关闭不影响 daemon。</td>
+    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u5">USER §5</a></td>
+  </tr>
+  <tr>
+    <td>按住说话</td>
+    <td>按住默认 <code>Super+F2</code> 开始录音，松开结束；组合键可在命令行配置。</td>
     <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u4-1">USER §4.1</a></td>
   </tr>
   <tr>
-    <td>PTT 开始 / 结束</td>
-    <td>按一次 <code>Space</code> 开始一段识别；再按一次 <code>Space</code> 结束。语音后长时间静音也会自动结束。</td>
-    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u3-2">USER §3.2</a></td>
+    <td>按一下切换</td>
+    <td>按一次默认 <code>Super+F3</code> 开始，再按一次结束；录音收尾期间的重复按下被忽略。</td>
+    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u4-1">USER §4.1</a></td>
   </tr>
   <tr>
-    <td>持续监听</td>
-    <td>VAD 检测到语音起点即开始一段识别，检测到语音终点即结束该段；无需按键。</td>
-    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u3-3">USER §3.3</a></td>
+    <td>普通打字</td>
+    <td>PTT 组合键以外，字符、快捷键、组合键和修饰键在任意应用中照常工作。</td>
+    <td><a href="USER.html#u2">USER §2</a></td>
+  </tr>
+  <tr>
+    <td>最终结果（原生 Wayland）</td>
+    <td>文本直接插入当前输入框的光标位置，不覆盖剪贴板。</td>
+    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u3">USER §3</a></td>
+  </tr>
+  <tr>
+    <td>最终结果（XWayland / 终端）</td>
+    <td>写入单条最终文本到剪贴板并发送粘贴快捷键；终端使用 <code>Ctrl+Shift+V</code>，普通应用使用 <code>Ctrl+V</code>。</td>
+    <td><a href="USER.html#u2">USER §2</a> · <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a></td>
   </tr>
   <tr>
     <td>临时结果</td>
-    <td>录音过程中，当前行按固定节奏刷新未加标点的临时文本；不同语音段不共享同一行。</td>
+    <td>录音过程中 TUI 当前行按固定节奏刷新未加标点的临时文本；不同语音段不共享同一行。</td>
     <td><a href="USER.html#u5-2">USER §5.2</a></td>
   </tr>
   <tr>
-    <td>最终结果</td>
-    <td>语音段结束后执行最终识别与标点，该行固化并保留到按 <code>Ctrl+X</code> 清空或程序退出；下一次识别另起一行。</td>
-    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u5-2">USER §5.2</a></td>
+    <td>PTT 倒计时</td>
+    <td>录音时在临时行上方显示 <code>● Remaining: xx s</code>，从 30 s 递减；continuous 不显示。</td>
+    <td><a href="USER.html#u5-2">USER §5.2</a></td>
   </tr>
   <tr>
     <td>清空工作区</td>
-    <td><code>Ctrl+X</code> 清空全部已完成结果行与内存会话文本；剪贴板保持不变。正在录音的段与临时行不受影响，清空后的下一次最终结果只把新结果写入剪贴板。</td>
-    <td><a href="USER.html#u2">USER §2</a> · <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a></td>
+    <td>TUI 中按 <code>Ctrl+X</code> 清空已完成结果与内存会话历史；剪贴板保持不变。</td>
+    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u5-2">USER §5.2</a></td>
   </tr>
   <tr>
-    <td>自动复制</td>
-    <td>每次最终结果产生后，把自上次清空以来的全部最终结果按行拼接后写入剪贴板；<code>Ctrl+X</code> 不写入也不清空剪贴板。</td>
-    <td><a href="USER.html#u2">USER §2</a> · <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a></td>
+    <td>关闭 TUI</td>
+    <td><code>q</code> 或 <code>Ctrl+C</code> 只断开 TUI；PTT、普通打字与上屏继续运行。</td>
+    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u3-7">USER §3.7</a></td>
   </tr>
   <tr>
-    <td>手动复制</td>
-    <td>用终端自身的鼠标选择与复制操作选取任意可见文本；应用不捕获鼠标。</td>
-    <td><a href="USER.html#u2">USER §2</a></td>
-  </tr>
-  <tr>
-    <td>回看</td>
-    <td>结果超过一屏时用 <code>PageUp</code> / <code>PageDown</code> / <code>Home</code> / <code>End</code> 滚动；新结果不会打断已上翻的视图。</td>
-    <td><a href="USER.html#u5-2">USER §5.2</a></td>
-  </tr>
-  <tr>
-    <td>快捷键提示</td>
-    <td>终端最后一行始终显示当前模式可用的快捷键；PTT 为 <code>Space 开始/结束&nbsp;&nbsp;Ctrl+X 清空&nbsp;&nbsp;q / Ctrl+C 退出</code>，continuous 省略无动作的 <code>Space</code>。</td>
-    <td><a href="USER.html#u5-2-4">USER §5.2.4</a></td>
-  </tr>
-  <tr>
-    <td>退出</td>
-    <td><code>q</code> 或 <code>Ctrl+C</code> 退出，恢复终端；退出不修改剪贴板内容。</td>
-    <td><a href="USER.html#u2">USER §2</a></td>
+    <td>退出 daemon</td>
+    <td><code>voime ctl quit</code> 或托盘右键“退出”；退出前取消当前段，不产生最终结果。</td>
+    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u5-3">USER §5.3</a></td>
   </tr>
   <tr>
     <td>安装模型</td>
-    <td>首次使用前手动运行 <code>scripts/install_models.sh</code>（Linux）或 <code>scripts/install_models.ps1</code>（Windows）安装模型包；安装需要网络与 Python 3.10+，完成后应用离线运行。应用启动时只校验与加载现有模型。</td>
-    <td><a href="CORE.html#c1">CORE §1</a> · <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a></td>
+    <td>首次使用前运行 <code>scripts/install_models.sh</code> 安装 FireRedVAD / FireRedASR2-CTC / FireRedPunc 模型包；安装需要网络，完成后应用离线运行。</td>
+    <td><a href="BUILD.html#b3">BUILD §3</a> · <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a></td>
   </tr>
   <tr>
     <td>启动失败</td>
-    <td>模型缺失、模型校验失败、没有可用录音设备或终端不是 TTY 时，在进入 TUI 前把原因写到 stderr 并以非零码退出。</td>
+    <td>模型缺失 / 校验失败、没有录音设备、Wayland 或输入法不可用、Fcitx5 占用 seat 时，把原因写到 stderr 并以非零码退出。</td>
     <td><a href="USER.html#u4-1">USER §4.1</a> · <a href="PROVIDER.html#p4-6">PROVIDER §4.6</a></td>
   </tr>
 </table>
@@ -132,18 +140,18 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
 <table>
   <tr><th>项目</th><th>在本项目中的角色</th><th>技术栈 / 许可</th></tr>
   <tr>
-    <td><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam/FireRedASR2S</a></td>
-    <td>FireRedASR2-AED 语音识别模型</td>
-    <td>PyTorch · Apache-2.0</td>
+    <td><a href="https://huggingface.co/csukuangfj2/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25">FireRedASR2-CTC int8</a></td>
+    <td>语音识别模型（final 与尾部 partial 共用）</td>
+    <td>ONNX · Apache-2.0</td>
   </tr>
   <tr>
     <td><a href="https://github.com/FireRedTeam/FireRedVAD">FireRedTeam/FireRedVAD</a></td>
-    <td>FireRedVAD 流式语音活动检测</td>
+    <td>流式语音活动检测</td>
     <td>PyTorch · Apache-2.0</td>
   </tr>
   <tr>
     <td><a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedTeam/FireRedPunc</a></td>
-    <td>FireRedPunc 中英文标点预测</td>
+    <td>中英文标点预测</td>
     <td>BERT · Apache-2.0</td>
   </tr>
   <tr>
@@ -158,17 +166,17 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
   </tr>
   <tr>
     <td><a href="https://github.com/ratatui/ratatui">ratatui</a> / <a href="https://github.com/crossterm-rs/crossterm">crossterm</a></td>
-    <td>终端界面与输入事件</td>
+    <td>可选 TUI 的布局与终端事件</td>
     <td>Rust · MIT</td>
   </tr>
   <tr>
     <td><a href="https://github.com/RustAudio/cpal">cpal</a></td>
-    <td>跨平台麦克风采集</td>
+    <td>麦克风采集</td>
     <td>Rust · Apache-2.0</td>
   </tr>
   <tr>
     <td><a href="https://github.com/1Password/arboard">arboard</a></td>
-    <td>跨平台剪贴板写入</td>
+    <td>XWayland / 终端的回退剪贴板写入</td>
     <td>Rust · MIT / Apache-2.0</td>
   </tr>
   <tr>
@@ -180,6 +188,21 @@ Linux 与 Windows 上的语音输入通常依赖云服务、整套输入法框�
     <td><a href="https://github.com/RustedBytes/kaldi-native-fbank">kaldi-native-fbank</a></td>
     <td>Kaldi 兼容 fbank 特征</td>
     <td>Rust · Apache-2.0</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/Smithay/wayland-rs">wayland-rs</a> / <a href="https://gitlab.freedesktop.org/xorg/lib/libxkbcommon">xkbcommon</a></td>
+    <td>input-method-v2、virtual-keyboard、键盘布局与组合键匹配</td>
+    <td>Rust / C · MIT</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/iovxw/ksni">ksni</a></td>
+    <td>StatusNotifierItem / DBusMenu 托盘</td>
+    <td>Rust · Unlicense</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/swaywm/wlroots">wlroots protocols</a></td>
+    <td>input-method-unstable-v2 / virtual-keyboard-unstable-v1 XML</td>
+    <td>MIT</td>
   </tr>
 </table>
 <ul class="note">

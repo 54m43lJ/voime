@@ -3,23 +3,28 @@ skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
 hide footbox
 
-participant "Voime" as App
+participant "Voime" as Voime
 participant "ONNX Runtime" as Ort
 participant "模型文件" as Model
 
-App -> Model : 读取 + SHA-256
-App -> Ort : Session::builder().commit_from_file()
-Ort -> App : Session
-loop 每个语音段
-  App -> Ort : run(vad features)
-  Ort -> App : probs
-  App -> Ort : run(encoder features)
-  Ort -> App : encoder_out
-  loop 自回归解码
-    App -> Ort : run(decoder tokens, encoder_out)
-    Ort -> App : logits
-  end
-  App -> Ort : run(punc input_ids, mask)
-  Ort -> App : logits
+Voime -> Model : 读取 + SHA-256
+Voime -> Ort : Session::builder().commit_from_file()
+Ort --> Voime : VAD / CTC / Punc Session
+
+loop 每一帧
+  Voime -> Ort : run(vad features, states)
+  Ort --> Voime : probs, next states
 end
+
+loop 每个语音段
+  Voime -> Ort : run(ctc x, x_lens)
+  Ort --> Voime : log_probs, log_probs_len
+  Voime -> Ort : run(punc input_ids, mask)
+  Ort --> Voime : logits
+end
+
+note over Voime
+  CMVN 与 greedy CTC 在项目内部完成；
+  边界只交换 fbank / log_probs / token ids。
+end note
 @enduml

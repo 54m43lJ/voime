@@ -4,22 +4,36 @@ skinparam shadowing false
 hide footbox
 
 actor "用户" as User
-participant "Voime" as App
+participant "Hyprland" as Compositor
+participant "Voime\ndaemon" as Voime
+participant "TUI\n可选" as Tui
 participant "麦克风" as Mic
-participant "终端" as Term
-participant "剪贴板" as Clip
+participant "目标应用" as App
+participant "系统剪贴板" as Clip
 
-User -> App : 按 Space
-App -> Term : 显示红色标记与新行
-App -> Mic : 开始本段采集
+User -> Compositor : 按住 SUPER+F2
+Compositor -> Voime : grab.key(hold)
+Voime -> Voime : StartSegment()
+Voime -> Mic : 开始本段采集
+Voime -> Tui : State(recording, remaining_ms)
 loop 采集期间
-  Mic -> App : PCM 帧
-  App -> Term : 更新临时文本
+  Mic -> Voime : PCM 帧
+  Voime -> Tui : Partial(text)\n每秒更新 Remaining
 end
-User -> App : 再按 Space / 静音自动结束
-App -> Mic : 结束本段采集
-App -> Term : 隐藏标记
-App -> App : 内部处理\n最终识别与标点
-App -> Term : 固化结果行
-App -> Clip : 写入会话文本
+User -> Compositor : 松开 F2 / 静音自动结束 / 30 s 到期
+Compositor -> Voime : grab.key(release)
+Voime -> Voime : FinishSegment()\n最终识别 + 标点
+Voime -> Tui : State(finalizing)
+
+alt IM active（原生 Wayland）
+  Voime -> Compositor : commit_string(text) + commit(serial)
+  Compositor -> App : 光标处插入文本
+else IM inactive（XWayland / 终端）
+  Voime -> Clip : set_text(单条 Final)
+  Voime -> Compositor : VK Ctrl+V / Ctrl+Shift+V
+  Compositor -> App : 粘贴按键
+  App -> Clip : 读取
+end
+
+Voime -> Tui : Final(text, delivery)
 @enduml

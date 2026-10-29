@@ -3,13 +3,20 @@ skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
 hide footbox
 
-participant "Voime" as App
+participant "Voime" as Voime
 participant "arboard / 系统剪贴板" as Clip
+participant "Hyprland" as Compositor
+participant "XWayland" as Xwayland
+participant "目标应用" as App
 
-App -> Clip : Clipboard::new()
-Clip -> App : Clipboard
-loop 每次最终结果
-  App -> Clip : set_text(session_text)
-  Clip -> App : Ok / Error
+Voime -> Clip : Clipboard::new()
+Voime -> Clip : set_text(单条 Final)
+Voime -> Compositor : VK 发送 Ctrl+V / Ctrl+Shift+V
+Compositor -> App : 粘贴按键
+alt VK 粘贴失败且目标为 XWayland
+  Voime -> Xwayland : XTEST Ctrl+V
+  Xwayland -> App : 粘贴按键
 end
+App -> Clip : 读取剪贴板
+App -> App : 在光标处插入文本
 @enduml

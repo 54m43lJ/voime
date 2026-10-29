@@ -169,13 +169,19 @@ let text = tokenizer.decode(&amp;ids);</code></pre>
   "max_segment_ms": 30000,
   "asr": {
     "kind": "fire-red-ctc",
-    "model": "asr/model.int8.onnx",
+    "model": {
+      "model": "asr/model.int8.onnx",
+      "sha256": "...",
+      "inputs":  [ ... ],
+      "outputs": [ ... ]
+    },
     "tokens": "asr/tokens.txt"
   },
   "vad": { ... },
   "punc": { ... }
 }</code></pre>
 <ul class="note">
+  <li>完整 manifest、张量与目录契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>；本节只记录 CTC 相关差异。</li>
   <li><code>max_segment_ms</code> 从 10_000 改为 30_000；PTT 硬上限固定 30_000，达到上限自动结束并开始下一段。</li>
   <li>保留 AED 作为 legacy 后端时，manifest 用 tagged enum：<code>kind = "fire-red-aed"</code> 时有 encoder/decoder，<code>"fire-red-ctc"</code> 时只有 model。</li>
   <li>安装脚本直接下载官方 <code>.tar.bz2</code> 并解出 <code>model.int8.onnx</code> / <code>tokens.txt</code>，不再需要 Python/PyTorch 导出 CTC；SHA-256 写入 manifest。</li>

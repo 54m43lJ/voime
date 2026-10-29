@@ -1,0 +1,25 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+
+start
+:Voime 收到 Final 文本;
+if (input-method-v2 处于 active?) then (是)
+  :commit_string(text);
+  :Hyprland 把文本提交给当前 text-input 应用;
+  :目标应用在光标处插入;
+  stop
+endif
+
+:写剪贴板，保留单条 Final;
+if (virtual-keyboard 可用?) then (是)
+  :VK 发送 Ctrl+V / Ctrl+Shift+V;
+  :Hyprland 转发粘贴按键;
+  :目标应用从剪贴板粘贴;
+  stop
+else (否)
+  :XTest 发送粘贴键（XWayland 兜底）;
+  :目标应用从剪贴板粘贴;
+  stop
+endif
+@enduml

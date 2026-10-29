@@ -1,0 +1,34 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+actor "用户" as User
+participant "voime TUI\n可选客户端" as Tui
+participant "Voime\ndaemon" as Voime
+participant "Hyprland" as Compositor
+participant "目标应用" as App
+
+User -> Voime : 登录后启动\nexec-once / systemd
+User -> Tui : 启动 voime
+Tui -> Voime : Hello(role=tui, version=1)
+Voime --> Tui : Snapshot(mode, phase, transcript, partial)
+User -> Compositor : 按下 PTT 组合键
+Compositor -> Voime : grab key / modifiers
+Voime -> Voime : PTT 匹配 → 录音 → VAD → ASR → 标点
+Voime -> Compositor : VK 转发非 PTT 按键\ncommit_string 上屏
+Compositor -> App : 转发按键 / 插入文本
+Voime --> Tui : Recording / Partial / Final
+
+User -> Tui : q / Ctrl+C
+Tui -> Voime : Detach
+Tui -> Tui : 恢复终端并退出
+note right of Voime
+  daemon、键盘抓取、PTT、普通按键转发
+  与上屏继续运行；TUI 退出不影响输入法。
+  托盘独立存在，仍可通过右键“退出”停止 daemon。
+end note
+
+User -> Voime : voime ctl quit
+Voime -> Voime : 停止采集、释放 grab / VK / IM、删除 socket
+@enduml

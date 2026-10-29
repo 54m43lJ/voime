@@ -1,0 +1,31 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Voime" as Voime
+participant "Hyprland" as Compositor
+participant "目标应用" as App
+
+Voime -> Compositor : create_virtual_keyboard(seat)
+Compositor --> Voime : zwp_virtual_keyboard_v1
+Voime -> Compositor : keymap(format, fd, size)
+Compositor -> App : 更新键盘布局
+
+loop 普通按键
+  Voime -> Compositor : key(time, key, state)
+  Compositor -> App : key(time, key, state)
+end
+Voime -> Compositor : modifiers(depressed, latched, locked, group)
+
+opt 粘贴回退
+  Voime -> Compositor : key(Ctrl) / key(V) / key(release)
+  Compositor -> App : 粘贴按键
+end
+
+note over Voime, Compositor
+  Voime 的 IM grab 与 VK 必须同一 wl_display；
+  Hyprland 会忽略同一客户端注入的按键，
+  避免转发回环。
+end note
+@enduml
