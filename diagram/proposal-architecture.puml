@@ -1,0 +1,38 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+skinparam componentStyle rectangle
+top to bottom direction
+
+actor "用户" as User
+component "物理键盘" as Keyboard
+component "Hyprland\nWayland 合成器" as Hyprland
+component "原生 Wayland 应用\ntext-input-v3" as WaylandApp
+component "XWayland 应用\nX11" as XApp
+component "voimed\n守护进程 / 唯一输入法" as Daemon
+component "voime TUI\n可选监视器" as Tui
+component "StatusNotifier 托盘宿主\nWaybar / Vicinae" as Tray
+component "本地模型包" as Models
+component "麦克风" as Mic
+component "系统剪贴板" as Clip
+component "Fcitx5\n必须停用" as Fcitx #EEEEEE
+
+User --> Keyboard : 按键
+Keyboard --> Hyprland : 输入事件
+Hyprland --> Daemon : input-method-v2\ngrab key / modifiers
+Daemon --> Hyprland : virtual-keyboard\n转发非 PTT 按键
+Daemon --> Hyprland : input-method-v2\ncommit_string
+Hyprland --> WaylandApp : text-input-v3\n插入文本 / 转发按键
+Hyprland --> XApp : 转发按键 / X11 事件
+Daemon --> Hyprland : virtual-keyboard\nCtrl+V / Ctrl+Shift+V
+Daemon --> Clip : 写入回退文本
+Daemon --> XApp : XTest Ctrl+V 兜底
+Clip ..> XApp : 读取
+Daemon --> Mic : PCM
+Daemon --> Models : 只读加载
+Tui <--> Daemon : Unix socket\n快照 / 事件 / 命令
+Daemon <--> Tray : SNI / DBusMenu
+User --> Tray : 右键菜单
+Tray --> Daemon : 退出
+Fcitx ..> Hyprland : 停用后空出 seat
+@enduml

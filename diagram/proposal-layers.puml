@@ -1,0 +1,39 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+skinparam componentStyle rectangle
+left to right direction
+
+rectangle "Layer 0 · 硬件 / 内核" {
+  component "物理键盘" as Keyboard
+}
+
+rectangle "Layer 1 · 合成器" {
+  component "Hyprland\ninput-method-v2\ntext-input-v3\nvirtual-keyboard" as Hyprland
+}
+
+rectangle "Layer 2 · 应用" {
+  component "原生 Wayland 应用\ntext-input-v3" as WaylandApp
+  component "XWayland 应用\nX11 / XIM" as XApp
+}
+
+rectangle "Layer 3 · 输入法（一个 seat 只能一个）" {
+  component "Fcitx5\n停用" as Fcitx #EEEEEE
+  component "Voime\n本提案" as Voime #F5F7FF
+}
+
+rectangle "Voime 进程" {
+  component "voimed\naudio / ASR / IM / grab / VK" as Daemon
+  component "voime TUI\n可选" as Tui
+}
+
+Keyboard --> Hyprland : HID 按键
+Hyprland --> Voime : grab key / modifiers
+Voime --> Hyprland : virtual-keyboard\n转发非 PTT 按键
+Voime --> Hyprland : commit_string
+Hyprland --> WaylandApp : text-input-v3\n插入文本 / 转发按键
+Hyprland --> XApp : 转发按键 / X11 事件
+Daemon --> XApp : 剪贴板 + 粘贴\n回退
+Daemon <--> Tui : Unix socket
+Fcitx ..> Hyprland : 停用
+@enduml

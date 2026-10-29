@@ -1,0 +1,34 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+actor "用户" as User
+participant "voimed" as Daemon
+participant "StatusNotifierWatcher" as Watcher
+participant "托盘宿主\nWaybar / Vicinae" as Host
+participant "voime TUI\n可选" as Tui
+
+Daemon -> Watcher : RegisterStatusNotifierItem
+Watcher -> Host : 新 item 可用
+Host -> Daemon : 读取 IconPixmap / ToolTip / Menu
+Host -> Host : 显示托盘图标
+
+User -> Host : 右键点击图标
+Host -> Daemon : DBusMenu.GetLayout
+Daemon --> Host : 菜单项：退出
+Host -> Host : 显示“退出”
+
+User -> Host : 点击“退出”
+Host -> Daemon : DBusMenu.Event(1, clicked)
+Daemon -> Daemon : TrayEvent::Quit
+Daemon -> Tui : Bye / socket close
+Daemon -> Daemon : 停止采集、关闭 grab/VK/IM、删除 socket
+
+note right of Daemon
+  托盘由 voimed 持有，与 TUI 无关。
+  没有 StatusNotifier 宿主时：
+  不显示图标，daemon 继续运行，
+  voime ctl quit 仍然可用。
+end note
+@enduml

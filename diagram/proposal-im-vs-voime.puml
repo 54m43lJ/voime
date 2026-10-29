@@ -1,0 +1,41 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "键盘" as Keyboard
+participant "Hyprland" as Compositor
+participant "Fcitx5" as Fcitx
+participant "voimed" as Daemon
+participant "目标应用" as App
+
+group Fcitx5（被取代）
+  Keyboard -> Compositor : 按键
+  Compositor -> Fcitx : input-method-v2\ngrab_keyboard + key
+  Fcitx -> Fcitx : 拼音引擎 / 候选
+  Fcitx -> Compositor : commit_string（上屏）
+  Fcitx -> Compositor : virtual-keyboard\n转发未处理按键
+  Compositor -> App : 插入文本 / 转发按键
+end
+
+group Voime（本提案）
+  Keyboard -> Compositor : 按键
+  Compositor -> Daemon : input-method-v2\ngrab_keyboard + key
+  Daemon -> Daemon : 匹配 PTT / 录音 → ASR
+  Daemon -> Compositor : virtual-keyboard\n转发非 PTT 按键
+  Daemon -> Compositor : commit_string（最终文本）
+  Compositor -> App : 转发按键 / 插入文本
+end
+
+note over Fcitx, Daemon
+  同一 seat 只允许一个 input-method-v2 对象。
+  Voime 取代 Fcitx5 后，拼音、候选、
+  Fcitx5 插件都不再可用。
+end note
+
+note right of Daemon
+  Voime 与 Fcitx5 一样抓键盘并转发；
+  区别是 Voime 不做拼音 / 候选，
+  只识别 PTT 组合键并提交语音文本。
+end note
+@enduml

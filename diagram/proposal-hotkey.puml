@@ -1,0 +1,48 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+actor "用户" as User
+participant "Hyprland" as Compositor
+participant "voimed\nIM + grab + VK" as Daemon
+participant "目标应用" as App
+
+Daemon -> Compositor : get_input_method(seat)
+Daemon -> Compositor : input-method-v2.grab_keyboard()
+Daemon -> Compositor : create_virtual_keyboard(seat)\n（同一 wl_display）
+Compositor --> Daemon : keymap / repeat_info
+
+group 普通输入：非 PTT 按键透明转发
+  User -> Compositor : 按下 A
+  Compositor -> Daemon : grab.key(A, pressed)
+  Daemon -> Daemon : 不匹配 PTT
+  Daemon -> Compositor : VK.key(A, pressed)
+  Compositor -> App : key(A, pressed)
+  User -> Compositor : 松开 A
+  Compositor -> Daemon : grab.key(A, released)
+  Daemon -> Compositor : VK.key(A, released)
+  Compositor -> App : key(A, released)
+end
+
+group 按住说话：消费 PTT 键
+  User -> Compositor : 按下 SUPER+F2
+  Compositor -> Daemon : grab.key(F2, pressed) + modifiers
+  Daemon -> Daemon : StartSegment()\n不转发
+  User -> Compositor : 松开 F2
+  Compositor -> Daemon : grab.key(F2, released)
+  Daemon -> Daemon : FinishSegment()\n不转发
+end
+
+note over Compositor, Daemon
+  Hyprland 先处理 bind / bindr，再交给 IM grab。
+  PTT 组合键若已在 Hyprland 绑定，
+  合成器先消费，voimed 收不到。
+end note
+
+note over Daemon
+  grab 与 virtual-keyboard 必须同一连接；
+  Hyprland 会忽略该客户端注入的按键，
+  避免转发回环。
+end note
+@enduml

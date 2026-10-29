@@ -1,0 +1,27 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+actor "用户" as User
+participant "voimed\nIM + grab + VK" as Daemon
+participant "Hyprland" as Compositor
+participant "系统剪贴板" as Clip
+participant "XWayland\nX server" as Xwayland
+participant "XWayland 应用" as App
+
+User -> Compositor : 按下 / 松开 PTT 组合键
+Compositor -> Daemon : grab key（IM 消费）
+Daemon -> Daemon : ASR + 标点 → Final
+Daemon -> Compositor : 查询 activewindow
+Compositor --> Daemon : class / xwayland=true
+Daemon -> Clip : set_text(final)
+Daemon -> Compositor : VK 发送 Ctrl+V\n（终端 Ctrl+Shift+V）
+Compositor -> App : 转发粘贴按键
+alt VK 粘贴失败
+  Daemon -> Xwayland : XTest Ctrl+V
+  Xwayland -> App : 粘贴按键
+end
+App -> Clip : 读取剪贴板
+App -> App : 在光标处插入文本
+@enduml

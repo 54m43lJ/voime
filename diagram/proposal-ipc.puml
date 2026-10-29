@@ -1,0 +1,22 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voime TUI" as Tui
+participant "voimed" as Daemon
+participant "voime ctl" as Ctl
+
+Tui -> Daemon : Hello(role=tui, version=1)
+Daemon --> Tui : Snapshot
+Daemon --> Tui : State / Partial / Final / Delivery
+Tui -> Daemon : Start / Stop / Toggle
+Tui -> Daemon : ClearHistory
+Daemon --> Tui : State / Snapshot
+
+Ctl -> Daemon : Hello(role=control, version=1)
+Ctl -> Daemon : Start / Stop / Toggle / Status
+Daemon --> Ctl : Response / Error
+Ctl -> Daemon : Quit
+Daemon -> Daemon : 关闭采集、grab、VK、IM、socket
+@enduml
