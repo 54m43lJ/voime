@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>WINDOWS — Voime 平台适配评估</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>WINDOWS — Voime 平台适配评估</h1>
+
+<p class="doc-links">
+<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+<strong>评估基线：</strong><code>dev/fcitx@07d9cfa</code> · 2026-10-30。
+本文是对当前设计的静态审查与可行性判断，不是 Windows 实测报告；所有 Windows API 行为仍需用最小原型验证。
+</p>
+
+<h2 id="w1">1. 结论</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="w1-1">1.1 一句话结论</h3>
+<p>
+<strong>不能直接套入 Windows。</strong>当前设计的“识别引擎 + 守护进程”与“输入前端”确实已经分层，但只把 Fcitx 前端隔离了出去，没有把桌面输入集成抽象成可替换的平台接口。Windows 上需要新建输入前端；识别、VAD、CTC、标点、会话状态与 IPC 协议可以大量复用。
+</p>
+<p>
+<strong>“语音 → 文字 → 输入”的闭环可行，但要分两种产品形态：</strong>后台听写工具（全局热键 + 文本注入）可以较快闭环，覆盖多数普通桌面应用；真正的 Windows 输入法（TSF 文本服务）也能闭环，但需要重写为进程内 COM 组件；若按 keyboard TIP 注册，还会改变“后台 addon、不注册输入法”的使用方式，speech TIP 是否能并行则需验证。
+</p>
+
+<h3 id="w1-2">1.2 结论表</h3>
+<table>
+  <tr><th>问题</th><th>结论</th><th>依据</th></tr>
+  <tr>
+    <td>能否把现有代码直接编译到 Windows？</td>
+    <td><strong>不能。</strong></td>
+    <td><code>voimed</code> / <code>voime</code> 直接使用 <code>std::os::unix::net::UnixStream</code>、<code>UnixListener</code> 与 Unix 权限位；<code>fcitx-addon</code> 是 Fcitx5 C++ 插件，CMake 依赖 Fcitx5Core。</td>
+  </tr>
+  <tr>
+    <td>识别引擎是否能复用？</td>
+    <td><strong>可以，复用度高。</strong></td>
+    <td><code>voime-core</code> 的音频、重采样、VAD、CTC、标点、分段器与 pipeline 不依赖 Fcitx；cpal、ONNX Runtime、kaldi-native-fbank、rubato 都有 Windows 路径。</td>
+  </tr>
+  <tr>
+    <td>IPC 协议是否能复用？</td>
+    <td><strong>可以，但传输层要换。</strong></td>
+    <td>消息是换行分隔的 JSON，与平台无关；Unix socket 必须替换为 Windows 命名管道或其他本机传输。</td>
+  </tr>
+  <tr>
+    <td>能否闭环“语音 → 文字 → 输入”？</td>
+    <td><strong>可以，但有覆盖边界。</strong></td>
+    <td>全局热键 + <code>SendInput</code> 能覆盖大量 Win32 / Chromium / Electron / Office 类应用；提权窗口、游戏、部分终端与 UWP 需要单独验证。TSF 可以获得更可靠的提交与目标上下文，但激活方式不同。</td>
+  </tr>
+  <tr>
+    <td>当前设计算不算“足够解耦”？</td>
+    <td><strong>引擎层够，平台输入层不够。</strong></td>
+    <td>进程边界、协议、模式/分段状态机是好的；但传输、角色命名、单前端假设、预览表面、音频生命周期、安装与自启动仍与 Linux/Fcitx 绑定。</td>
+  </tr>
+  <tr>
+    <td>建议先做哪条路？</td>
+    <td><strong>先做 MVP，再决定是否做 TSF。</strong></td>
+    <td>先用后台听写验证“目标绑定 + 提交可靠性 + 用户接受度”，成本低；如果产品要求系统级输入法体验，再做 TSF 第二阶段。</td>
+  </tr>
+</table>
+
+<h3 id="w1-3">1.3 三个判断</h3>
+<ul>
+  <li><strong>可复用：</strong>音频采集后的整条识别链路、会话状态机、<code>Partial</code> / <code>Final</code> / <code>State</code> 消息语义、TUI 的大部分终端逻辑。</li>
+  <li><strong>必须重写：</strong>Fcitx addon、热键/焦点/目标绑定、临时窗口、文本提交、配置与安装/自启动。不能把 <code>fcitx-addon</code> 逐行翻译成 Windows；它只能作为行为规格。</li>
+  <li><strong>最大风险：</strong><code>SendInput</code> 在真实应用中的覆盖率与焦点竞态；TSF 键盘 TIP 的“必须被选为当前输入法”、speech TIP 是否能并行的未知性，以及多进程客户端模型；还有 Windows 麦克风隐私、蓝牙耳机与提权窗口带来的边界。</li>
+</ul>
+
+<h2 id="w2">2. 评估范围与判定标准</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="w2-1">2.1 评估对象</h3>
+<table>
+  <tr><th>项目</th><th>范围</th></tr>
+  <tr><td>代码基线</td><td><code>dev/fcitx</code> 的当前实现，包含 Rust workspace、<code>fcitx-addon</code>、脚本与文档。</td></tr>
+  <tr><td>目标平台</td><td>Windows 10 / 11 x64，普通用户桌面会话；不包含锁屏、UAC 安全桌面、Windows Server 与 ARM64。</td></tr>
+  <tr><td>运行约束</td><td>沿用现有约束：本地 CPU 推理、运行期不联网、不需要 GPU / Python、音频不落盘。</td></tr>
+  <tr><td>不在本文范围</td><td>具体 UI 视觉稿、安装器实现、模型再导出、Windows 上的性能实测。</td></tr>
+</table>
+
+<h3 id="w2-2">2.2 判定标准</h3>
+<table>
+  <tr><th>标准</th><th>要回答的问题</th></tr>
+  <tr><td>平台无关性</td><td>核心识别链路是否能在不修改业务逻辑的前提下运行在 Windows？</td></tr>
+  <tr><td>前端可替换性</td><td>能否用一个新的 Windows 前端替换 Fcitx addon，而不改 daemon 的会话/识别逻辑？</td></tr>
+  <tr><td>闭环完整性</td><td>从热键、目标绑定、采音、识别、临时结果到最终提交，是否形成无人工复制的闭环？</td></tr>
+  <tr><td>可运维性</td><td>安装、自启动、配置、日志、崩溃恢复、升级能否在 Windows 上成立？</td></tr>
+  <tr><td>安全与隐私</td><td>本机 IPC 是否只允许同一用户访问？键盘监听是否最小化？音频与识别文本是否不落盘？</td></tr>
+</table>
+
+<h3 id="w2-3">2.3 先区分两种“输入法”</h3>
+<p>
+“输入法”在 Windows 上通常指可被系统选中的 IME（Text Services Framework 文本服务）；而“语音听写工具”是后台程序，用全局热键把识别文本注入当前焦点。两者都能把文字送进应用，但系统身份、目标模型、提交可靠性和使用方式不同。
+</p>
+<table>
+  <tr><th>形态</th><th>系统身份</th><th>用户操作</th><th>本项目对应</th></tr>
+  <tr>
+    <td>后台听写工具</td>
+    <td>普通桌面进程 + 全局热键</td>
+    <td>在任意应用按热键说话，文字注入当前焦点</td>
+    <td>方案 A；最接近现有“后台 addon”的 UX</td>
+  </tr>
+  <tr>
+    <td>Windows 输入法（IME）</td>
+    <td>TSF 文本服务（进程内 COM DLL）</td>
+    <td>用户把 Voime 选为当前输入法后说话；或通过输入法切换进入</td>
+    <td>方案 B；系统集成更完整；按 keyboard TIP 时不再是“后台旁路”</td>
+  </tr>
+</table>
+<ul class="note">
+  <li>现有 README 的非目标明确写了“不支持 Linux + Fcitx5 之外的平台形态”。本文评估的是：若要改变这个非目标，现有设计离 Windows 有多远。</li>
+  <li>“闭环”不要求必须有临时文本窗口；预览是体验项，最终提交才是闭环的必要条件。</li>
+</ul>
+
+<h2 id="w3">3. 现有设计的解耦程度</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="w3-1">3.1 分层与依赖</h3>
+<table>
+  <tr><th>层</th><th>主要文件</th><th>平台依赖</th><th>与 Fcitx 的耦合</th><th>Windows 判断</th></tr>
+  <tr>
+    <td>识别核心</td>
+    <td><code>crates/voime-core/</code></td>
+    <td>cpal、rubato、kaldi-native-fbank、ort、tokenizers、crossbeam；无 UI / 输入法 API</td>
+    <td>无</td>
+    <td><strong>可复用</strong>，需 Windows 构建与少量音频/路径调整</td>
+  </tr>
+  <tr>
+    <td>IPC 协议</td>
+    <td><code>crates/voime-ipc/</code></td>
+    <td>serde / serde_json；无 OS API</td>
+    <td>仅命名与角色语义（<code>Fcitx</code>）</td>
+    <td><strong>协议可复用</strong>，传输与命名需改</td>
+  </tr>
+  <tr>
+    <td>守护进程</td>
+    <td><code>crates/voimed/</code></td>
+    <td>Unix socket、文件权限；部署由 systemd 托管</td>
+    <td>使用 <code>Role::Fcitx</code> 与 addon 状态</td>
+    <td><strong>需适配</strong>，会话/状态机可复用</td>
+  </tr>
+  <tr>
+    <td>TUI / 控制</td>
+    <td><code>crates/voime/</code></td>
+    <td>UnixStream、<code>/proc</code>、<code>/usr</code>、XDG 路径；crossterm 本身跨平台</td>
+    <td>观察 addon 状态</td>
+    <td><strong>部分可复用</strong>，客户端与 doctor 需改</td>
+  </tr>
+  <tr>
+    <td>Fcitx 前端</td>
+    <td><code>fcitx-addon/</code></td>
+    <td>Fcitx5 C++ API、<code>InputContext</code>、<code>InputPanel</code>、事件循环、CMake</td>
+    <td>完全耦合</td>
+    <td><strong>不可复用</strong>，必须重写</td>
+  </tr>
+  <tr>
+    <td>安装 / 运维</td>
+    <td><code>scripts/</code>、<code>systemd/</code>、<code>tools/</code></td>
+    <td>bash、systemd、XDG、Linux 包管理</td>
+    <td>Fcitx 配置与重启</td>
+    <td><strong>不可复用</strong>，需要 Windows 安装器/启动项</td>
+  </tr>
+</table>
+
+<h3 id="w3-2">3.2 复用矩阵</h3>
+<table>
+  <tr><th>能力</th><th>现状</th><th>Windows 复用度</th><th>说明</th></tr>
+  <tr><td>麦克风采集与重采样</td><td>cpal + rubato</td><td>高</td><td>cpal 在 Windows 使用 WASAPI；代码只处理 I16 / U16 / F32，需补充 I32/U32 与设备选择策略。</td></tr>
+  <tr><td>VAD 与分段</td><td>FireRedVAD + segmenter</td><td>高</td><td>纯模型推理与状态机，无 OS 依赖。</td></tr>
+  <tr><td>CTC 识别</td><td>FireRedASR2-CTC + fbank</td><td>高</td><td>ONNX Runtime 有 Windows x64 构建；模型包相对路径与 SHA 校验可复用。</td></tr>
+  <tr><td>标点</td><td>FireRedPunc</td><td>高</td><td>tokenizers 的 onig 特性在 Windows 需要 MSVC 构建环境。</td></tr>
+  <tr><td>会话/分段状态机</td><td><code>Daemon</code> + <code>State</code></td><td>高</td><td>PTT / Toggle / Continuous、segment_id、Partial/Final 语义可原样复用。</td></tr>
+  <tr><td>IPC 消息</td><td>换行 JSON</td><td>高</td><td>协议本身可复用；Unix socket 必须换传输。</td></tr>
+  <tr><td>TUI</td><td>ratatui + crossterm</td><td>中高</td><td>crossterm 支持 Windows；<code>Client</code> 的 UnixStream 与 <code>doctor</code> 需改。</td></tr>
+  <tr><td>热键</td><td>Fcitx 事件管线</td><td>低</td><td>Windows 需要 <code>RegisterHotKey</code> / 低级键盘钩子；PTT 还需要 key-up。</td></tr>
+  <tr><td>目标输入框</td><td><code>InputContext</code> 弱引用</td><td>低</td><td>Windows 没有等价 Fcitx 对象；需 HWND + UIA 焦点元素或 TSF <code>ITfContext</code>。</td></tr>
+  <tr><td>临时窗口</td><td><code>InputPanel::setPreedit</code></td><td>无</td><td>需要自绘浮层或 TSF 组合/候选 UI。</td></tr>
+  <tr><td>最终提交</td><td><code>commitString</code></td><td>低</td><td><code>SendInput</code> 或 <code>ITfRange::SetText</code>；编码从 UTF-8 变 UTF-16。</td></tr>
+  <tr><td>配置/生命周期</td><td>Fcitx 配置 + systemd</td><td>无</td><td>需要托盘/设置文件/登录启动项/命名管道 ACL。</td></tr>
+</table>
+
+<h3 id="w3-3">3.3 解耦得好的地方</h3>
+<ul>
+  <li><strong>进程边界清楚：</strong>Fcitx 进程只负责键盘、焦点、临时窗口与提交；<code>voimed</code> 拥有音频、模型、pipeline 与会话历史；TUI 只是客户端。这个划分本身可以直接延续到 Windows。</li>
+  <li><strong>核心不依赖输入法框架：</strong><code>voime-core</code> 没有 Fcitx 类型；音频、VAD、CTC、标点、分段器都能独立测试。</li>
+  <li><strong>目标策略留在前端：</strong>daemon 只分配 <code>segment_id</code> 并广播 <code>SegmentStarted</code> / <code>Partial</code> / <code>Final</code>；目标绑定、失焦判断、提交由前端完成。Windows 前端可以按自己的目标模型实现，这是最重要的可替换点。</li>
+  <li><strong>模式与热键由前端拥有：</strong><code>Mode</code> / <code>Hotkey</code> 从 addon 配置通过 <code>Hello</code> / <code>Configure</code> 同步给 daemon，daemon 不解析命令行模式。Windows 前端可以继续拥有这两个配置。</li>
+  <li><strong>临时结果与最终结果分离：</strong><code>Partial</code> 可丢、<code>Final</code> 不丢的背压策略与平台无关；Windows 浮层/TSF UI 只需要消费同一条消息。</li>
+  <li><strong>无异步运行时：</strong>线程 + crossbeam 的模型容易换成命名管道读写线程，不需要引入 tokio。</li>
+  <li><strong>模型包路径相对化：</strong><code>manifest.json</code> 使用相对路径，<code>resolve_inside</code> 还拒绝绝对路径与 <code>..</code>；Windows 上只需要换默认目录。</li>
+</ul>
+
+<h3 id="w3-4">3.4 仍然绑死的地方</h3>
+<table>
+  <tr><th>泄漏点</th><th>现状</th><th>Windows 影响</th><th>建议处理</th></tr>
+  <tr>
+    <td>本机传输</td>
+    <td><code>voimed</code> 用 <code>UnixListener</code> / <code>PermissionsExt</code>；<code>voime</code> 用 <code>UnixStream</code>；<code>fcitx-addon</code> 直接使用 <code>AF_UNIX</code> / <code>sockaddr_un</code>。</td>
+    <td>Rust 侧无法编译；Windows 需要命名管道或 <code>uds_windows</code> 包装的 AF_UNIX。</td>
+    <td>在 <code>voime-ipc</code> 增加 <code>Endpoint</code> 与传输实现；Unix socket / Windows named pipe 双后端。</td>
+  </tr>
+  <tr>
+    <td>角色命名</td>
+    <td><code>Role::Fcitx</code>、<code>FcitxConfig</code>、<code>AddonState</code>、<code>Snapshot.addon</code>、错误语义 <code>FcitxUnavailable</code> / <code>AddonNotLoaded</code>。</td>
+    <td>Windows 前端可以硬套这些名字，但日志、TUI 文案和协议语义都可疑；后续多前端会更乱。</td>
+    <td>泛化为 <code>Frontend</code> / <code>FrontendConfig</code> / <code>FrontendState</code>；保留旧值作为兼容别名并升级协议版本。</td>
+  </tr>
+  <tr>
+    <td>单前端假设</td>
+    <td><code>IpcServer::set_role</code> 只允许一个 <code>Role::Fcitx</code>；daemon 的 <code>addon</code> 状态是单值。</td>
+    <td>方案 A 够用；方案 B 的 TSF DLL 会加载到多个应用进程，需要多个客户端或一个代理层。</td>
+    <td>MVP 保持单前端；TSF 阶段增加 <code>Role::TextService</code> 与目标认领/路由。</td>
+  </tr>
+  <tr>
+    <td>目标模型</td>
+    <td><code>InputContext</code> 弱引用 + <code>hasFocus()</code>；提交直接调用 <code>commitString</code>。</td>
+    <td>Windows 只能用 HWND/UIA 或 TSF context 重建；没有“输入框对象”可直接复用。</td>
+    <td>把目标抽象为前端私有类型；协议不携带目标对象，只携带 <code>segment_id</code> 与事件。</td>
+  </tr>
+  <tr>
+    <td>预览表面</td>
+    <td>Fcitx <code>InputPanel</code> 的 preedit。</td>
+    <td>Windows 需要自绘浮层（WS_EX_NOACTIVATE / 置顶 / DPI）或 TSF 组合/候选 UI。</td>
+    <td>保持 <code>Partial</code> 协议；在 Windows 前端实现独立的 preview 模块。</td>
+  </tr>
+  <tr>
+    <td>音频生命周期</td>
+    <td>daemon 启动即打开麦克风流并保持播放；没有按段开关。</td>
+    <td>Windows 会常亮麦克风指示；蓝牙耳机会被拉入 HFP；隐私设置拒绝时 daemon 直接启动失败。</td>
+    <td>增加按需开流/关流或至少可配置；启动失败时给出 Windows 隐私诊断。</td>
+  </tr>
+  <tr>
+    <td>采样格式</td>
+    <td><code>audio/capture.rs</code> 只匹配 I16 / U16 / F32；其它格式返回 <code>UnsupportedSampleFormat</code>。</td>
+    <td>WASAPI 设备可能报告 I32 / U32；会直接不可用。</td>
+    <td>补充 I32 / U32（以及必要时 I8/U8）转换；或统一用 cpal 的样本转换。</td>
+  </tr>
+  <tr>
+    <td>设备选择</td>
+    <td>按设备名精确匹配；默认设备由 cpal 决定。</td>
+    <td>Windows 设备友好名可能重复、随语言变化；默认设备与“通信设备”可能不同。</td>
+    <td>支持 endpoint ID / 索引；明确默认设备角色；doctor 显示实际设备。</td>
+  </tr>
+  <tr>
+    <td>配置与路径</td>
+    <td><code>XDG_DATA_HOME</code> / <code>XDG_RUNTIME_DIR</code> / <code>HOME</code>；<code>Config</code> 里直接放 <code>socket: PathBuf</code>。</td>
+    <td>Windows 没有这些变量；命名管道不是文件路径。</td>
+    <td>平台目录模块（<code>LOCALAPPDATA</code> / <code>APPDATA</code>）；把 endpoint 移出 <code>voime-core::Config</code>。</td>
+  </tr>
+  <tr>
+    <td>诊断</td>
+    <td><code>voime doctor</code> 读 <code>/proc</code>、<code>/usr</code>、XDG 配置，检查 Fcitx 进程与 addon。</td>
+    <td>Windows 上全部失效。</td>
+    <td>写 Windows doctor：麦克风隐私、设备、命名管道、前端进程、模型、TSF 注册（若做 B）。</td>
+  </tr>
+  <tr>
+    <td>安装/自启动</td>
+    <td>systemd user unit、bash 安装脚本、<code>fcitx5 -r</code>。</td>
+    <td>不应把 daemon 装成 Session 0 服务：它无法可靠访问交互用户会话的麦克风，也破坏隐私边界；需要登录启动项/托盘。</td>
+    <td>每用户安装器 + 登录启动；前端负责拉起 daemon；不要用 Windows 服务采集音频。</td>
+  </tr>
+  <tr>
+    <td>热键语义</td>
+    <td>Fcitx key 语法，默认 <code>Super+F2</code>；由 Fcitx 只在有文本焦点时消费。</td>
+    <td><code>Win+F2</code> 可能被系统保留；全局热键会吞掉整个系统范围的组合键；PTT 需要 key-up。</td>
+    <td>换默认组合（如 <code>Ctrl+Alt+Space</code>）；自己实现热键解析；PTT 用低级钩子或轮询 <code>GetAsyncKeyState</code>。</td>
+  </tr>
+  <tr>
+    <td>编码</td>
+    <td>UTF-8 字符串，<code>commitString</code> 直接接收。</td>
+    <td><code>SendInput</code> 与 TSF 都使用 UTF-16；emoji 需要代理对。</td>
+    <td>前端统一做 UTF-8 → UTF-16 转换；按 UTF-16 单元拆分注入。</td>
+  </tr>
+  <tr>
+    <td>错误语义</td>
+    <td><code>NoInputContext</code>、<code>CommitTargetLost</code>、<code>FcitxUnavailable</code>、<code>AddonAbiMismatch</code> 等。</td>
+    <td>部分错误在 Windows 没有对应物；用户文案不应出现 Fcitx。</td>
+    <td>拆成通用 <code>FrontendUnavailable</code> / <code>TargetLost</code> / <code>CommitFailed</code>，平台细节放日志。</td>
+  </tr>
+</table>
+
+<h3 id="w3-5">3.5 解耦判定</h3>
+<table>
+  <tr><th>判定项</th><th>结果</th><th>说明</th></tr>
+  <tr><td>识别引擎与 UI/输入法解耦</td><td><strong>好</strong></td><td><code>voime-core</code> 不依赖 Fcitx；可以单独跨平台构建。</td></tr>
+  <tr><td>前端可替换性</td><td><strong>部分</strong></td><td>协议语义支持替换，但传输、角色、单前端假设与目标抽象没有完成。</td></tr>
+  <tr><td>平台运维可移植性</td><td><strong>差</strong></td><td>systemd、Unix socket、XDG、Fcitx 配置与 addon ABI 都是 Linux 专属。</td></tr>
+  <tr><td>直接套入 Windows 做输入法</td><td><strong>不成立</strong></td><td>需要新前端；真正的 IME 还需要 TSF 与多客户端模型。</td></tr>
+  <tr><td>复用识别链路做 Windows 听写</td><td><strong>成立</strong></td><td>补传输、配置、音频与前端即可闭环。</td></tr>
+</table>
+
+<h3 id="w3-6">3.6 代码证据</h3>
+<table>
+  <tr><th>判断</th><th>代码位置</th></tr>
+  <tr>
+    <td>Unix socket 直接进入 daemon/client</td>
+    <td><code>crates/voimed/src/ipc_server.rs</code>（<code>UnixListener</code> / <code>PermissionsExt</code>）、<code>crates/voime/src/client.rs</code>（<code>UnixStream</code>）、<code>fcitx-addon/src/ipc.cpp</code>（<code>AF_UNIX</code> / <code>sockaddr_un</code>）。</td>
+  </tr>
+  <tr>
+    <td>音频格式覆盖不足</td>
+    <td><code>crates/voime-core/src/audio/capture.rs</code> 只匹配 I16 / U16 / F32，其它格式返回 <code>UnsupportedSampleFormat</code>。</td>
+  </tr>
+  <tr>
+    <td>daemon 启动即常开麦克风</td>
+    <td><code>crates/voimed/src/main.rs</code> 在 <code>run()</code> 中先 <code>capture::start</code>，随后才绑定 IPC。</td>
+  </tr>
+  <tr>
+    <td>XDG / HOME 路径</td>
+    <td><code>crates/voime-core/src/config.rs</code> 的 <code>default_model_dir</code> / <code>default_socket</code> / <code>current_uid</code>；<code>crates/voime/src/doctor.rs</code> 还检查 <code>/proc</code> 与 <code>/usr</code>。</td>
+  </tr>
+  <tr>
+    <td>单前端角色</td>
+    <td><code>crates/voimed/src/ipc_server.rs</code> 的 <code>set_role</code> 只允许一个 <code>Role::Fcitx</code>；<code>crates/voimed/src/daemon.rs</code> 以单个 <code>addon</code> 状态决定 continuous 是否可用。</td>
+  </tr>
+  <tr>
+    <td>协议语义带 Fcitx 命名</td>
+    <td><code>crates/voime-ipc/src/lib.rs</code> 的 <code>Role::Fcitx</code>、<code>FcitxConfig</code>、<code>AddonState</code>。</td>
+  </tr>
+  <tr>
+    <td>Fcitx 前端完全绑定宿主</td>
+    <td><code>fcitx-addon/src/voime.cpp</code> 使用 <code>InputContextKeyEvent</code>、<code>InputContext::commitString</code>、<code>InputPanel::setPreedit</code>、<code>TrackableObjectReference</code>；<code>CMakeLists.txt</code> 依赖 Fcitx5Core。</td>
+  </tr>
+  <tr>
+    <td>核心不依赖 Fcitx</td>
+    <td><code>crates/voime-core/src/lib.rs</code> 只导出 <code>audio</code> / <code>config</code> / <code>infer</code> / <code>model</code> / <code>pipeline</code> / <code>punc</code> / <code>vad</code> / <code>asr</code>；没有 Fcitx 头文件或类型。</td>
+  </tr>
+</table>
+
+<h2 id="w4">4. Windows 输入路径</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="w4-1">4.1 方案 A：后台听写工具（全局热键 + 文本注入）</h3>
+<div class="diagram"><img src="diagram/windows-mvp.svg" alt="Windows 后台听写工具组件图"></div>
+<ul class="note">
+  <li>前端是普通桌面进程，不需要注册为 Windows 输入法；daemon 继续拥有音频与模型。</li>
+  <li>提交不是 Fcitx <code>commitString</code>，而是向当前焦点窗口注入 UTF-16 文本。</li>
+</ul>
+
+<h4>流程</h4>
+<pre><code>用户按下热键
+└── Windows 前端
+    ├── 记录前台窗口 + 焦点元素
+    ├── 发送 Start / Stop 到 voimed
+    └── voimed
+        ├── 采集 → VAD → CTC → 标点
+        ├── 广播 Partial（前端浮层显示）
+        └── 广播 Final
+            └── Windows 前端
+                ├── 清除浮层
+                ├── 校验前台窗口 / 焦点元素仍是目标
+                └── SendInput(KEYEVENTF_UNICODE, UTF-16)</code></pre>
+
+<h4>实现要点</h4>
+<table>
+  <tr><th>能力</th><th>Windows 实现</th><th>复用现有代码</th></tr>
+  <tr><td>热键</td><td><code>RegisterHotKey</code> 适合 Toggle；PTT 需要 <code>WH_KEYBOARD_LL</code> 获取 key-up，或定时轮询 <code>GetAsyncKeyState</code>。</td><td>语义复用：Hold / Toggle / Continuous；实现重写。</td></tr>
+  <tr><td>目标绑定</td><td><code>GetForegroundWindow</code> + <code>GetGUIThreadInfo</code> 取焦点 HWND；再用 UI Automation <code>GetFocusedElement</code> 取控件与 RuntimeId。</td><td>绑定/失焦策略可参考 addon，但不能复用代码。</td></tr>
+  <tr><td>音频</td><td>cpal 的 WASAPI 后端；需处理 I32/U32、默认设备与隐私设置。</td><td>采集之后的 pipeline 直接复用。</td></tr>
+  <tr><td>临时窗口</td><td>无激活、置顶、点击穿透的分层窗口（<code>WS_EX_NOACTIVATE</code> / <code>WS_EX_TOOLWINDOW</code> / <code>WS_EX_TRANSPARENT</code>）；按 DPI 与多显示器定位。</td><td>只复用 <code>Partial</code> 消息与显示策略，UI 重写。</td></tr>
+  <tr><td>提交</td><td><code>SendInput</code> + <code>KEYEVENTF_UNICODE</code>；长文本分批；提交前检查目标。</td><td><code>Final</code> 文本与 segment_id 复用。</td></tr>
+  <tr><td>失败处理</td><td>daemon 不可用、无麦克风、目标失焦、注入失败都回到“不误提交”策略，最终文本保留在 daemon 历史/TUI。</td><td>错误策略与状态机复用。</td></tr>
+</table>
+
+<h4>边界与限制</h4>
+<table>
+  <tr><th>场景</th><th>结果</th><th>说明</th></tr>
+  <tr><td>普通 Win32 / WinForms / WPF</td><td>通常可用</td><td>焦点 HWND 明确，<code>SendInput</code> 一般能到达编辑控件。</td></tr>
+  <tr><td>Chromium / Electron / Office</td><td>通常可用，需实测</td><td>焦点元素常是子控件或 contenteditable；UIA 能帮助绑定，但仍可能有焦点竞态。</td></tr>
+  <tr><td>Windows Terminal / 控制台</td><td>需实测</td><td>终端可能使用不同的输入路径；部分 TUI 程序会拦截合成输入。</td></tr>
+  <tr><td>UWP / 商店应用</td><td>需实测</td><td>沙箱与焦点模型不同；不能用“普通 Win32”假设。</td></tr>
+  <tr><td>提权窗口（管理员控制台、任务管理器）</td><td>通常不可用</td><td>UIPI 会阻止普通完整性进程向高完整性窗口注入；除非前端也提权。</td></tr>
+  <tr><td>游戏 / Raw Input / 反作弊</td><td>通常不可用</td><td>合成输入可能被忽略或拦截；这不是本项目应承诺的场景。</td></tr>
+  <tr><td>密码框</td><td>可能注入</td><td><code>SendInput</code> 不知道输入框语义；只能做 best-effort 的 UIA 检测。</td></tr>
+  <tr><td>同一窗口内切换输入框</td><td>可能误提交</td><td>前台 HWND 不变但焦点元素变化；需要 UIA RuntimeId 或 caret 校验。</td></tr>
+  <tr><td>锁屏 / UAC 安全桌面</td><td>不可用</td><td>与现有 Linux 非目标一致，不承诺。</td></tr>
+</table>
+<ul class="note">
+  <li>方案 A 的“输入法”身份不完整：没有 composition、没有系统输入法列表、没有候选/语言栏集成；它更像“语音听写工具”。</li>
+  <li>如果产品接受“在支持的桌面应用里按热键说话即可上屏”，方案 A 可以闭环；如果要求“像微软拼音一样被系统选中、在所有应用中可靠工作”，方案 A 不够。</li>
+</ul>
+
+<h3 id="w4-2">4.2 方案 B：TSF 文本服务（真正的 Windows 输入法）</h3>
+<div class="diagram"><img src="diagram/windows-tsf.svg" alt="Windows TSF 输入法组件图"></div>
+<ul class="note">
+  <li>TSF DLL 加载到每个使用 TSF 的目标应用进程内；它不应自己持有 740 MiB 模型，仍然通过命名管道与 daemon 通信。</li>
+  <li>提交发生在应用进程内，使用该应用的 <code>ITfContext</code>，比跨进程注入更接近系统输入法。</li>
+</ul>
+
+<h4>TSF 侧需要实现的接口</h4>
+<table>
+  <tr><th>接口 / 机制</th><th>作用</th></tr>
+  <tr><td><code>ITfTextInputProcessor</code> / <code>ITfTextInputProcessorEx</code></td><td>文本服务生命周期：激活、停用；取得 <code>ITfThreadMgr</code>。</td></tr>
+  <tr><td><code>ITfThreadMgrEventSink</code></td><td>跟踪焦点上下文、文档变化；决定当前目标 <code>ITfContext</code>。</td></tr>
+  <tr><td><code>ITfKeyEventSink</code></td><td>在 Voime 是当前输入法时接收按键；处理热键并放行普通按键。</td></tr>
+  <tr><td><code>ITfContext::RequestEditSession</code> / <code>ITfEditSession</code></td><td>在目标上下文里执行读写编辑；提交文本必须走 edit session。</td></tr>
+  <tr><td><code>ITfRange::SetText</code> / <code>Collapse</code></td><td>把最终文本写入选区或组合范围。</td></tr>
+  <tr><td><code>ITfContextComposition</code> / <code>ITfComposition</code></td><td>可选的组合/preedit；与现有“只用输入面板、不用客户端 preedit”的设计冲突。</td></tr>
+  <tr><td><code>ITfUIElementSink</code> / candidate UI</td><td>可选的候选/预览窗口；实现成本高，也可以先用独立浮层。</td></tr>
+  <tr><td><code>ITfInputProcessorProfileMgr</code></td><td>注册/激活语言 profile；决定 Voime 何时成为当前输入法。</td></tr>
+  <tr><td>COM 注册 + <code>InprocServer32</code></td><td>CLSID、线程模型、DLL 路径；通常需要管理员权限，且要同时提供 x86 / x64 DLL。</td></tr>
+</table>
+
+<h4>两种 TSF 注册方式</h4>
+<table>
+  <tr><th>注册类别</th><th>激活方式</th><th>与键盘输入法的关系</th><th>需要验证</th></tr>
+  <tr>
+    <td>keyboard TIP（<code>GUID_TFCAT_TIP_KEYBOARD</code>）</td>
+    <td>语言栏 / Win+Space 选中，成为当前键盘输入法</td>
+    <td>互斥；Voime 激活时，微软拼音等键盘输入法不处于活动状态</td>
+    <td>提交、焦点、按键、切换体验；普通按键是否全部放行</td>
+  </tr>
+  <tr>
+    <td>speech TIP（<code>GUID_TFCAT_TIP_SPEECH</code>）</td>
+    <td>作为语音文本服务注册；能否与 keyboard TIP 同时激活没有稳定的公开保证</td>
+    <td>可能并行，但不能按“已成立的后台旁路”设计</td>
+    <td>能否同时激活、是否收到焦点上下文、是否收到热键、应用覆盖</td>
+  </tr>
+</table>
+<ul class="note">
+  <li>Windows 自带的语音输入/听写可能使用了与 keyboard TIP 不同的路径；这不是可直接复制的实现证据，必须用 TSF 原型验证。</li>
+  <li>如果 speech TIP 能稳定并行，它会是比 keyboard TIP 更接近现有后台 UX 的方案；如果不行，就必须接受输入法切换。</li>
+</ul>
+
+<h4>TSF 方案的关键约束</h4>
+<table>
+  <tr><th>约束</th><th>影响</th></tr>
+  <tr>
+    <td>键盘 TIP 必须成为当前输入法；speech TIP 的并行能力未验证</td>
+    <td>若注册为 keyboard TIP，用户需要把 Voime 选为输入法（语言栏 / Win+Space），或者由前端用系统快捷键切换；这会与微软拼音、搜狗等键盘输入法互斥。若注册为 speech TIP，是否能与另一个键盘输入法同时激活、是否仍能稳定收到焦点上下文与按键，需要原型验证，不能直接当作后台旁路。</td>
+  </tr>
+  <tr>
+    <td>TSF DLL 是进程内组件，按应用位数加载</td>
+    <td>需要 x86 与 x64 两份 DLL；安装/注册比普通桌面程序重；每个应用进程都会加载。</td>
+  </tr>
+  <tr>
+    <td>多客户端</td>
+    <td>一个 TSF DLL 实例只对应一个应用进程；daemon 现在只允许一个 <code>Role::Fcitx</code> 客户端。需要多客户端角色或代理/路由层。</td>
+  </tr>
+  <tr>
+    <td>提交语义</td>
+    <td><code>ITfRange::SetText</code> 仍然可能失败（只读、选区变化、上下文销毁）；必须处理 edit session 失败，不能假设一定成功。</td>
+  </tr>
+  <tr>
+    <td>预览语义</td>
+    <td>用 composition 会让应用渲染 preedit，违背当前“不用客户端 preedit”的约定；用候选/UIElement 实现复杂；用独立浮层则又回到方案 A 的自绘窗口。</td>
+  </tr>
+  <tr>
+    <td>更新</td>
+    <td>DLL 被大量应用加载；升级时替换文件可能失败，运行中的应用继续用旧版本。需要版本化 DLL、注册切换和“重启应用/注销”策略。</td>
+  </tr>
+  <tr>
+    <td>覆盖范围</td>
+    <td>仍不覆盖不使用 TSF 的应用（部分游戏、部分终端/遗留程序）和锁屏/安全桌面。</td>
+  </tr>
+</table>
+
+<h4>TSF 方案的价值</h4>
+<ul>
+  <li>目标上下文、焦点、选区由系统框架提供，不需要靠前台窗口猜测；目标丢失更容易判断。</li>
+  <li>提交在应用进程内完成，不依赖 <code>SendInput</code> 的全局注入；对提权应用、UWP、Office/Chromium 等通常更可靠（前提是 DLL 被加载）。</li>
+  <li>可以做真正的 composition / 候选 UI / 语言栏集成，系统身份是“输入法”。</li>
+</ul>
+<ul class="note">
+  <li>TSF 不是“把 Fcitx addon 换成 Windows API”那么简单：它是另一套生命周期、激活模型与进程模型。</li>
+  <li>不要设计“按热键临时把前台线程切到 Voime、提交后切回”：TSF profile 激活是线程级的，跨进程切换没有稳定的公共 API；模拟 Win+Space 容易破坏用户当前输入状态。</li>
+  <li>如果产品不能接受“用户需要切换到 Voime 输入法”这一 UX，那么 TSF 可能不是正确答案，方案 A 反而更贴近现有体验。</li>
+</ul>
+
+<h3 id="w4-3">4.3 方案 C：混合与回退</h3>
+<table>
+  <tr><th>手段</th><th>适用</th><th>问题</th></tr>
+  <tr>
+    <td>UI Automation <code>ValuePattern.SetValue</code></td>
+    <td>标准 Edit 控件、部分 UWP 控件</td>
+    <td>绕过键盘/输入法语义；不触发所有变更事件；对 contenteditable / 自定义控件无效。</td>
+  </tr>
+  <tr>
+    <td>剪贴板 + <code>Ctrl+V</code></td>
+    <td><code>SendInput</code> 失败的普通应用</td>
+    <td>污染用户剪贴板与剪贴板历史；需要恢复；提权窗口仍可能失败；不适合密码/敏感内容。</td>
+  </tr>
+  <tr>
+    <td><code>EM_REPLACESEL</code> / 控件消息</td>
+    <td>标准 Win32 Edit / RichEdit</td>
+    <td>只覆盖特定控件；跨进程消息与 UIPI 限制；维护成本高。</td>
+  </tr>
+  <tr>
+    <td>TSF 组合 + 自定义候选窗口</td>
+    <td>真正的输入法体验</td>
+    <td>实现量大；与现有“不用客户端 preedit”的约定冲突。</td>
+  </tr>
+</table>
+<ul class="note">
+  <li>方案 C 应作为方案 A 的兜底，不应作为主路径；剪贴板回退必须默认关闭或明确提示。</li>
+  <li>不建议用 loopback TCP 作为默认 IPC：会触发防火墙提示、端口冲突，且本机任意进程可连接；命名管道更容易做用户级 ACL。</li>
+</ul>
+
+<h3 id="w4-4">4.4 两条路径对比</h3>
+<table>
+  <tr><th>维度</th><th>方案 A：后台听写</th><th>方案 B：TSF 输入法</th></tr>
+  <tr><td>系统身份</td><td>普通桌面程序</td><td>系统输入法（TSF 文本服务）</td></tr>
+  <tr><td>用户是否需要切换输入法</td><td>不需要；任意输入法下按热键</td><td>键盘 TIP 需要把 Voime 选为当前输入法；speech TIP 是否可并行待验证</td></tr>
+  <tr><td>热键捕获</td><td>全局热键/低级钩子</td><td>TSF <code>ITfKeyEventSink</code> 或全局热键</td></tr>
+  <tr><td>目标绑定</td><td>前台 HWND + UIA 焦点元素（近似）</td><td><code>ITfContext</code>（精确）</td></tr>
+  <tr><td>提交</td><td><code>SendInput</code>（跨进程注入）</td><td><code>ITfRange::SetText</code>（进程内编辑会话）</td></tr>
+  <tr><td>临时窗口</td><td>自绘浮层</td><td>composition / candidate UI / 自绘浮层</td></tr>
+  <tr><td>应用覆盖</td><td>多数普通桌面应用；提权/游戏/部分终端弱</td><td>TSF 应用覆盖更好；非 TSF 应用仍不覆盖</td></tr>
+  <tr><td>后台常驻</td><td>是；与现有 UX 接近</td><td>否；必须作为当前输入法激活</td></tr>
+  <tr><td>安装权限</td><td>通常每用户安装即可</td><td>COM/TSF 注册通常需要管理员；按用户启用 profile</td></tr>
+  <tr><td>升级</td><td>替换桌面程序，重启前端</td><td>替换 DLL；运行中的应用继续用旧版本，通常需重启应用</td></tr>
+  <tr><td>工程量</td><td>中</td><td>大；需要 COM/C++、32/64 位 DLL、TSF 测试矩阵</td></tr>
+  <tr><td>与现有设计的关系</td><td>保留“后台 addon”心智，替换输入集成</td><td>改变产品形态；需要重新定义“普通输入法切换”</td></tr>
+</table>
+
+<h2 id="w5">5. 闭环判定</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="w5-1">5.1 闭环定义</h3>
+<p>
+本文把“闭环”定义为：用户触发后，系统自动完成采音、VAD 分段、识别、标点，并把最终文本提交到同一目标输入位置；失败时可见、可恢复，不需要用户手工复制粘贴；运行期不联网。
+</p>
+
+<h3 id="w5-2">5.2 闭环检查表</h3>
+<table>
+  <tr><th>步骤</th><th>现有 Linux 实现</th><th>方案 A</th><th>方案 B</th><th>判定</th></tr>
+  <tr><td>1. 触发</td><td>Fcitx 热键事件</td><td><code>RegisterHotKey</code> / 低级钩子</td><td>TSF key sink / 全局热键</td><td>A 可；B 可但受激活方式限制</td></tr>
+  <tr><td>2. 目标绑定</td><td><code>InputContext</code> 弱引用</td><td>前台 HWND + UIA 焦点元素</td><td><code>ITfContext</code></td><td>A 近似；B 精确</td></tr>
+  <tr><td>3. 采音</td><td>cpal / ALSA</td><td>cpal / WASAPI</td><td>同 A</td><td>可，需格式/设备适配</td></tr>
+  <tr><td>4. VAD / 分段</td><td>FireRedVAD + segmenter</td><td>原样复用</td><td>原样复用</td><td>可</td></tr>
+  <tr><td>5. Partial 识别</td><td>CTC 尾部识别</td><td>原样复用</td><td>原样复用</td><td>可</td></tr>
+  <tr><td>6. 临时窗口</td><td>Fcitx InputPanel</td><td>自绘浮层</td><td>composition / candidate / 浮层</td><td>A 需新 UI；B 需选择 UI 方案</td></tr>
+  <tr><td>7. Final + 标点</td><td>CTC + FireRedPunc</td><td>原样复用</td><td>原样复用</td><td>可</td></tr>
+  <tr><td>8. 提交</td><td><code>commitString</code></td><td><code>SendInput</code></td><td><code>ITfRange::SetText</code></td><td>A 有覆盖边界；B 更可靠但需激活</td></tr>
+  <tr><td>9. 失焦/目标丢失</td><td><code>hasFocus()</code></td><td>前台窗口 + UIA 校验</td><td>TSF 焦点事件 + context 校验</td><td>A 近似；B 更准确</td></tr>
+  <tr><td>10. 生命周期</td><td>systemd</td><td>登录启动 + 托盘</td><td>登录启动 + TSF 注册</td><td>A 简单；B 复杂</td></tr>
+  <tr><td>11. 安全/隐私</td><td>0700/0600 Unix socket</td><td>命名管道 ACL</td><td>命名管道 ACL + 进程内 DLL</td><td>都可做，B 攻击面更大</td></tr>
+</table>
+
+<h3 id="w5-3">5.3 方案 A 的闭环结论</h3>
+<table>
+  <tr><th>结论</th><th>内容</th></tr>
+  <tr><td>能闭环的场景</td><td>普通 Win32 / WinForms / WPF、Chromium/Electron、Office 类应用、部分终端；目标窗口在录音期间保持前台与焦点；用户接受“语音听写”而非“系统输入法”。</td></tr>
+  <tr><td>需要降级的场景</td><td>提权窗口（不注入了，只保留历史）、游戏/Raw Input、部分 UWP/终端、同一窗口内焦点切换；提交失败时提示用户手动从 TUI/历史复制。</td></tr>
+  <tr><td>不能承诺的场景</td><td>锁屏、UAC 安全桌面、所有应用 100% 覆盖、密码框安全、长文本零延迟。</td></tr>
+  <tr><td>总体判断</td><td><strong>可以形成产品级闭环，但应明确“支持的桌面应用集合”，不要宣称“Windows 通用输入法”。</strong></td></tr>
+</table>
+
+<h3 id="w5-4">5.4 方案 B 的闭环结论</h3>
+<table>
+  <tr><th>结论</th><th>内容</th></tr>
+  <tr><td>能闭环的场景</td><td>TSF 应用；Voime 是当前输入法；目标上下文明确；提交走编辑会话；可做 composition / 候选/预览。</td></tr>
+  <tr><td>仍然不覆盖</td><td>非 TSF 应用、部分游戏/终端、锁屏/安全桌面；输入法切换期间的空窗。</td></tr>
+  <tr><td>主要代价</td><td>用户必须切换到 Voime 输入法；32/64 位 DLL、COM 注册、多客户端、升级与应用重启；工程量显著大于 A。</td></tr>
+  <tr><td>总体判断</td><td><strong>技术上更“像输入法”，但与现有“后台 addon、不注册输入法、普通输入法照常”的产品约定冲突；需要产品层面先接受新的交互模型。</strong></td></tr>
+</table>
+
+<h2 id="w6">6. 需要改造的边界</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="w6-1">6.1 P0：做 Windows MVP 之前必须完成</h3>
+<table>
+  <tr><th>#</th><th>改动</th><th>落点</th><th>验收</th></tr>
+  <tr>
+    <td>1</td>
+    <td><strong>传输抽象</strong>：把 Unix socket 从 daemon/client 中抽出，定义 <code>Endpoint</code> 与读写接口；Windows 后端用命名管道。</td>
+    <td><code>voime-ipc</code> 新增 transport 模块；<code>voimed::ipc_server</code>、<code>voime::client</code> 改为泛型/枚举端点。</td>
+    <td>Linux 行为不变；Windows 上 daemon 与客户端可握手、收发 JSON lines；命名管道只允许当前用户。</td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td><strong>协议去 Fcitx 化</strong>：<code>Role::Fcitx</code> → <code>Frontend</code>，<code>FcitxConfig</code> → <code>FrontendConfig</code>，<code>AddonState</code> → <code>FrontendState</code>；旧值保留兼容别名。</td>
+    <td><code>voime-ipc</code>、<code>voimed</code>、<code>voime</code>、TUI 文案、协议版本。</td>
+    <td>旧 addon 仍能连接（兼容期）；新前端使用新角色；日志/快照不再出现 Fcitx 专用词。</td>
+  </tr>
+  <tr>
+    <td>3</td>
+    <td><strong>平台目录与配置</strong>：模型、日志、配置、端点按平台解析；<code>socket: PathBuf</code> 从 <code>voime-core::Config</code> 移出。</td>
+    <td><code>voime-core::config</code>、<code>voimed</code>、<code>voime</code>、<code>doctor</code>。</td>
+    <td>Windows 默认 <code>%LOCALAPPDATA%\voime\...</code>；Linux 默认路径不变；CLI 支持 <code>--endpoint</code>。</td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td><strong>音频适配</strong>：补 I32/U32；设备按 endpoint ID/索引选择；评估按段开流与常开流的取舍；隐私拒绝给出明确错误。</td>
+    <td><code>voime-core::audio::capture</code>、<code>config</code>、<code>voimed</code> 启动流程、doctor。</td>
+    <td>Windows 上内置麦克风、USB、蓝牙至少各一台可用；设备切换/拔出有可读错误。</td>
+  </tr>
+  <tr>
+    <td>5</td>
+    <td><strong>构建与 CI</strong>：用 <code>cfg</code> 隔离 Unix 专属代码；Windows 构建产出 <code>voimed.exe</code>、<code>voime.exe</code> 与 <code>onnxruntime.dll</code>；模型安装脚本支持 Windows。</td>
+    <td><code>Cargo.toml</code>、<code>tests/</code>、<code>scripts/</code>、<code>tools/install_models.py</code>、CI。</td>
+    <td><code>cargo test</code> 在 Windows 通过；Linux 行为不变；模型校验通过。</td>
+  </tr>
+  <tr>
+    <td>6</td>
+    <td><strong>Windows 前端 MVP</strong>：托盘/后台进程、热键、目标绑定、浮层、<code>SendInput</code>、失焦取消、daemon 重连。</td>
+    <td>新 crate（例如 <code>crates/voime-windows/</code>）或独立 <code>windows-frontend/</code>；使用 <code>windows</code> crate。</td>
+    <td>在验收应用集合中完成“按热键说话 → 浮层 → 最终文本上屏”；目标失焦不误提交。</td>
+  </tr>
+  <tr>
+    <td>7</td>
+    <td><strong>生命周期与安装</strong>：每用户安装、登录启动、单实例、日志、卸载；不要使用 Session 0 的 Windows 服务采集音频。</td>
+    <td>安装器、启动项、<code>voimed</code> 启动方式、托盘菜单。</td>
+    <td>重启登录后自动可用；daemon 崩溃可由前端拉起；卸载干净。</td>
+  </tr>
+  <tr>
+    <td>8</td>
+    <td><strong>安全基线</strong>：命名管道 DACL（当前用户）、拒绝远程客户端、键盘钩子只处理配置热键且不记录、提交前目标校验、二进制签名。</td>
+    <td>传输层、Windows 前端、安装器。</td>
+    <td>同机其他用户不能连接；无按键/音频/文本落盘；安全软件不误报（需签名与说明）。</td>
+  </tr>
+</table>
+
+<h3 id="w6-2">6.2 P1：决定做 TSF 后必须完成</h3>
+<table>
+  <tr><th>#</th><th>改动</th><th>落点</th><th>验收</th></tr>
+  <tr>
+    <td>1</td>
+    <td><strong>多客户端协议</strong>：新增 <code>Role::TextService</code>（或等价代理模型）；允许多个 TSF DLL 连接，daemon 按 <code>segment_id</code> / 目标认领路由 <code>Partial</code> / <code>Final</code>。</td>
+    <td><code>voime-ipc</code>、<code>voimed::ipc_server</code>、<code>daemon</code>。</td>
+    <td>两个以上 TSF 应用同时打开时，只有目标上下文提交；无重复提交。</td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td><strong>TSF DLL</strong>（x86 + x64）：<code>ITfTextInputProcessor</code>、<code>ITfThreadMgrEventSink</code>、<code>ITfKeyEventSink</code>、edit session、<code>ITfRange::SetText</code>。</td>
+    <td>新 <code>tsf/</code> C++ 工程；COM/CLSID 注册；DLL 签名。</td>
+    <td>在 Notepad、Word、Chrome、VS Code、Windows Terminal 中完成提交与焦点丢失处理。</td>
+  </tr>
+  <tr>
+    <td>3</td>
+    <td><strong>激活模型</strong>：决定 Voime 是 keyboard TIP（用户主动切换）还是 speech TIP（先验证并行能力）；不要假设可以无感旁路。</td>
+    <td>TSF profile 注册、托盘/语言栏、用户文档。</td>
+    <td>用户能清楚地知道何时 Voime 在接收按键；不会误吞普通输入。</td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td><strong>预览</strong>：选择 composition、candidate UI 或独立浮层；明确是否接受客户端 preedit。</td>
+    <td>TSF DLL / 前端浮层。</td>
+    <td>Partial 显示与 Final 清理符合现有 Toggle/PTT 语义。</td>
+  </tr>
+  <tr>
+    <td>5</td>
+    <td><strong>安装/升级</strong>：TSF 注册需要管理员；32/64 位 DLL；版本化；运行中应用加载旧 DLL 的处理。</td>
+    <td>安装器、注册脚本、升级流程。</td>
+    <td>升级后可回退；旧 DLL 不阻塞新 daemon；用户知道需要重启哪些应用。</td>
+  </tr>
+</table>
+
+<h3 id="w6-3">6.3 P2：可选增强</h3>
+<ul>
+  <li>UIA <code>ValuePattern</code> / 剪贴板回退，仅对白名单应用启用。</li>
+  <li>按光标位置显示浮层（UIA <code>TextPattern</code> / <code>GetGUIThreadInfo</code> 的 caret 矩形）；多显示器与 DPI 适配。</li>
+  <li>Windows 10/11 不同版本的兼容性；ARM64 评估。</li>
+  <li>无网络遥测之外的本地诊断包（默认关闭，不包含音频/文本）。</li>
+</ul>
+
+<h3 id="w6-4">6.4 推荐实施顺序</h3>
+<pre><code>1. 传输 + 配置 + 音频 + CI
+   └── 让 voimed / voime 在 Windows 上编译、启动、连接、采集
+
+2. Windows 前端 MVP
+   ├── 托盘 + 热键 + Start/Stop/Toggle
+   ├── 目标绑定（前台窗口 + UIA）
+   ├── 浮层（Partial）
+   └── SendInput（Final）
+
+3. 真实应用验收
+   └── 通过 → 作为“语音听写工具”发布
+       不通过 → 缩小支持范围，或进入 TSF 评估
+
+4. TSF 原型（仅当产品要求系统级输入法）
+   ├── Notepad 单应用提交
+   ├── 多应用 + 多客户端
+   ├── 32/64 位 DLL / 注册 / 升级
+   └── 通过 → 产品化；不通过 → 保持 MVP</code></pre>
+
+<h3 id="w6-5">6.5 不建议的做法</h3>
+<ul>
+  <li><strong>不要逐行移植 <code>fcitx-addon</code>。</strong>它的价值是行为规格（热键、目标、预览、提交顺序），不是可移植代码。</li>
+  <li><strong>不要用 Windows 服务承载音频。</strong>Session 0 无法可靠访问交互用户会话的麦克风；用登录启动的每用户进程。</li>
+  <li><strong>不要把 loopback TCP 作为默认 IPC。</strong>防火墙提示、端口冲突、任意本机进程可连接；命名管道更合适。</li>
+  <li><strong>不要假设 <code>SendInput</code> 到处可用。</strong>先把支持矩阵写清楚，再决定是否投入 TSF。</li>
+  <li><strong>不要在 TSF 中假设“后台旁路”。</strong>按 keyboard TIP 注册时，TSF 文本服务必须是当前输入法；speech TIP 能否并行仍需验证，不能先按旁路设计。</li>
+</ul>
+
+<h2 id="w7">7. 风险与验证计划</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="w7-1">7.1 风险清单</h3>
+<table>
+  <tr><th>风险</th><th>影响</th><th>缓解</th></tr>
+  <tr><td><code>SendInput</code> 被目标应用忽略</td><td>文本不出现或只出现一部分</td><td>先做应用矩阵；失败时提示；白名单 + 回退；必要时 TSF。</td></tr>
+  <tr><td>UIPI / 提权窗口</td><td>无法注入管理员应用</td><td>默认不支持；可选“以管理员运行前端”模式；文档写清楚。</td></tr>
+  <tr><td>焦点竞态</td><td>文本进入错误窗口</td><td>绑定前台 HWND + UIA RuntimeId；提交前复核；任何变化则放弃提交并保留历史。</td></tr>
+  <tr><td>中文输入法开启时的注入</td><td>合成 Unicode 被 IME 处理或吞掉</td><td>在微软拼音/第三方输入法开启状态下测试；必要时临时切换输入法或使用 TSF。</td></tr>
+  <tr><td>TSF 激活方式</td><td>用户必须切换输入法，体验不符</td><td>产品先决策；若不可接受，不做 TSF；或提供明确的切换引导。</td></tr>
+  <tr><td>TSF 多客户端 / 32/64 位</td><td>实现复杂、提交错目标</td><td>先做单应用原型；协议增加 <code>TextService</code> 角色；目标认领与去重。</td></tr>
+  <tr><td>TSF 升级</td><td>运行中应用继续用旧 DLL</td><td>版本化 DLL；注册切换；提示重启应用；daemon 兼容旧协议。</td></tr>
+  <tr><td>Windows 麦克风隐私</td><td>daemon 启动失败或录不到音</td><td>doctor 检查隐私设置；明确错误；首次运行引导。</td></tr>
+  <tr><td>蓝牙耳机 HFP</td><td>音质下降、设备切换延迟</td><td>按段开流；允许选择设备；文档提示。</td></tr>
+  <tr><td>命名管道安全</td><td>其他用户/会话读取识别文本或控制 daemon</td><td>当前用户 DACL、<code>PIPE_REJECT_REMOTE_CLIENTS</code>、管道名带会话标识；控制命令校验。</td></tr>
+  <tr><td>安全软件误报</td><td>键盘钩子 + 麦克风 + 注入被拦截</td><td>代码签名；只挂钩配置热键；不记录按键；提供隐私说明。</td></tr>
+  <tr><td>安装包体积/首启</td><td>740 MiB 模型下载失败或过慢</td><td>模型与程序分离；断点/校验；缓存；失败可重试。</td></tr>
+  <tr><td>多会话 / RDP</td><td>跨会话注入或管道串扰；每会话 daemon 会各占一份模型内存</td><td>每会话 daemon + 管道名带会话 ID；不要用 <code>Global\</code> 让管道跨会话可见；若内存不可接受，再评估共享 daemon + 会话路由。</td></tr>
+  <tr><td>Windows 版本差异</td><td>Win10/11、UWP、终端行为不同</td><td>矩阵测试；按版本记录已知限制。</td></tr>
+</table>
+
+<h3 id="w7-2">7.2 测试矩阵</h3>
+<table>
+  <tr><th>类别</th><th>用例</th></tr>
+  <tr>
+    <td>系统</td>
+    <td>Windows 10 22H2、Windows 11 23H2/24H2（x64）；中文与英文系统语言；100% / 150% / 200% DPI；多显示器。</td>
+  </tr>
+  <tr>
+    <td>应用</td>
+    <td>Notepad、Word、Outlook、Chrome、Edge、Firefox、VS Code、Windows Terminal、PowerShell、WPF/WinForms 示例、UWP Notepad、管理员控制台、RDP 客户端。</td>
+  </tr>
+  <tr>
+    <td>音频</td>
+    <td>内置麦克风、USB 麦克风、蓝牙耳机；44.1 kHz / 48 kHz；单声道/立体声；I16 / F32 / I32；默认设备切换；拔出/重插；隐私拒绝；独占模式占用。</td>
+  </tr>
+  <tr>
+    <td>热键</td>
+    <td>PTT 按下/松开、自动重复、先松修饰键、Toggle 连按、Continuous 无热键；热键冲突；中文/英文输入法开启；提权窗口前台；锁屏。</td>
+  </tr>
+  <tr>
+    <td>目标/提交</td>
+    <td>录音期间切换窗口；同窗口切换输入框；最小化/关闭目标；只读控件；密码框；长文本；emoji/中英混排；剪贴板回退（若启用）。</td>
+  </tr>
+  <tr>
+    <td>故障</td>
+    <td>daemon 未启动/崩溃/重启；模型缺失/损坏；管道断开；前端崩溃；磁盘满；麦克风被占用。</td>
+  </tr>
+  <tr>
+    <td>安全/隐私</td>
+    <td>其他用户连接管道；远程客户端；网络抓包确认无出站；检查临时目录/日志/崩溃转储；键盘钩子不记录非热键。</td>
+  </tr>
+  <tr>
+    <td>性能</td>
+    <td>PTT 按下到开始录音延迟；Final 到上屏延迟；10/20/30 s 语音 RTF；内存占用；首次模型校验时间；长时间连续模式稳定性。</td>
+  </tr>
+</table>
+
+<h3 id="w7-3">7.3 验收门槛</h3>
+<table>
+  <tr><th>阶段</th><th>门槛</th></tr>
+  <tr><td>核心可运行</td><td>Windows 上 <code>voimed</code> 启动、模型校验通过、麦克风采集 16 kHz 单声道、TUI 能看到 Partial/Final。</td></tr>
+  <tr><td>MVP 闭环</td><td>验收应用集合中完成“热键 → 浮层 → 上屏”；目标失焦不误提交；daemon 重启后前端自动重连；无网络访问。</td></tr>
+  <tr><td>产品可用</td><td>安装/卸载/登录启动可用；命名管道 ACL 正确；无音频/文本落盘；崩溃可恢复；用户能选择麦克风与热键。</td></tr>
+  <tr><td>TSF 决策</td><td>单应用原型能在 Notepad/Word/Chrome/VS Code/Windows Terminal 中提交；多客户端不重复提交；产品接受输入法切换 UX。</td></tr>
+</table>
+
+<h3 id="w7-4">7.4 仍需实测的未知项</h3>
+<ul>
+  <li><code>SendInput</code> 在 Chromium、Electron、UWP、Windows Terminal、Office 中的真实成功率与延迟。</li>
+  <li>中文输入法开启时 Unicode 注入是否被拦截；是否需要在注入前切换输入法状态。</li>
+  <li>提权窗口、RDP、多会话下的行为；是否需要可选的提权前端。</li>
+  <li>TSF 在目标应用中的激活、焦点、composition、只读/密码输入域的实际表现。</li>
+  <li>蓝牙耳机按段开流与常开流的音质/延迟权衡。</li>
+  <li>Windows Defender / SmartScreen 对键盘钩子与注入行为的拦截策略。</li>
+  <li>模型在 Windows 上的 RTF 与内存占用是否与 Linux 验收值一致。</li>
+</ul>
+
+<h2 id="w8">8. 建议</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>如果产品目标是…</th><th>建议路径</th><th>原因</th></tr>
+  <tr>
+    <td>“在 Windows 上按热键说话，文字进入当前应用”</td>
+    <td>方案 A；先做 P0，再做 MVP。</td>
+    <td>最接近现有后台 addon；复用识别链路；工程量可控；可先验证真实应用覆盖率。</td>
+  </tr>
+  <tr>
+    <td>“像系统输入法一样，被选中后在所有应用可靠工作”</td>
+    <td>方案 B；先做 TSF 单应用 spike，再决定是否产品化。</td>
+    <td>只有 TSF 能提供系统输入法身份与 context 级提交；但 keyboard TIP 的激活方式、speech TIP 的并行能力、32/64 位 DLL、多客户端与升级成本都需先验证。</td>
+  </tr>
+  <tr>
+    <td>“先不确定，想看 Windows 是否值得投入”</td>
+    <td>先完成 P0 + MVP 的目标/提交验证；用数据决定是否进入 TSF。</td>
+    <td>TSF 的最大风险不是识别，而是输入法激活与覆盖；MVP 能以较低成本暴露这些问题。</td>
+  </tr>
+</table>
+
+<p>
+<strong>工程建议：</strong>把“平台输入集成”正式抽象成一层，而不是在 daemon 里加 <code>#[cfg(windows)]</code> 分支。当前最值得做的重构是传输抽象与角色/协议去 Fcitx 化；这两项完成后，Windows 前端、TUI、未来 TSF 都能复用同一套会话协议。
+</p>
+<p>
+<strong>产品建议：</strong>在文档和 UI 中明确区分“语音听写工具”和“Windows 输入法”。如果选择方案 A，不要宣称“通用输入法”；如果选择方案 B，要提前接受“用户需要切换到 Voime 输入法”的交互变化。
+</p>
+
+<h2 id="w9">9. 附录：Fcitx / Linux → Windows 映射</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>现有概念</th><th>方案 A（后台听写）</th><th>方案 B（TSF）</th><th>备注</th></tr>
+  <tr><td><code>InputContext</code></td><td>前台 HWND + UIA 焦点元素</td><td><code>ITfContext</code> / <code>ITfRange</code></td><td>A 是近似目标；B 是系统上下文。</td></tr>
+  <tr><td><code>InputContextKeyEvent</code></td><td><code>RegisterHotKey</code> / <code>WH_KEYBOARD_LL</code></td><td><code>ITfKeyEventSink</code> + 全局热键</td><td>PTT 需要 key-up；TSF 只在激活时收键。</td></tr>
+  <tr><td><code>commitString</code></td><td><code>SendInput(KEYEVENTF_UNICODE)</code></td><td><code>ITfRange::SetText</code>（edit session）</td><td>UTF-8 → UTF-16；都可能失败。</td></tr>
+  <tr><td><code>InputPanel::setPreedit</code></td><td>自绘浮层</td><td>composition / candidate UI / 浮层</td><td>现有设计不使用客户端 preedit。</td></tr>
+  <tr><td><code>hasFocus()</code></td><td><code>GetForegroundWindow</code> + <code>GetGUIThreadInfo</code> + UIA</td><td>TSF 焦点事件 / context 状态</td><td>提交前必须复核。</td></tr>
+  <tr><td><code>TrackableObjectReference&lt;InputContext&gt;</code></td><td>HWND + PID/TID + UIA RuntimeId</td><td><code>ITfContext</code> cookie / 文档 cookie</td><td>目标丢失时放弃提交。</td></tr>
+  <tr><td><code>Mode</code> / <code>Hotkey</code></td><td>JSON/TOML + 托盘设置</td><td>TSF profile + 配置</td><td>默认热键不要用 <code>Super+F2</code>。</td></tr>
+  <tr><td><code>~/.config/fcitx5/conf/voime.conf</code></td><td><code>%APPDATA%\voime\config.json</code></td><td>同 A + TSF profile</td><td>每用户配置。</td></tr>
+  <tr><td>Unix socket</td><td>命名管道</td><td>命名管道</td><td>当前用户 ACL + 管道名带会话 ID。</td></tr>
+  <tr><td>systemd user service</td><td>登录启动项 / 托盘拉起</td><td>登录启动 + TSF 注册</td><td>不要用 Session 0 服务采音。</td></tr>
+  <tr><td><code>fcitx5 -r</code></td><td>重启 Windows 前端</td><td>重启目标应用或注销/登录</td><td>TSF DLL 被多进程加载。</td></tr>
+  <tr><td><code>FCITX_ADDON_FACTORY</code></td><td>普通桌面程序入口</td><td>COM <code>InprocServer32</code> + TSF profile</td><td>TSF 注册通常需要管理员。</td></tr>
+  <tr><td>Fcitx commit filter</td><td>无等价物</td><td>无等价物</td><td>Windows 应用/输入法可能自行处理。</td></tr>
+  <tr><td>UTF-8 文本</td><td>UTF-16 注入</td><td>UTF-16 编辑</td><td>emoji 需要代理对。</td></tr>
+  <tr><td><code>Role::Fcitx</code> / <code>FcitxConfig</code></td><td><code>Role::Frontend</code> / <code>FrontendConfig</code></td><td>+ <code>Role::TextService</code></td><td>建议在 Windows 工作前先泛化。</td></tr>
+</table>
+
+<ul class="note">
+  <li>Windows API 的具体签名与限制以 Microsoft 官方文档为准；本表只记录本项目需要消费的子集。</li>
+  <li>“方案 A 可用”不等于“所有应用可用”；验收以测试矩阵为准，不以 API 存在为准。</li>
+  <li>TSF 的注册、语言 profile 与 32/64 位 DLL 细节会随 Windows 版本和应用类型变化；先用单应用 spike 验证。</li>
+</ul>
+
+<h2 id="w10">10. 参考</h2>
+<p><a href="#top">↑</a></p>
+
+<ul>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/tsf/text-services-framework">Microsoft Learn — Text Services Framework</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/tsf/predefined-category-values">Microsoft Learn — Predefined Category Values（keyboard / speech / handwriting TIP）</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/tsf/text-service-registration">Microsoft Learn — Text Service Registration</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput">Microsoft Learn — SendInput</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey">Microsoft Learn — RegisterHotKey</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelkeyboardproc">Microsoft Learn — LowLevelKeyboardProc</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipes">Microsoft Learn — Named Pipes</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/secauthz/user-interface-privilege-isolation">Microsoft Learn — User Interface Privilege Isolation</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/winauto/entry-uiauto-win32">Microsoft Learn — UI Automation</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/windows/win32/coreaudio/wasapi">Microsoft Learn — WASAPI</a></li>
+</ul>
+
+</body>
+</html>
