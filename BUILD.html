@@ -20,7 +20,7 @@
 </p>
 
 <p>
-根 BUILD 负责多构建根编排、共享模型安装与发布。单个 crate 或前端的构建、测试与安装细节
+根 BUILD 负责多构建根编排、从源码安装、共享模型安装与发布。单个 crate 或前端的构建、测试与安装细节
 在其自己的 <code>BUILD</code> 中维护；本文只保留跨构建根的步骤。
 </p>
 
@@ -50,7 +50,6 @@ cargo test -p voime-core -p voime-ipc -p voime-transport -p voimed -p voime
 # Linux 前端（frontends/fcitx）
 cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build/fcitx
-sudo cmake --install build/fcitx
 
 # Windows 前端（目标 P3）
 cd frontends/windows
@@ -73,12 +72,110 @@ cmake --build build/tsf-x86 --config Release</code></pre>
   <tr><td>Windows CMake</td><td>可选 TSF DLL（x86 / x64）</td><td><a href="frontends/windows/BUILD.html">windows BUILD</a></td></tr>
 </table>
 <ul class="note">
+  <li>本节只构建；二进制、addon 与 systemd 服务的安装步骤见 <a href="#b3">§3</a>。</li>
   <li>构建过程通过 <code>ort</code> 的 <code>download-binaries</code> 获取 ONNX Runtime；构建完成后运行期不联网。</li>
   <li><code>frontends/windows</code> 使用独立 workspace，不进入根 <code>cargo test --workspace</code>。</li>
   <li>Linux 构建不编译 Windows 专用 crate；Windows 构建不要求 Fcitx5 或 Linux 音频头文件。</li>
 </ul>
 
-<h2 id="b3">3. 安装模型</h2>
+<h2 id="b3">3. 从源码安装</h2>
+<p><a href="#top">↑</a></p>
+
+<p>
+以下步骤从干净检出的仓库开始，安装 <code>voimed</code>、<code>voime</code>、Fcitx5 addon、
+systemd 用户服务与模型包。默认把二进制安装到 <code>~/.local/bin</code>，把 addon 安装到
+<code>/usr</code> 前缀；所有命令在仓库根目录执行。
+</p>
+
+<h3 id="b3-1">3.1 准备构建环境</h3>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>用途 / 安装包示例</th></tr>
+  <tr><td>Rust stable</td><td><code>rust-toolchain.toml</code>；首次构建需要网络下载 crate 与 ONNX Runtime。</td></tr>
+  <tr><td>ALSA 开发头文件</td><td>Arch：<code>alsa-lib</code>；Debian / Ubuntu：<code>libasound2-dev</code>。</td></tr>
+  <tr><td>C++20 / CMake / Fcitx5Core</td><td>Arch：<code>fcitx5</code>；Debian / Ubuntu：<code>libfcitx5core-dev</code> 等。</td></tr>
+  <tr><td>Python 3.10+ 与网络</td><td>仅用于安装模型；运行期不需要网络或 Python。</td></tr>
+</table>
+
+<h3 id="b3-2">3.2 构建并安装 Rust 二进制</h3>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cargo build --release -p voimed -p voime
+
+# 安装到 ~/.local/bin，并生成 ~/.config/systemd/user/voime.service
+scripts/install_voimed.sh --no-build
+scripts/install_voime.sh --no-build</code></pre>
+
+<p>
+根 <code>scripts/install_*.sh</code> 是 <code>packaging/linux/install_*.sh</code> 的入口；
+首次构建可省略 <code>--no-build</code>，由安装脚本重新执行 release 构建。
+</p>
+
+<table>
+  <tr><th>脚本</th><th>默认行为</th></tr>
+  <tr><td><code>scripts/install_voimed.sh</code></td><td>安装 <code>voimed</code> 到 <code>~/.local/bin</code>，并从 <code>packaging/linux/voime.service</code> 生成 systemd 用户服务。</td></tr>
+  <tr><td><code>scripts/install_voime.sh</code></td><td>安装 <code>voime</code>（TUI / ctl / doctor）到 <code>~/.local/bin</code>。</td></tr>
+</table>
+
+<ul class="note">
+  <li>自定义前缀：<code>scripts/install_voimed.sh --prefix /usr/local</code>；<code>ExecStart</code> 会替换为实际的 <code>$BINDIR/voimed</code>。</li>
+  <li>不安装 systemd：<code>scripts/install_voimed.sh --no-systemd</code>，之后手动运行 <code>~/.local/bin/voimed</code>。</li>
+  <li>也可以手动安装：<code>install -Dm755 target/release/voimed ~/.local/bin/voimed</code> 与 <code>install -Dm755 target/release/voime ~/.local/bin/voime</code>。</li>
+  <li>手动安装 systemd 用户服务：<code>install -Dm644 packaging/linux/voime.service ~/.config/systemd/user/voime.service</code>；默认 unit 使用 <code>%h/.local/bin/voimed</code>。</li>
+</ul>
+
+<h3 id="b3-3">3.3 构建并安装 Fcitx5 addon</h3>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build build/fcitx
+sudo cmake --install build/fcitx</code></pre>
+
+<p>
+安装结果包含 <code>voime.so</code> 与 addon 描述文件；addon 不注册 inputmethod 条目，
+因此不需要把 Voime 加入输入法组。
+</p>
+
+<ul class="note">
+  <li>只重新编译、不安装：<code>cmake --build build/fcitx</code>；产物为 <code>build/fcitx/voime.so</code>。</li>
+  <li>使用 <code>/usr/local</code> 前缀时，确认 Fcitx5 会搜索该前缀下的 addon 与库。</li>
+</ul>
+
+<h3 id="b3-4">3.4 安装模型</h3>
+<p><a href="#top">↑</a></p>
+
+<pre><code>scripts/install_models.sh</code></pre>
+
+<p>
+模型默认写入 <code>$XDG_DATA_HOME/voime/models</code>（未设置时
+<code>~/.local/share/voime/models</code>）；模型目录、SHA-256 与离线安装选项见
+<a href="#b4">§4</a>。模型权重不随仓库或 release 包提交。
+</p>
+
+<h3 id="b3-5">3.5 启动服务并验证</h3>
+<p><a href="#top">↑</a></p>
+
+<pre><code>systemctl --user daemon-reload
+systemctl --user enable --now voime.service
+
+# 安装 / 更新 addon 后重启 Fcitx
+fcitx5 -r
+
+# 验证端点、daemon、模型、音频与 addon
+voime doctor
+voime ctl status
+
+# 可选 TUI
+voime</code></pre>
+
+<ul class="note">
+  <li>首次安装后可在 <code>fcitx5-configtool</code> 的 Addons 页面确认 <code>Voime</code> 已加载。</li>
+  <li>若 <code>~/.local/bin</code> 不在 <code>PATH</code> 中，使用绝对路径运行 <code>voime</code>，或把该目录加入 <code>PATH</code>。</li>
+  <li>不安装 systemd 时，先手动启动 <code>~/.local/bin/voimed</code>，再启动 <code>voime</code> 或 Fcitx。</li>
+</ul>
+
+<h2 id="b4">4. 安装模型</h2>
 <p><a href="#top">↑</a></p>
 
 <pre><code># Linux
@@ -104,7 +201,7 @@ scripts/install_models.sh --source-dir /path/to/official/weights</code></pre>
   <li>模型包内容与张量契约见 <a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a>。</li>
 </ul>
 
-<h2 id="b4">4. 运行</h2>
+<h2 id="b5">5. 运行</h2>
 <p><a href="#top">↑</a></p>
 
 <pre><code># 1. 启动 daemon（推荐 systemd user service）
@@ -139,7 +236,7 @@ voime doctor</code></pre>
   <li>TUI 的 <code>q</code> / <code>Ctrl+C</code> 只 detach；停止 daemon 使用 <code>voime ctl quit</code> 或 systemd。</li>
 </ul>
 
-<h2 id="b5">5. 测试与验收</h2>
+<h2 id="b6">6. 测试与验收</h2>
 <p><a href="#top">↑</a></p>
 
 <pre><code>cargo test
@@ -157,7 +254,7 @@ ctest --test-dir build/fcitx --output-on-failure</code></pre>
   <li>Windows 验收矩阵见 <a href="WINDOWS.html#w7-2">WINDOWS §7.2</a>；前端实现后按该矩阵执行。</li>
 </ul>
 
-<h2 id="b6">6. 发布</h2>
+<h2 id="b7">7. 发布</h2>
 <p><a href="#top">↑</a></p>
 
 <pre><code>cargo build --release
@@ -181,7 +278,7 @@ scripts/install_models.sh</code></pre>
   <li>Linux 验收：addon 被 Fcitx 后台加载且不出现在输入法组；Mode 三态与 Hotkey；Toggle 空白窗口；普通打字不受影响；原生 Wayland / XWayland XIM 提交；目标失焦不误提交；TUI detach；daemon 重启重连；CTC final / partial 文本正常、RTF 达标。</li>
 </ul>
 
-<h2 id="b7">7. 升级 / 卸载</h2>
+<h2 id="b8">8. 升级 / 卸载</h2>
 <p><a href="#top">↑</a></p>
 
 <table>
