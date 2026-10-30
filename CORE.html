@@ -49,7 +49,7 @@
 │   │       ├── <a href="#c4-6">vad/firered.rs</a>
 │   │       ├── <a href="#c4-7">vad/segmenter.rs</a>
 │   │       ├── asr.rs
-│   │       ├── asr/features.rs
+│   │       ├── <a href="#c4-7a">asr/features.rs</a>
 │   │       ├── <a href="#c4-8">asr/firered_ctc.rs</a>
 │   │       ├── <a href="#c4-9">asr/tokenizer.rs</a>
 │   │       ├── punc.rs
@@ -107,6 +107,7 @@
 </code></pre>
 <ul class="note">
   <li><code>models/</code> 只保留 <code>manifest.json</code> 的结构；权重由安装脚本生成后放在本地，不进入版本库。</li>
+  <li>根 <code>Cargo.toml</code> 同时是 <code>voime-tests</code> 包，通过显式 <code>[[test]]</code> 发现 <code>tests/</code> 下的集成测试；<code>crates/voimed/src/lib.rs</code> 导出 <code>daemon</code> / <code>ipc_server</code> / <code>state</code>。</li>
   <li>文档、图表与样式不属于源码结构，不在此列出；模型包契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
 </ul>
 
@@ -133,7 +134,7 @@
   </tr>
   <tr>
     <td>目标输入框</td>
-    <td>每个语音段在开始时保存目标 <code>InputContext</code> 的 <code>TrackableObjectReference</code>；最终提交前检查存在且 <code>hasFocus()</code>。</td>
+    <td>PTT / Toggle 在按键事件中立即绑定目标 <code>InputContext</code>；continuous 与 TUI / ctl 在收到 <code>SegmentStarted</code> 广播时绑定当时聚焦的上下文。段内不再改变；最终提交前检查存在且 <code>hasFocus()</code>。</td>
   </tr>
   <tr>
     <td>临时窗口</td>
@@ -153,7 +154,7 @@
   </tr>
   <tr>
     <td>有界队列</td>
-    <td>continuous 的完成段进入容量 2 的待识别队列；队列满时丢弃最旧段，避免阻塞当前语音。</td>
+    <td>continuous 的完成段进入容量 2 的待识别队列；队列满时丢弃最旧段。pipeline 只有一个工作线程，VAD / CTC / 标点串行执行，音频通道（容量 2048）仍是独立背压点；不承诺慢识别时音频零丢失。</td>
   </tr>
   <tr>
     <td>音频格式</td>
@@ -165,7 +166,11 @@
   </tr>
   <tr>
     <td>CTC</td>
-    <td>单 ONNX、CMVN 从 metadata 读取、greedy 解码；final 与尾部 partial 共用同一会话；默认分段上限 30_000 ms。</td>
+    <td>单 ONNX、CMVN 从 metadata 读取、greedy 解码；每帧更新 <code>prev</code>（包括 blank），仅当 <code>id != 0 &amp;&amp; id != prev</code> 时输出；final 与尾部 partial 共用同一会话；默认分段上限 30_000 ms。</td>
+  </tr>
+  <tr>
+    <td>Fbank 生命周期</td>
+    <td><code>StreamingFbank</code> 只服务 VAD，保留滑动窗口和未消费样本；<code>Fbank::compute</code> 每次从完整音频段独立计算，服务 CTC final / partial；两者不共享实例。输入统一乘 <code>32768</code>。</td>
   </tr>
   <tr>
     <td>临时识别</td>
@@ -213,7 +218,7 @@
   <tr><td><code>sha2</code></td><td><code>voime-core</code></td><td>启动时校验模型文件 SHA-256。</td></tr>
   <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>Rust workspace</td><td>错误传播与边界错误类型。</td></tr>
   <tr><td><code>unicode-width</code></td><td><code>voime</code></td><td>按终端显示宽度换行。</td></tr>
-  <tr><td>CMake / C++17</td><td><code>fcitx-addon</code></td><td>编译 <code>voime.so</code> 与安装描述文件。</td></tr>
+  <tr><td>CMake / C++20</td><td><code>fcitx-addon</code></td><td>编译 <code>voime.so</code> 与安装描述文件。</td></tr>
 </table>
 <ul class="note">
   <li>版本与许可证以 <code>Cargo.toml</code> / <code>Cargo.lock</code> / 系统包清单为准；本表只记录职责。</li>
@@ -245,6 +250,9 @@ pub mod asr;</code></pre>
 
 pub fn resolve(args: Args) -&gt; anyhow::Result&lt;Config&gt;;
 pub fn default_model_dir() -&gt; PathBuf;</code></pre>
+<ul class="note">
+  <li><code>resolve</code> 负责加载、校验并重定位 manifest 中的模型路径；失败时返回带模型目录的错误。</li>
+</ul>
 
 <h3 id="c4-3">4.3 crates/voime-core/src/model.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct ModelManifest {
@@ -291,7 +299,14 @@ impl StreamResampler {
 }</code></pre>
 
 <h3 id="c4-6">4.6 crates/voime-core/src/vad/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct VadFrame {
+<pre><code>pub struct VadConfig {
+    pub speech_threshold: f32,
+    pub min_speech_ms: u32,
+    pub min_silence_ms: u32,
+    pub fbank: FbankConfig,
+}
+
+pub struct VadFrame {
     pub speech_prob: f32,
     pub is_speech: bool,
 }
@@ -328,6 +343,36 @@ impl Segmenter {
     pub fn active_samples(&amp;self) -&gt; &amp;[f32];
     pub fn reset(&amp;mut self);
 }</code></pre>
+<ul class="note">
+  <li><code>MIN_SPEECH_MS</code>、<code>MIN_SILENCE_MS</code>、<code>PTT_AUTO_END_MS</code> 由 segmenter 模块拥有；文档只给推荐值，具体值以源码为准。</li>
+</ul>
+
+<h3 id="c4-7a">4.7a crates/voime-core/src/asr/features.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct FbankConfig {
+    pub sample_rate: u32,
+    pub num_bins: usize,
+    pub frame_ms: u32,
+    pub shift_ms: u32,
+}
+
+pub struct Fbank { /* 整段音频的 fbank */ }
+
+impl Fbank {
+    pub fn new(config: FbankConfig) -&gt; Self;
+    pub fn compute(&amp;mut self, samples: &amp;[f32])
+        -&gt; anyhow::Result&lt;Vec&lt;Vec&lt;f32&gt;&gt;&gt;;
+}
+
+pub struct StreamingFbank { /* 滑动窗口 + 未消费样本 */ }
+
+impl StreamingFbank {
+    pub fn new(config: FbankConfig) -&gt; Self;
+    pub fn push(&amp;mut self, samples: &amp;[f32])
+        -&gt; anyhow::Result&lt;Vec&lt;Vec&lt;f32&gt;&gt;&gt;;
+}</code></pre>
+<ul class="note">
+  <li><code>Fbank</code> 处理完整语音段；<code>StreamingFbank</code> 保留滑动窗口服务 VAD；两者都使用 16 kHz、80 bin、25 ms 窗长、10 ms 帧移和 32768 样本缩放。</li>
+</ul>
 
 <h3 id="c4-8">4.8 crates/voime-core/src/asr/firered_ctc.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct FireRedCtc {
@@ -452,6 +497,10 @@ pub enum ServerMessage {
     Error { code: ErrorCode, message: String },
     Bye,
 }</code></pre>
+<ul class="note">
+  <li>线上 JSON 使用外部标签；<code>Mode</code> / <code>Role</code> / <code>TriggerSource</code> / <code>Phase</code> / <code>AddonState</code> 为小写值，<code>ErrorCode</code> 为 snake_case；<code>PROTOCOL_VERSION = 1</code>。</li>
+  <li><code>Hello.config</code> 可选；Fcitx 客户端连接时携带 <code>mode</code> 与 <code>hotkey</code>。</li>
+</ul>
 
 <h3 id="c4-14">4.14 crates/voimed/src/state.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct State {
@@ -482,9 +531,19 @@ impl Daemon {
     fn on_client(&amp;mut self, client_id: u64, message: ClientMessage);
     fn on_pipeline(&amp;mut self, event: PipelineEvent);
 }</code></pre>
+<ul class="note">
+  <li><code>segment_id</code> 由 daemon 递增计数器唯一分配；<code>Start</code> / <code>Toggle</code> 里的 ID 只是提示，<code>SegmentStarted</code> 广播最终 ID；<code>Stop</code> 的非零 ID 在 PTT / continuous 下会与当前段校验，0 表示停止当前段（Toggle 例外）。</li>
+</ul>
 
 <h3 id="c4-16">4.16 crates/voimed/src/ipc_server.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct IpcServer { /* listener + subscribers */ }
+<pre><code>pub enum ServerEvent {
+    Connected { client_id: u64 },
+    Message { client_id: u64, message: ClientMessage },
+    BadMessage { client_id: u64, message: String },
+    Disconnected { client_id: u64, role: Option&lt;Role&gt; },
+}
+
+pub struct IpcServer { /* listener + subscribers */ }
 
 impl IpcServer {
     pub fn bind(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
@@ -496,6 +555,9 @@ impl IpcServer {
     pub fn role(&amp;self, client_id: u64) -&gt; Option&lt;Role&gt;;
     pub fn shutdown(&amp;mut self);
 }</code></pre>
+<ul class="note">
+  <li><code>disconnect(client_id)</code> 只移除广播发送端；writer 线程先发送已排队的 Error，再关闭 socket。握手版本不匹配或角色冲突时 daemon 走此路径。</li>
+</ul>
 
 <h3 id="c4-17">4.17 crates/voimed/src/main.rs, cli.rs / crates/voime/src/main.rs, cli.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>fn main() -&gt; std::process::ExitCode;
@@ -566,6 +628,7 @@ private:
     void onDaemonDisconnected();
     void connectDaemon();
     void bindTarget(fcitx::InputContext *inputContext);
+    void stopToggle();
     void clearPreview();
     void refreshTogglePreview();
     IpcConfig currentConfig() const;
@@ -632,6 +695,9 @@ public:
     std::function&lt;void(const ServerMessage &amp;)&gt; onMessage;
     std::function&lt;void()&gt; onDisconnected;
 };</code></pre>
+<ul class="note">
+  <li>socket 断线在 Fcitx 事件循环线程处理：先关闭 fd，再对 <code>ioEvent_</code> 调用 <code>setEnabled(false)</code>，不在回调内销毁事件源；下一次 <code>connect</code> 时再替换。</li>
+</ul>
 
 <h3 id="c4-25">4.25 fcitx-addon/src/target.h <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>struct TargetRef {
@@ -649,8 +715,8 @@ public:
 <pre><code>systemd --user
 └── voimed::main()
     ├── cli::parse()
-    ├── config::Config::resolve(args)
-    ├── model::ModelManifest::load / verify
+    ├── config::resolve(args)
+    │   └── model::ModelManifest::load / verify / rebase
     ├── infer::session::SessionFactory::new(config.threads)
     ├── pipeline::spawn(&amp;config, factory, audio_rx)
     │   ├── vad::firered::FireRedVad::new(...)
@@ -659,21 +725,23 @@ public:
     │   └── std::thread::Builder::spawn(Worker::run)
     ├── audio::capture::start(config.input_device, audio_tx)
     ├── ipc_server::IpcServer::bind(config.socket)
-    └── daemon::Daemon::run(state, pipeline, audio, ipc)
+    └── daemon::Daemon::new(config, pipeline, audio, ipc) -&gt; run()
 
 fcitx5
 ├── 加载 share/fcitx5/addon/voime.conf（OnDemand=False，后台加载）
 └── VoimeAddon::VoimeAddon(instance)
-    ├── VoimeConfig::load(~/.config/fcitx5/conf/voime.conf)
-    ├── IpcClient::connect(default_socket)
-    ├── IpcClient::configure(mode, hotkey)
-    └── Instance::watchEvent(InputContextKeyEvent, PreInputMethod)
+    ├── VoimeConfig::load / fcitx::readAsIni(~/.config/fcitx5/conf/voime.conf)
+    ├── IpcClient::connect(default_socket) → Hello(config)
+    ├── Instance::watchEvent&lt;EventType::InputContextKeyEvent&gt;(PreInputMethod, KeyEvent &amp;)
+    ├── Instance::watchEvent&lt;EventType::InputContextFocusOut&gt;(PreInputMethod, FocusOutEvent &amp;)
+    └── EventLoop::addTimeEvent(2 s, reconnect timer)
 
 voime（可选）
 └── Client::connect(socket)
     └── Snapshot</code></pre>
 <ul class="note">
-  <li><code>voimed</code> 与 Fcitx 的启动顺序不敏感；addon 每 2 s 检查连接，断线后自动重连。</li>
+  <li><code>voimed</code> 与 Fcitx 的启动顺序不敏感；addon 的 timer 固定每 2 s 检查连接，断线后自动重连。</li>
+  <li>重连 timer 的回调每次都重新 <code>setNextInterval(2000000)</code> 与 <code>setOneShot()</code>，否则部分事件循环后端只触发一次。</li>
   <li>模型校验、会话创建与音频流在 socket 服务前完成；任一步失败不进入运行态。</li>
   <li>addon 未连接 daemon 时不消费热键；Fcitx 继续正常输入。</li>
 </ul>
@@ -685,21 +753,27 @@ voime（可选）
     ├── KeyEvent::checkKeyList(VoimeConfig::hotkey)
     ├── 判断 Mode == Ptt
     │   ├── 判断 event.isRelease() 且 holdActive_
+    │   │   ├── finalizing_ = recording_; recording_ = false; starting_ = false
     │   │   └── IpcClient::stop(segment_id, Hold)
-    │   └── 判断 press 且 !recording_ 且 !finalizing_
+    │   └── 判断 press 且 !holdActive_ 且 !starting_ 且 !recording_ 且 !finalizing_
     │       ├── target_ = event.inputContext()-&gt;watch()
+    │       ├── holdActive_ = true; starting_ = true
     │       └── IpcClient::start(segment_id, Hold)
     └── 判断 Mode == Toggle
         ├── 判断 toggleCode_ 且 release → 消费
         └── 判断 press
-            ├── 判断 !recording_
+            ├── 判断 !toggleActive_ 且 !starting_ 且 !recording_ 且 !finalizing_
             │   ├── target_ = event.inputContext()-&gt;watch()
+            │   ├── toggleActive_ = true; starting_ = true
+            │   ├── Preview::showEmpty(target_.get())
             │   └── IpcClient::start(segment_id, Toggle)
-            └── 判断 recording_
-                └── IpcClient::stop(segment_id, Toggle)</code></pre>
+            └── 判断 toggleActive_
+                └── VoimeAddon::stopToggle()
+                    └── IpcClient::stop(0, Toggle)</code></pre>
 <ul class="note">
   <li>命中热键后调用 <code>KeyEvent::filterAndAccept()</code>；未命中立即返回，不影响 Fcitx 的普通路由。</li>
   <li>hold 的松开按记录的 keycode 匹配，不重新比较完整组合键；auto-repeat 消费后忽略。</li>
+  <li><code>starting_</code> 表示已发送 Start 但尚未收到 daemon <code>State.recording=true</code>；期间不会再次启动新段，Error 时统一清理。</li>
 </ul>
 
 <h3 id="c5-3">5.3 Continuous 监听</h3>
@@ -724,6 +798,7 @@ voime（可选）
   <li>continuous 由 daemon 的 <code>Mode=continuous</code> 驱动；addon 不参与分段。</li>
   <li>Toggle 由 addon 的 Start/Stop 驱动；VAD 结束时 worker 立即开始下一个段并继续收集，直到 Stop。</li>
   <li>VAD 与分段器在同一工作线程串行执行，不需要锁。</li>
+  <li>pipeline 只有一个 worker；容量 2 的队列只缓存已完成段，慢识别时音频通道仍可能丢弃，不承诺零丢失。</li>
 </ul>
 
 <h3 id="c5-4">5.4 临时结果与窗口</h3>
@@ -767,7 +842,7 @@ VoimeAddon::onIpcMessage(Final(segment_id, text))
 <ul class="note">
   <li>提交前先清空临时窗口；<code>commitString</code> 没有返回值，不能确认应用接受文本。</li>
   <li>Fcitx commit filter 会作用在最终文本上；Voime 不二次转换。</li>
-  <li>Toggle 会话在提交后重新写入空白 preedit，保持输入面板窗口到 toggle off；PTT / continuous 仍然关闭窗口。</li>
+  <li>Toggle 会话在提交后重新写入空白 preedit，保持输入面板窗口到 toggle off 或目标失焦；PTT / continuous 仍然关闭窗口。</li>
 </ul>
 
 <h3 id="c5-6">5.6 TUI、控制与退出</h3>
@@ -791,20 +866,30 @@ voime ctl quit
     └── 删除 socket</code></pre>
 
 <h3 id="c5-7">5.7 断线、目标丢失与模式切换</h3>
-<pre><code>IpcClient::on_readable() 返回 EOF
-└── VoimeAddon::onIpcMessage(Disconnected)
+<pre><code>IpcClient::onReadable() 返回 EOF
+└── IpcClient::fail() → VoimeAddon::onDaemonDisconnected()
     ├── Preview::clear(target_.get())
-    ├── holdActive_ = false; toggleCode_ = 0
+    ├── target_.ref.unwatch(); segmentId_.reset()
+    ├── holdActive_ / starting_ / toggleActive_ = false
     └── 热键恢复为普通按键（不消费）
 
 Daemon::apply_mode(mode)
 ├── Mode=continuous → 允许 VAD 自动分段
 └── Mode=ptt / toggle → 等待 addon 的 Start / Stop
 
-TargetRef::focused() == false
-├── Preview::clear(ref.get())
-└── Final 保留在 daemon 历史 / TUI</code></pre>
+fcitx5::InputContextFocusOut(target_)
+└── VoimeAddon::focusWatcher_ lambda
+    ├── 判断 toggleActive_
+    │   └── VoimeAddon::stopToggle()
+    │       ├── Preview::clear(target_.get())
+    │       ├── IpcClient::stop(0, Toggle)
+    │       └── 判断 !finalizing_
+    │           ├── target_.ref.unwatch()
+    │           └── segmentId_.reset()
+    └── 判断 !toggleActive_ → Preview::clear(target_.get())</code></pre>
 <ul class="note">
+  <li>Fcitx 在目标失焦时隐藏输入面板；Toggle 会话同时发送 Stop，daemon 结束当前段，目标无焦点时最终文本保留在 daemon/TUI 而不提交。</li>
+  <li>Toggle 的后续 <code>SegmentStarted</code> 只在会话仍有效时跟随当前焦点，避免失焦停止后重新绑定到新窗口。</li>
   <li>Fcitx 重启后 addon 重新加载并重连；daemon 不重启。</li>
   <li>模式切换在下一个语音段生效；当前段继续到结束。</li>
 </ul>

@@ -65,7 +65,15 @@ VoimeAddon::VoimeAddon(fcitx::Instance *instance)
     focusWatcher_ = instance_->watchEvent<fcitx::EventType::InputContextFocusOut>(
         fcitx::EventWatcherPhase::PreInputMethod,
         [this](fcitx::FocusOutEvent &event) {
-            if (target_.get() == event.inputContext()) {
+            if (target_.get() != event.inputContext()) {
+                return;
+            }
+            if (toggleActive_) {
+                // The input panel is hidden by Fcitx when the target loses
+                // focus. Keeping Toggle recording would leave the daemon
+                // listening without any visible session.
+                stopToggle();
+            } else {
                 preview_.clear(target_.get());
             }
         });
@@ -218,18 +226,25 @@ void VoimeAddon::handleToggle(fcitx::KeyEvent &event, bool matches) {
         refreshTogglePreview();
         client_.start(segmentId_.value_or(0), TriggerSource::Toggle);
     } else if (toggleActive_) {
-        toggleActive_ = false;
-        starting_ = false;
-        finalizing_ = recording_;
-        recording_ = false;
-        clearPreview();
-        // 0 lets the daemon stop whatever Toggle segment is current, even if
-        // Final and the next SegmentStarted crossed on the wire.
-        client_.stop(0, TriggerSource::Toggle);
-        if (!finalizing_) {
-            target_.ref.unwatch();
-            segmentId_.reset();
-        }
+        stopToggle();
+    }
+}
+
+void VoimeAddon::stopToggle() {
+    if (!toggleActive_) {
+        return;
+    }
+    toggleActive_ = false;
+    starting_ = false;
+    finalizing_ = recording_;
+    recording_ = false;
+    clearPreview();
+    // 0 lets the daemon stop whatever Toggle segment is current, even if
+    // Final and the next SegmentStarted crossed on the wire.
+    client_.stop(0, TriggerSource::Toggle);
+    if (!finalizing_) {
+        target_.ref.unwatch();
+        segmentId_.reset();
     }
 }
 
@@ -255,10 +270,12 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             } else {
                 target_.ref.unwatch();
             }
-        } else if (message.source == TriggerSource::Toggle &&
+        } else if (toggleActive_ &&
+                   message.source == TriggerSource::Toggle &&
                    !target_.focused()) {
             // A toggle session may continue after a segment ended; follow the
-            // current focus if the original input context disappeared.
+            // current focus if the original input context disappeared. A
+            // focus-out ends the session, so only live sessions may rebind.
             auto *inputContext = instance_->mostRecentInputContext();
             if (inputContext && inputContext->hasFocus()) {
                 target_.ref = inputContext->watch();

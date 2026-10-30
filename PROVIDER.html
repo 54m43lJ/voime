@@ -200,7 +200,7 @@
 <div class="diagram"><img src="diagram/prov-input-panel.svg" alt="Fcitx InputPanel 临时文本窗口时序图"></div>
 <ul class="note">
   <li><code>Partial</code> 写入 <code>InputPanel::setPreedit</code>，由 Fcitx UI 渲染；Voime 不创建窗口。</li>
-  <li>Final / 停止 / 断线时清空 preedit；最终提交前先关闭窗口。Toggle 会话在 Final 后重新写入空白 preedit，直到 toggle off。</li>
+  <li>Final / 停止 / 断线时清空 preedit；最终提交前先关闭窗口。Toggle 会话在 Final 后重新写入空白 preedit，直到 toggle off 或目标失焦。</li>
 </ul>
 
 <h3 id="p3-5">3.5 Fcitx 提交边界</h3>
@@ -266,8 +266,9 @@
   <tr><td>ASR 文件</td><td><code>asr/model.int8.onnx</code>（约 740 MiB）+ <code>asr/tokens.txt</code>。</td></tr>
   <tr><td>输入</td><td><code>x</code>: <code>float32[1,T,80]</code> fbank；<code>x_lens</code>: <code>int64[1]</code>。</td></tr>
   <tr><td>输出</td><td><code>log_probs</code>: <code>float32[1,T',8667]</code>；<code>log_probs_len</code>: <code>int64[1]</code>。</td></tr>
-  <tr><td>CMVN</td><td>ONNX metadata <code>cmvn_mean</code> / <code>cmvn_inv_stddev</code>；运行期做 <code>(x - mean) * inv_stddev</code>。</td></tr>
+  <tr><td>CMVN</td><td>ONNX metadata <code>cmvn_mean</code> / <code>cmvn_inv_stddev</code>；运行期做 <code>(x - mean) * inv_stddev</code>。值可能是 JSON 数组或空白 / 逗号 / 分号分隔的浮点串，两种编码都要解析；mean 与 inv_stddev 必须等长且非空。</td></tr>
   <tr><td>词表</td><td><code>tokens.txt</code> 为 token / id；id 0 为 blank；英文 <code>▁</code> 转为空格；<code>token_count</code> 必须等于输出类别数。</td></tr>
+  <tr><td>Punc 输入</td><td><code>input_ids</code> 为词表 id；<code>attention_mask</code> 固定 1；<code>token_type_ids</code> 是 0/1 句段 id，固定填 0，不能填 token id。</td></tr>
   <tr><td>安装</td><td>安装脚本下载官方 <code>.tar.bz2</code>，解出 ONNX / tokens 并写 manifest；详细事实见 <a href="ASR.html">ASR 研究</a>。</td></tr>
 </table>
 <ul class="note">
@@ -358,9 +359,10 @@
   <tr><td><code>TokenizerFormat</code></td><td><code>tokens.txt</code> 行格式错误。</td><td>daemon 启动失败。</td></tr>
   <tr><td><code>FcitxUnavailable</code></td><td>Fcitx 未运行或 addon 未加载。</td><td>无热键 / 临时窗口；TUI 可手动控制；日志说明。</td></tr>
   <tr><td><code>AddonNotLoaded</code></td><td>addon 描述文件缺失或加载失败。</td><td>日志 / <code>voime doctor</code>；不消费热键。</td></tr>
+  <tr><td><code>RoleConflict</code></td><td>已有 <code>role=Fcitx</code> 客户端连接。</td><td>daemon 发送 Error 后断开新连接；addon 由 2 s timer 重试。</td></tr>
   <tr><td><code>NoInputContext</code></td><td>没有聚焦文本输入框。</td><td>不开始语音段；不提交。</td></tr>
   <tr><td><code>CommitTargetLost</code></td><td>目标输入框失焦或销毁。</td><td>清空临时窗口；Final 保留历史。</td></tr>
-  <tr><td><code>DaemonUnavailable</code></td><td>addon 无法连接 socket。</td><td>放行热键；重连；不影响普通输入。</td></tr>
+  <tr><td><code>DaemonUnavailable</code></td><td>addon 无法连接 socket。</td><td>放行热键；固定每 2 s 重连；不影响普通输入。</td></tr>
   <tr><td><code>IpcDisconnected</code> / <code>IpcVersionMismatch</code></td><td>IPC 断线或版本不匹配。</td><td>清理状态；版本不匹配拒绝连接。</td></tr>
   <tr><td><code>AddonAbiMismatch</code></td><td>Fcitx 升级后 addon ABI 不匹配。</td><td>重新编译 addon；Fcitx 日志记录。</td></tr>
   <tr><td><code>NotATty</code> / <code>Terminal Io</code></td><td>TUI 没有终端或控制失败。</td><td>TUI 启动失败；daemon 不受影响。</td></tr>
@@ -384,7 +386,8 @@ Mode=ptt
 Hotkey=Super+F2</code></pre>
 <ul class="note">
   <li><code>OnDemand=False</code> 让 addon 在 Fcitx 启动时后台加载，从而在其他输入法活动时也能收到按键。</li>
-  <li><code>Library=voime</code> 对应 <code>$PREFIX/lib/fcitx5/voime.so</code>；没有输入法条目引用它，因此不会出现在输入法组。</li>
+  <li><code>Library=voime</code> 对应 <code>$PREFIX/lib/fcitx5/voime.so</code>；CMake 关闭 <code>lib</code> 前缀，不能生成 <code>libvoime.so</code>。没有输入法条目引用它，因此不会出现在输入法组。</li>
+  <li><code>readAsIni</code> / <code>safeSaveAsIni</code> 不会自动补 <code>.conf</code>，配置文件路径必须写全 <code>conf/voime.conf</code>。</li>
   <li>socket 使用 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code> 默认路径，不暴露为用户配置。</li>
 </ul>
 

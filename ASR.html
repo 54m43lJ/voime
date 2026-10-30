@@ -102,6 +102,7 @@ sample_scale  = 32768    # 输入到 fbank 前乘 32768</code></pre>
 <ul class="note">
   <li>FireRed-CTC 的预处理以 <code>normalize_samples=false</code>、<code>high_freq=0</code>、<code>snip_edges=true</code> 为准。</li>
   <li>项目现有 <code>asr/features.rs</code> 已经使用 32768 缩放、<code>snip_edges=true</code>、默认 <code>high_freq=0</code>，与上面一致；主要新增的是 CMVN 与 CTC 解码。</li>
+  <li><code>StreamingFbank</code> 只服务 VAD，保留滑动窗口和未消费样本；<code>Fbank::compute</code> 每次从零处理一个完整语音段，服务 CTC final / 尾 partial；两者不共享实例。</li>
 </ul>
 
 <h3 id="a3-2">3.2 推理</h3>
@@ -127,6 +128,8 @@ for t in 0..len {
 let text = tokenizer.decode(&amp;ids);</code></pre>
 <ul class="note">
   <li><code>cmvn_mean</code> / <code>cmvn_inv_stddev</code> 可以直接用 <code>ort::Session::metadata().custom("cmvn_mean")</code> 读取，不需要 <code>cmvn.ark</code>。</li>
+  <li>CMVN metadata 可能是 JSON 数组或空白 / 逗号 / 分号分隔的浮点串；两种编码都要解析，并校验 mean 与 inv_stddev 等长且非空。</li>
+  <li>CTC greedy 的 <code>prev</code> 每帧更新，包括 blank；这样 <code>a blank a</code> 不会被合并成一个 token。</li>
   <li>token 文件是 <code>token id</code> 两列；现有 <code>Tokenizer::load</code> 需要新增“带 id 后缀”的解析，或新增 <code>CtcTokenizer::load_sherpa</code>。</li>
   <li>CTC token 含 <code>▁</code> 和英文子词；解码后把 <code>▁</code> 替换为空格，并合并重复空格。</li>
 </ul>
@@ -182,6 +185,7 @@ let text = tokenizer.decode(&amp;ids);</code></pre>
 <ul class="note">
   <li>完整 manifest、张量与目录契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>；本节只记录 CTC 相关差异。</li>
   <li><code>max_segment_ms</code> 取 30_000；PTT 达到上限自动结束并开始下一段。</li>
+  <li><code>token_count</code> 必须等于 <code>tokens.txt</code> 的 id 数；安装脚本还会校验它等于 ONNX 输出类别数 8667。运行期启动只校验词表条目数与 <code>token_count</code> 一致。</li>
   <li>manifest 只描述 <code>kind = "fire-red-ctc"</code>：单个 <code>model.int8.onnx</code> + <code>tokens.txt</code>。</li>
   <li>安装脚本直接下载官方 <code>.tar.bz2</code> 并解出 <code>model.int8.onnx</code> / <code>tokens.txt</code>；SHA-256 写入 manifest。</li>
 </ul>

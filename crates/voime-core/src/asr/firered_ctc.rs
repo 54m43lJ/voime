@@ -296,6 +296,17 @@ mod tests {
     }
 
     #[test]
+    fn consecutive_blanks_are_dropped() {
+        let logits = vec![
+            0.0, 1.0, 0.0, 0.0, // class 1
+            1.0, 0.0, 0.0, 0.0, // blank
+            1.0, 0.0, 0.0, 0.0, // blank
+            0.0, 0.0, 1.0, 0.0, // class 2
+        ];
+        assert_eq!(greedy_decode(&logits, 4, 4), vec![1, 2]);
+    }
+
+    #[test]
     fn parses_json_and_space_separated_cmvn() {
         assert_eq!(parse_cmvn("[1.0, 2.5, -3]").unwrap(), vec![1.0, 2.5, -3.0]);
         assert_eq!(parse_cmvn("1 2.5\t-3").unwrap(), vec![1.0, 2.5, -3.0]);

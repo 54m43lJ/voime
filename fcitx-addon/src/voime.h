@@ -36,6 +36,7 @@ private:
     void onDaemonDisconnected();
     void connectDaemon();
     void bindTarget(fcitx::InputContext *inputContext);
+    void stopToggle();
     void clearPreview();
     void refreshTogglePreview();
     IpcConfig currentConfig() const;

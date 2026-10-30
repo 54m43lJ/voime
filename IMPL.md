@@ -8,7 +8,7 @@
 
 **1. 问题描述**
 
-`CORE §1` 的 `voime-core` 文件树没有 `asr/features.rs`，但 `CORE §5.4/§5.5` 的调用栈和 `ASR §3.1/§5.2` 都明确引用 `asr::features::Fbank`。按文件树创建模块时，开发者无法确定 Fbank 应该放在哪里。
+`CORE §1` 的 `voime-core` 文件树没有 `asr/features.rs`，但 `CORE §5.4/§5.5` 的调用栈和 `ASR §3.1` 都明确引用 `asr::features::Fbank`。按文件树创建模块时，开发者无法确定 Fbank 应该放在哪里。
 
 **2. 解决方法**
 
@@ -21,20 +21,20 @@
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
 | CORE.html | §1 File tree | 增 | 在 `asr/firered_ctc.rs` 前增加 `asr/features.rs`。 |
-| CORE.html | §4.8 附近 | 增 | 补充 `Fbank`、`StreamingFbank`、`FbankConfig` 的签名小节。 |
-| ASR.html | §5.2 代码落点 | 不动 | 已说明 `asr/features.rs` 已存在，见第 1 条。 |
+| CORE.html | §4.7 后 | 增 | 补充 `Fbank`、`StreamingFbank`、`FbankConfig` 的签名小节。 |
+| ASR.html | §3.1 预处理 | 不动 | 已说明 `asr/features.rs` 存在，见第 1 条。 |
 
 ### 2. `Config` 缺少模型清单，启动职责与调用栈不一致
 
 **1. 问题描述**
 
-`CORE §4.2` 的 `Config` 只有 `model_dir`、`input_device`、`threads`、`socket`，但 `CORE §4.12` 的 `Pipeline::spawn(config, factory, audio_rx)` 只能拿到 `Config`，而加载 VAD/CTC/Punc 需要 `ModelManifest`。如果按原签名实现，要么 pipeline 再次读取并校验 manifest，要么在文档之外增加参数；同时 `CORE §5.1` 又把 `Config::resolve` 和 `ModelManifest::load/verify` 写成两个独立步骤。
+`CORE §4.2` 的 `Config` 只有 `model_dir`、`input_device`、`threads`、`socket`，但 `CORE §4.12` 的 `Pipeline::spawn(config, factory, audio_rx)` 只能拿到 `Config`，而加载 VAD/CTC/Punc 需要 `ModelManifest`。如果按原签名实现，要么 pipeline 再次读取并校验 manifest，要么在文档之外增加参数；同时 `CORE §5.1` 又把 `config::resolve` 和 `ModelManifest::load/verify` 写成两个独立步骤。
 
 **2. 解决方法**
 
 - 给 `Config` 增加 `pub manifest: ModelManifest`。
 - `config::resolve` 内部完成 `ModelManifest::load`、`verify`、`rebase`，并在失败时返回带模型路径的错误。
-- `Pipeline::spawn` 直接使用 `config.manifest`，不再重复读取文件。
+- `pipeline::spawn(&config, ...)` 直接使用 `config.manifest`，不再重复读取文件。
 - `config::Args` 承载 `model_dir`、`input_device`、`threads`、`socket`、`verbose`，由 `voimed` 的 `Cli` 转换而来。
 
 **3. 修订建议**
@@ -42,8 +42,8 @@
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
 | CORE.html | §4.2 config.rs | 改 | `Config` 增加 `manifest: ModelManifest`，并写明 `resolve` 负责加载、校验与路径重定位。 |
-| CORE.html | §5.1 启动 | 改 | 启动调用栈改为 `config::Config::resolve(args)` 一次完成 manifest 加载/校验，移除重复的独立 load/verify 步骤。 |
-| CORE.html | §4.12 pipeline.rs | 不动 | `Pipeline::spawn(&config, ...)` 保持原签名，manifest 来源见第 2 条。 |
+| CORE.html | §5.1 启动 | 改 | 启动调用栈改为 `config::resolve(args)` 一次完成 manifest 加载/校验，移除重复的独立 load/verify 步骤。 |
+| CORE.html | §4.12 pipeline.rs | 不动 | `pipeline::spawn(&config, ...)` 的 config / factory / audio_rx 参数不变；签名与命令变化见第 5 条。 |
 
 ### 3. FireRedVad 的签名与批处理调用栈矛盾
 
@@ -121,7 +121,7 @@
 |---|---|---|---|
 | CORE.html | §4.15 daemon.rs | 改 | `new` 增加 `IpcServer`，补充 `on_server_event` 与客户端 ID。 |
 | CORE.html | §4.16 ipc_server.rs | 改 | 增加 `events`、`send_to`、`set_role`、`role`、`shutdown` 和 `ServerEvent`。 |
-| CORE.html | §5.1 启动 | 不动 | 启动顺序不变，接口变化见本条。 |
+| CORE.html | §5.1 启动 | 改 | 启动顺序不变，`Daemon::new(config, pipeline, audio, ipc).run()` 的签名按本条修正。 |
 
 ### 7. `ServerMessage::Status` 与 `State::status` 未定义
 
@@ -177,12 +177,13 @@
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
 | BUILD.html | §1 环境 | 改 | `C++17` 改为 `C++20`，说明由 Fcitx 5.1.23 头文件决定。 |
+| CORE.html | §3 SBOM | 改 | `CMake / C++17` 改为 `CMake / C++20`。 |
 
 ### 10. addon 安装命令没有指定 Fcitx 前缀
 
 **1. 问题描述**
 
-`BUILD §2/§6` 使用 `cmake -S fcitx-addon -B build/fcitx` 后直接 `sudo cmake --install`。CMake 默认前缀是 `/usr/local`，而发行版 Fcitx 的 addon 通常从 `/usr/lib/fcitx5` 与 `/usr/share/fcitx5` 查找；按原文安装后可能出现“输入法列表没有 Voime”。
+`BUILD §2/§6` 使用 `cmake -S fcitx-addon -B build/fcitx` 后直接 `sudo cmake --install`。CMake 默认前缀是 `/usr/local`，而发行版 Fcitx 的 addon 通常从 `/usr/lib/fcitx5` 与 `/usr/share/fcitx5` 查找；按原文安装后可能出现 addon 未加载（Addons 页面找不到 Voime 或日志报加载失败）。
 
 **2. 解决方法**
 
@@ -218,7 +219,7 @@
 
 **1. 问题描述**
 
-`PROVIDER §4.2` 和 `ASR §5.1` 的 manifest 示例只有 `tokens`，没有 `token_count`；实现中的 `CtcArtifact` 需要该字段来校验词表大小与 ONNX 输出维度。虽然 serde 默认值 8667 能让官方模型通过，但文档没有说明这个约束，替换模型时容易出错。
+`PROVIDER §4.2` 和 `ASR §5.1` 的 manifest 示例只有 `tokens`，没有 `token_count`；实现中的 `CtcArtifact` 需要该字段来校验词表大小，安装脚本还会用它校验 ONNX 输出维度。虽然 serde 默认值 8667 能让官方模型通过，但文档没有说明这个约束，替换模型时容易出错。
 
 **2. 解决方法**
 
@@ -273,7 +274,7 @@
 
 **1. 问题描述**
 
-`BUILD §5` 声称 `tests/daemon.rs` 覆盖 PTT/toggle/continuous/断线、`tests/asr_ctc.rs` 覆盖真实 10–60 s 解码、addon 测试覆盖 keymatch/preview/target。实际实现中，daemon 测试主要覆盖 socket/角色/断线契约；真实 CTC 解码测试需要 `VOIME_CTC_MODEL_DIR` 才执行，否则直接返回；addon 测试覆盖 mode、热键字符串、IPC 枚举和空 target，不覆盖真实 Fcitx keymatch/preview 渲染。
+`BUILD §5` 声称 `tests/daemon.rs` 覆盖 PTT / toggle / continuous / 断线，且 `tests/asr_ctc.rs` 覆盖 10–60 s 解码。实际 daemon 测试只覆盖 socket 存活与断线角色；真实 CTC 解码测试需要 `VOIME_CTC_MODEL_DIR` 才执行，否则直接返回。addon 测试覆盖 mode、热键字符串、IPC 枚举和空 target，不覆盖真实 Fcitx keymatch / preview 渲染。
 
 **2. 解决方法**
 
@@ -464,7 +465,7 @@
 
 **1. 问题描述**
 
-`USER §4.2` 只提供 `voime doctor [--socket PATH]`，但 `voimed` 支持 `--model-dir`，addon 也可能安装在自定义前缀。当前 doctor 固定检查 `~/.local/share/voime/models` 和 `/usr`、`/usr/local` 下的 addon 文件，无法诊断自定义部署。
+`USER §4.2` 只提供 `voime doctor [--socket PATH]`，但 `voimed` 支持 `--model-dir`，addon 也可能安装在自定义前缀。当前 doctor 固定检查 `$XDG_DATA_HOME/voime/models`（未设置时 `~/.local/share/voime/models`）和 `/usr`、`/usr/local` 下的 addon 文件，无法诊断自定义部署。
 
 **2. 解决方法**
 
@@ -488,14 +489,14 @@
 **2. 解决方法**
 
 - daemon 是 `segment_id` 的唯一分配者，内部递增 counter。
-- 客户端可发送 0 或本地临时 ID 作为提示；daemon 在 `SegmentStarted` 中广播最终 ID。
-- addon 收到 `SegmentStarted` 后更新 `segmentId_` 和 `target_.segment_id`；TUI 只显示服务端状态。
+- `Start` / `Toggle` 的 `segment_id` 只作提示；`Stop` 的非零 ID 在 PTT / continuous 下会与当前段校验，不匹配返回 `Busy`，传 0 表示停止当前段，Toggle 不受 ID 校验限制。
+- daemon 在 `SegmentStarted` 中广播最终 ID；addon 收到后更新 `segmentId_` 和 `target_.segment_id`；TUI 只显示服务端状态。
 
 **3. 修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| USER.html | §4.3 IPC | 增 | 明确 daemon 分配 segment_id，客户端只做提示。 |
+| USER.html | §4.3 IPC | 增 | 明确 daemon 分配 segment_id；Start / Toggle 只作提示，Stop 的非零 ID 需匹配当前段（Toggle 除外）。 |
 | CORE.html | §4.15 daemon.rs | 增 | 说明 allocate_segment 与 SegmentStarted 广播。 |
 
 ## 三、其它技术上踩的坑
@@ -674,19 +675,19 @@ Fcitx 执行 `fcitx5 -r` 时，新旧实例可能短暂同时连接 daemon。新
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
 | CORE.html | §4.16 ipc_server.rs | 增 | 补充 `disconnect(client_id)`，说明握手失败时发送 Error 后断开。 |
-| PROVIDER.html | §4.7 消息与错误 | 不动 | `IpcVersionMismatch` / 角色冲突的处理已列，细节见本条。 |
+| PROVIDER.html | §4.7 消息与错误 | 增 | 补充 `RoleConflict`：已有 Fcitx 客户端时的拒绝与断开行为。 |
 
 ### 36. addon 在 daemon 确认前设置 recording，Busy/Error 后状态卡死
 
 **1. 问题描述**
 
-addon 最初在按键命中后立即把 `recording_` 设为 true，再发送 `Start`。如果 daemon 因已有语音段返回 `Busy`、或因没有输入上下文返回错误，addon 会收到 Error，但 `recording_` 已经为 true，后续热键会被 `recording_` 分支拦住，表现为“热键失灵直到重启 Fcitx”。
+addon 最初在按键命中后立即把 `recording_` 设为 true，再发送 `Start`。如果 daemon 因已有语音段或正在识别返回 `Busy`，addon 会收到 Error，但 `recording_` 已经为 true，后续热键会被 `recording_` 分支拦住，表现为“热键失灵直到重启 Fcitx”。
 
 **2. 解决方法**
 
 - 增加 `starting_` 状态：按键后只置 `starting_`，收到 daemon `State.recording=true` 后才置 `recording_`。
 - 收到 Error 且当前未 recording 时，清理 `starting_`、`holdActive_`、`toggleCode_`、目标引用和预览。
-- Toggle 在 `starting_` 期间忽略重复启动；PTT 松开时发送 Stop，由 daemon 幂等处理。
+- Toggle 在 `starting_` 期间不会再次启动新段；再次按热键走 `stopToggle()`。PTT 松开时发送 Stop，由 daemon 幂等处理。
 - 在 `onDaemonDisconnected` 中一并重置 `starting_`。
 - 修复已随初始实现提交 `359cc8a` 合入。
 
@@ -744,7 +745,7 @@ Voime 改为后台 addon 后，如果只停止安装 `share/fcitx5/inputmethod/v
 **2. 解决方法**
 
 - CMake 安装时增加 `install(CODE ...)`，删除 `${CMAKE_INSTALL_FULL_DATADIR}/fcitx5/inputmethod/voime.conf`。
-- Fcitx 启动时检测到 `Found 0 input method(s) in addon voime` 后自动移除 profile 中的 voime 条目。
+- Fcitx 加载 profile 时会把不在输入法条目表中的 `voime` 项视为无效并从输入法组移除。
 - 重新安装 addon 并重启 Fcitx 后，输入法组不再出现 Voime。
 
 **3. 修订建议**
@@ -753,3 +754,23 @@ Voime 改为后台 addon 后，如果只停止安装 `share/fcitx5/inputmethod/v
 |---|---|---|---|
 | BUILD.html | §7 升级 | 增 | 升级时说明旧 inputmethod 条目会被安装脚本删除。 |
 | PROVIDER.html | §4.8 addon 描述 | 不动 | 已注明不安装 inputmethod 条目，本条不重复修改。 |
+
+### 40. Toggle 会话在目标失焦后继续监听
+
+**1. 问题描述**
+
+Toggle 会话只在再次按热键时发送 Stop。目标输入框失焦后，Fcitx 按框架行为隐藏输入面板，但 addon 的 `toggleActive_` 仍为 true，daemon 也保持 Toggle collecting；用户看不到预览窗口，麦克风却继续采集，后续 `SegmentStarted` 还可能把目标重新绑定到新焦点。
+
+**2. 解决方法**
+
+- 焦点 watcher 在 `target_.get() == event.inputContext()` 时，若 `toggleActive_` 为 true，调用与 toggle off 共用的 `VoimeAddon::stopToggle()`：清空预览、发送 `Stop(0, Toggle)`、清除 `toggleActive_`，并按 `recording_` 决定是否等待 Final 后解除目标绑定。
+- `SegmentStarted(source=Toggle)` 的重新聚焦逻辑增加 `toggleActive_` 条件，失焦停止后不会再跟随新焦点绑定目标。
+- 构建 `voime.so` 并通过 `ctest` 与 workspace Rust 测试；焦点事件的运行时行为需在 Fcitx 会话中验证。
+
+**3. 修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| USER.html | §2 CONVENTIONS / §3.2 / §3.4 | 改 | 目标失焦时 Toggle 会话停止录音；空白窗口保留到 toggle off 或目标失焦。 |
+| CORE.html | §4.21 | 增 | 增加 `stopToggle()`。 |
+| CORE.html | §5.2 / §5.5 / §5.7 | 改 | Toggle 关闭与焦点 watcher 共用停止路径；失焦后不再重绑目标。 |
