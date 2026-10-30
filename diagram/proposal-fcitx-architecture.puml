@@ -1,0 +1,30 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+skinparam componentStyle rectangle
+top to bottom direction
+
+actor "用户" as User
+component "物理键盘" as Keyboard
+component "Fcitx5\n输入法框架" as Fcitx
+component "Voime addon（voime.so）\n输入法引擎 + PTT + commit" as Addon
+component "voimed\nASR 守护进程" as Daemon
+component "voime TUI\n可选监视器" as Tui
+component "目标应用\nWayland text-input / XWayland XIM" as App
+component "本地模型包\nFireRedVAD / FireRedASR2-AED / FireRedPunc" as Models
+component "麦克风" as Mic
+component "Fcitx 配置\naddon / inputmethod / voime.conf" as Config
+
+User --> Keyboard : 按键
+Keyboard --> Fcitx : 输入事件
+Fcitx --> Addon : InputContextKeyEvent\nPreInputMethod
+Addon --> Fcitx : commitString(final)
+Fcitx --> App : 普通按键 / 最终文本
+Addon <--> Daemon : Unix socket\nStart / Stop / Partial / Final
+Daemon --> Mic : PCM
+Daemon --> Models : 只读加载
+Tui <--> Daemon : Unix socket\n快照 / 命令
+Fcitx --> Config : 加载 addon / IM 条目
+
+note right of Addon : PTT 键在 PreInputMethod 阶段被消费；\n普通键继续由 Fcitx 路由，Voime 不抓键盘、不转发。
+@enduml
