@@ -1,0 +1,12 @@
+/target
+/build
+/models/*.onnx
+/models/*.data
+/models/asr/
+/models/vad/
+/models/punc/
+!models/manifest.json
+*.part
+
+__pycache__/
+*.pyc

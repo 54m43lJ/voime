@@ -1,0 +1,8 @@
+[Addon]
+Name=Voime
+Category=InputMethod
+Version=@PROJECT_VERSION@
+Library=voime
+Type=SharedLibrary
+OnDemand=False
+Configurable=True

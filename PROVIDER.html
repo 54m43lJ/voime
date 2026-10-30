@@ -251,7 +251,8 @@
       "inputs": [ ... ],
       "outputs": [ ... ]
     },
-    "tokens": "asr/tokens.txt"
+    "tokens": "asr/tokens.txt",
+    "token_count": 8667
   },
   "punc": {
     "model": "punc/model.onnx",
@@ -266,7 +267,7 @@
   <tr><td>输入</td><td><code>x</code>: <code>float32[1,T,80]</code> fbank；<code>x_lens</code>: <code>int64[1]</code>。</td></tr>
   <tr><td>输出</td><td><code>log_probs</code>: <code>float32[1,T',8667]</code>；<code>log_probs_len</code>: <code>int64[1]</code>。</td></tr>
   <tr><td>CMVN</td><td>ONNX metadata <code>cmvn_mean</code> / <code>cmvn_inv_stddev</code>；运行期做 <code>(x - mean) * inv_stddev</code>。</td></tr>
-  <tr><td>词表</td><td><code>tokens.txt</code> 为 token / id；id 0 为 blank；英文 <code>▁</code> 转为空格。</td></tr>
+  <tr><td>词表</td><td><code>tokens.txt</code> 为 token / id；id 0 为 blank；英文 <code>▁</code> 转为空格；<code>token_count</code> 必须等于输出类别数。</td></tr>
   <tr><td>安装</td><td>安装脚本下载官方 <code>.tar.bz2</code>，解出 ONNX / tokens 并写 manifest；详细事实见 <a href="ASR.html">ASR 研究</a>。</td></tr>
 </table>
 <ul class="note">
