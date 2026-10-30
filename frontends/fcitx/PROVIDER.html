@@ -161,7 +161,7 @@ Hotkey=Super+F2</code></pre>
   <tr><td>权限</td><td>目录 0700、socket 0600；只允许同 UID 连接。</td></tr>
   <tr><td>协议</td><td>换行 JSON；消息与错误码见 <a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>。</td></tr>
   <tr><td>读写</td><td>非阻塞 fd；<code>EventLoop::addIOEvent</code> 驱动读写；最大行 1 MiB。</td></tr>
-  <tr><td>目标形态</td><td>P0 后端点语义由 <a href="../../crates/voime-transport/USER.html">voime-transport USER</a> 定义；C++ 前端按同一路径 / 权限契约实现。</td></tr>
+  <tr><td>目标形态</td><td>端点语义由 <a href="../../crates/voime-transport/USER.html">voime-transport USER</a> 定义；C++ 前端按同一路径 / 权限契约实现。</td></tr>
 </table>
 
 <h3 id="p4-6">4.6 错误</h3>

@@ -37,7 +37,6 @@
     └── <a href="#c4-7">doctor.rs</a></code></pre>
 
 <ul class="note">
-  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -53,7 +52,7 @@
   <tr><td>角色</td><td>TUI 以 <code>tui</code> 连接；<code>ctl</code> / <code>doctor</code> 以 <code>control</code> 连接。</td></tr>
   <tr><td>doctor 只读</td><td>不发送 Start / Stop / Quit，不修改配置；只连接读 Snapshot 与调用 core 只读 API。</td></tr>
   <tr><td>ctl 超时</td><td>每次 ctl 动作等待响应的超时由 <code>main.rs</code> 拥有；具体值见 <a href="#c4-1">§4.1</a>。</td></tr>
-  <tr><td>过渡端点</td><td>当前 <code>Client</code> 直接使用 <code>UnixStream</code>；P0 后改为 <a href="../voime-transport/CORE.html">voime-transport</a>。</td></tr>
+  <tr><td>端点</td><td><code>Client</code> 通过 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Stream</code> 连接 daemon。</td></tr>
   <tr><td>无模型</td><td>不加载 ONNX；doctor 只读模型清单与设备列表。</td></tr>
 </table>
 <ul class="note">
@@ -72,7 +71,7 @@
   <tr><td><code>crossbeam-channel</code></td><td>IPC reader 线程到 TUI 的事件通道。</td></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
   <tr><td><code>voime-core</code></td><td>doctor 的默认模型目录、模型清单与音频设备列表。</td></tr>
-  <tr><td><code>voime-transport</code></td><td>本机端点（目标 P0；当前未依赖）。</td></tr>
+  <tr><td><code>voime-transport</code></td><td>本机端点与字节流。</td></tr>
   <tr><td><code>anyhow</code></td><td>命令 / 终端 / 连接错误。</td></tr>
 </table>
 
@@ -82,15 +81,15 @@
 <h3 id="c4-1">4.1 main.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>fn main() -&gt; std::process::ExitCode;
 fn parse_cli() -&gt; Cli;
-fn run_tui(socket: &amp;Path) -&gt; ExitCode;
-fn run_ctl(socket: &amp;Path, action: CtlAction) -&gt; ExitCode;
-fn run_ctl_inner(socket: &amp;Path, action: CtlAction) -&gt; anyhow::Result&lt;()&gt;;
+fn run_tui(endpoint: &amp;Endpoint) -&gt; ExitCode;
+fn run_ctl(endpoint: &amp;Endpoint, action: CtlAction) -&gt; ExitCode;
+fn run_ctl_inner(endpoint: &amp;Endpoint, action: CtlAction) -&gt; anyhow::Result&lt;()&gt;;
 // ctl 动作等待响应的超时由 main.rs 拥有；推荐值 3 s
 fn print_state(message: ServerMessage);</code></pre>
 
 <h3 id="c4-2">4.2 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Cli {
-    pub socket: Option&lt;PathBuf&gt;,
+    pub endpoint: Option&lt;String&gt;,
     pub command: Option&lt;Command&gt;,
 }
 
@@ -102,14 +101,14 @@ pub fn parse() -&gt; Cli;</code></pre>
 
 <h3 id="c4-3">4.3 client.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Client {
-    writer: UnixStream,
+    writer: Box&lt;dyn Stream&gt;,
     events: Receiver&lt;ServerMessage&gt;,
     closed: bool,
 }
 
 impl Client {
-    pub fn connect(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
-    pub fn connect_as(path: &amp;Path, role: Role) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn connect(endpoint: &amp;Endpoint) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn connect_as(endpoint: &amp;Endpoint, role: Role) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn snapshot(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
     pub fn send(&amp;mut self, message: &amp;ClientMessage) -&gt; anyhow::Result&lt;()&gt;;
     pub fn next_event(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
@@ -120,7 +119,7 @@ impl Client {
     pub fn wait_for_state(&amp;mut self, timeout: Duration)
         -&gt; anyhow::Result&lt;ServerMessage&gt;;
 }
-impl Drop for Client { /* shutdown Both */ }</code></pre>
+impl Drop for Client { /* Stream::shutdown */ }</code></pre>
 
 <h3 id="c4-4">4.4 app.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub enum Control { Continue, Detach }
@@ -132,7 +131,7 @@ pub struct App {
     pub partial: String,
     pub recording: bool,
     pub finalizing: bool,
-    pub addon: AddonState,
+    pub addon: FrontendState,
     pub scroll: ScrollState,
     pub viewport_height: u16,
     client: Option&lt;Client&gt;,
@@ -189,7 +188,7 @@ fn install_panic_hook();</code></pre>
 pub const TEXT: Color;</code></pre>
 
 <h3 id="c4-7">4.7 doctor.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub fn run(socket: &amp;Path) -&gt; bool;
+<pre><code>pub fn run(endpoint: &amp;Endpoint) -&gt; bool;
 
 fn fcitx_running() -&gt; bool;
 fn addon_path(relative: &amp;str) -&gt; Option&lt;PathBuf&gt;;
@@ -202,8 +201,8 @@ fn user_config_path() -&gt; Option&lt;PathBuf&gt;;</code></pre>
 <h3 id="c5-1">5.1 TUI 启动与事件循环</h3>
 <pre><code>voime::main()
 ├── voime::cli::parse()
-├── 判断无子命令 → voime::run_tui(socket)
-│   ├── Client::connect(socket)
+├── 判断无子命令 → voime::run_tui(endpoint)
+│   ├── Client::connect(endpoint)
 │   ├── Client::snapshot()
 │   ├── App::new()
 │   ├── App::on_event(Snapshot)
@@ -254,9 +253,9 @@ Tui::draw(&amp;mut app)
 └── footer_text(app) → Paragraph（DIM）</code></pre>
 
 <h3 id="c5-4">5.4 ctl 命令</h3>
-<pre><code>voime::run_ctl(socket, action)
-└── voime::run_ctl_inner(socket, action)
-    ├── Client::connect_as(socket, Role::Control)
+<pre><code>voime::run_ctl(endpoint, action)
+└── voime::run_ctl_inner(endpoint, action)
+    ├── Client::connect_as(endpoint, Role::Control)
     ├── Client::snapshot()
     ├── 判断 Start / Stop / Toggle → Client::send(...) + Client::wait_for_state(3 s)
     ├── 判断 Status → Client::send(Status) + Client::next_event_timeout(3 s)
@@ -265,9 +264,9 @@ Tui::draw(&amp;mut app)
 
 <h3 id="c5-5">5.5 doctor</h3>
 <pre><code>voime::main()
-└── voime::doctor::run(socket)
-    ├── std::fs::metadata(socket) → 检查 Unix 0600
-    ├── Client::connect_as(socket, Role::Control)
+└── voime::doctor::run(endpoint)
+    ├── std::fs::metadata(endpoint.as_unix_path()) → 检查 Unix 0600
+    ├── Client::connect_as(endpoint, Role::Control)
     │   └── Client::snapshot() → daemon 在线
     ├── voime_core::config::default_model_dir()
     │   └── ModelManifest::load / verify

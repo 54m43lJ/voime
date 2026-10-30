@@ -20,7 +20,7 @@
 </p>
 
 <p>
-<strong>状态：</strong>提案，待评审。基线 <code>dev/fcitx@07d9cfa</code>；本文描述目标结构与编译边界。
+<strong>状态：</strong>提案；P0 传输、P1 协议去 Fcitx 化与 P4 源码迁移已在 <code>dev/windows</code> 落地，P2/P3 待实现。基线 <code>dev/fcitx@07d9cfa</code>。
 运行时契约以 <a href="README.html#r4">根 README §4</a> 的组件文档树为准；本文不复制组件内部契约。
 </p>
 
@@ -117,7 +117,7 @@
 │   ├── voimed/                # daemon；只依赖 transport 契约
 │   └── voime/                 # CLI / TUI / ctl / doctor
 ├── frontends/
-│   ├── fcitx/                 # Linux 前端（文档已迁移；源码迁移见 P4）
+│   ├── fcitx/                 # Linux 前端（文档与源码）
 │   │   ├── CMakeLists.txt
 │   │   └── src/
 │   └── windows/               # Windows 构建根
@@ -133,10 +133,9 @@
 ├── scripts/                   # 开发/安装辅助脚本
 ├── tests/                     # 共享集成测试（root 包 voime-tests）
 ├── tools/                     # 模型导出/安装/校验
-├── systemd/                   # 迁移期保留；目标移入 packaging/linux
 └── *.html                     # 文档</code></pre>
 <ul class="note">
-  <li>现状到目标：新增 <code>crates/voime-transport</code>、<code>frontends/windows</code>、<code>packaging/windows</code>；Fcitx 文档已在 <code>frontends/fcitx</code>，源码迁移在 P4；<code>systemd</code> 目标移入 <code>packaging/linux</code>。</li>
+  <li>现状到目标：<code>crates/voime-transport</code> 与 <code>frontends/fcitx</code> 源码已落地；<code>systemd</code> 已移入 <code>packaging/linux</code>；<code>frontends/windows</code>、<code>packaging/windows</code> 待实现。</li>
   <li>迁移期允许旧路径继续工作；不要为了目录整齐先做一次无关的大搬家。</li>
   <li>文档随项目走：每个组件目录拥有自己的 <code>README / USER / CORE / PROVIDER / BUILD</code>；根目录只保留产品级同名文档与 PLATFORM / WINDOWS 提案。组件文档树见 <a href="README.html#r3">根 README §3</a>。</li>
 </ul>
@@ -385,7 +384,7 @@ cmake -S frontends/windows/tsf -B build/tsf-x86 -A Win32
 cmake --build build/tsf-x64 --config Release
 cmake --build build/tsf-x86 --config Release</code></pre>
 <ul class="note">
-  <li>文档分支已按 <code>frontends/fcitx</code> 编写；源码迁移完成标准见 P4。</li>
+  <li>Fcitx 文档与源码均位于 <code>frontends/fcitx</code>；迁移完成标准见 P4。</li>
   <li>Windows 的 CMake 命令需要 Visual Studio / Windows SDK 环境；<code>-A Win32</code> 与 <code>-A x64</code> 分别产出 TSF 的 32/64 位 DLL。</li>
 </ul>
 

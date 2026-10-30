@@ -151,7 +151,7 @@
     <td>守护进程</td>
     <td><code>crates/voimed/</code></td>
     <td>Unix socket、文件权限；部署由 systemd 托管</td>
-    <td>使用 <code>Role::Fcitx</code> 与 addon 状态</td>
+    <td>使用 <code>Role::Frontend</code> 与 <code>FrontendState</code></td>
     <td><strong>需适配</strong>，会话/状态机可复用</td>
   </tr>
   <tr>
@@ -170,7 +170,7 @@
   </tr>
   <tr>
     <td>安装 / 运维</td>
-    <td><code>scripts/</code>、<code>systemd/</code>、<code>tools/</code></td>
+    <td><code>scripts/</code>、<code>packaging/linux/</code>、<code>tools/</code></td>
     <td>bash、systemd、XDG、Linux 包管理</td>
     <td>Fcitx 配置与重启</td>
     <td><strong>不可复用</strong>，需要 Windows 安装器/启动项</td>
@@ -216,13 +216,13 @@
   </tr>
   <tr>
     <td>角色命名</td>
-    <td><code>Role::Fcitx</code>、<code>FcitxConfig</code>、<code>AddonState</code>、<code>Snapshot.addon</code>、错误语义 <code>FcitxUnavailable</code> / <code>AddonNotLoaded</code>。</td>
+    <td><code>Role::Frontend</code>、<code>FrontendConfig</code>、<code>FrontendState</code>、<code>Snapshot.addon</code>、错误语义 <code>FcitxUnavailable</code> / <code>AddonNotLoaded</code>。</td>
     <td>Windows 前端可以硬套这些名字，但日志、TUI 文案和协议语义都可疑；后续多前端会更乱。</td>
     <td>泛化为 <code>Frontend</code> / <code>FrontendConfig</code> / <code>FrontendState</code>；保留旧值作为兼容别名并升级协议版本。</td>
   </tr>
   <tr>
     <td>单前端假设</td>
-    <td><code>IpcServer::set_role</code> 只允许一个 <code>Role::Fcitx</code>；daemon 的 <code>addon</code> 状态是单值。</td>
+    <td><code>IpcServer::set_role</code> 只允许一个 <code>Role::Frontend</code>；daemon 的 <code>addon</code> 状态是单值。</td>
     <td>方案 A 够用；方案 B 的 TSF DLL 会加载到多个应用进程，需要多个客户端或一个代理层。</td>
     <td>MVP 保持单前端；TSF 阶段增加 <code>Role::TextService</code> 与目标认领/路由。</td>
   </tr>
@@ -258,7 +258,7 @@
   </tr>
   <tr>
     <td>配置与路径</td>
-    <td><code>XDG_DATA_HOME</code> / <code>XDG_RUNTIME_DIR</code> / <code>HOME</code>；<code>Config</code> 里直接放 <code>socket: PathBuf</code>。</td>
+    <td><code>XDG_DATA_HOME</code> / <code>HOME</code> 用于模型目录；端点由 <code>voime-transport</code> 管理，不进入 <code>Config</code>。</td>
     <td>Windows 没有这些变量；命名管道不是文件路径。</td>
     <td>平台目录模块（<code>LOCALAPPDATA</code> / <code>APPDATA</code>）；把 endpoint 移出 <code>voime-core::Config</code>。</td>
   </tr>
@@ -321,15 +321,15 @@
   </tr>
   <tr>
     <td>XDG / HOME 路径</td>
-    <td><code>crates/voime-core/src/config.rs</code> 的 <code>default_model_dir</code> / <code>default_socket</code> / <code>current_uid</code>；<code>crates/voime/src/doctor.rs</code> 还检查 <code>/proc</code> 与 <code>/usr</code>。</td>
+    <td><code>crates/voime-core/src/config.rs</code> 的 <code>default_model_dir</code>；<code>crates/voime/src/doctor.rs</code> 还检查 <code>/proc</code> 与 <code>/usr</code>。</td>
   </tr>
   <tr>
     <td>单前端角色</td>
-    <td><code>crates/voimed/src/ipc_server.rs</code> 的 <code>set_role</code> 只允许一个 <code>Role::Fcitx</code>；<code>crates/voimed/src/daemon.rs</code> 以单个 <code>addon</code> 状态决定 continuous 是否可用。</td>
+    <td><code>crates/voimed/src/ipc_server.rs</code> 的 <code>set_role</code> 只允许一个 <code>Role::Frontend</code>；<code>crates/voimed/src/daemon.rs</code> 以单个 <code>addon</code> 状态决定 continuous 是否可用。</td>
   </tr>
   <tr>
     <td>协议语义带 Fcitx 命名</td>
-    <td><code>crates/voime-ipc/src/lib.rs</code> 的 <code>Role::Fcitx</code>、<code>FcitxConfig</code>、<code>AddonState</code>。</td>
+    <td><code>crates/voime-ipc/src/lib.rs</code> 的 <code>Role::Frontend</code>、<code>FrontendConfig</code>、<code>FrontendState</code>。</td>
   </tr>
   <tr>
     <td>Fcitx 前端完全绑定宿主</td>
@@ -449,7 +449,7 @@
   </tr>
   <tr>
     <td>多客户端</td>
-    <td>一个 TSF DLL 实例只对应一个应用进程；daemon 现在只允许一个 <code>Role::Fcitx</code> 客户端。需要多客户端角色或代理/路由层。</td>
+    <td>一个 TSF DLL 实例只对应一个应用进程；daemon 现在只允许一个 <code>Role::Frontend</code> 客户端。需要多客户端角色或代理/路由层。</td>
   </tr>
   <tr>
     <td>提交语义</td>

@@ -34,11 +34,11 @@
   <tr><td>消息（message）</td><td>一个 JSON 对象，带唯一外部标签；一行一个消息。</td></tr>
   <tr><td>frame</td><td>消息 JSON + 一个换行符 <code>\n</code>；换行是唯一的消息边界。</td></tr>
   <tr><td>外部标签</td><td>消息类型作为 JSON 对象的唯一键，例如 <code>{"Hello": {...}}</code>。</td></tr>
-  <tr><td>角色（Role）</td><td>客户端身份：<code>fcitx</code>（平台前端）、<code>tui</code>（监视器）或 <code>control</code>（一次性控制）。</td></tr>
+  <tr><td>角色（Role）</td><td>客户端身份：<code>frontend</code>（平台前端，兼容旧值 <code>fcitx</code>）、<code>tui</code>（监视器）或 <code>control</code>（一次性控制）。</td></tr>
   <tr><td>模式（Mode）</td><td><code>ptt</code> / <code>toggle</code> / <code>continuous</code>；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
   <tr><td>触发来源（TriggerSource）</td><td>段开始 / 停止的来源：<code>hold</code>、<code>toggle</code>、<code>tui</code>、<code>cli</code>、<code>continuous</code>。</td></tr>
   <tr><td>阶段（Phase）</td><td>daemon 当前状态：<code>idle</code>、<code>recording</code>、<code>finalizing</code>。</td></tr>
-  <tr><td>前端状态（AddonState）</td><td>平台前端是否连接到 daemon：<code>connected</code> / <code>disconnected</code>。</td></tr>
+  <tr><td>前端状态（FrontendState）</td><td>平台前端是否连接到 daemon：<code>connected</code> / <code>disconnected</code>；旧类型名 <code>AddonState</code> 保留为别名。</td></tr>
   <tr><td><code>segment_id</code></td><td>daemon 为语音段分配的唯一整数；客户端发送的 ID 只是提示，最终以 <code>SegmentStarted</code> 为准。</td></tr>
   <tr><td>Snapshot</td><td>连接时的全量状态：模式、热键、phase、partial、历史、前端连接状态。</td></tr>
   <tr><td>Partial / Final</td><td>临时结果 / 最终结果；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
@@ -54,9 +54,9 @@
   <tr><td>编码</td><td>UTF-8 JSON；每个消息一行；不得 pretty-print；不得包含未转义的换行。</td></tr>
   <tr><td>framing</td><td>消息以 <code>\n</code> 终止；缺少换行、超过 <code>MAX_MESSAGE_BYTES</code> 或不是合法 JSON 都是协议错误。</td></tr>
   <tr><td>外部标签</td><td>消息类型是对象的唯一键；字段平铺在标签对象内。</td></tr>
-  <tr><td>枚举值</td><td><code>Mode</code> / <code>Role</code> / <code>TriggerSource</code> / <code>Phase</code> / <code>AddonState</code> 使用小写；<code>ErrorCode</code> 使用 snake_case。</td></tr>
+  <tr><td>枚举值</td><td><code>Mode</code> / <code>Role</code> / <code>TriggerSource</code> / <code>Phase</code> / <code>FrontendState</code> 使用小写；<code>ErrorCode</code> 使用 snake_case。</td></tr>
   <tr><td>握手顺序</td><td>连接后第一条消息必须是 <code>Hello</code>；版本或角色不合法时 daemon 发送 <code>Error</code> 并断开。</td></tr>
-  <tr><td>角色</td><td>只允许一个 <code>fcitx</code> 连接；<code>configure</code> 只接受 <code>fcitx</code>；<code>quit</code> 只接受 <code>control</code>。</td></tr>
+  <tr><td>角色</td><td>只允许一个 <code>frontend</code> 连接；<code>configure</code> 只接受 <code>frontend</code>；<code>quit</code> 只接受 <code>control</code>。</td></tr>
   <tr><td>配置</td><td><code>Hello.config</code> 可选；只有平台前端携带 <code>mode</code> / <code>hotkey</code>。daemon 不解析命令行模式。</td></tr>
   <tr><td><code>segment_id</code></td><td>daemon 分配；<code>Start</code> / <code>Toggle</code> 的 ID 只是提示；<code>Stop</code> 的非零 ID 在 PTT / Continuous 下需匹配当前段，0 表示当前段（Toggle 例外）。</td></tr>
   <tr><td>背压</td><td><code>Final</code> / <code>State</code> 不丢弃；<code>Partial</code> 可在队列满时丢弃；慢客户端由 daemon 断开。</td></tr>
@@ -70,7 +70,7 @@
 <h3 id="u3-1">3.1 握手与角色</h3>
 <div class="diagram"><img src="diagram/handshake.svg" alt="客户端连接、Hello、版本与角色校验的时序图"></div>
 <ul class="note">
-  <li>版本不匹配或第二个 <code>fcitx</code> 连接会收到 <code>Error</code>，随后连接被关闭。</li>
+  <li>版本不匹配或第二个 <code>frontend</code> 连接会收到 <code>Error</code>，随后连接被关闭。</li>
   <li>TUI / Control 连接收到 <code>Snapshot</code>；前端连接还会触发 daemon 的前端状态更新。</li>
 </ul>
 
@@ -108,7 +108,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
     Hello {
         role: Role,
         version: u32,
-        config: Option&lt;FcitxConfig&gt;,
+        config: Option&lt;FrontendConfig&gt;,
     },
     Configure {
         mode: Mode,
@@ -138,7 +138,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
         phase: Phase,
         partial: Option&lt;String&gt;,
         transcript: Vec&lt;String&gt;,
-        addon: AddonState,
+        addon: FrontendState,
         hotkey: Option&lt;String&gt;,
     },
     SegmentStarted {
@@ -171,10 +171,10 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
 
 <h3 id="u4-4">4.4 辅助类型</h3>
 <pre><code>pub enum Mode { Ptt, Toggle, Continuous }
-pub enum Role { Fcitx, Tui, Control }
+pub enum Role { Frontend, Tui, Control }
 pub enum TriggerSource { Hold, Toggle, Tui, Cli, Continuous }
 pub enum Phase { Idle, Recording, Finalizing }
-pub enum AddonState { Connected, Disconnected }
+pub enum FrontendState { Connected, Disconnected }
 
 pub enum ErrorCode {
     InvalidMessage,
@@ -188,7 +188,7 @@ pub enum ErrorCode {
     Internal,
 }
 
-pub struct FcitxConfig {
+pub struct FrontendConfig {
     pub mode: Mode,
     pub hotkey: String,
 }
@@ -199,7 +199,7 @@ pub struct Status {
     pub segment_id: Option&lt;u64&gt;,
     pub mode: Option&lt;Mode&gt;,
     pub hotkey: Option&lt;String&gt;,
-    pub addon: AddonState,
+    pub addon: FrontendState,
     pub transcript_count: usize,
 }</code></pre>
 
@@ -225,7 +225,7 @@ pub struct Status {
 
 <h3 id="u4-6">4.6 JSON 示例</h3>
 <pre><code>// client → daemon
-{"Hello":{"role":"fcitx","version":1,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
+{"Hello":{"role":"frontend","version":1,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
 
 // daemon → client
 {"SegmentStarted":{"segment_id":1,"source":"toggle"}}
@@ -234,14 +234,14 @@ pub struct Status {
 
 {"Final":{"segment_id":1,"text":"明天的日程帮我确认一下。"}}
 
-{"Error":{"code":"role_conflict","message":"已有 Fcitx 客户端连接"}}</code></pre>
+{"Error":{"code":"role_conflict","message":"已有前端连接"}}</code></pre>
 
 <h3 id="u4-7">4.7 错误码</h3>
 <table>
   <tr><th>错误码</th><th>触发条件</th><th>建议动作</th></tr>
   <tr><td><code>invalid_message</code></td><td>JSON 非法、字段缺失、角色不允许该命令。</td><td>修正客户端；daemon 可断开。</td></tr>
   <tr><td><code>version_mismatch</code></td><td><code>Hello.version</code> 与 daemon 不一致。</td><td>升级客户端或 daemon；重新连接。</td></tr>
-  <tr><td><code>role_conflict</code></td><td>已有 <code>fcitx</code> 连接。</td><td>关闭重复前端；定时重试。</td></tr>
+  <tr><td><code>role_conflict</code></td><td>已有 <code>frontend</code> 连接。</td><td>关闭重复前端；定时重试。</td></tr>
   <tr><td><code>busy</code></td><td>已有语音段、正在识别，或 <code>segment_id</code> 不匹配。</td><td>等待 Idle 后重试；不要强制提交。</td></tr>
   <tr><td><code>no_input_context</code></td><td>没有可用的输入目标。</td><td>前端不开始语音段；提示用户聚焦输入框。</td></tr>
   <tr><td><code>daemon_unavailable</code></td><td>客户端无法连接 daemon。</td><td>放行热键；定时重连。</td></tr>
@@ -256,7 +256,7 @@ pub struct Status {
   <tr><td>新增消息类型</td><td>旧客户端忽略未知标签；提升 <code>PROTOCOL_VERSION</code> 仅在旧客户端无法安全忽略时。</td></tr>
   <tr><td>修改现有消息字段 / 类型</td><td>必须提升 <code>PROTOCOL_VERSION</code>；daemon 拒绝旧版本并返回 <code>version_mismatch</code>。</td></tr>
   <tr><td>新增角色或平台前端</td><td>不改变现有消息形状时保持版本；新增角色需 daemon 与客户端同时支持。</td></tr>
-  <tr><td>兼容窗口</td><td>目标 P1 允许过渡期同时接受旧 <code>fcitx</code> 命名；具体兼容策略由 <a href="../voimed/USER.html#u2">voimed USER §2</a> 决定。</td></tr>
+  <tr><td>兼容窗口</td><td>线协议同时接受旧值 <code>fcitx</code> 与新值 <code>frontend</code>；Rust 旧类型名通过别名保留。消息形状未变化，<code>PROTOCOL_VERSION</code> 保持 1。</td></tr>
 </table>
 
 </body>

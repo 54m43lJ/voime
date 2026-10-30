@@ -27,8 +27,9 @@
 </p>
 
 <p>
-<strong>分支范围：</strong>本分支只包含文档、图表与样式；Rust / C++ 源码、构建清单、脚本、模型与 systemd 单元不在本分支。
-<code>CORE</code> 中的文件树与签名描述源码分支的目标结构，供实现时对照。
+<strong>分支范围：</strong>本分支只包含文档、图表与样式；源码、构建清单、脚本与模型不在本分支，
+以 <code>dev/windows</code> 为准。<code>frontends/windows</code> 与 <code>packaging/windows</code>
+在该源码分支中也仅有目标设计，实现尚未落地。
 </p>
 
 <h2 id="r1">1. WHAT &amp; WHY</h2>
@@ -141,7 +142,7 @@
 ├── crates/
 │   ├── voime-core/            README · USER · CORE · PROVIDER · BUILD
 │   ├── voime-ipc/             README · USER · CORE · BUILD
-│   ├── voime-transport/       README · USER · CORE · PROVIDER · BUILD（目标 P0）
+│   ├── voime-transport/       README · USER · CORE · PROVIDER · BUILD
 │   ├── voimed/                README · USER · CORE · BUILD
 │   └── voime/                 README · USER · CORE · PROVIDER · BUILD
 │
@@ -153,9 +154,9 @@
 <ul class="note">
   <li>根 <code>README / USER / CORE / PROVIDER / BUILD</code> 是父文档；每个组件目录下的同名文档是子树。</li>
   <li>父文档只定义产品级边界与组件关系；组件内部类型、签名和调用栈只出现在组件 <code>CORE</code>。</li>
-  <li><code>voime-transport</code> 与 <code>frontends/windows</code> 当前是目标组件，文档先于代码落地；README 标注“目标设计”。</li>
-  <li>Fcitx 文档已迁入 <code>frontends/fcitx</code>；源码分支的迁移步骤见 <a href="PLATFORM.html#p7">PLATFORM §7</a> 的 P4。</li>
-  <li>本分支不包含源码；源码结构见 <a href="CORE.html#c1">根 CORE §1</a>。</li>
+  <li><code>voime-transport</code> 已在 <code>dev/windows</code> 落地；<code>frontends/windows</code> 仍是目标组件。</li>
+  <li>Fcitx 文档位于 <code>frontends/fcitx</code>；源码与迁移记录见 <code>dev/windows</code> 与 <a href="PLATFORM.html#p7">PLATFORM §7</a>。</li>
+  <li>源码结构见 <a href="CORE.html#c1">根 CORE §1</a>。</li>
 </ul>
 
 <h2 id="r4">4. 文档所有权</h2>
@@ -209,7 +210,7 @@
     <td><a href="crates/voime-transport/CORE.html">CORE</a></td>
     <td><a href="crates/voime-transport/PROVIDER.html">PROVIDER</a></td>
     <td><a href="crates/voime-transport/BUILD.html">BUILD</a></td>
-    <td>根 Cargo workspace · Linux / Windows（目标 P0）</td>
+    <td>根 Cargo workspace · Linux / Windows</td>
   </tr>
   <tr>
     <td><code>voimed</code></td>

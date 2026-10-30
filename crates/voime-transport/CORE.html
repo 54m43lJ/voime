@@ -23,8 +23,7 @@
 </p>
 
 <p>
-<strong>状态：</strong>目标 P0。以下文件名与签名是起草值，待实现，可以根据实际平台 API 调整；
-契约语义以 <a href="USER.html">USER</a> 为准。
+<strong>状态：</strong>已实现。契约语义以 <a href="USER.html">USER</a> 为准；平台实现细节以对应源文件为准。
 </p>
 
 <h2 id="c1">1. File tree</h2>
@@ -43,7 +42,6 @@
 </ul>
 
 <ul class="note">
-  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -66,7 +64,7 @@
 <table>
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
   <tr><td>Rust <code>std</code></td><td>Unix socket、fd、文件权限、线程与 <code>io::Error</code>。</td></tr>
-  <tr><td><code>windows-sys</code>（计划）</td><td>named pipe、DACL、<code>DuplicateHandle</code> 等 Win32 绑定。</td></tr>
+  <tr><td><code>windows-sys</code></td><td>named pipe、DACL、<code>DuplicateHandle</code> 等 Win32 绑定。</td></tr>
   <tr><td><code>libc</code>（仅在需要时）</td><td>Unix 权限 / 句柄细节；优先使用 std。</td></tr>
   <tr><td><code>tempfile</code>（dev）</td><td>临时 socket 路径测试。</td></tr>
 </table>

@@ -32,7 +32,7 @@
 ├── crates/
 │   ├── voime-core/                    → <a href="crates/voime-core/CORE.html#c1">voime-core CORE §1</a>
 │   ├── voime-ipc/                     → <a href="crates/voime-ipc/CORE.html#c1">voime-ipc CORE §1</a>
-│   ├── voime-transport/               → <a href="crates/voime-transport/CORE.html#c1">voime-transport CORE §1</a>（目标 P0）
+│   ├── voime-transport/               → <a href="crates/voime-transport/CORE.html#c1">voime-transport CORE §1</a>
 │   ├── voimed/                        → <a href="crates/voimed/CORE.html#c1">voimed CORE §1</a>
 │   └── voime/                         → <a href="crates/voime/CORE.html#c1">voime CORE §1</a>
 ├── frontends/
@@ -40,17 +40,20 @@
 │   └── windows/                       → <a href="frontends/windows/CORE.html#c1">windows CORE §1</a>（目标 P3）
 ├── models/
 │   └── manifest.json                  共享模型清单（权重不提交）
-├── scripts/                           安装 / 模型辅助脚本
+├── scripts/                           安装入口 / 模型辅助脚本
 ├── tools/                             模型导出 / 安装 / 校验
-├── systemd/voime.service              Linux 用户服务
+├── packaging/
+│   └── linux/
+│       ├── voime.service              Linux 用户服务
+│       ├── install_voime.sh           voime 安装脚本
+│       └── install_voimed.sh          voimed 安装脚本
 └── tests/
     ├── segmenter.rs                   分段器集成测试
     ├── ipc.rs                         协议集成测试
     ├── state.rs                       daemon 状态测试
-    ├── daemon.rs                      socket / 断线测试
+    ├── daemon.rs                      端点 / 断线测试
     └── asr_ctc.rs                     CTC 金样测试</code></pre>
 <ul class="note">
-  <li>本分支只保留文档；上述源码、构建与脚本路径不在当前工作树，文件树描述源码分支结构。</li>
   <li>根文件树只列到组件目录；组件内部文件树见对应 CORE，文档与图表不属于源码结构。</li>
   <li>根 <code>Cargo.toml</code> 同时是 <code>voime-tests</code> 包，通过显式 <code>[[test]]</code> 发现 <code>tests/</code>。</li>
   <li><code>frontends/windows</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>，不进入根 workspace。</li>
@@ -63,15 +66,15 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
     <td>依赖方向</td>
-    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport（transport 为目标 P0）；<code>voime</code> → core + ipc + transport（transport 为目标 P0）；前端 → ipc + transport。前端不依赖 core，core 不依赖 transport / daemon / 前端。目标 P0 要求 core 不依赖其它 <code>voime-*</code> crate，详见 <a href="PLATFORM.html#p3-4">PLATFORM §3.4</a>。</td>
+    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport；<code>voime</code> → core + ipc + transport；前端 → ipc + transport。前端不依赖 core，core 不依赖 transport / daemon / 前端；当前仅保留 <code>voime-ipc</code> 的 <code>Mode</code> 类型依赖，后续按 <a href="PLATFORM.html#p3-4">PLATFORM §3.4</a> 继续收敛。</td>
   </tr>
   <tr>
     <td>OS API 位置</td>
     <td>Unix socket、named pipe、权限与路径只出现在 <code>voime-transport</code> 与平台前端；<code>voime-core</code> / <code>voime-ipc</code> / <code>voimed</code> 的业务代码不直接调用 OS 传输 API。</td>
   </tr>
   <tr>
-    <td>迁移期例外</td>
-    <td>P0 之前，Unix socket 仍在 <code>voimed::ipc_server</code>、<code>voime::client</code> 与 <code>frontends/fcitx/src/ipc.cpp</code> 内；P0 后由 <a href="crates/voime-transport/USER.html">voime-transport</a> 接管。</td>
+    <td>前端传输例外</td>
+    <td>Rust daemon / CLI 通过 <a href="crates/voime-transport/USER.html">voime-transport</a> 访问端点；<code>frontends/fcitx/src/ipc.cpp</code> 是 C++ 前端，直接使用 Unix socket 并按同一路径 / 权限契约实现。</td>
   </tr>
   <tr>
     <td>进程边界</td>
@@ -119,7 +122,7 @@
   <tr><td><code>tempfile</code></td><td>dev-dependencies</td><td>临时目录 / socket 测试。</td></tr>
   <tr><td>CMake / C++20</td><td><code>fcitx-addon</code></td><td>编译 <code>voime.so</code> 与安装描述文件。</td></tr>
   <tr><td>Python 3.10+</td><td><code>tools/</code> / <code>scripts/</code></td><td>模型导出、安装与校验；只在构建 / 安装期使用。</td></tr>
-  <tr><td>systemd</td><td><code>systemd/</code></td><td>Linux 用户服务生命周期。</td></tr>
+  <tr><td>systemd</td><td><code>packaging/linux/</code></td><td>Linux 用户服务生命周期。</td></tr>
 </table>
 <ul class="note">
   <li>组件依赖与版本职责见各组件 CORE 的 SBOM；本表只列根工作区与构建根级别。</li>
@@ -152,7 +155,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R) -
 // 编码与解码细节见 voime-ipc CORE §4 / §5</code></pre>
 
 <h3 id="c4-3">4.3 crates/voime-transport <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub enum Endpoint { /* ... */ }                  // 见 voime-transport USER §4.1（目标 P0）
+<pre><code>pub enum Endpoint { /* ... */ }                  // 见 voime-transport USER §4.1
 pub trait Stream: Read + Write + Send { /* ... */ } // 见 voime-transport USER §4.2
 pub trait Listener: Send + Sync { /* ... */ }   // 见 voime-transport USER §4.2
 pub fn bind(endpoint: &amp;Endpoint) -&gt; io::Result&lt;Box&lt;dyn Listener&gt;&gt;; // 见 voime-transport USER §4.3
@@ -212,7 +215,7 @@ fcitx5 / Windows 前端
 └── 前端连接
     └── voime_ipc::write_message(Hello)</code></pre>
 <ul class="note">
-  <li>P0 后 <code>IpcServer::bind()</code> 改为 <code>voime_transport::bind()</code>；当前实现见 <a href="crates/voimed/CORE.html#c5-1">voimed CORE §5.1</a>。</li>
+  <li><code>IpcServer::bind()</code> 内部调用 <code>voime_transport::bind()</code>；当前实现见 <a href="crates/voimed/CORE.html#c5-1">voimed CORE §5.1</a>。</li>
   <li>每个组件内部的模型加载、线程创建与错误分支见对应 CORE。</li>
 </ul>
 
@@ -258,9 +261,9 @@ voime ctl quit
     ├── voime_ipc::encode_message(Bye)
     ├── voime_core::pipeline::Pipeline::shutdown()
     ├── voime_core::audio::capture::CaptureHandle::stop()
-    └── voime_transport::Listener::shutdown()（P0 后）</code></pre>
+    └── voime_transport::Listener::shutdown()</code></pre>
 <ul class="note">
-  <li>当前退出路径仍由 <code>voimed::ipc_server::IpcServer::shutdown()</code> 删除 Unix socket；P0 后由 transport 关闭端点。</li>
+  <li><code>voimed::ipc_server::IpcServer::shutdown()</code> 调用 <code>Listener::shutdown()</code>，由 transport 删除端点。</li>
   <li>TUI 的 <code>q</code> 只 detach，不发送 Quit；停止 daemon 只使用 <code>ctl quit</code> 或平台服务管理。</li>
 </ul>
 

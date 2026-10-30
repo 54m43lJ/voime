@@ -38,7 +38,6 @@
 </ul>
 
 <ul class="note">
-  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -55,7 +54,7 @@
   <tr><td>模式生效</td><td>Idle 时立即 <code>pipeline.set_mode</code>；非 Idle 时暂存到 <code>pending_mode</code>，段结束后应用。</td></tr>
   <tr><td>前端断开</td><td>前端状态置 disconnected；Continuous 退 PTT；结束当前段；广播 Snapshot。</td></tr>
   <tr><td>退出顺序</td><td>广播 Bye → IPC shutdown → pipeline shutdown → audio stop → 删除端点。</td></tr>
-  <tr><td>过渡实现</td><td><code>ipc_server.rs</code> 当前直接使用 Unix socket；P0 后改为 <a href="../voime-transport/CORE.html">voime-transport</a>，daemon 不再 import <code>std::os::unix</code>。</td></tr>
+  <tr><td>传输边界</td><td><code>ipc_server.rs</code> 只使用 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Listener</code> / <code>Stream</code>；daemon 不 import <code>std::os::unix</code> 或 Win32。</td></tr>
 </table>
 <ul class="note">
   <li>仓库级进程 / 线程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>
@@ -68,7 +67,7 @@
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
   <tr><td><code>voime-core</code></td><td>配置、音频、模型、pipeline。</td></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
-  <tr><td><code>voime-transport</code></td><td>本机端点（目标 P0；当前未依赖）。</td></tr>
+  <tr><td><code>voime-transport</code></td><td>本机端点与字节流。</td></tr>
   <tr><td><code>clap</code></td><td>命令行参数。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>IPC 事件、pipeline 事件与客户端发送队列。</td></tr>
   <tr><td><code>serde_json</code></td><td>当前 reader 线程直接反序列化 ClientMessage。</td></tr>
@@ -99,7 +98,7 @@ fn stop_audio(audio: CaptureHandle);</code></pre>
     pub model_dir: Option&lt;PathBuf&gt;,
     pub input_device: Option&lt;String&gt;,
     pub threads: Option&lt;usize&gt;,
-    pub socket: Option&lt;PathBuf&gt;,
+    pub endpoint: Option&lt;String&gt;,
     pub verbose: bool,
 }
 
@@ -149,7 +148,7 @@ fn continuation_source(mode: Option&lt;Mode&gt;) -&gt; TriggerSource;</code></pr
     pub phase: Phase,
     pub partial: Option&lt;String&gt;,
     pub transcript: Vec&lt;String&gt;,
-    pub addon: AddonState,
+    pub addon: FrontendState,
 }
 impl Default for State { /* Idle / Disconnected / empty history */ }
 
@@ -175,15 +174,16 @@ struct ClientEntry {
 }
 
 pub struct IpcServer {
-    path: PathBuf,
+    endpoint: Endpoint,
     events_rx: Receiver&lt;ServerEvent&gt;,
     clients: Arc&lt;Mutex&lt;HashMap&lt;u64, ClientEntry&gt;&gt;,
     shutdown: Arc&lt;AtomicBool&gt;,
+    listener: Option&lt;Arc&lt;dyn Listener&gt;&gt;,
     accept_thread: Option&lt;JoinHandle&lt;()&gt;&gt;,
 }
 
 impl IpcServer {
-    pub fn bind(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn bind(endpoint: &amp;Endpoint) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn events(&amp;self) -&gt; &amp;Receiver&lt;ServerEvent&gt;;
     pub fn next_event(&amp;self) -&gt; anyhow::Result&lt;ServerEvent&gt;;
     pub fn try_event(&amp;self) -&gt; Option&lt;ServerEvent&gt;;
@@ -193,13 +193,13 @@ impl IpcServer {
     pub fn set_role(&amp;self, client_id: u64, role: Role) -&gt; bool;
     pub fn role(&amp;self, client_id: u64) -&gt; Option&lt;Role&gt;;
     pub fn client_count(&amp;self) -&gt; usize;
+    pub fn endpoint(&amp;self) -&gt; &amp;Endpoint;
     pub fn shutdown(&amp;mut self);
 }
-impl Drop for IpcServer { /* shutdown + remove socket */ }
+impl Drop for IpcServer { /* shutdown + remove endpoint */ }
 
-fn prepare_parent(path: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
-pub fn daemon_running(path: &amp;Path) -&gt; bool;
-fn spawn_client(stream: UnixStream, client_id: u64,
+pub fn daemon_running(endpoint: &amp;Endpoint) -&gt; bool;
+fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
                 clients: &amp;Arc&lt;Mutex&lt;HashMap&lt;u64, ClientEntry&gt;&gt;&gt;,
                 events: &amp;Sender&lt;ServerEvent&gt;) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 
@@ -210,22 +210,22 @@ fn spawn_client(stream: UnixStream, client_id: u64,
 <pre><code>systemd --user
 └── voimed::main()
     ├── voimed::cli::parse()
-    ├── ipc_server::daemon_running(&amp;socket)
+    ├── ipc_server::daemon_running(&amp;endpoint)
     │   └── 判断已运行 → ExitCode::SUCCESS
     ├── voimed::run(args)
     │   ├── voime_core::config::resolve(args)
     │   ├── voime_core::infer::session::SessionFactory::new(config.threads)
     │   ├── voime_core::pipeline::spawn(&amp;config, factory, audio_rx)
     │   ├── voime_core::audio::capture::start(config.input_device, audio_tx)
-    │   ├── ipc_server::IpcServer::bind(&amp;config.socket)
+    │   ├── ipc_server::IpcServer::bind(&amp;endpoint)
     │   └── daemon::Daemon::new(config, pipeline, audio, ipc).run()
     └── 判断 Err → eprintln! + ExitCode::from(1)</code></pre>
 
 <h3 id="c5-2">5.2 连接、Hello 与角色</h3>
 <pre><code>IpcServer accept thread
-└── UnixListener::accept()
+└── voime_transport::Listener::accept()
     └── ipc_server::spawn_client(stream, client_id, clients, events)
-        ├── UnixStream::try_clone()
+        ├── voime_transport::Stream::try_clone()
         ├── std::thread::Builder::spawn(writer loop)
         └── std::thread::Builder::spawn(reader loop)
             ├── read_until(b'\n')
@@ -297,9 +297,10 @@ pipeline::PipelineEvent::Recording(true)
         ├── IpcServer::broadcast(Bye)
         ├── IpcServer::shutdown()
         │   ├── shutdown.store(true)
+        │   ├── Listener::shutdown()
         │   ├── accept_thread.join()
         │   ├── clients.clear()
-        │   └── std::fs::remove_file(socket)
+        │   └── listener.take()
         ├── Pipeline::shutdown()
         └── CaptureHandle::stop()</code></pre>
 

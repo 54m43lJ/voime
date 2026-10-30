@@ -55,7 +55,7 @@
   <li>不实现平台 UI、托盘、配置界面或安装器。</li>
   <li>不解析命令行模式 / 热键；这些由前端通过 IPC 提供。</li>
   <li>不保存音频、按键或历史到磁盘。</li>
-  <li>不直接依赖 Fcitx / Win32；OS 传输由 <a href="../voime-transport/USER.html">voime-transport</a> 负责（P0 前为过渡实现）。</li>
+  <li>不直接依赖 Fcitx / Win32；OS 传输由 <a href="../voime-transport/USER.html">voime-transport</a> 负责。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -92,7 +92,7 @@
   <tr><th>项目</th><th>在本组件中的角色</th><th>技术栈 / 许可</th></tr>
   <tr><td><code>voime-core</code></td><td>音频、VAD、CTC、标点、pipeline</td><td>本仓库</td></tr>
   <tr><td><code>voime-ipc</code></td><td>消息类型与 framing</td><td>本仓库</td></tr>
-  <tr><td><code>voime-transport</code></td><td>本机端点（目标 P0）</td><td>本仓库</td></tr>
+  <tr><td><code>voime-transport</code></td><td>本机端点</td><td>本仓库</td></tr>
   <tr><td><a href="https://github.com/clap-rs/clap">clap</a></td><td>命令行参数</td><td>Rust · MIT / Apache-2.0</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>IPC 事件、pipeline 事件与客户端队列</td><td>Rust · MIT / Apache-2.0</td></tr>
 </table>

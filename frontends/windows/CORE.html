@@ -53,7 +53,7 @@
 </ul>
 
 <ul class="note">
-  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
+  <li>本模块尚未实现；文件树描述目标源码结构。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -81,7 +81,7 @@
 <table>
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
-  <tr><td><code>voime-transport</code></td><td>命名管道客户端（目标 P0）。</td></tr>
+  <tr><td><code>voime-transport</code></td><td>命名管道客户端。</td></tr>
   <tr><td><code>windows</code> crate（计划）</td><td>RegisterHotKey、UIA、SendInput、托盘、窗口 API。</td></tr>
   <tr><td><code>serde</code> / <code>serde_json</code></td><td>设置文件。</td></tr>
   <tr><td><code>tray-icon</code> 或 Win32 托盘（计划）</td><td>通知区域图标与菜单；具体 crate 以实现时为准。</td></tr>

@@ -74,9 +74,9 @@
 <p><a href="#top">↑</a></p>
 
 <h3 id="u4-1">4.1 命令行</h3>
-<pre><code>voime [--socket &lt;PATH&gt;]
-voime ctl &lt;start|stop|toggle|status|clear|quit&gt; [--socket &lt;PATH&gt;]
-voime doctor [--socket &lt;PATH&gt;]</code></pre>
+<pre><code>voime [--endpoint &lt;ENDPOINT&gt;]
+voime ctl &lt;start|stop|toggle|status|clear|quit&gt; [--endpoint &lt;ENDPOINT&gt;]
+voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
 
 <table>
   <tr><th>命令 / 选项</th><th>契约</th></tr>
@@ -88,7 +88,7 @@ voime doctor [--socket &lt;PATH&gt;]</code></pre>
   <tr><td><code>voime ctl clear</code></td><td>发送 <code>ClearHistory</code>；等待 <code>HistoryCleared</code>。</td></tr>
   <tr><td><code>voime ctl quit</code></td><td>发送 <code>Quit</code>；等待 <code>Bye</code>。</td></tr>
   <tr><td><code>voime doctor</code></td><td>只读检查；退出码 0 表示全部通过，1 表示存在 FAIL。</td></tr>
-  <tr><td><code>--socket</code></td><td>全局选项；P0 后改为 <code>--endpoint</code>。</td></tr>
+  <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名。</td></tr>
 </table>
 
 <table>
@@ -133,7 +133,7 @@ voimed stopped</code></pre>
 </table>
 
 <h3 id="u4-4">4.4 doctor 检查</h3>
-<pre><code>socket: /run/user/1000/voime/voimed.sock
+<pre><code>endpoint: /run/user/1000/voime/voimed.sock
   OK   权限 0600
   OK   daemon 在线
 model: /home/user/.local/share/voime/models
@@ -150,7 +150,7 @@ fcitx:
 
 <table>
   <tr><th>检查</th><th>契约</th></tr>
-  <tr><td>端点</td><td>检查默认路径 / <code>--socket</code> 指定路径；Unix 上检查权限是否 0600。</td></tr>
+  <tr><td>端点</td><td>检查默认端点 / <code>--endpoint</code> 指定端点；Unix 上检查权限是否 0600。</td></tr>
   <tr><td>daemon</td><td>以 <code>control</code> 角色连接并读取 Snapshot。</td></tr>
   <tr><td>模型</td><td>固定检查默认模型目录；不读取 <code>--model-dir</code>。</td></tr>
   <tr><td>音频</td><td>枚举输入设备并显示默认设备名；不打开流。</td></tr>

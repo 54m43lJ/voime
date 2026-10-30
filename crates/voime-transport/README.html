@@ -31,8 +31,7 @@
 </p>
 
 <p>
-<strong>状态：</strong>目标 P0 组件，代码尚未落地。本文定义实现约束；接口名以
-<a href="USER.html">USER</a> 为准，待实现时可以根据平台 API 调整实现细节。
+<strong>状态：</strong>已落地。Unix 与 Windows 后端均按 <a href="USER.html">USER</a> 的契约实现；平台细节见 <a href="PROVIDER.html">PROVIDER</a>。
 </p>
 
 <h2 id="r1">1. WHAT &amp; WHY</h2>
@@ -103,7 +102,7 @@ daemon 与客户端需要本机传输：Linux 使用 Unix domain socket，Window
   <tr><th>项目</th><th>在本组件中的角色</th><th>技术栈 / 许可</th></tr>
   <tr><td>Rust <code>std::os::unix::net</code></td><td>Unix domain socket、fd 复制与权限</td><td>Rust std · MIT / Apache-2.0</td></tr>
   <tr><td>Win32 named pipe</td><td>命名管道、DACL、句柄复制与取消</td><td>Windows SDK</td></tr>
-  <tr><td><code>windows-sys</code>（计划）</td><td>Win32 API 绑定；具体 crate 以实现时为准</td><td>Rust · MIT / Apache-2.0</td></tr>
+  <tr><td><code>windows-sys</code></td><td>Win32 API 绑定；具体 crate 以实现时为准</td><td>Rust · MIT / Apache-2.0</td></tr>
 </table>
 
 </body>

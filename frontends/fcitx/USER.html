@@ -67,7 +67,7 @@
   <tr><td>Continuous</td><td>VAD 自动开始 / 结束；不需要热键；TUI / ctl 仍可手动 Start / Stop 用于调试。</td></tr>
   <tr><td>daemon 断线</td><td>addon 清空临时窗口、放行热键；按定时器重连；不阻塞普通输入。</td></tr>
   <tr><td>无持久化</td><td>不保存音频、按键或识别历史到磁盘；配置只写 Fcitx 配置文件。</td></tr>
-  <tr><td>过渡传输</td><td>当前 addon 直接连接 Unix socket；P0 后端点契约由 <a href="../../crates/voime-transport/USER.html">voime-transport</a> 定义，C++ 前端按同一边界实现。</td></tr>
+  <tr><td>传输</td><td>addon 直接连接 Unix socket；端点路径与权限契约与 <a href="../../crates/voime-transport/USER.html">voime-transport</a> 的 Unix 实现一致。</td></tr>
 </table>
 
 <h2 id="u3">3. DIAGRAMS</h2>

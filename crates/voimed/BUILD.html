@@ -21,9 +21,6 @@
 <a href="CORE.html">CORE</a>
 </p>
 
-<p>
-本分支只保留文档；以下构建与运行命令用于源码分支。
-</p>
 
 <h2 id="b1">1. 环境</h2>
 <p><a href="#top">↑</a></p>
@@ -53,7 +50,7 @@ scripts/install_voimed.sh --prefix DIR --bindir DIR --no-build --no-systemd</cod
   <tr><td><code>~/.config/systemd/user/voime.service</code></td><td>用户服务；<code>ExecStart</code> 替换为实际 <code>$BINDIR/voimed</code>。</td></tr>
 </table>
 <ul class="note">
-  <li>根 workspace 的完整构建与模型安装见 <a href="../../BUILD.html#b2">根 BUILD §2</a> / <a href="../../BUILD.html#b3">§3</a>。</li>
+  <li>根 workspace 的完整构建、源码安装与模型安装见 <a href="../../BUILD.html#b2">根 BUILD §2</a> / <a href="../../BUILD.html#b3">§3</a> / <a href="../../BUILD.html#b4">§4</a>。</li>
   <li>Windows 产物为 <code>voimed.exe</code>；登录启动由 Windows 前端或安装器负责，不使用 Session 0 服务。</li>
 </ul>
 
@@ -73,7 +70,7 @@ voimed --verbose</code></pre>
   <tr><td>停止</td><td><code>voime ctl quit</code> 或 <code>systemctl --user stop voime.service</code>。</td></tr>
   <tr><td>重启</td><td><code>systemctl --user restart voime.service</code>；前端会定时重连。</td></tr>
   <tr><td>诊断</td><td><code>voime doctor</code> 检查端点、daemon、模型、音频与前端。</td></tr>
-  <tr><td>端点</td><td>P0 前 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>；自定义路径用 <code>--socket</code>。</td></tr>
+  <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>；自定义端点用 <code>--endpoint</code>（<code>--socket</code> 为兼容别名）。</td></tr>
 </table>
 <ul class="note">
   <li><code>voimed</code> 不需要 <code>WAYLAND_DISPLAY</code> / <code>DISPLAY</code>；它只处理音频与 IPC。</li>
@@ -89,7 +86,7 @@ cargo fmt -p voimed --check</code></pre>
 
 <table>
   <tr><th>测试</th><th>覆盖</th></tr>
-  <tr><td><code>tests/daemon.rs</code></td><td>socket 存活、断线角色、daemon 生命周期。</td></tr>
+  <tr><td><code>tests/daemon.rs</code></td><td>端点存活、断线角色、daemon 生命周期。</td></tr>
   <tr><td><code>tests/state.rs</code></td><td>快照默认值、清空历史、status 字段。</td></tr>
   <tr><td><code>tests/ipc.rs</code></td><td>握手、角色、模式与 framing。</td></tr>
   <tr><td><code>tests/segmenter.rs</code></td><td>分段端点与最大段长。</td></tr>
