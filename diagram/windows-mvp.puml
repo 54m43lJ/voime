@@ -1,0 +1,19 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+skinparam componentStyle rectangle
+left to right direction
+
+actor "用户" as User
+component "Windows 前端\n托盘 / 全局热键 / 目标绑定 / 浮层" as Frontend
+component "voimed\n音频 / VAD / CTC / 标点 / 会话" as Daemon
+component "目标应用\nHWND / UIA 焦点元素" as App
+component "麦克风" as Mic
+component "本地模型包" as Models
+
+User --> Frontend : 热键 / 语音
+Frontend <--> Daemon : 命名管道\nJSON lines
+Frontend --> App : SendInput(UTF-16)\n提交前校验焦点
+Daemon --> Mic : WASAPI
+Daemon --> Models : 只读加载
+@enduml

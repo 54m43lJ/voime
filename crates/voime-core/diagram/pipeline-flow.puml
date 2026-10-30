@@ -1,0 +1,29 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+
+|voimed|
+start
+:发送 Start / Stop / 音频块;
+|pipeline worker|
+repeat
+  :select 命令优先，50 ms 超时;
+  if (Shutdown?) then (是)
+    stop
+  endif
+  if (StartSegment?) then (是)
+    :清空旧音频;
+    :collecting = true;
+  endif
+  if (FinishSegment?) then (是)
+    :排空音频;
+    :force_end 当前段;
+  endif
+  if (音频块?) then (是)
+    :重采样;
+    :VAD 批处理;
+  endif
+  :drain_queue;
+repeat while (继续)
+stop
+@enduml

@@ -1,0 +1,21 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "NamedPipeListener" as Listener
+participant "NamedPipeStream" as Stream
+
+Daemon -> Listener : current_user_sddl()
+Daemon -> Listener : CreateNamedPipeW(PIPE_REJECT_REMOTE_CLIENTS)
+Daemon -> Listener : ConnectNamedPipe()
+
+loop 每个连接
+  Listener -> Daemon : accept()
+  Daemon -> Stream : DuplicateHandle()
+end
+
+Daemon -> Stream : DisconnectNamedPipe / CloseHandle
+Daemon -> Listener : CancelIoEx / CloseHandle
+@enduml

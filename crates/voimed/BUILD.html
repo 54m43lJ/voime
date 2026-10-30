@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BUILD — voimed</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>BUILD — voimed</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+</p>
+
+
+<h2 id="b1">1. 环境</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>要求</th></tr>
+  <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）。</td></tr>
+  <tr><td>Linux</td><td>ALSA 开发头文件；Fcitx5 不是 daemon 的构建依赖。</td></tr>
+  <tr><td>Windows</td><td>Rust MSVC 工具链；WASAPI 由 cpal 处理。</td></tr>
+  <tr><td>模型</td><td>运行前必须安装完整模型包；编译不需要权重。</td></tr>
+  <tr><td>服务管理</td><td>Linux systemd user service；Windows 登录启动 / 托盘拉起（目标 P3）。</td></tr>
+</table>
+
+<h2 id="b2">2. 构建与安装</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cargo build --release -p voimed
+scripts/install_voimed.sh
+
+# 自定义前缀 / 不重新构建 / 不安装 systemd
+scripts/install_voimed.sh --prefix DIR --bindir DIR --no-build --no-systemd</code></pre>
+
+<table>
+  <tr><th>产物</th><th>说明</th></tr>
+  <tr><td><code>target/release/voimed</code></td><td>ASR 守护进程；ONNX Runtime 随 <code>ort</code> 构建时链接。</td></tr>
+  <tr><td><code>scripts/install_voimed.sh</code></td><td>安装到 <code>~/.local/bin</code>，生成 systemd user unit。</td></tr>
+  <tr><td><code>~/.config/systemd/user/voime.service</code></td><td>用户服务；<code>ExecStart</code> 替换为实际 <code>$BINDIR/voimed</code>。</td></tr>
+</table>
+<ul class="note">
+  <li>根 workspace 的完整构建与模型安装见 <a href="../../BUILD.html#b2">根 BUILD §2</a> / <a href="../../BUILD.html#b3">§3</a>。</li>
+  <li>Windows 产物为 <code>voimed.exe</code>；登录启动由 Windows 前端或安装器负责，不使用 Session 0 服务。</li>
+</ul>
+
+<h2 id="b3">3. 运行</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code># systemd user service
+systemctl --user daemon-reload
+systemctl --user enable --now voime.service
+systemctl --user status voime.service
+
+# 或前台启动
+voimed --verbose</code></pre>
+
+<table>
+  <tr><th>操作</th><th>命令 / 契约</th></tr>
+  <tr><td>停止</td><td><code>voime ctl quit</code> 或 <code>systemctl --user stop voime.service</code>。</td></tr>
+  <tr><td>重启</td><td><code>systemctl --user restart voime.service</code>；前端会定时重连。</td></tr>
+  <tr><td>诊断</td><td><code>voime doctor</code> 检查端点、daemon、模型、音频与前端。</td></tr>
+  <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>；自定义端点用 <code>--endpoint</code>（<code>--socket</code> 为兼容别名）。</td></tr>
+</table>
+<ul class="note">
+  <li><code>voimed</code> 不需要 <code>WAYLAND_DISPLAY</code> / <code>DISPLAY</code>；它只处理音频与 IPC。</li>
+  <li>如果已有 daemon 在运行，再次启动会打印提示并以 0 退出。</li>
+</ul>
+
+<h2 id="b4">4. 测试</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cargo test -p voimed
+cargo clippy -p voimed --all-targets
+cargo fmt -p voimed --check</code></pre>
+
+<table>
+  <tr><th>测试</th><th>覆盖</th></tr>
+  <tr><td><code>tests/daemon.rs</code></td><td>端点存活、断线角色、daemon 生命周期。</td></tr>
+  <tr><td><code>tests/state.rs</code></td><td>快照默认值、清空历史、status 字段。</td></tr>
+  <tr><td><code>tests/ipc.rs</code></td><td>握手、角色、模式与 framing。</td></tr>
+  <tr><td><code>tests/segmenter.rs</code></td><td>分段端点与最大段长。</td></tr>
+</table>
+
+<h2 id="b5">5. 升级 / 卸载</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>操作</th><th>步骤</th></tr>
+  <tr><td>升级</td><td>停止服务；重新运行安装脚本；启动服务；前端自动重连。</td></tr>
+  <tr><td>迁移配置</td><td>模型目录与端点路径由 CLI / 安装脚本决定；不迁移历史（不持久化）。</td></tr>
+  <tr><td>卸载</td><td><code>systemctl --user disable --now voime.service</code>；删除 <code>~/.local/bin/voimed</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录按需保留。</td></tr>
+  <tr><td>Windows</td><td>停止前端与 daemon；删除 <code>voimed.exe</code> / <code>voime.exe</code>；按需删除模型目录与登录启动项。</td></tr>
+</table>
+
+</body>
+</html>

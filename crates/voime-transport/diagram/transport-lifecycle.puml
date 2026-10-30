@@ -1,0 +1,23 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "voime-transport" as Transport
+participant "客户端" as Client
+
+Daemon -> Transport : bind(&Endpoint)
+Transport -> Daemon : Box<dyn Listener>
+Client -> Transport : connect(&Endpoint)
+Transport -> Client : Box<dyn Stream>
+
+loop accept 线程
+  Daemon -> Transport : Listener::accept()
+  Transport -> Daemon : Box<dyn Stream>
+end
+
+Daemon -> Transport : Stream::try_clone()
+Daemon -> Transport : Stream::shutdown()
+Daemon -> Transport : Listener::shutdown()
+@enduml

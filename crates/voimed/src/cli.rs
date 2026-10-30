@@ -22,9 +22,9 @@ pub struct Cli {
     #[arg(long, value_name = "N", value_parser = parse_positive_usize)]
     pub threads: Option<usize>,
 
-    /// IPC socket 路径
-    #[arg(long, value_name = "PATH")]
-    pub socket: Option<PathBuf>,
+    /// 本机传输端点（Unix socket 路径或 Windows 命名管道名）
+    #[arg(long, alias = "socket", value_name = "ENDPOINT")]
+    pub endpoint: Option<String>,
 
     /// 输出启动与运行期诊断
     #[arg(long)]

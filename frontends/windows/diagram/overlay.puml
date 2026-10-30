@@ -1,0 +1,16 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "Windows 前端" as Frontend
+participant "浮层窗口" as Overlay
+
+Daemon -> Frontend : Partial
+Frontend -> Overlay : show(text, target)
+Overlay -> Overlay : 无激活 / 置顶 / 点击穿透
+Daemon -> Frontend : Final
+Frontend -> Overlay : hide()
+Frontend -> Frontend : 复核目标并提交
+@enduml

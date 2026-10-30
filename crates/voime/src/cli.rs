@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
@@ -10,9 +8,9 @@ use clap::{Args, Parser, Subcommand};
     max_term_width = 100
 )]
 pub struct Cli {
-    /// IPC socket 路径
-    #[arg(long, global = true, value_name = "PATH")]
-    pub socket: Option<PathBuf>,
+    /// 本机传输端点（Unix socket 路径或 Windows 命名管道名）
+    #[arg(long, alias = "socket", global = true, value_name = "ENDPOINT")]
+    pub endpoint: Option<String>,
 
     #[command(subcommand)]
     pub command: Option<Command>,

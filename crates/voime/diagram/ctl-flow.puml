@@ -1,0 +1,26 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voime ctl" as Ctl
+participant "voimed" as Daemon
+
+Ctl -> Daemon : connect(role: control)
+Ctl -> Daemon : Hello { role: control }
+Daemon -> Ctl : Snapshot
+
+alt start / stop / toggle
+  Ctl -> Daemon : Start / Stop / Toggle
+  Daemon -> Ctl : State
+else status
+  Ctl -> Daemon : Status
+  Daemon -> Ctl : Status
+else clear
+  Ctl -> Daemon : ClearHistory
+  Daemon -> Ctl : HistoryCleared
+else quit
+  Ctl -> Daemon : Quit
+  Daemon -> Ctl : Bye
+end
+@enduml

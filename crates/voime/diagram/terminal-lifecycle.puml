@@ -1,0 +1,22 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voime TUI" as Tui
+participant "终端 / crossterm" as Term
+
+Tui -> Term : is_terminal()（stdin / stdout）
+alt 不是 TTY
+  Tui -> Tui : 启动失败
+else 是 TTY
+  Tui -> Term : enable_raw_mode()
+  Tui -> Term : EnterAlternateScreen + Hide + DisableMouseCapture
+  loop 事件循环
+    Tui -> Term : poll(50 ms) / read()
+    Tui -> Term : draw()
+  end
+  Tui -> Term : Show + LeaveAlternateScreen
+  Tui -> Term : disable_raw_mode()
+end
+@enduml

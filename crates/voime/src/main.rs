@@ -8,8 +8,8 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Context;
-use voime_core::config::default_socket;
 use voime_ipc::{ClientMessage, Role, ServerMessage, TriggerSource};
+use voime_transport::{default_endpoint, Endpoint};
 
 use crate::app::App;
 use crate::cli::{Cli, Command, CtlAction};
@@ -17,12 +17,25 @@ use crate::client::Client;
 
 fn main() -> ExitCode {
     let cli = parse_cli();
-    let socket = cli.socket.unwrap_or_else(default_socket);
+    let endpoint = match cli
+        .endpoint
+        .as_deref()
+        .map(Endpoint::parse)
+        .transpose()
+        .context("解析端点失败")
+    {
+        Ok(Some(endpoint)) => endpoint,
+        Ok(None) => default_endpoint(),
+        Err(error) => {
+            eprintln!("voime: {error:#}");
+            return ExitCode::from(1);
+        }
+    };
     match cli.command {
-        None => run_tui(&socket),
-        Some(Command::Ctl(args)) => run_ctl(&socket, args.action),
+        None => run_tui(&endpoint),
+        Some(Command::Ctl(args)) => run_ctl(&endpoint, args.action),
         Some(Command::Doctor) => {
-            if doctor::run(&socket) {
+            if doctor::run(&endpoint) {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::from(1)
@@ -35,9 +48,9 @@ fn parse_cli() -> Cli {
     cli::parse()
 }
 
-fn run_tui(socket: &std::path::Path) -> ExitCode {
+fn run_tui(endpoint: &Endpoint) -> ExitCode {
     let result = (|| -> anyhow::Result<()> {
-        let mut client = Client::connect(socket).context("连接 daemon 失败")?;
+        let mut client = Client::connect(endpoint).context("连接 daemon 失败")?;
         let snapshot = client.snapshot().context("读取 daemon 快照失败")?;
         let mut app = App::new();
         app.on_event(snapshot);
@@ -52,8 +65,8 @@ fn run_tui(socket: &std::path::Path) -> ExitCode {
     }
 }
 
-fn run_ctl(socket: &std::path::Path, action: CtlAction) -> ExitCode {
-    match run_ctl_inner(socket, action) {
+fn run_ctl(endpoint: &Endpoint, action: CtlAction) -> ExitCode {
+    match run_ctl_inner(endpoint, action) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("voime: {error:#}");
@@ -62,8 +75,8 @@ fn run_ctl(socket: &std::path::Path, action: CtlAction) -> ExitCode {
     }
 }
 
-fn run_ctl_inner(socket: &std::path::Path, action: CtlAction) -> anyhow::Result<()> {
-    let mut client = Client::connect_as(socket, Role::Control).context("连接 daemon 失败")?;
+fn run_ctl_inner(endpoint: &Endpoint, action: CtlAction) -> anyhow::Result<()> {
+    let mut client = Client::connect_as(endpoint, Role::Control).context("连接 daemon 失败")?;
     let _ = client.snapshot().context("读取 daemon 快照失败")?;
 
     match action {

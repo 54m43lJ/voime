@@ -1,0 +1,32 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+skinparam componentStyle rectangle
+left to right direction
+
+component "Voime" as Voime
+
+package "平台边界" {
+  component "Fcitx5\nLinux 输入栈" as Fcitx
+  component "Win32 / UIA / TSF\nWindows 输入栈" as Win
+}
+
+package "本机资源" {
+  component "音频设备\ncpal / ALSA / WASAPI" as Audio
+  component "ONNX Runtime\nCPU" as Ort
+  component "模型包\nFireRedVAD / CTC / Punc" as Models
+}
+
+package "本机端点" {
+  component "Unix socket\nLinux" as Unix
+  component "named pipe\nWindows" as Pipe
+}
+
+Voime --> Fcitx : 热键 / 目标 / 提交
+Voime --> Win : 热键 / 目标 / 提交
+Voime --> Audio : PCM
+Voime --> Ort : 推理
+Voime --> Models : 只读加载
+Voime --> Unix : daemon ↔ 客户端
+Voime --> Pipe : daemon ↔ 客户端
+@enduml

@@ -1,0 +1,16 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Windows 前端" as Frontend
+participant "named pipe" as Pipe
+participant "voimed" as Daemon
+
+Frontend -> Pipe : CreateFile(\\.\pipe\voime-<session>-<user>)
+Pipe -> Daemon : 连接实例
+Frontend -> Pipe : Hello / Configure / Start / Stop
+Daemon -> Pipe : Snapshot / SegmentStarted / Partial / Final
+Pipe -> Frontend : read JSON line
+Frontend -> Pipe : CloseHandle
+@enduml

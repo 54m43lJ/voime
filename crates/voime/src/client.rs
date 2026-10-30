@@ -1,29 +1,27 @@
 use std::io::BufReader;
-use std::net::Shutdown;
-use std::os::unix::net::UnixStream;
-use std::path::Path;
 
 use anyhow::{bail, Context};
 use crossbeam_channel::{Receiver, TryRecvError};
 use voime_ipc::{
     read_message, write_message, ClientMessage, Role, ServerMessage, PROTOCOL_VERSION,
 };
+use voime_transport::{Endpoint, Stream};
 
 pub struct Client {
-    writer: UnixStream,
+    writer: Box<dyn Stream>,
     events: Receiver<ServerMessage>,
     closed: bool,
 }
 
 impl Client {
-    pub fn connect(path: &Path) -> anyhow::Result<Self> {
-        Self::connect_as(path, Role::Tui)
+    pub fn connect(endpoint: &Endpoint) -> anyhow::Result<Self> {
+        Self::connect_as(endpoint, Role::Tui)
     }
 
-    pub fn connect_as(path: &Path, role: Role) -> anyhow::Result<Self> {
-        let stream = UnixStream::connect(path)
-            .with_context(|| format!("连接 daemon 失败 {}", path.display()))?;
-        let reader = stream.try_clone().context("复制 daemon socket 失败")?;
+    pub fn connect_as(endpoint: &Endpoint, role: Role) -> anyhow::Result<Self> {
+        let stream = voime_transport::connect(endpoint)
+            .with_context(|| format!("连接 daemon 失败 {endpoint}"))?;
+        let reader = stream.try_clone().context("复制 daemon 流失败")?;
         let (events_tx, events_rx) = crossbeam_channel::bounded(64);
         std::thread::Builder::new()
             .name("voime-ipc-read".to_string())
@@ -118,6 +116,6 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        let _ = self.writer.shutdown(Shutdown::Both);
+        let _ = self.writer.shutdown();
     }
 }

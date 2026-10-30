@@ -1,0 +1,27 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Voime addon" as Addon
+participant "Fcitx InputContext" as Ic
+participant "Fcitx frontend" as Frontend
+participant "目标应用" as App
+
+Addon -> Addon : Final(segment_id, text)
+Addon -> Addon : 复核目标存在且 hasFocus()
+
+alt 目标有效
+  Addon -> Ic : commitString(text)
+  Ic -> Frontend : commit
+  Frontend -> App : 插入 UTF-8 文本
+else 目标失效
+  Addon -> Addon : 不提交\n保留 daemon 历史
+end
+
+note over Frontend
+  Wayland：text-input-v3 commit_string
+  XWayland / X11：XIM_COMMIT
+  commit filter 由 Fcitx 处理。
+end note
+@enduml

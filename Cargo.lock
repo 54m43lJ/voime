@@ -2235,6 +2235,7 @@ dependencies = [
  "unicode-width 0.2.0",
  "voime-core",
  "voime-ipc",
+ "voime-transport",
 ]
 
 [[package]]
@@ -2276,7 +2277,16 @@ dependencies = [
  "tempfile",
  "voime-core",
  "voime-ipc",
+ "voime-transport",
  "voimed",
+]
+
+[[package]]
+name = "voime-transport"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2290,6 +2300,7 @@ dependencies = [
  "tempfile",
  "voime-core",
  "voime-ipc",
+ "voime-transport",
 ]
 
 [[package]]

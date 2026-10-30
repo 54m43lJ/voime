@@ -2,54 +2,64 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>Voime — 基于 Fcitx5 的本地语音输入法</title>
+<title>Voime — 本地语音输入</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <a id="top"></a>
-<h1>Voime — 基于 Fcitx5 的本地语音输入法</h1>
+<h1>Voime — 本地语音输入</h1>
 
 <p class="doc-links">
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
+<a href="PLATFORM.html">PLATFORM</a>
+<a href="WINDOWS.html">WINDOWS</a>
 <a href="BUILD.html">BUILD</a>
+<a href="crates/voime-core/README.html">voime-core</a>
+<a href="crates/voime-ipc/README.html">voime-ipc</a>
+<a href="crates/voime-transport/README.html">voime-transport</a>
+<a href="crates/voimed/README.html">voimed</a>
+<a href="crates/voime/README.html">voime</a>
+<a href="frontends/fcitx/README.html">fcitx</a>
+<a href="frontends/windows/README.html">windows</a>
+</p>
+
+<p>
+<strong>分支范围：</strong>本分支包含跨平台源码、构建清单、脚本、模型清单与文档；
+<code>frontends/windows</code> 与 <code>packaging/windows</code> 仅有目标设计，实现尚未落地。
 </p>
 
 <h2 id="r1">1. WHAT &amp; WHY</h2>
 <p><a href="#top">↑</a></p>
 
-<h3>1.1 IDEAL：要解决的问题</h3>
+<h3 id="r1-1">1.1 IDEAL：要解决的问题</h3>
 <p>
-Linux 上的语音输入通常需要云服务、独立输入法或额外的 GPU 推理环境。本项目把语音识别放进
-Fcitx5：Fcitx 负责键盘、输入焦点与文本提交，Voime 作为 addon 把本地语音识别结果直接写入当前
-输入框。音频、VAD、ASR 与标点全部在本机 CPU 上完成，运行时不联网、不上传音频，也不需要 GPU 或
-Python。TUI 只是可选的监视器，不参与键盘与上屏路径。
+桌面语音输入通常依赖云服务、独立输入法或 GPU 推理环境。Voime 把语音识别放在本机 CPU：
+一个常驻 daemon 持有音频、VAD、ASR、标点与会话历史，平台前端只负责热键、目标输入位置、
+临时文本与最终提交。Linux 前端运行在 Fcitx5 内；Windows 前端以独立桌面进程提供后台听写。
+运行时不联网、不上传音频，也不需要 GPU 或 Python。
 </p>
 
-<h3>1.2 GOAL：什么算成功</h3>
+<h3 id="r1-2">1.2 GOAL：什么算成功</h3>
 <ul>
-  <li>安装 <code>voime</code> addon 后，addon 随 Fcitx5 在后台加载，不注册输入法条目；切换键盘输入法时不会切到 Voime。</li>
-  <li>addon 配置一个模式：<code>ptt</code>（按住说话）、<code>toggle</code>（按一下切换）或 <code>continuous</code>（VAD 自动分段）。</li>
-  <li>addon 只配置一个热键；<code>ptt</code> 模式按住说话，<code>toggle</code> 模式切换录音，<code>continuous</code> 模式忽略热键。</li>
-  <li>热键由 Fcitx 捕获；普通按键照常输入，不被 Voime 拦截或转发。</li>
-  <li>说话期间，Fcitx 输入面板显示当前段的临时文本窗口；PTT / continuous 最终结果产生后关闭，Toggle 会话保持空白窗口到 toggle off 或目标失焦。</li>
-  <li>最终文本通过 Fcitx 提交到语音段开始时聚焦的输入框；输入框失焦时不向其他窗口注入。</li>
+  <li>Linux 上安装 <code>voime</code> addon 后，addon 随 Fcitx5 在后台加载，不注册输入法条目；Windows 上安装前端后，用户可在支持的桌面应用中按热键说话。</li>
+  <li>前端配置一个模式：<code>ptt</code>（按住说话）、<code>toggle</code>（按一下切换）或 <code>continuous</code>（VAD 自动分段）。</li>
+  <li>前端配置一个热键；<code>ptt</code> 按住说话，<code>toggle</code> 切换录音，<code>continuous</code> 忽略热键。</li>
+  <li>说话期间显示当前段的临时文本；最终结果提交到语音段开始时聚焦的输入位置，失焦时不向其他窗口注入。</li>
   <li>音频、模型、VAD、FireRedASR2-CTC、FireRedPunc 与会话历史由独立 <code>voimed</code> 守护进程持有。</li>
-  <li>ASR 使用 FireRedASR2-CTC int8 单 ONNX；CPU 推理成本低，模型约 740 MiB；final 与临时结果共用同一模型。</li>
-  <li>TUI 可连接 daemon，显示模式、热键、临时结果与历史；关闭 TUI 不影响热键、临时窗口与上屏。</li>
+  <li>可选 TUI 连接 daemon，显示模式、热键、临时结果与历史；关闭 TUI 不影响热键、临时窗口与上屏。</li>
   <li>运行时不需要网络、GPU 或 Python；模型由安装脚本生成，<code>voimed</code> 完全离线运行。</li>
 </ul>
 
-<h3>1.3 非目标</h3>
+<h3 id="r1-3">1.3 非目标</h3>
 <ul>
   <li>不做拼音、形码、候选词或通用键盘输入法；Voime 只负责语音文本的提交。</li>
-  <li>不实现自绘候选窗口、托盘或设置 GUI；输入法状态与配置由 Fcitx 提供。</li>
-  <li>不保证桌面空白处、锁屏、未使用 Fcitx 的应用、没有文本输入焦点的窗口中的热键。</li>
-  <li>不使用客户端 preedit；临时文本只显示在 Fcitx 输入面板的窗口中。</li>
+  <li>不实现跨平台统一 UI 抽象；各平台前端保留自己的热键、目标、预览与提交实现。</li>
+  <li>不保证锁屏、安全桌面、提权窗口、游戏或未使用受支持输入协议的应用。</li>
+  <li>不使用客户端 preedit 作为 Linux 临时文本；Fcitx 输入面板由宿主渲染。</li>
   <li>不引入第二个 ASR 模型或额外推理后端；不保存音频、按键或识别历史到磁盘。</li>
-  <li>不支持 Linux + Fcitx5 之外的平台形态；X11 仅通过 Fcitx XIM 覆盖。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -58,126 +68,213 @@ Python。TUI 只是可选的监视器，不参与键盘与上屏路径。
 <table>
   <tr><th>场景</th><th>行为</th><th>详细契约</th></tr>
   <tr>
-    <td>安装 addon</td>
+    <td>Linux 安装 addon</td>
     <td>把 <code>voime.so</code> 与 addon 描述文件安装到 Fcitx5，重启 Fcitx；Voime 作为后台 addon 加载，不需要加入输入法组。</td>
-    <td><a href="BUILD.html#b2">BUILD §2</a> · <a href="USER.html#u2">USER §2</a></td>
+    <td><a href="frontends/fcitx/BUILD.html">fcitx-addon BUILD</a> · <a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td>
   </tr>
   <tr>
     <td>配置</td>
-    <td>在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 中设置 <code>Mode</code> 与 <code>Hotkey</code>。</td>
-    <td><a href="USER.html#u4-1">USER §4.1</a></td>
+    <td>Linux 在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 中设置 <code>Mode</code> 与 <code>Hotkey</code>；Windows 在托盘设置中配置。</td>
+    <td><a href="frontends/fcitx/USER.html#u4-1">fcitx-addon USER §4.1</a> · <a href="frontends/windows/USER.html#u4-1">windows USER §4.1</a></td>
   </tr>
   <tr>
     <td>PTT 模式</td>
     <td><code>Mode=ptt</code>：按住 <code>Hotkey</code> 开始，松开结束；按住期间可被静音自动结束。</td>
-    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u3-2">USER §3.2</a></td>
+    <td><a href="frontends/fcitx/USER.html#u3-1">fcitx-addon USER §3.1</a> · <a href="frontends/windows/USER.html#u3-1">windows USER §3.1</a></td>
   </tr>
   <tr>
     <td>Toggle 模式</td>
-    <td><code>Mode=toggle</code>：按一下 <code>Hotkey</code> 开始，再按一下结束；目标失焦时自动结束；会话期间没有语音也保持空白临时窗口。</td>
-    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u3-2">USER §3.2</a></td>
+    <td><code>Mode=toggle</code>：按一下 <code>Hotkey</code> 开始，再按一下结束；目标失焦时自动结束；Linux 会话期间没有语音也保持空白临时窗口，Windows 浮层隐藏。</td>
+    <td><a href="frontends/fcitx/USER.html#u3-1">fcitx-addon USER §3.1</a> · <a href="frontends/windows/USER.html#u3-1">windows USER §3.1</a></td>
   </tr>
   <tr>
     <td>Continuous 模式</td>
     <td><code>Mode=continuous</code>：忽略热键，VAD 检测到语音起点即开始、终点即结束；无需按键。</td>
-    <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u3-3">USER §3.3</a></td>
+    <td><a href="frontends/fcitx/USER.html#u3-2">fcitx-addon USER §3.2</a> · <a href="frontends/windows/USER.html#u3-2">windows USER §3.2</a></td>
   </tr>
   <tr>
     <td>临时文本窗口</td>
-    <td>说话期间在 Fcitx 输入面板显示当前段的 <code>Partial</code>；Toggle 会话在 Final/空段后保持空白窗口，直到再次按热键关闭或目标失焦。</td>
-    <td><a href="USER.html#u3-4">USER §3.4</a> · <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a></td>
+    <td>说话期间显示当前段的 <code>Partial</code>；Linux Toggle 会话在 Final/空段后保持空白窗口，Windows 浮层在 Final 后隐藏；直到再次按热键关闭或目标失焦。</td>
+    <td><a href="frontends/fcitx/USER.html#u3-3">fcitx-addon USER §3.3</a> · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td>
   </tr>
   <tr>
     <td>最终结果</td>
-    <td>语音段结束后识别并加标点，通过 Fcitx 提交到语音段开始时聚焦的输入框；失焦则不提交。</td>
-    <td><a href="USER.html#u4-4">USER §4.4</a> · <a href="PROVIDER.html#p4-5">PROVIDER §4.5</a></td>
+    <td>语音段结束后识别并加标点，提交到语音段开始时聚焦的输入位置；失焦则不提交。</td>
+    <td><a href="frontends/fcitx/USER.html#u4-2">fcitx-addon USER §4.2</a> · <a href="frontends/windows/USER.html#u4-2">windows USER §4.2</a></td>
   </tr>
   <tr>
     <td>普通输入</td>
-    <td>除热键外的按键全部由 Fcitx 正常处理；拼音、候选、快捷键与组合键不受 Voime 影响。</td>
-    <td><a href="USER.html#u2">USER §2</a></td>
+    <td>除热键外的按键全部由宿主或系统正常处理；Voime 不抓取、不转发普通按键。</td>
+    <td><a href="frontends/fcitx/USER.html#u2">fcitx-addon USER §2</a> · <a href="frontends/windows/USER.html#u2">windows USER §2</a></td>
   </tr>
   <tr>
     <td>TUI</td>
     <td><code>voime</code> 可选连接 daemon，显示模式、热键、临时结果与历史；<code>q</code> 只 detach。</td>
-    <td><a href="USER.html#u5">USER §5</a></td>
+    <td><a href="crates/voime/USER.html">voime USER</a></td>
   </tr>
   <tr>
     <td>停止 daemon</td>
-    <td><code>voime ctl quit</code> 或停止 systemd user service；Fcitx 继续运行，热键因 daemon 不可用而放行。</td>
-    <td><a href="BUILD.html#b4">BUILD §4</a> · <a href="USER.html#u4-2">USER §4.2</a></td>
+    <td><code>voime ctl quit</code> 或停止平台服务；前端继续运行，热键因 daemon 不可用而放行。</td>
+    <td><a href="crates/voimed/USER.html#u4-1">voimed USER §4.1</a> · <a href="crates/voime/USER.html#u4-2">voime USER §4.2</a></td>
   </tr>
   <tr>
     <td>运行环境缺失</td>
-    <td>Fcitx 未运行、addon 未加载、daemon 未启动或没有文本焦点时，在 stderr / 日志说明原因；不静默注入文本。</td>
-    <td><a href="USER.html#u2">USER §2</a> · <a href="BUILD.html#b5">BUILD §5</a></td>
+    <td>前端未加载、daemon 未启动或没有文本焦点时，在日志 / <code>doctor</code> 说明原因；不静默注入文本。</td>
+    <td><a href="crates/voime/USER.html#u4-4">voime USER §4.4</a> · <a href="frontends/windows/USER.html#u4-5">windows USER §4.5</a></td>
   </tr>
 </table>
 
-<h2 id="r3">3. Credits</h2>
+<h2 id="r3">3. 项目地图与文档树</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>Voime/
+├── README.html                产品 WHAT &amp; WHY / 用户交互 / 文档树
+├── USER.html                  产品级边界：术语、约定、端到端流程、接口索引
+├── CORE.html                  仓库级结构：组件依赖、构建根、跨组件调用栈
+├── PROVIDER.html              产品级下边界：平台宿主、音频、推理、模型
+├── BUILD.html                 多构建根编排、模型安装、发布
+├── PLATFORM.html              跨平台项目结构提案
+├── WINDOWS.html               Windows 适配评估
+├── GUIDELINES.md              文档规范
+├── style.css                  共享样式
+│
+├── crates/
+│   ├── voime-core/            README · USER · CORE · PROVIDER · BUILD
+│   ├── voime-ipc/             README · USER · CORE · BUILD
+│   ├── voime-transport/       README · USER · CORE · PROVIDER · BUILD
+│   ├── voimed/                README · USER · CORE · BUILD
+│   └── voime/                 README · USER · CORE · PROVIDER · BUILD
+│
+├── frontends/
+│   ├── fcitx/                 README · USER · CORE · PROVIDER · BUILD
+│   └── windows/               README · USER · CORE · PROVIDER · BUILD（目标 P3 / P4）
+│
+└── diagram/                   根项目图表（PLATFORM / 产品级流程）</code></pre>
+<ul class="note">
+  <li>根 <code>README / USER / CORE / PROVIDER / BUILD</code> 是父文档；每个组件目录下的同名文档是子树。</li>
+  <li>父文档只定义产品级边界与组件关系；组件内部类型、签名和调用栈只出现在组件 <code>CORE</code>。</li>
+  <li><code>voime-transport</code> 已落地；<code>frontends/windows</code> 仍是目标组件，文档先于代码。</li>
+  <li>Fcitx 文档与源码均位于 <code>frontends/fcitx</code>；迁移记录见 <a href="PLATFORM.html#p7">PLATFORM §7</a>。</li>
+  <li>源码结构见 <a href="CORE.html#c1">根 CORE §1</a>。</li>
+</ul>
+
+<h2 id="r4">4. 文档所有权</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>内容</th><th>唯一所有者</th><th>其他文档的做法</th></tr>
+  <tr><td>消息类型、JSON 编码、framing、协议版本、错误码</td><td><a href="crates/voime-ipc/USER.html">voime-ipc USER</a></td><td>只链接，不复制定义</td></tr>
+  <tr><td>daemon 会话、<code>segment_id</code> 分配、广播、背压、历史</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
+  <tr><td>音频、VAD、CTC、标点、pipeline 的公开 API</td><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>只链接，不复制类型与语义</td></tr>
+  <tr><td>OS 本机传输契约（Unix socket / named pipe）</td><td><a href="crates/voime-transport/USER.html">voime-transport USER</a></td><td>只链接，不复制端点与安全细节</td></tr>
+  <tr><td>Linux 热键、目标、临时窗口、提交</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td><td>Windows 前端只引用行为契约</td></tr>
+  <tr><td>Windows 热键、目标、浮层、注入、TSF</td><td><a href="frontends/windows/USER.html">windows USER</a></td><td>Linux 前端不复制 Windows API</td></tr>
+  <tr><td>TUI、ctl、doctor 的用户界面与命令</td><td><a href="crates/voime/USER.html">voime USER</a></td><td>根 README 只列入口</td></tr>
+  <tr><td>外部 provider 契约</td><td>各组件 <code>PROVIDER</code></td><td>被依赖方只链接到对应 provider</td></tr>
+</table>
+
+<table>
+  <tr><th>组件</th><th>README</th><th>USER</th><th>CORE</th><th>PROVIDER</th><th>BUILD</th><th>构建根 / 平台</th></tr>
+  <tr>
+    <td><strong>根项目</strong></td>
+    <td><a href="README.html">README</a></td>
+    <td><a href="USER.html">USER</a></td>
+    <td><a href="CORE.html">CORE</a></td>
+    <td><a href="PROVIDER.html">PROVIDER</a></td>
+    <td><a href="BUILD.html">BUILD</a></td>
+    <td>根 workspace · Linux / Windows</td>
+  </tr>
+  <tr>
+    <td><code>voime-core</code></td>
+    <td><a href="crates/voime-core/README.html">README</a></td>
+    <td><a href="crates/voime-core/USER.html">USER</a></td>
+    <td><a href="crates/voime-core/CORE.html">CORE</a></td>
+    <td><a href="crates/voime-core/PROVIDER.html">PROVIDER</a></td>
+    <td><a href="crates/voime-core/BUILD.html">BUILD</a></td>
+    <td>根 Cargo workspace · Linux / Windows</td>
+  </tr>
+  <tr>
+    <td><code>voime-ipc</code></td>
+    <td><a href="crates/voime-ipc/README.html">README</a></td>
+    <td><a href="crates/voime-ipc/USER.html">USER</a></td>
+    <td><a href="crates/voime-ipc/CORE.html">CORE</a></td>
+    <td>—</td>
+    <td><a href="crates/voime-ipc/BUILD.html">BUILD</a></td>
+    <td>根 Cargo workspace · Linux / Windows</td>
+  </tr>
+  <tr>
+    <td><code>voime-transport</code></td>
+    <td><a href="crates/voime-transport/README.html">README</a></td>
+    <td><a href="crates/voime-transport/USER.html">USER</a></td>
+    <td><a href="crates/voime-transport/CORE.html">CORE</a></td>
+    <td><a href="crates/voime-transport/PROVIDER.html">PROVIDER</a></td>
+    <td><a href="crates/voime-transport/BUILD.html">BUILD</a></td>
+    <td>根 Cargo workspace · Linux / Windows</td>
+  </tr>
+  <tr>
+    <td><code>voimed</code></td>
+    <td><a href="crates/voimed/README.html">README</a></td>
+    <td><a href="crates/voimed/USER.html">USER</a></td>
+    <td><a href="crates/voimed/CORE.html">CORE</a></td>
+    <td>—</td>
+    <td><a href="crates/voimed/BUILD.html">BUILD</a></td>
+    <td>根 Cargo workspace · Linux / Windows</td>
+  </tr>
+  <tr>
+    <td><code>voime</code></td>
+    <td><a href="crates/voime/README.html">README</a></td>
+    <td><a href="crates/voime/USER.html">USER</a></td>
+    <td><a href="crates/voime/CORE.html">CORE</a></td>
+    <td><a href="crates/voime/PROVIDER.html">PROVIDER</a></td>
+    <td><a href="crates/voime/BUILD.html">BUILD</a></td>
+    <td>根 Cargo workspace · Linux / Windows</td>
+  </tr>
+  <tr>
+    <td><code>frontends/fcitx</code></td>
+    <td><a href="frontends/fcitx/README.html">README</a></td>
+    <td><a href="frontends/fcitx/USER.html">USER</a></td>
+    <td><a href="frontends/fcitx/CORE.html">CORE</a></td>
+    <td><a href="frontends/fcitx/PROVIDER.html">PROVIDER</a></td>
+    <td><a href="frontends/fcitx/BUILD.html">BUILD</a></td>
+    <td>CMake · Linux only</td>
+  </tr>
+  <tr>
+    <td><code>frontends/windows</code></td>
+    <td><a href="frontends/windows/README.html">README</a></td>
+    <td><a href="frontends/windows/USER.html">USER</a></td>
+    <td><a href="frontends/windows/CORE.html">CORE</a></td>
+    <td><a href="frontends/windows/PROVIDER.html">PROVIDER</a></td>
+    <td><a href="frontends/windows/BUILD.html">BUILD</a></td>
+    <td>独立 Cargo workspace + CMake · Windows only（目标 P3 / P4）</td>
+  </tr>
+</table>
+<ul class="note">
+  <li>文档树自根向下：根 README → 根 USER / CORE / PROVIDER / BUILD → 组件 README → 组件同名文档；跨组件引用只指向内容所有者。</li>
+  <li><code>PROVIDER</code> 仅在下边界真实存在时创建；<code>voime-ipc</code> 与 <code>voimed</code> 没有直接外部 provider，故省略。</li>
+  <li>根 <a href="BUILD.html">BUILD</a> 只负责多构建根编排、模型安装与发布；单组件命令在各自 <code>BUILD</code> 中维护。</li>
+  <li>PLATFORM 与 WINDOWS 是跨组件提案 / 评估，不是组件运行契约；实现契约以组件文档为准。</li>
+</ul>
+
+<h2 id="r5">5. Credits</h2>
 <p><a href="#top">↑</a></p>
 
 <table>
   <tr><th>项目</th><th>在本项目中的角色</th><th>技术栈 / 许可</th></tr>
-  <tr>
-    <td><a href="https://github.com/fcitx/fcitx5">Fcitx5</a></td>
-    <td>输入法框架、addon 宿主、键盘与文本提交</td>
-    <td>C++ · LGPL-2.1+</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam/FireRedASR2S</a></td>
-    <td>FireRedASR2-CTC 语音识别模型</td>
-    <td>ONNX · Apache-2.0</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/FireRedTeam/FireRedVAD">FireRedTeam/FireRedVAD</a></td>
-    <td>FireRedVAD 流式语音活动检测</td>
-    <td>ONNX · Apache-2.0</td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedTeam/FireRedPunc</a></td>
-    <td>FireRedPunc 中英文标点预测</td>
-    <td>BERT / ONNX · Apache-2.0</td>
-  </tr>
-  <tr>
-    <td><a href="https://onnxruntime.ai/">ONNX Runtime</a></td>
-    <td>CPU 推理运行时</td>
-    <td>C++ · MIT</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/huggingface/tokenizers">tokenizers</a></td>
-    <td>CTC / FireRedPunc 的词表与分词</td>
-    <td>Rust · Apache-2.0</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/ratatui/ratatui">ratatui</a> / <a href="https://github.com/crossterm-rs/crossterm">crossterm</a></td>
-    <td>可选 TUI</td>
-    <td>Rust · MIT</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/RustAudio/cpal">cpal</a></td>
-    <td>Linux 麦克风采集</td>
-    <td>Rust · Apache-2.0</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/HEnquist/rubato">rubato</a></td>
-    <td>采样率转换</td>
-    <td>Rust · MIT</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/RustedBytes/kaldi-native-fbank">kaldi-native-fbank</a></td>
-    <td>Kaldi 兼容 fbank 特征</td>
-    <td>Rust · Apache-2.0</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/nlohmann/json">nlohmann/json</a></td>
-    <td>addon IPC 的 JSON 解析</td>
-    <td>C++ · MIT</td>
-  </tr>
+  <tr><td><a href="https://github.com/fcitx/fcitx5">Fcitx5</a></td><td>Linux 输入法框架、addon 宿主、键盘与文本提交</td><td>C++ · LGPL-2.1+</td></tr>
+  <tr><td><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam/FireRedASR2S</a></td><td>FireRedASR2-CTC 语音识别模型</td><td>ONNX · Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/FireRedTeam/FireRedVAD">FireRedTeam/FireRedVAD</a></td><td>FireRedVAD 流式语音活动检测</td><td>ONNX · Apache-2.0</td></tr>
+  <tr><td><a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedTeam/FireRedPunc</a></td><td>FireRedPunc 中英文标点预测</td><td>BERT / ONNX · Apache-2.0</td></tr>
+  <tr><td><a href="https://onnxruntime.ai/">ONNX Runtime</a></td><td>CPU 推理运行时</td><td>C++ · MIT</td></tr>
+  <tr><td><a href="https://github.com/huggingface/tokenizers">tokenizers</a></td><td>FireRedPunc 的 BERT 分词与 CTC 词表</td><td>Rust · Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/ratatui/ratatui">ratatui</a> / <a href="https://github.com/crossterm-rs/crossterm">crossterm</a></td><td>可选 TUI</td><td>Rust · MIT</td></tr>
+  <tr><td><a href="https://github.com/RustAudio/cpal">cpal</a></td><td>麦克风采集</td><td>Rust · Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/HEnquist/rubato">rubato</a></td><td>采样率转换</td><td>Rust · MIT</td></tr>
+  <tr><td><a href="https://github.com/RustedBytes/kaldi-native-fbank">kaldi-native-fbank</a></td><td>Kaldi 兼容 fbank 特征</td><td>Rust · Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/nlohmann/json">nlohmann/json</a></td><td>Linux 前端 IPC JSON 解析</td><td>C++ · MIT</td></tr>
 </table>
 <ul class="note">
   <li>模型权重及其许可证随模型包分发；本仓库不提交权重文件。</li>
-  <li>本项目的许可证与第三方依赖的完整版本以仓库清单为准。</li>
+  <li>各组件的依赖职责见其 <code>CORE</code> 的 SBOM；版本与许可证以仓库清单为准。</li>
 </ul>
 
 </body>

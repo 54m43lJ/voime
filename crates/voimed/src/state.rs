@@ -1,4 +1,4 @@
-use voime_ipc::{AddonState, Mode, Phase, ServerMessage, Status};
+use voime_ipc::{FrontendState, Mode, Phase, ServerMessage, Status};
 
 pub struct State {
     pub mode: Option<Mode>,
@@ -6,7 +6,7 @@ pub struct State {
     pub phase: Phase,
     pub partial: Option<String>,
     pub transcript: Vec<String>,
-    pub addon: AddonState,
+    pub addon: FrontendState,
 }
 
 impl Default for State {
@@ -17,7 +17,7 @@ impl Default for State {
             phase: Phase::Idle,
             partial: None,
             transcript: Vec::new(),
-            addon: AddonState::Disconnected,
+            addon: FrontendState::Disconnected,
         }
     }
 }
@@ -76,7 +76,7 @@ mod tests {
         let mut state = State::default();
         state.apply_mode(Mode::Continuous);
         state.hotkey = Some("Super+F2".to_string());
-        state.addon = AddonState::Connected;
+        state.addon = FrontendState::Connected;
         match state.snapshot() {
             ServerMessage::Snapshot {
                 mode,
@@ -85,7 +85,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(mode, Some(Mode::Continuous));
-                assert_eq!(addon, AddonState::Connected);
+                assert_eq!(addon, FrontendState::Connected);
                 assert_eq!(hotkey.as_deref(), Some("Super+F2"));
             }
             other => panic!("unexpected snapshot: {other:?}"),

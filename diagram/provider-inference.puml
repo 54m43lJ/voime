@@ -1,0 +1,24 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Voime" as Voime
+participant "模型包" as Model
+participant "ONNX Runtime" as Ort
+
+Voime -> Model : 读取 manifest.json
+Voime -> Model : SHA-256 + 张量校验
+Voime -> Ort : 创建 CPU 会话
+Ort -> Voime : Session
+
+loop 每个语音段
+  Voime -> Ort : 推理
+  Ort -> Voime : log_probs / logits
+end
+
+note over Voime
+  模型只读；每个语音段只重置解码状态，
+  不重新加载权重。
+end note
+@enduml

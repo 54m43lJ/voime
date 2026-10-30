@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use voime_ipc::{AddonState, ClientMessage, Mode, Phase, ServerMessage, Status, TriggerSource};
+use voime_ipc::{ClientMessage, FrontendState, Mode, Phase, ServerMessage, Status, TriggerSource};
 
 use crate::client::Client;
 use crate::ui::Tui;
@@ -18,7 +18,7 @@ pub struct App {
     pub partial: String,
     pub recording: bool,
     pub finalizing: bool,
-    pub addon: AddonState,
+    pub addon: FrontendState,
     pub scroll: ScrollState,
     pub viewport_height: u16,
     client: Option<Client>,
@@ -34,7 +34,7 @@ impl App {
             partial: String::new(),
             recording: false,
             finalizing: false,
-            addon: AddonState::Disconnected,
+            addon: FrontendState::Disconnected,
             scroll: ScrollState::default(),
             viewport_height: 24,
             client: None,
@@ -303,7 +303,7 @@ mod tests {
             phase: Phase::Recording,
             partial: Some("临时".to_string()),
             transcript: vec!["历史".to_string()],
-            addon: AddonState::Connected,
+            addon: FrontendState::Connected,
             hotkey: Some("Super+F2".to_string()),
         });
         assert_eq!(app.mode, Some(Mode::Ptt));

@@ -5,7 +5,7 @@ use voime_core::audio::capture::CaptureHandle;
 use voime_core::config::Config;
 use voime_core::pipeline::{Pipeline, PipelineEvent};
 use voime_ipc::{
-    AddonState, ClientMessage, ErrorCode, Mode, Phase, Role, ServerMessage, TriggerSource,
+    ClientMessage, ErrorCode, FrontendState, Mode, Phase, Role, ServerMessage, TriggerSource,
 };
 
 use crate::ipc_server::{IpcServer, ServerEvent};
@@ -87,8 +87,8 @@ impl Daemon {
             }
             ServerEvent::Disconnected { client_id, role } => {
                 let _ = client_id;
-                if role == Some(Role::Fcitx) {
-                    self.state.addon = AddonState::Disconnected;
+                if role == Some(Role::Frontend) {
+                    self.state.addon = FrontendState::Disconnected;
                     if self.state.mode == Some(Mode::Continuous) {
                         let _ = self.pipeline.set_mode(Mode::Ptt);
                     }
@@ -128,14 +128,14 @@ impl Daemon {
                         client_id,
                         &ServerMessage::Error {
                             code: ErrorCode::RoleConflict,
-                            message: "已有 Fcitx 客户端连接".to_string(),
+                            message: "已有前端连接".to_string(),
                         },
                     );
                     self.ipc.disconnect(client_id);
                     return;
                 }
-                if role == Role::Fcitx {
-                    self.state.addon = AddonState::Connected;
+                if role == Role::Frontend {
+                    self.state.addon = FrontendState::Connected;
                     if let Some(config) = config {
                         self.state.apply_mode(config.mode);
                         self.state.hotkey = Some(config.hotkey);
@@ -147,8 +147,8 @@ impl Daemon {
                 }
             }
             ClientMessage::Configure { mode, hotkey } => {
-                if self.ipc.role(client_id) != Some(Role::Fcitx) {
-                    self.send_error(client_id, ErrorCode::InvalidMessage, "只有 Fcitx 可以配置");
+                if self.ipc.role(client_id) != Some(Role::Frontend) {
+                    self.send_error(client_id, ErrorCode::InvalidMessage, "只有前端可以配置");
                     return;
                 }
                 self.state.apply_mode(mode);
@@ -336,7 +336,7 @@ impl Daemon {
         if let Some(mode) = self.pending_mode.take() {
             let _ = self
                 .pipeline
-                .set_mode(if self.state.addon == AddonState::Connected {
+                .set_mode(if self.state.addon == FrontendState::Connected {
                     mode
                 } else {
                     Mode::Ptt
@@ -345,7 +345,7 @@ impl Daemon {
     }
 
     fn effective_mode(&self) -> Mode {
-        if self.state.addon == AddonState::Connected {
+        if self.state.addon == FrontendState::Connected {
             self.state.mode.unwrap_or(Mode::Ptt)
         } else {
             Mode::Ptt

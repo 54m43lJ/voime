@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PROVIDER — voime-transport</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>PROVIDER — voime-transport</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+本文只记录 <code>voime-transport</code> 消费的 OS 传输子集。完整语义以平台官方文档为准；
+上层契约见 <a href="USER.html">USER</a>。
+</p>
+
+<h2 id="p1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>Unix domain socket</td><td>Linux 本机字节流端点；由文件系统路径标识。</td></tr>
+  <tr><td><code>sockaddr_un</code></td><td>Unix socket 地址结构；<code>sun_path</code> 存放路径。</td></tr>
+  <tr><td>文件权限位</td><td>父目录 0700、socket 0600；只允许同 UID 访问。</td></tr>
+  <tr><td>named pipe</td><td>Windows 本机字节流端点；由 <code>\\.\pipe\&lt;name&gt;</code> 标识。</td></tr>
+  <tr><td>DACL</td><td>命名管道的访问控制列表；只授予当前用户。</td></tr>
+  <tr><td>会话 ID</td><td>Windows 登录会话标识；管道名包含它，避免跨会话冲突。</td></tr>
+  <tr><td><code>PIPE_REJECT_REMOTE_CLIENTS</code></td><td>拒绝远程客户端连接的管道标志。</td></tr>
+  <tr><td><code>ConnectNamedPipe</code></td><td>服务端等待客户端连接的 Win32 调用。</td></tr>
+  <tr><td><code>DuplicateHandle</code></td><td>复制管道句柄，供读写线程独立使用。</td></tr>
+  <tr><td><code>DisconnectNamedPipe</code></td><td>断开一个管道实例；与 <code>CloseHandle</code> 一起释放连接。</td></tr>
+</table>
+
+<h2 id="p2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>端点命名</td><td>Unix 使用文件系统路径；Windows 使用 <code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td></tr>
+  <tr><td>权限</td><td>Unix 父目录 0700、socket 0600；Windows 当前用户 DACL + 拒绝远程客户端。</td></tr>
+  <tr><td>陈旧端点</td><td>Unix 启动时尝试连接；失败则删除旧 socket。Windows 管道句柄关闭即消失；bind 前检查已有 daemon。</td></tr>
+  <tr><td>阻塞与取消</td><td>accept / read 可阻塞；shutdown 必须能取消。Unix 使用非阻塞 + 短睡眠或可中断 accept；Windows 使用 overlapped / <code>CancelIoEx</code>。</td></tr>
+  <tr><td>读写分离</td><td>Unix <code>try_clone</code> 复制 fd；Windows <code>DuplicateHandle</code>。</td></tr>
+  <tr><td>关闭顺序</td><td>先停止 accept，再关闭所有 stream，最后删除端点。</td></tr>
+  <tr><td>错误映射</td><td>统一转 <code>io::Error</code>，保留路径 / 管道名 / Win32 错误码上下文。</td></tr>
+  <tr><td>不使用 TCP</td><td>不使用 loopback TCP：防火墙提示、端口冲突、同机任意进程可连接。</td></tr>
+</table>
+
+<h2 id="p3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="p3-1">3.1 Unix socket 绑定与接受</h3>
+<div class="diagram"><img src="diagram/unix-socket.svg" alt="Unix domain socket 的 bind / accept / connect 时序图"></div>
+<ul class="note">
+  <li>父目录与 socket 权限在 bind 时设置；已有活动 daemon 时拒绝绑定。</li>
+  <li>客户端 connect 成功后得到字节流；读写由上层协议处理。</li>
+</ul>
+
+<h3 id="p3-2">3.2 Windows named pipe</h3>
+<div class="diagram"><img src="diagram/named-pipe.svg" alt="Windows named pipe 的创建、连接与关闭时序图"></div>
+<ul class="note">
+  <li>服务端创建带当前用户 DACL 的管道，并拒绝远程客户端。</li>
+  <li>每个连接实例可复制句柄供读写线程使用；关闭时断开并释放句柄。</li>
+</ul>
+
+<h2 id="p4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="p4-1">4.1 Unix 调用</h3>
+<table>
+  <tr><th>调用 / 类型</th><th>用途</th></tr>
+  <tr><td><code>UnixListener::bind(path)</code></td><td>绑定路径并创建监听 socket。</td></tr>
+  <tr><td><code>UnixListener::accept()</code></td><td>接受连接；非阻塞模式下返回 <code>WouldBlock</code>。</td></tr>
+  <tr><td><code>UnixListener::set_nonblocking(true)</code></td><td>让 accept 线程可轮询关闭标志。</td></tr>
+  <tr><td><code>UnixStream::connect(path)</code></td><td>客户端连接；用于陈旧端点探测。</td></tr>
+  <tr><td><code>UnixStream::try_clone()</code></td><td>复制 fd 供读写线程分离。</td></tr>
+  <tr><td><code>UnixStream::shutdown(Shutdown::Both)</code></td><td>关闭读写并唤醒阻塞 read。</td></tr>
+  <tr><td><code>std::fs::set_permissions(..., 0o700 / 0o600)</code></td><td>设置目录 / socket 权限。</td></tr>
+</table>
+
+<h3 id="p4-2">4.2 Windows 调用</h3>
+<table>
+  <tr><th>调用 / 类型</th><th>用途</th></tr>
+  <tr><td><code>CreateNamedPipeW</code></td><td>创建管道实例；指定 <code>PIPE_ACCESS_DUPLEX</code> 与安全描述符。</td></tr>
+  <tr><td><code>ConnectNamedPipe</code></td><td>等待客户端连接；可阻塞或 overlapped。</td></tr>
+  <tr><td><code>DisconnectNamedPipe</code></td><td>断开实例，准备复用或关闭。</td></tr>
+  <tr><td><code>DuplicateHandle</code></td><td>复制读写句柄。</td></tr>
+  <tr><td><code>CancelIoEx</code> / <code>CloseHandle</code></td><td>取消阻塞 I/O 并释放资源。</td></tr>
+  <tr><td><code>PIPE_REJECT_REMOTE_CLIENTS</code></td><td>拒绝远程客户端。</td></tr>
+  <tr><td><code>ConvertStringSecurityDescriptorToSecurityDescriptorW</code></td><td>构造当前用户 DACL。</td></tr>
+</table>
+
+<h3 id="p4-3">4.3 安全矩阵</h3>
+<table>
+  <tr><th>关注点</th><th>Unix</th><th>Windows</th></tr>
+  <tr><td>同机其他用户</td><td>目录 0700 / socket 0600 阻止</td><td>当前用户 DACL 阻止</td></tr>
+  <tr><td>远程客户端</td><td>AF_UNIX 不支持远程</td><td><code>PIPE_REJECT_REMOTE_CLIENTS</code></td></tr>
+  <tr><td>跨会话</td><td>路径位于用户 runtime / tmp</td><td>管道名包含会话 ID；不使用 <code>Global\</code></td></tr>
+  <tr><td>端点被替换</td><td>bind 前探测活动 daemon</td><td>管道句柄唯一；关闭即消失</td></tr>
+  <tr><td>错误信息泄漏</td><td>路径上下文可记录</td><td>错误码 + 管道名；不记录安全描述符内容</td></tr>
+</table>
+
+<h3 id="p4-4">4.4 错误映射</h3>
+<table>
+  <tr><th>平台错误</th><th>触发条件</th><th>项目行为</th></tr>
+  <tr><td><code>EADDRINUSE</code> / 端点可连接</td><td>已有 daemon。</td><td>返回“daemon 已在运行”；daemon 幂等退出。</td></tr>
+  <tr><td><code>EACCES</code> / <code>EPERM</code></td><td>目录 / socket / DACL 权限不足。</td><td>返回带路径的错误；不放宽权限。</td></tr>
+  <tr><td><code>ECONNREFUSED</code> / <code>ENOENT</code></td><td>端点不存在或陈旧。</td><td>客户端重试；daemon 清理。</td></tr>
+  <tr><td><code>ERROR_PIPE_BUSY</code></td><td>管道实例忙。</td><td>等待或重试；按上层重连策略处理。</td></tr>
+  <tr><td><code>ERROR_ACCESS_DENIED</code></td><td>DACL 拒绝。</td><td>返回权限错误；检查运行用户。</td></tr>
+  <tr><td><code>ERROR_OPERATION_ABORTED</code></td><td>shutdown 取消 I/O。</td><td>视为正常关闭。</td></tr>
+</table>
+
+</body>
+</html>

@@ -1,0 +1,33 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+actor "用户" as User
+participant "Fcitx5" as Fcitx
+participant "Voime addon" as Addon
+participant "voimed" as Daemon
+participant "目标应用" as App
+
+note over Fcitx, Addon
+  Mode=continuous：不读取、不消费 Hotkey。
+end note
+
+Daemon -> Addon : SegmentStarted { source: continuous }
+Addon -> Addon : 绑定当前焦点
+
+loop 语音期间
+  Daemon -> Addon : Partial
+  Addon -> Fcitx : setPreedit(Partial)
+  Fcitx -> User : 临时窗口
+end
+
+Daemon -> Addon : Final
+Addon -> Fcitx : 清空 preedit
+alt 目标仍聚焦
+  Addon -> Fcitx : commitString(Final)
+  Fcitx -> App : 插入文本
+else 目标失焦 / 销毁
+  Addon -> Addon : 不提交\n保留历史
+end
+@enduml

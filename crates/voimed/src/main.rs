@@ -5,6 +5,7 @@ use voime_core::audio::capture::{self, CaptureHandle, AUDIO_CHANNEL_CAPACITY};
 use voime_core::config::{self, Args};
 use voime_core::infer::session::SessionFactory;
 use voime_core::pipeline;
+use voime_transport::{default_endpoint, Endpoint};
 
 use voimed::cli;
 use voimed::daemon::Daemon;
@@ -12,10 +13,23 @@ use voimed::ipc_server::{self, IpcServer};
 
 fn main() -> ExitCode {
     let cli = cli::parse();
-    let socket = cli.socket.clone().unwrap_or_else(config::default_socket);
+    let endpoint = match cli
+        .endpoint
+        .as_deref()
+        .map(Endpoint::parse)
+        .transpose()
+        .context("解析端点失败")
+    {
+        Ok(Some(endpoint)) => endpoint,
+        Ok(None) => default_endpoint(),
+        Err(error) => {
+            eprintln!("voimed: {error:#}");
+            return ExitCode::from(1);
+        }
+    };
 
-    if ipc_server::daemon_running(&socket) {
-        println!("voimed: daemon 已在运行（{}）", socket.display());
+    if ipc_server::daemon_running(&endpoint) {
+        println!("voimed: daemon 已在运行（{endpoint}）");
         return ExitCode::SUCCESS;
     }
 
@@ -23,10 +37,9 @@ fn main() -> ExitCode {
         model_dir: cli.model_dir,
         input_device: cli.input_device,
         threads: cli.threads,
-        socket: Some(socket),
         verbose: cli.verbose,
     };
-    match run(args) {
+    match run(args, endpoint) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("voimed: {error:#}");
@@ -35,14 +48,14 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: Args) -> anyhow::Result<()> {
+fn run(args: Args, endpoint: Endpoint) -> anyhow::Result<()> {
     let verbose = args.verbose;
     let config = config::resolve(args).context("初始化配置失败")?;
     if verbose {
         eprintln!(
-            "voimed: 模型 {}，socket {}，线程 {}",
+            "voimed: 模型 {}，端点 {}，线程 {}",
             config.model_dir.display(),
-            config.socket.display(),
+            endpoint,
             config.threads
         );
     }
@@ -58,7 +71,7 @@ fn run(args: Args) -> anyhow::Result<()> {
             return Err(error).context("打开录音设备失败");
         }
     };
-    let ipc = match IpcServer::bind(&config.socket) {
+    let ipc = match IpcServer::bind(&endpoint) {
         Ok(ipc) => ipc,
         Err(error) => {
             stop_audio(audio);

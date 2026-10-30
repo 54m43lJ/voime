@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BUILD — frontends/windows</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>BUILD — frontends/windows</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+｜ 评估：<a href="../../WINDOWS.html">WINDOWS</a>
+</p>
+
+<p>
+<strong>状态：</strong>目标 P3（Rust 托盘）与可选 P4（TSF）。以下命令在组件落地后生效；
+当前仓库尚未包含 <code>frontends/windows/Cargo.toml</code> 与 <code>tsf/</code>。
+</p>
+
+<p>
+本模块尚未实现；以下命令是目标构建流程。
+</p>
+
+<h2 id="b1">1. 环境</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>要求</th></tr>
+  <tr><td>系统</td><td>Windows 10 / 11 x64；普通用户桌面会话。</td></tr>
+  <tr><td>Rust</td><td>MSVC 工具链；独立 workspace。</td></tr>
+  <tr><td>Windows SDK</td><td>Win32 / UIA / TSF 头文件与库；TSF 需要 C++20 与 CMake。</td></tr>
+  <tr><td>共享 crate</td><td><code>voime-ipc</code>、<code>voime-transport</code> 通过 path dependency 复用。</td></tr>
+  <tr><td>模型 / daemon</td><td>由根 workspace 构建 <code>voimed.exe</code> / <code>voime.exe</code>；前端不加载模型。</td></tr>
+</table>
+
+<h2 id="b2">2. 构建</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code># Windows 前端（P3）
+cd frontends/windows
+cargo build --release
+
+# 共享 crate + daemon / CLI（在仓库根）
+cargo build --release -p voimed -p voime
+
+# 可选 TSF（P4）
+cmake -S frontends/windows/tsf -B build/tsf-x64 -A x64
+cmake -S frontends/windows/tsf -B build/tsf-x86 -A Win32
+cmake --build build/tsf-x64 --config Release
+cmake --build build/tsf-x86 --config Release</code></pre>
+
+<table>
+  <tr><th>产物</th><th>说明</th></tr>
+  <tr><td><code>voime-tray.exe</code></td><td>托盘 / 热键 / 目标 / 浮层 / SendInput。</td></tr>
+  <tr><td><code>voimed.exe</code> / <code>voime.exe</code></td><td>由根 workspace 构建；前端通过命名管道连接。</td></tr>
+  <tr><td><code>onnxruntime.dll</code></td><td>随 daemon 发布；前端不链接。</td></tr>
+  <tr><td>TSF DLL（可选）</td><td>x86 / x64 两份；COM 注册后由目标应用加载。</td></tr>
+</table>
+<ul class="note">
+  <li><code>frontends/windows</code> 使用独立 <code>Cargo.lock</code>，避免 Windows-only 依赖污染 Linux 根构建。</li>
+  <li>Linux 上可跑 <code>cargo check --target x86_64-pc-windows-msvc</code> 做快速反馈，但不能替代 Windows 链接 / COM / TSF 验证。</li>
+</ul>
+
+<h2 id="b3">3. 安装与启动</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code># 每用户安装（目标流程）
+voime-setup.exe
+
+# 登录启动：当前用户 Startup / 计划任务
+# 托盘拉起 daemon：voimed.exe --model-dir %LOCALAPPDATA%\voime\models</code></pre>
+
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>安装</td><td>每用户安装；不要求管理员，除非启用 TSF 注册。</td></tr>
+  <tr><td>登录启动</td><td>当前用户登录后启动托盘；托盘负责拉起 daemon。</td></tr>
+  <tr><td>模型</td><td><code>%LOCALAPPDATA%\voime\models</code>；由根模型安装流程生成。</td></tr>
+  <tr><td>TSF 注册</td><td>可选阶段；COM / TSF profile 注册通常需要管理员，按用户启用。</td></tr>
+  <tr><td>卸载</td><td>停止托盘与 daemon；删除二进制、登录启动项、TSF 注册与按需保留的模型目录。</td></tr>
+</table>
+<ul class="note">
+  <li>不要把 daemon 装成 Session 0 服务：无法可靠访问交互用户麦克风，也破坏隐私边界。</li>
+  <li>模型下载与 daemon 安装见根 <a href="../../BUILD.html#b3">BUILD §3</a>。</li>
+</ul>
+
+<h2 id="b4">4. 测试</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code># Windows 前端
+cd frontends/windows
+cargo test
+cargo clippy --all-targets
+cargo fmt --check
+
+# 共享 crate（仓库根）
+cargo test -p voime-ipc -p voime-transport
+
+# TSF（可选）
+cmake --build build/tsf-x64 --config Release
+ctest --test-dir build/tsf-x64 -C Release --output-on-failure</code></pre>
+
+<table>
+  <tr><th>类别</th><th>用例</th></tr>
+  <tr><td>系统</td><td>Windows 10 22H2、Windows 11 23H2 / 24H2（x64）；中英文系统；100% / 150% / 200% DPI；多显示器。</td></tr>
+  <tr><td>应用</td><td>Notepad、Word、Outlook、Chrome、Edge、Firefox、VS Code、Windows Terminal、PowerShell、WPF / WinForms、UWP Notepad、管理员控制台、RDP 客户端。</td></tr>
+  <tr><td>目标</td><td>前台窗口稳定、窗口内切换焦点、目标关闭、提权窗口、锁屏。</td></tr>
+  <tr><td>输入</td><td>中文 / 英文 / emoji / 长文本；IME 开启状态；SendInput 失败。</td></tr>
+  <tr><td>传输</td><td>命名管道 ACL、拒绝远程、daemon 重启、慢读。</td></tr>
+  <tr><td>TSF（可选）</td><td>Notepad 单应用提交、多应用、x86 / x64、注册 / 升级、组合 / 预览。</td></tr>
+</table>
+
+<h2 id="b5">5. 发布</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>产物</th><th>说明</th></tr>
+  <tr><td><code>voimed.exe</code>、<code>voime.exe</code>、<code>voime-tray.exe</code></td><td>daemon、CLI / TUI、托盘前端。</td></tr>
+  <tr><td><code>onnxruntime.dll</code></td><td>与 daemon 一起分发。</td></tr>
+  <tr><td>安装器 / 登录启动项</td><td>每用户安装；托盘拉起 daemon。</td></tr>
+  <tr><td>可选 TSF DLL</td><td>x86 / x64 + 注册脚本；版本化，升级需重启应用。</td></tr>
+  <tr><td>模型下载 / 校验</td><td>与 Linux 共用 <code>manifest.json</code> 与 SHA-256。</td></tr>
+</table>
+<ul class="note">
+  <li>发布前检查：托盘单实例、热键注册、目标失焦不误提交、提权窗口不注入、命名管道 ACL、无按键 / 音频 / 文本落盘。</li>
+  <li>代码签名与隐私说明属于发布必需项；安全软件可能对键盘钩子 + 麦克风 + 注入敏感。</li>
+</ul>
+
+</body>
+</html>

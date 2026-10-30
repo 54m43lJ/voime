@@ -1,0 +1,30 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voime-core" as Core
+participant "cpal / 系统音频栈" as Cpal
+participant "麦克风" as Mic
+
+Core -> Cpal : default_input_device()
+Cpal -> Core : Device
+Core -> Cpal : default_input_config()
+Cpal -> Core : SupportedStreamConfig
+Core -> Cpal : build_input_stream(data_cb, err_cb)
+Cpal -> Core : Stream
+Core -> Cpal : Stream::play()
+
+loop 音频回调
+  Mic -> Cpal : PCM
+  Cpal -> Core : data_cb(&[f32])
+  Core -> Core : 转换 / 入队
+end
+
+alt 流错误
+  Cpal -> Core : err_cb(StreamError)
+  Core -> Core : 写入零长度哨兵
+end
+
+Core -> Cpal : Stream::pause()
+@enduml

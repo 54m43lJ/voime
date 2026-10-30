@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BUILD — voime-ipc</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>BUILD — voime-ipc</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+</p>
+
+
+<h2 id="b1">1. 环境</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>要求</th></tr>
+  <tr><td>Rust</td><td>stable 工具链；无平台特定系统依赖。</td></tr>
+  <tr><td>平台</td><td>Linux / Windows 均可构建；本 crate 不含 OS 调用。</td></tr>
+</table>
+
+<h2 id="b2">2. 构建</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cargo build -p voime-ipc
+cargo build --release -p voime-ipc</code></pre>
+
+<table>
+  <tr><th>产物</th><th>说明</th></tr>
+  <tr><td><code>libvoime_ipc.rlib</code></td><td>供 daemon、CLI、Windows 前端链接；C++ 前端按协议自行实现，不链接本库。</td></tr>
+</table>
+
+<h2 id="b3">3. 测试</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cargo test -p voime-ipc
+cargo clippy -p voime-ipc --all-targets
+cargo fmt -p voime-ipc --check</code></pre>
+
+<table>
+  <tr><th>测试</th><th>覆盖</th></tr>
+  <tr><td>单元测试</td><td>Hello 往返、外部标签与小写值、超长消息、缺少换行。</td></tr>
+  <tr><td><code>tests/ipc.rs</code></td><td>握手 / 角色 / Mode / framing 的跨组件集成测试。</td></tr>
+  <tr><td>协议金样</td><td>C++ 前端与 Rust 客户端共用同一组 JSON 样例；新增消息时必须同步。</td></tr>
+</table>
+<ul class="note">
+  <li>根 workspace 的完整测试与发布命令见 <a href="../../BUILD.html#b5">根 BUILD §5</a>。</li>
+  <li>协议版本变化时必须更新 <a href="USER.html#u4-8">USER §4.8</a> 与金样测试。</li>
+</ul>
+
+</body>
+</html>

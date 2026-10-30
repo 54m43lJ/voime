@@ -1,16 +1,14 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use voime_ipc::{ClientMessage, Role, ServerMessage, MAX_MESSAGE_BYTES};
+use voime_transport::{Endpoint, Listener, Stream};
 
 #[derive(Debug)]
 pub enum ServerEvent {
@@ -37,32 +35,19 @@ struct ClientEntry {
 }
 
 pub struct IpcServer {
-    path: PathBuf,
+    endpoint: Endpoint,
     events_rx: Receiver<ServerEvent>,
     clients: Arc<Mutex<HashMap<u64, ClientEntry>>>,
     shutdown: Arc<AtomicBool>,
+    listener: Option<Arc<dyn Listener>>,
     accept_thread: Option<JoinHandle<()>>,
 }
 
 impl IpcServer {
-    pub fn bind(path: &Path) -> anyhow::Result<Self> {
-        prepare_parent(path)?;
-        if path.exists() {
-            if UnixStream::connect(path).is_ok() {
-                bail!("daemon 已在运行：{}", path.display());
-            }
-            std::fs::remove_file(path)
-                .with_context(|| format!("删除陈旧 socket 失败 {}", path.display()))?;
-        }
-
-        let listener = UnixListener::bind(path)
-            .with_context(|| format!("绑定 socket 失败 {}", path.display()))?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("设置 socket 权限失败 {}", path.display()))?;
-        listener
-            .set_nonblocking(true)
-            .context("设置 socket 非阻塞失败")?;
-
+    pub fn bind(endpoint: &Endpoint) -> Result<Self> {
+        let listener: Arc<dyn Listener> = Arc::from(
+            voime_transport::bind(endpoint).with_context(|| format!("绑定端点失败 {endpoint}"))?,
+        );
         let (events_tx, events_rx) = crossbeam_channel::unbounded();
         let clients = Arc::new(Mutex::new(HashMap::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -71,12 +56,13 @@ impl IpcServer {
             let clients = Arc::clone(&clients);
             let shutdown = Arc::clone(&shutdown);
             let events_tx = events_tx.clone();
+            let listener = Arc::clone(&listener);
             std::thread::Builder::new()
                 .name("voimed-ipc-accept".to_string())
                 .spawn(move || {
                     while !shutdown.load(Ordering::Relaxed) {
                         match listener.accept() {
-                            Ok((stream, _)) => {
+                            Ok(stream) => {
                                 let id = next_id.fetch_add(1, Ordering::Relaxed);
                                 if let Err(error) = spawn_client(stream, id, &clients, &events_tx) {
                                     let _ = events_tx.send(ServerEvent::BadMessage {
@@ -88,10 +74,14 @@ impl IpcServer {
                                         events_tx.send(ServerEvent::Connected { client_id: id });
                                 }
                             }
-                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                                std::thread::sleep(Duration::from_millis(25));
+                            Err(error) => {
+                                if shutdown.load(Ordering::Relaxed)
+                                    || error.kind() == std::io::ErrorKind::Interrupted
+                                {
+                                    break;
+                                }
+                                std::thread::sleep(Duration::from_millis(100));
                             }
-                            Err(_) => std::thread::sleep(Duration::from_millis(100)),
                         }
                     }
                 })
@@ -99,10 +89,11 @@ impl IpcServer {
         };
 
         Ok(Self {
-            path: path.to_path_buf(),
+            endpoint: endpoint.clone(),
             events_rx,
             clients,
             shutdown,
+            listener: Some(listener),
             accept_thread: Some(accept_thread),
         })
     }
@@ -111,7 +102,7 @@ impl IpcServer {
         &self.events_rx
     }
 
-    pub fn next_event(&self) -> anyhow::Result<ServerEvent> {
+    pub fn next_event(&self) -> Result<ServerEvent> {
         self.events_rx.recv().context("IPC 事件通道已关闭")
     }
 
@@ -166,13 +157,13 @@ impl IpcServer {
         }
     }
 
-    /// Assigns a role. Only one Fcitx client is allowed.
+    /// Assigns a role. Only one frontend client is allowed.
     pub fn set_role(&self, client_id: u64, role: Role) -> bool {
         let mut clients = self.clients.lock().expect("clients mutex poisoned");
-        if role == Role::Fcitx
+        if role == Role::Frontend
             && clients
                 .iter()
-                .any(|(id, entry)| *id != client_id && entry.role == Some(Role::Fcitx))
+                .any(|(id, entry)| *id != client_id && entry.role == Some(Role::Frontend))
         {
             return false;
         }
@@ -196,51 +187,40 @@ impl IpcServer {
         self.clients.lock().expect("clients mutex poisoned").len()
     }
 
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+
     pub fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
+        if let Some(listener) = self.listener.as_ref() {
+            let _ = listener.shutdown();
+        }
         if let Some(thread) = self.accept_thread.take() {
             let _ = thread.join();
         }
         self.clients.lock().expect("clients mutex poisoned").clear();
-        let _ = std::fs::remove_file(&self.path);
+        self.listener.take();
     }
 }
 
 impl Drop for IpcServer {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.accept_thread.take() {
-            let _ = thread.join();
-        }
-        let _ = std::fs::remove_file(&self.path);
+        self.shutdown();
     }
 }
 
-fn prepare_parent(path: &Path) -> anyhow::Result<()> {
-    let Some(parent) = path.parent() else {
-        bail!("socket 路径没有父目录：{}", path.display());
-    };
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("创建 socket 目录失败 {}", parent.display()))?;
-    std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("设置 socket 目录权限失败 {}", parent.display()))?;
-    Ok(())
-}
-
-pub fn daemon_running(path: &Path) -> bool {
-    UnixStream::connect(path).is_ok()
+pub fn daemon_running(endpoint: &Endpoint) -> bool {
+    voime_transport::connect(endpoint).is_ok()
 }
 
 fn spawn_client(
-    stream: UnixStream,
+    stream: Box<dyn Stream>,
     client_id: u64,
     clients: &Arc<Mutex<HashMap<u64, ClientEntry>>>,
     events: &Sender<ServerEvent>,
-) -> anyhow::Result<()> {
-    let read_stream = stream.try_clone().context("复制 IPC socket 失败")?;
-    read_stream
-        .set_read_timeout(Some(Duration::from_millis(250)))
-        .context("设置 IPC 读超时失败")?;
+) -> Result<()> {
+    let read_stream = stream.try_clone().context("复制 IPC 流失败")?;
     let write_stream = stream;
     let (message_tx, message_rx) = crossbeam_channel::bounded::<ServerMessage>(64);
     clients.lock().expect("clients mutex poisoned").insert(
@@ -341,16 +321,15 @@ mod tests {
     use super::*;
     use std::io::Write;
     use voime_ipc::{write_message, ClientMessage, PROTOCOL_VERSION};
+    use voime_transport::connect;
 
     #[test]
     fn binds_private_socket_and_accepts_messages() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("voime").join("voimed.sock");
-        let server = IpcServer::bind(&path).unwrap();
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        let endpoint = Endpoint::from_path(directory.path().join("voime").join("voimed.sock"));
+        let server = IpcServer::bind(&endpoint).unwrap();
 
-        let mut client = UnixStream::connect(&path).unwrap();
+        let mut client = connect(&endpoint).unwrap();
         let event = server.next_event().unwrap();
         let client_id = match event {
             ServerEvent::Connected { client_id } => client_id,
@@ -382,24 +361,24 @@ mod tests {
     }
 
     #[test]
-    fn rejects_second_fcitx_role() {
+    fn rejects_second_frontend_role() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("voimed.sock");
-        let server = IpcServer::bind(&path).unwrap();
-        let mut first = UnixStream::connect(&path).unwrap();
+        let endpoint = Endpoint::from_path(directory.path().join("voimed.sock"));
+        let server = IpcServer::bind(&endpoint).unwrap();
+        let mut first = connect(&endpoint).unwrap();
         let first_id = match server.next_event().unwrap() {
             ServerEvent::Connected { client_id } => client_id,
             other => panic!("unexpected event: {other:?}"),
         };
-        let mut second = UnixStream::connect(&path).unwrap();
+        let mut second = connect(&endpoint).unwrap();
         let second_id = loop {
             match server.next_event().unwrap() {
                 ServerEvent::Connected { client_id } if client_id != first_id => break client_id,
                 _ => continue,
             }
         };
-        assert!(server.set_role(first_id, Role::Fcitx));
-        assert!(!server.set_role(second_id, Role::Fcitx));
+        assert!(server.set_role(first_id, Role::Frontend));
+        assert!(!server.set_role(second_id, Role::Frontend));
         let _ = first.write_all(b"");
         let _ = second.write_all(b"");
     }

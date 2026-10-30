@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — frontends/windows</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — frontends/windows</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+<strong>状态：</strong>目标 P3 / P4。以下文件与签名是起草值，待实现，可以根据实际 Windows API 调整；
+行为契约以 <a href="USER.html">USER</a> 为准。
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>frontends/windows/
+├── Cargo.toml                    独立 workspace
+├── src/
+│   ├── <a href="#c4-1">main.rs</a>              进程入口、事件循环、单实例
+│   ├── <a href="#c4-2">config.rs</a>            Mode / Hotkey / 设置持久化
+│   ├── <a href="#c4-3">ipc.rs</a>               命名管道客户端 + ServerMessage 分发
+│   ├── <a href="#c4-4">hotkey.rs</a>            RegisterHotKey / 低级键盘钩子
+│   ├── <a href="#c4-5">target.rs</a>            前台窗口 + UIA 焦点元素
+│   ├── <a href="#c4-6">preview.rs</a>           无激活浮层
+│   ├── <a href="#c4-7">commit.rs</a>            UTF-8 → UTF-16 + SendInput
+│   └── <a href="#c4-8">tray.rs</a>              托盘图标与菜单
+└── tsf/                          可选 P4
+    ├── CMakeLists.txt
+    └── src/
+        ├── <a href="#c4-9">text_service.cpp</a>   ITfTextInputProcessor
+        ├── <a href="#c4-9">key_sink.cpp</a>      ITfKeyEventSink
+        └── <a href="#c4-9">edit_session.cpp</a>  ITfEditSession / ITfRange</code></pre>
+<ul class="note">
+  <li>文件划分是起草结构；实现时可按平台模块拆分，但前端不得依赖 <code>voime-core</code>。</li>
+  <li><code>tsf/</code> 是可选子工程，不进入 Rust workspace；不启用 TSF 时可以不构建。</li>
+</ul>
+
+<ul class="note">
+  <li>本模块尚未实现；文件树描述目标源码结构。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>独立构建根</td><td><code>frontends/windows</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>；不进入根 <code>cargo test --workspace</code>。</td></tr>
+  <tr><td>平台</td><td>只构建 Windows 目标；Linux CI 不构建本 crate。</td></tr>
+  <tr><td>无模型</td><td>不链接 ONNX Runtime，不加载模型，不做 VAD / CTC / 分段。</td></tr>
+  <tr><td>事件循环</td><td>主线程拥有托盘与消息循环；IPC reader 线程把消息送入有界通道；热键 / 目标 / 浮层更新回到主线程。</td></tr>
+  <tr><td>目标所有权</td><td>目标窗口 / 焦点元素属于前端私有类型；协议只传 <code>segment_id</code> 与事件。</td></tr>
+  <tr><td>单实例</td><td>每用户一个前端进程；重复启动激活已有托盘。</td></tr>
+  <tr><td>提交边界</td><td>SendInput 只在目标复核通过后调用；失败不重试其他窗口。</td></tr>
+  <tr><td>日志</td><td>只记录错误码、端点、热键注册与目标变化；不记录按键内容或识别文本。</td></tr>
+  <tr><td>TSF</td><td>DLL 不加载模型；只通过命名管道连接 daemon；编辑会话失败不注入其他窗口。</td></tr>
+</table>
+<ul class="note">
+  <li>仓库级依赖方向见 <a href="../../CORE.html#c2">根 CORE §2</a>；平台 API 与安全约束见 <a href="PROVIDER.html">PROVIDER</a>。</li>
+</ul>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
+  <tr><td><code>voime-transport</code></td><td>命名管道客户端。</td></tr>
+  <tr><td><code>windows</code> crate（计划）</td><td>RegisterHotKey、UIA、SendInput、托盘、窗口 API。</td></tr>
+  <tr><td><code>serde</code> / <code>serde_json</code></td><td>设置文件。</td></tr>
+  <tr><td><code>tray-icon</code> 或 Win32 托盘（计划）</td><td>通知区域图标与菜单；具体 crate 以实现时为准。</td></tr>
+  <tr><td>C++ / COM / CMake</td><td>可选 TSF DLL；Windows SDK。</td></tr>
+</table>
+<ul class="note">
+  <li>不依赖 <code>voime-core</code>；版本以 <code>frontends/windows/Cargo.toml</code> 为准。</li>
+</ul>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 main.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>fn main() -&gt; windows::core::Result&lt;()&gt;;
+fn run(frontend: Frontend) -&gt; windows::core::Result&lt;()&gt;;
+fn ensure_single_instance() -&gt; bool;</code></pre>
+
+<h3 id="c4-2">4.2 config.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Config {
+    pub mode: Mode,
+    pub hotkey: Hotkey,
+    pub start_at_login: bool,
+    pub overlay_enabled: bool,
+}
+
+pub fn load() -&gt; anyhow::Result&lt;Config&gt;;
+pub fn save(&amp;self, config: &amp;Config) -&gt; anyhow::Result&lt;()&gt;;
+pub fn to_ipc_config(&amp;self) -&gt; IpcConfig;</code></pre>
+
+<h3 id="c4-3">4.3 ipc.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct IpcClient { /* stream + reader thread */ }
+
+impl IpcClient {
+    pub fn connect(endpoint: &amp;Endpoint) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn send(&amp;mut self, message: &amp;ClientMessage) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn next_event(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
+    pub fn snapshot(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
+}
+
+pub fn dispatch(message: ServerMessage, frontend: &amp;mut Frontend);</code></pre>
+
+<h3 id="c4-4">4.4 hotkey.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Hotkey { /* modifiers + virtual key */ }
+pub struct HotkeyHandle { /* registered id / hook handle */ }
+
+pub fn parse(spec: &amp;str) -&gt; anyhow::Result&lt;Hotkey&gt;;
+pub fn register(hotkey: &amp;Hotkey, frontend: &amp;mut Frontend)
+    -&gt; anyhow::Result&lt;HotkeyHandle&gt;;
+pub fn unregister(handle: HotkeyHandle);</code></pre>
+
+<h3 id="c4-5">4.5 target.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Target {
+    pub window: HWND,
+    pub element: Option&lt;UiElementId&gt;,
+    pub segment_id: u64,
+}
+
+pub fn capture() -&gt; anyhow::Result&lt;Target&gt;;
+pub fn focused(target: &amp;Target) -&gt; bool;
+pub fn same(a: &amp;Target, b: &amp;Target) -&gt; bool;</code></pre>
+
+<h3 id="c4-6">4.6 preview.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Overlay { /* HWND + DPI + monitor */ }
+
+impl Overlay {
+    pub fn create() -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn show(&amp;mut self, text: &amp;str, target: &amp;Target);
+    pub fn hide(&amp;mut self);
+    pub fn set_enabled(&amp;mut self, enabled: bool);
+}</code></pre>
+
+<h3 id="c4-7">4.7 commit.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub fn commit(target: &amp;Target, text: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
+fn to_utf16(text: &amp;str) -&gt; Vec&lt;u16&gt;;
+fn send_unicode(chunk: &amp;[u16]) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+
+<h3 id="c4-8">4.8 tray.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Tray { /* icon + menu */ }
+
+impl Tray {
+    pub fn create(frontend: &amp;mut Frontend) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn update_status(&amp;mut self, status: FrontendStatus);
+    pub fn poll_events(&amp;mut self, frontend: &amp;mut Frontend);
+}</code></pre>
+
+<h3 id="c4-9">4.9 tsf/（可选 P4） <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>class VoimeTextService : public ITfTextInputProcessorEx,
+                         public ITfThreadMgrEventSink,
+                         public ITfKeyEventSink { /* ... */ };
+
+class VoimeEditSession : public ITfEditSession {
+    STDMETHOD(DoEditSession)(TfEditCookie ec) override;
+};
+
+// COM 注册：CLSID、InprocServer32、x86 / x64 DLL。</code></pre>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 启动与连接</h3>
+<pre><code>Windows 登录启动 / 用户双击
+└── frontends_windows::main()
+    ├── ensure_single_instance()
+    ├── config::load()
+    ├── IpcClient::connect(&amp;Endpoint::NamedPipe(name))
+    ├── IpcClient::snapshot()
+    ├── HotkeyHandle::register(config.hotkey)
+    ├── Tray::create()
+    └── run(frontend) → Windows 消息循环</code></pre>
+
+<h3 id="c5-2">5.2 热键到提交</h3>
+<pre><code>热键事件
+└── frontend::on_hotkey()
+    ├── 判断 Mode == Ptt / Toggle
+    ├── target::capture()
+    ├── IpcClient::send(Start { segment_id, source })
+    ├── IpcClient::send(Stop { ... })（松开或再次按下）
+    └── 消息循环分发 ServerMessage
+
+frontend::on_message(Partial)
+└── Overlay::show(text, &amp;target)
+
+frontend::on_message(Final)
+├── 判断 message.segment_id == target.segment_id
+├── 判断 target::focused(&amp;target)
+├── Overlay::hide()
+└── commit::commit(&amp;target, &amp;text)</code></pre>
+
+<h3 id="c5-3">5.3 Continuous 与目标失效</h3>
+<pre><code>frontend::on_message(SegmentStarted)
+├── 判断 source == Continuous / Toggle 续段
+├── target::capture()
+└── 判断 target::focused → 绑定；否则不绑定
+
+frontend::on_focus_change()
+├── 判断 !target::focused → Overlay::hide()
+├── 判断 Mode == Toggle → IpcClient::send(Stop { 0, Toggle })
+└── 放弃当前段提交</code></pre>
+
+<h3 id="c5-4">5.4 断线与重连</h3>
+<pre><code>IpcClient reader thread
+└── read_message() 返回 EOF / 错误
+    └── frontend::on_disconnect()
+        ├── Overlay::hide()
+        ├── target.clear()
+        ├── 热键放行
+        └── 定时重连
+            ├── IpcClient::connect()
+            └── IpcClient::snapshot()</code></pre>
+
+<h3 id="c5-5">5.5 TSF（可选 P4）</h3>
+<pre><code>目标应用进程加载 TSF DLL
+└── VoimeTextService::Activate()
+    ├── ITfThreadMgrEventSink 注册
+    ├── ITfKeyEventSink 注册
+    └── IpcClient::send(Hello { role: TextService })
+
+Final
+└── VoimeTextService::on_final(segment_id, text)
+    ├── 判断目标 ITfContext 仍有效
+    ├── ITfContext::RequestEditSession(VoimeEditSession)
+    └── VoimeEditSession::DoEditSession(ec)
+        └── ITfRange::SetText(ec, text)</code></pre>
+
+</body>
+</html>

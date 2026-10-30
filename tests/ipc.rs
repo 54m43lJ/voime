@@ -1,19 +1,19 @@
 use std::io::BufReader;
-use std::os::unix::net::UnixStream;
 
 use voime_ipc::{
-    read_message, write_message, ClientMessage, FcitxConfig, Mode, Role, ServerMessage,
+    read_message, write_message, ClientMessage, FrontendConfig, Mode, Role, ServerMessage,
     TriggerSource, PROTOCOL_VERSION,
 };
+use voime_transport::{connect, Endpoint};
 use voimed::ipc_server::{IpcServer, ServerEvent};
 
 #[test]
 fn framing_round_trips_all_documented_client_messages() {
     let messages = vec![
         ClientMessage::Hello {
-            role: Role::Fcitx,
+            role: Role::Frontend,
             version: PROTOCOL_VERSION,
-            config: Some(FcitxConfig {
+            config: Some(FrontendConfig {
                 mode: Mode::Toggle,
                 hotkey: "Super+F2".to_string(),
             }),
@@ -48,28 +48,28 @@ fn framing_round_trips_all_documented_client_messages() {
 }
 
 #[test]
-fn server_enforces_single_fcitx_client_and_broadcasts() {
+fn server_enforces_single_frontend_client_and_broadcasts() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("voime").join("voimed.sock");
-    let server = IpcServer::bind(&path).unwrap();
+    let endpoint = Endpoint::from_path(directory.path().join("voime").join("voimed.sock"));
+    let server = IpcServer::bind(&endpoint).unwrap();
 
-    let mut fcitx = UnixStream::connect(&path).unwrap();
-    let fcitx_id = next_connected(&server);
+    let mut frontend = connect(&endpoint).unwrap();
+    let frontend_id = next_connected(&server);
     write_message(
-        &mut fcitx,
+        &mut frontend,
         &ClientMessage::Hello {
-            role: Role::Fcitx,
+            role: Role::Frontend,
             version: PROTOCOL_VERSION,
             config: None,
         },
     )
     .unwrap();
-    assert!(server.set_role(fcitx_id, Role::Fcitx));
+    assert!(server.set_role(frontend_id, Role::Frontend));
 
-    let tui = UnixStream::connect(&path).unwrap();
+    let tui = connect(&endpoint).unwrap();
     let tui_id = next_connected(&server);
-    assert_ne!(tui_id, fcitx_id);
-    assert!(!server.set_role(tui_id, Role::Fcitx));
+    assert_ne!(tui_id, frontend_id);
+    assert!(!server.set_role(tui_id, Role::Frontend));
     assert!(server.set_role(tui_id, Role::Tui));
 
     server.broadcast(&ServerMessage::Partial {

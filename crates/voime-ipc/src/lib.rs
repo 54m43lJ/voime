@@ -30,11 +30,19 @@ impl Mode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum Role {
-    Fcitx,
+    #[serde(rename = "frontend", alias = "fcitx")]
+    Frontend,
+    #[serde(rename = "tui")]
     Tui,
+    #[serde(rename = "control")]
     Control,
+}
+
+impl Role {
+    /// 旧 Rust 名称的兼容别名；线协议同时接受 `"fcitx"` 与 `"frontend"`。
+    #[allow(non_upper_case_globals)]
+    pub const Fcitx: Self = Self::Frontend;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -57,10 +65,13 @@ pub enum Phase {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum AddonState {
+pub enum FrontendState {
     Connected,
     Disconnected,
 }
+
+/// 旧名称兼容别名。
+pub type AddonState = FrontendState;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -77,10 +88,13 @@ pub enum ErrorCode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct FcitxConfig {
+pub struct FrontendConfig {
     pub mode: Mode,
     pub hotkey: String,
 }
+
+/// 旧名称兼容别名。
+pub type FcitxConfig = FrontendConfig;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
@@ -88,7 +102,7 @@ pub enum ClientMessage {
         role: Role,
         version: u32,
         #[serde(default)]
-        config: Option<FcitxConfig>,
+        config: Option<FrontendConfig>,
     },
     Configure {
         mode: Mode,
@@ -118,7 +132,7 @@ pub struct Status {
     pub segment_id: Option<u64>,
     pub mode: Option<Mode>,
     pub hotkey: Option<String>,
-    pub addon: AddonState,
+    pub addon: FrontendState,
     pub transcript_count: usize,
 }
 
@@ -129,7 +143,7 @@ pub enum ServerMessage {
         phase: Phase,
         partial: Option<String>,
         transcript: Vec<String>,
-        addon: AddonState,
+        addon: FrontendState,
         hotkey: Option<String>,
     },
     SegmentStarted {
@@ -216,6 +230,35 @@ mod tests {
         let mut cursor = Cursor::new(bytes);
         let decoded: ClientMessage = read_message(&mut cursor).unwrap().unwrap();
         assert_eq!(decoded, message);
+    }
+
+    #[test]
+    fn serializes_frontend_role_and_accepts_legacy_fcitx_role() {
+        let message = ClientMessage::Hello {
+            role: Role::Frontend,
+            version: PROTOCOL_VERSION,
+            config: Some(FrontendConfig {
+                mode: Mode::Ptt,
+                hotkey: "Super+F2".to_string(),
+            }),
+        };
+        let bytes = encode_message(&message).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("\"role\":\"frontend\""));
+
+        let legacy = br#"{"Hello":{"role":"fcitx","version":1,"config":{"mode":"toggle","hotkey":"Super+F3"}}}"#;
+        let decoded: ClientMessage = serde_json::from_slice(legacy).unwrap();
+        assert_eq!(
+            decoded,
+            ClientMessage::Hello {
+                role: Role::Frontend,
+                version: PROTOCOL_VERSION,
+                config: Some(FrontendConfig {
+                    mode: Mode::Toggle,
+                    hotkey: "Super+F3".to_string(),
+                }),
+            }
+        );
     }
 
     #[test]

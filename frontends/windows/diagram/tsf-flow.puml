@@ -1,0 +1,18 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "Voime TSF DLL" as Tsf
+participant "目标应用\nITfContext" as App
+
+App -> Tsf : Activate
+Tsf -> Daemon : Hello { role: TextService }
+
+Daemon -> Tsf : Partial
+Tsf -> App : 可选 composition / UIElement
+Daemon -> Tsf : Final
+Tsf -> App : RequestEditSession
+Tsf -> App : ITfRange::SetText(text)
+@enduml

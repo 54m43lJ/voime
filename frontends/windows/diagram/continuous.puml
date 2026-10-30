@@ -1,0 +1,21 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "Windows 前端" as Frontend
+participant "目标应用" as App
+
+Daemon -> Frontend : SegmentStarted { source: continuous }
+Frontend -> Frontend : 绑定当前前台焦点
+Daemon -> Frontend : Partial
+Frontend -> Frontend : 更新浮层
+Daemon -> Frontend : Final
+Frontend -> Frontend : 复核目标
+alt 目标仍有效
+  Frontend -> App : SendInput(UTF-16)
+else 目标失效
+  Frontend -> Frontend : 不提交\n保留历史
+end
+@enduml

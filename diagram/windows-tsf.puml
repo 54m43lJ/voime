@@ -1,0 +1,25 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+skinparam componentStyle rectangle
+left to right direction
+
+actor "用户" as User
+component "Voime 前端\n托盘 / 全局热键 / 配置" as Broker
+component "voimed\n音频 / VAD / CTC / 标点 / 会话" as Daemon
+component "麦克风" as Mic
+component "本地模型包" as Models
+
+package "目标应用进程" {
+  component "Voime TSF DLL" as TSF
+  component "应用文档\nITfContext" as Doc
+}
+
+User --> Broker : 热键 / 配置
+User --> TSF : 输入
+Broker <--> Daemon : 命名管道
+TSF <--> Daemon : 命名管道\n多客户端
+TSF --> Doc : ITfRange::SetText\ncomposition
+Daemon --> Mic : WASAPI
+Daemon --> Models : 只读加载
+@enduml

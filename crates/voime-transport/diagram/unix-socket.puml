@@ -1,0 +1,24 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "UnixListener" as Listener
+participant "UnixStream" as Stream
+
+Daemon -> Listener : prepare_parent(0700)
+Daemon -> Listener : 探测 / 删除陈旧 socket
+Daemon -> Listener : UnixListener::bind(path)
+Daemon -> Listener : set_permissions(0600)
+Daemon -> Listener : set_nonblocking(true)
+
+loop accept
+  Listener -> Daemon : accept()
+  Daemon -> Stream : try_clone()
+end
+
+Daemon -> Listener : shutdown()
+Daemon -> Stream : shutdown(Both)
+Daemon -> Listener : remove_file(path)
+@enduml

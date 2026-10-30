@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>USER — voimed</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>USER — voimed</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="CORE.html">CORE</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+本文只定义 daemon 一侧的会话、命令处理与广播行为。消息形状、字段与编码见
+<a href="../voime-ipc/USER.html">voime-ipc USER</a>；Windows / Linux 前端的输入集成见各自 USER。
+</p>
+
+<h2 id="u1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>daemon</td><td><code>voimed</code> 进程；拥有音频、模型、pipeline、会话状态与 IPC 服务。</td></tr>
+  <tr><td>会话（session）</td><td>从 PTT 按下、Toggle 开始或 Continuous 首个段开始，到停止 / 失焦 / 断线为止的一段用户交互。一个 Toggle 会话可以包含多个语音段。</td></tr>
+  <tr><td>语音段（segment）</td><td>产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>；daemon 为每段分配 <code>segment_id</code>。</td></tr>
+  <tr><td>当前段</td><td><code>current_segment</code>；同一时刻最多一个，Final / SegmentDropped 后清空。</td></tr>
+  <tr><td>阶段（Phase）</td><td><code>idle</code> / <code>recording</code> / <code>finalizing</code>；由 daemon 维护并广播。</td></tr>
+  <tr><td>广播</td><td>向所有已连接客户端发送 <code>ServerMessage</code>；客户端队列有界。</td></tr>
+  <tr><td>Snapshot</td><td>连接时返回的全量状态；字段见 <a href="../voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a>。</td></tr>
+  <tr><td>历史（transcript）</td><td>daemon 内存中的最终结果列表；TUI 重连可恢复，daemon 退出丢失。</td></tr>
+  <tr><td>慢客户端</td><td>发送队列已满的客户端；Final / State 满时断开，Partial 满时只丢该条。</td></tr>
+  <tr><td>pending stop</td><td>Toggle 在两个段之间收到 Stop 时暂存，等下一次 <code>Recording(true)</code> 立即结束。</td></tr>
+  <tr><td>有效模式（effective mode）</td><td>前端连接时使用其配置的 Mode；前端断开时 daemon 退回 <code>ptt</code>，避免无人控制 Continuous。</td></tr>
+</table>
+
+<h2 id="u2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>模式所有权</td><td>Mode / Hotkey 来自前端 <code>Hello</code> / <code>Configure</code>；daemon 只保存并消费，不解析命令行模式。</td></tr>
+  <tr><td>单活动段</td><td>同一时刻只有一个语音段；Recording / Finalizing 期间新的 Start 返回 <code>busy</code>。</td></tr>
+  <tr><td>ID 分配</td><td>daemon 递增分配 <code>segment_id</code>；客户端传入的 ID 只是提示；<code>SegmentStarted</code> 是权威值。</td></tr>
+  <tr><td>Stop 匹配</td><td><code>Stop</code> 的非零 ID 在 PTT / Continuous 下必须匹配当前段；0 表示停止当前段。Toggle 忽略 ID，停止当前 Toggle 段。</td></tr>
+  <tr><td>Toggle 会话</td><td>VAD 在 Toggle 会话中连续切分多个段；每段 Final 后继续 <code>Recording(true)</code>，直到第二次热键、目标失焦或 daemon 断线。</td></tr>
+  <tr><td>Continuous</td><td>仅当前端连接且 Mode=Continuous 时由 VAD 自动开始段；前端断开时 daemon 切回 <code>ptt</code> 并停止当前段。</td></tr>
+  <tr><td>模式切换时机</td><td>Idle 时立即应用到 pipeline；非 Idle 时暂存，当前段 Final / 丢弃后应用。</td></tr>
+  <tr><td>广播优先级</td><td>Final / State 不丢弃；Partial 可丢弃；慢客户端断开不影响其他客户端。</td></tr>
+  <tr><td>历史</td><td>只存最终文本；<code>ClearHistory</code> 保留当前段与 partial。</td></tr>
+  <tr><td>角色</td><td>只允许一个 <code>fcitx</code> 连接；<code>Configure</code> 只接受前端；<code>Quit</code> 只接受 <code>control</code>。</td></tr>
+  <tr><td>退出顺序</td><td>广播 <code>Bye</code> → 关闭 IPC → 停止 pipeline → 停止音频 → 删除端点。</td></tr>
+  <tr><td>无持久化</td><td>不写音频、按键或历史到磁盘；daemon 退出后历史丢失。</td></tr>
+  <tr><td>端点</td><td>daemon 通过 <a href="../voime-transport/USER.html">voime-transport</a> 绑定端点；Unix 使用文件系统 socket，Windows 使用命名管道。</td></tr>
+</table>
+
+<h2 id="u3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u3-1">3.1 会话状态</h3>
+<div class="diagram"><img src="diagram/session-state.svg" alt="voimed 的 Idle / Recording / Finalizing 状态与 Toggle 连续段"></div>
+<ul class="note">
+  <li>PTT / Continuous 每段回到 Idle；Toggle 在 Final 后回到 Recording，保留同一个会话。</li>
+  <li>空段、识别错误与目标失焦都回到 Idle；最终文本是否保留由前端决定。</li>
+  <li>前端断线会停止当前段并把有效模式退回 <code>ptt</code>。</li>
+</ul>
+
+<h3 id="u3-2">3.2 Continuous 自动分段</h3>
+<div class="diagram"><img src="diagram/continuous-flow.svg" alt="voimed 在 Continuous 模式下广播 SegmentStarted / Partial / Final 的时序图"></div>
+<ul class="note">
+  <li>VAD 起点触发 <code>SegmentStarted</code>；无需客户端发送 Start。</li>
+  <li>完成段进入有界队列，识别慢时丢弃最旧段；音频通道也可能丢弃。</li>
+</ul>
+
+<h2 id="u4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u4-1">4.1 命令行</h3>
+<pre><code>voimed [--model-dir &lt;DIR&gt;]
+       [--input-device &lt;NAME&gt;]
+       [--threads &lt;N&gt;]
+       [--endpoint &lt;ENDPOINT&gt;]
+       [--verbose]</code></pre>
+
+<table>
+  <tr><th>选项</th><th>契约</th></tr>
+  <tr><td><code>--model-dir</code></td><td>包含 <code>manifest.json</code> 的目录；默认见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</td></tr>
+  <tr><td><code>--input-device</code></td><td>输入设备名，按精确字符串匹配；省略时使用默认设备。</td></tr>
+  <tr><td><code>--threads</code></td><td>ONNX Runtime intra-op 线程数；必须大于 0。</td></tr>
+  <tr><td><code>--endpoint</code></td><td>本机传输端点；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名。</td></tr>
+  <tr><td><code>--verbose</code></td><td>输出启动与运行期诊断到 stderr。</td></tr>
+</table>
+
+<table>
+  <tr><th>退出码</th><th>含义</th></tr>
+  <tr><td><code>0</code></td><td>正常退出 / 已有 daemon 在运行（幂等启动）。</td></tr>
+  <tr><td><code>1</code></td><td>启动或运行期致命错误：模型、音频、端点、pipeline 或 IPC 初始化失败。</td></tr>
+  <tr><td><code>2</code></td><td>命令行参数非法（clap）。</td></tr>
+</table>
+
+<h3 id="u4-2">4.2 客户端消息处理</h3>
+<table>
+  <tr><th>消息</th><th>前置条件</th><th>daemon 行为</th></tr>
+  <tr><td><code>Hello</code></td><td>连接后的第一条消息。</td><td>校验版本与角色；<code>fcitx</code> 连接更新前端状态 / Mode / Hotkey 并广播 Snapshot；其他角色返回 Snapshot。</td></tr>
+  <tr><td><code>Configure</code></td><td>客户端角色为 <code>fcitx</code>。</td><td>更新 Mode / Hotkey；Idle 时立即应用 pipeline 模式，否则等当前段结束；广播 Snapshot。</td></tr>
+  <tr><td><code>Start</code></td><td>Phase=Idle。</td><td>分配 <code>segment_id</code>、进入 Recording、启动 pipeline、广播 <code>SegmentStarted</code> 与 <code>State</code>。</td></tr>
+  <tr><td><code>Stop</code></td><td>Phase=Recording。</td><td>校验 ID（Toggle 例外），请求 pipeline 结束当前段；进入 Finalizing。</td></tr>
+  <tr><td><code>Toggle</code></td><td>Idle 或 Recording。</td><td>Idle 时等同 Start；Recording 时等同 Stop；Finalizing 时返回 <code>busy</code>。</td></tr>
+  <tr><td><code>ClearHistory</code></td><td>任意角色。</td><td>清空历史，保留当前段 / partial；广播 <code>HistoryCleared</code>。</td></tr>
+  <tr><td><code>Status</code></td><td>任意角色。</td><td>返回 <code>Status</code> 快照。</td></tr>
+  <tr><td><code>Quit</code></td><td>客户端角色为 <code>control</code>。</td><td>进入关闭流程；其他角色返回 <code>invalid_message</code>。</td></tr>
+</table>
+
+<h3 id="u4-3">4.3 服务端广播</h3>
+<table>
+  <tr><th>消息</th><th>触发</th><th>语义</th></tr>
+  <tr><td><code>SegmentStarted</code></td><td>Start / Toggle 成功，或 Continuous / Toggle 续段。</td><td>携带最终 <code>segment_id</code> 与来源；前端据此绑定 / 跟随目标。</td></tr>
+  <tr><td><code>State</code></td><td>Phase 变化。</td><td>录音 / 收尾状态；前端更新临时窗口。</td></tr>
+  <tr><td><code>Partial</code></td><td>pipeline 产生临时结果。</td><td>可丢弃；只显示，不提交。</td></tr>
+  <tr><td><code>Final</code></td><td>完整段识别成功。</td><td>加入历史；前端清空临时文本并提交。</td></tr>
+  <tr><td><code>Snapshot</code></td><td>Hello、配置变化、前端连接 / 断开。</td><td>全量状态；字段见 <a href="../voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a>。</td></tr>
+  <tr><td><code>Error</code></td><td>协议、角色、忙碌或推理失败。</td><td>按 <code>code</code> 处理；不解析文案。</td></tr>
+  <tr><td><code>Bye</code></td><td>daemon 关闭。</td><td>客户端清理并等待重连。</td></tr>
+</table>
+
+<h3 id="u4-4">4.4 启动与默认值</h3>
+<table>
+  <tr><th>项目</th><th>契约</th><th>所有者</th></tr>
+  <tr><td>模型目录</td><td>默认 <code>$XDG_DATA_HOME/voime/models</code>；Windows 目标 <code>%LOCALAPPDATA%</code>。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
+  <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>（未设置时 <code>/tmp/voime-&lt;uid&gt;/voimed.sock</code>）；Windows 默认 <code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td><td><a href="../voime-transport/USER.html#u4">voime-transport USER §4</a></td></tr>
+  <tr><td>线程数</td><td>默认 2；必须大于 0。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
+  <tr><td>初始模式</td><td>无前端连接时有效模式为 <code>ptt</code>；前端 Hello 后使用其配置。</td><td>本组件 §2</td></tr>
+</table>
+
+<h3 id="u4-5">4.5 错误与恢复</h3>
+<table>
+  <tr><th>情况</th><th>行为</th></tr>
+  <tr><td>模型 / 音频初始化失败</td><td>启动失败，stderr + 退出码 1；不绑定端点。</td></tr>
+  <tr><td>端点已被活动 daemon 占用</td><td>幂等退出（退出码 0）。</td></tr>
+  <tr><td>单段推理失败</td><td>广播 <code>Error{code:"inference"}</code>，清空当前段，继续监听。</td></tr>
+  <tr><td>前端断线</td><td>前端状态置 disconnected；Continuous 退回 PTT；结束当前段；广播 Snapshot。</td></tr>
+  <tr><td>慢客户端</td><td>Final / State 队列满时断开该客户端；Partial 满时丢该条。</td></tr>
+  <tr><td>pipeline 致命错误</td><td>daemon 记录并以非零退出；客户端收到 <code>Bye</code>。</td></tr>
+</table>
+
+</body>
+</html>

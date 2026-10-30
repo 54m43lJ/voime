@@ -1,19 +1,20 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use voime_core::audio::capture;
 use voime_core::config::default_model_dir;
 use voime_core::model::{ModelManifest, MANIFEST_FILE};
-use voime_ipc::{AddonState, Role, ServerMessage};
+use voime_ipc::{FrontendState, Role, ServerMessage};
+use voime_transport::Endpoint;
 
 use crate::client::Client;
 
-pub fn run(socket: &Path) -> bool {
+pub fn run(endpoint: &Endpoint) -> bool {
     let mut ok = true;
-    println!("socket: {}", socket.display());
-    match std::fs::metadata(socket) {
-        Ok(metadata) => {
-            #[cfg(unix)]
-            {
+    println!("endpoint: {endpoint}");
+    #[cfg(unix)]
+    if let Some(path) = endpoint.as_unix_path() {
+        match std::fs::metadata(path) {
+            Ok(metadata) => {
                 use std::os::unix::fs::PermissionsExt;
                 let mode = metadata.permissions().mode() & 0o777;
                 if mode == 0o600 {
@@ -22,15 +23,15 @@ pub fn run(socket: &Path) -> bool {
                     println!("  WARN 权限 {:o}，期望 0600", mode);
                 }
             }
-        }
-        Err(error) => {
-            println!("  FAIL socket 不存在：{error}");
-            ok = false;
+            Err(error) => {
+                println!("  FAIL 端点不存在：{error}");
+                ok = false;
+            }
         }
     }
 
     let mut snapshot = None;
-    match Client::connect_as(socket, Role::Control) {
+    match Client::connect_as(endpoint, Role::Control) {
         Ok(mut client) => match client.snapshot() {
             Ok(message) => {
                 println!("  OK   daemon 在线");
@@ -133,11 +134,11 @@ pub fn run(socket: &Path) -> bool {
             mode.map(|mode| mode.as_str()).unwrap_or("-"),
             hotkey.as_deref().unwrap_or("-"),
             match addon {
-                AddonState::Connected => "connected",
-                AddonState::Disconnected => "disconnected",
+                FrontendState::Connected => "connected",
+                FrontendState::Disconnected => "disconnected",
             }
         );
-        if addon == AddonState::Disconnected {
+        if addon == FrontendState::Disconnected {
             println!("  WARN Fcitx addon 未连接 daemon");
         }
     }

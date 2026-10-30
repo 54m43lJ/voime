@@ -2,6 +2,7 @@
 members = [
     "crates/voime-core",
     "crates/voime-ipc",
+    "crates/voime-transport",
     "crates/voimed",
     "crates/voime",
 ]
@@ -9,9 +10,11 @@ default-members = [
     ".",
     "crates/voime-core",
     "crates/voime-ipc",
+    "crates/voime-transport",
     "crates/voimed",
     "crates/voime",
 ]
+exclude = ["frontends/windows"]
 resolver = "2"
 
 [workspace.package]
@@ -85,6 +88,7 @@ serde_json.workspace = true
 tempfile.workspace = true
 voime-core = { path = "crates/voime-core" }
 voime-ipc = { path = "crates/voime-ipc" }
+voime-transport = { path = "crates/voime-transport" }
 voimed = { path = "crates/voimed" }
 
 [profile.release]

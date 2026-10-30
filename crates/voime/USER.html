@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>USER — voime</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>USER — voime</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+本文定义 <code>voime</code> 的命令行、TUI 行为与界面。协议消息形状见
+<a href="../voime-ipc/USER.html">voime-ipc USER</a>；daemon 状态语义见 <a href="../voimed/USER.html">voimed USER</a>。
+</p>
+
+<h2 id="u1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>TUI</td><td><code>voime</code> 无子命令时进入的终端监视器；只读展示并发送控制命令。</td></tr>
+  <tr><td><code>ctl</code></td><td>一次性控制客户端；执行一个动作并退出。</td></tr>
+  <tr><td><code>doctor</code></td><td>只读诊断命令；检查端点、daemon、模型、音频与平台前端。</td></tr>
+  <tr><td>detach</td><td>退出 TUI 但不停止 daemon；<code>q</code> / <code>Ctrl+C</code> 的行为。</td></tr>
+  <tr><td>临时行</td><td>TUI 中显示当前 <code>Partial</code> 的行；不是最终历史。</td></tr>
+  <tr><td>历史行</td><td>已收到的 <code>Final</code> 文本；保存在 daemon 内存，TUI 重连后恢复。</td></tr>
+  <tr><td>跟随（follow）</td><td>视图自动滚动到最新一行；用户上翻后停止，<code>End</code> 恢复。</td></tr>
+  <tr><td>viewport</td><td>去掉底部提示行后的内容区域高度，用于翻页步长。</td></tr>
+  <tr><td>提示行</td><td>底部一行显示 Mode / Hotkey / 快捷键；不属于识别内容。</td></tr>
+</table>
+
+<h2 id="u2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>detach 语义</td><td><code>q</code>（无修饰键）与 <code>Ctrl+C</code> 只退出 TUI；daemon、前端、热键与临时窗口继续工作。</td></tr>
+  <tr><td>停止 daemon</td><td>只使用 <code>voime ctl quit</code> 或平台服务管理，不用 TUI 退出键。</td></tr>
+  <tr><td>清空历史</td><td><code>Ctrl+X</code> 发送 <code>ClearHistory</code>；不清空当前段与 partial。</td></tr>
+  <tr><td>手动录音</td><td><code>Space</code> 在非 finalizing 时发送 Start；recording 时发送 Stop；来源为 <code>tui</code>。</td></tr>
+  <tr><td>滚动</td><td><code>PageUp</code> / <code>PageDown</code> / <code>Home</code> / <code>End</code>；上翻停止跟随，<code>End</code> 恢复。</td></tr>
+  <tr><td>内容清洗</td><td>Final / Partial 中的 <code>\r</code> / <code>\n</code> 替换为空格并 trim；空文本不进入历史。</td></tr>
+  <tr><td>断线</td><td>daemon 断开时 TUI 以错误退出（退出码 1）；<code>Bye</code> 视为正常 detach。</td></tr>
+  <tr><td>doctor 只读</td><td>不启动/停止 daemon，不修改配置；只报告 OK / WARN / FAIL。</td></tr>
+  <tr><td>无持久化</td><td>TUI 不写历史文件；退出后历史只存在于 daemon 内存。</td></tr>
+</table>
+
+<h2 id="u3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u3-1">3.1 ctl 命令流</h3>
+<div class="diagram"><img src="diagram/ctl-flow.svg" alt="voime ctl 连接 daemon、发送命令并等待状态的时序图"></div>
+<ul class="note">
+  <li><code>ctl</code> 以 <code>control</code> 角色连接，先读取 Snapshot，再发送命令。</li>
+  <li>每个动作等待对应响应或超时；错误以 stderr + 退出码 1 返回。</li>
+  <li>TUI 使用同一 <code>Client</code>，但以 <code>tui</code> 角色连接。</li>
+</ul>
+
+<h2 id="u4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u4-1">4.1 命令行</h3>
+<pre><code>voime [--endpoint &lt;ENDPOINT&gt;]
+voime ctl &lt;start|stop|toggle|status|clear|quit&gt; [--endpoint &lt;ENDPOINT&gt;]
+voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
+
+<table>
+  <tr><th>命令 / 选项</th><th>契约</th></tr>
+  <tr><td><code>voime</code></td><td>进入 TUI；stdin 与 stdout 必须是 TTY。</td></tr>
+  <tr><td><code>voime ctl start</code></td><td>发送 <code>Start { segment_id: 0, source: Cli }</code>；等待 State 或 Error。</td></tr>
+  <tr><td><code>voime ctl stop</code></td><td>发送 <code>Stop { segment_id: 0, source: Cli }</code>。</td></tr>
+  <tr><td><code>voime ctl toggle</code></td><td>发送 <code>Toggle { segment_id: 0, source: Cli }</code>。</td></tr>
+  <tr><td><code>voime ctl status</code></td><td>发送 <code>Status</code>；打印一行状态。</td></tr>
+  <tr><td><code>voime ctl clear</code></td><td>发送 <code>ClearHistory</code>；等待 <code>HistoryCleared</code>。</td></tr>
+  <tr><td><code>voime ctl quit</code></td><td>发送 <code>Quit</code>；等待 <code>Bye</code>。</td></tr>
+  <tr><td><code>voime doctor</code></td><td>只读检查；退出码 0 表示全部通过，1 表示存在 FAIL。</td></tr>
+  <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名。</td></tr>
+</table>
+
+<table>
+  <tr><th>退出码</th><th>含义</th></tr>
+  <tr><td><code>0</code></td><td>命令成功 / doctor 全部通过。</td></tr>
+  <tr><td><code>1</code></td><td>连接失败、daemon 错误、超时、TUI 不可用或 doctor 存在 FAIL。</td></tr>
+  <tr><td><code>2</code></td><td>命令行参数非法（clap）。</td></tr>
+</table>
+
+<h3 id="u4-2">4.2 TUI 按键</h3>
+<table>
+  <tr><th>按键</th><th>行为</th></tr>
+  <tr><td><code>q</code></td><td>detach；不停止 daemon。</td></tr>
+  <tr><td><code>Ctrl+C</code></td><td>detach；不停止 daemon。</td></tr>
+  <tr><td><code>Ctrl+X</code></td><td>发送 <code>ClearHistory</code>。</td></tr>
+  <tr><td><code>Space</code></td><td>recording 时发送 Stop；否则在非 finalizing 时发送 Start。</td></tr>
+  <tr><td><code>PageUp</code></td><td>向上翻一页；停止跟随。</td></tr>
+  <tr><td><code>PageDown</code></td><td>向下翻一页。</td></tr>
+  <tr><td><code>Home</code></td><td>跳到顶部；停止跟随。</td></tr>
+  <tr><td><code>End</code></td><td>跳到最新；恢复跟随。</td></tr>
+</table>
+
+<h3 id="u4-3">4.3 ctl 输出</h3>
+<pre><code># start / stop / toggle
+recording=true finalizing=false segment=Some(3)
+
+# status
+recording=false finalizing=false segment=None mode=ptt hotkey=Super+F2 addon=Connected transcript=2
+
+# clear
+history cleared
+
+# quit
+voimed stopped</code></pre>
+
+<table>
+  <tr><th>输出</th><th>契约</th></tr>
+  <tr><td>start / stop / toggle</td><td>打印 <code>State</code> 的 recording / finalizing / segment；Error 走 stderr。</td></tr>
+  <tr><td>status</td><td><code>Status</code> 的所有字段；未知 mode / hotkey 显示 <code>-</code>。</td></tr>
+  <tr><td>clear / quit</td><td>成功标记；Error 或 Bye 走 stderr / 退出码 1。</td></tr>
+  <tr><td>超时</td><td>超时时间内没有响应则报错退出；具体值见 <a href="CORE.html#c2">CORE §2</a>。</td></tr>
+</table>
+
+<h3 id="u4-4">4.4 doctor 检查</h3>
+<pre><code>endpoint: /run/user/1000/voime/voimed.sock
+  OK   权限 0600
+  OK   daemon 在线
+model: /home/user/.local/share/voime/models
+  OK   manifest 与 SHA-256 校验通过
+audio:
+  OK   2 个输入设备，默认 ...
+fcitx:
+  OK   fcitx5 进程运行中
+  OK   addon 描述 /usr/share/fcitx5/addon/voime.conf
+  OK   voime.so /usr/lib/fcitx5/voime.so
+  OK   未注册输入法条目（Shift 不会切换到 Voime）
+  OK   用户配置 /home/user/.config/fcitx5/conf/voime.conf
+  OK   Mode=ptt Hotkey=Super+F2 addon=connected</code></pre>
+
+<table>
+  <tr><th>检查</th><th>契约</th></tr>
+  <tr><td>端点</td><td>检查默认端点 / <code>--endpoint</code> 指定端点；Unix 上检查权限是否 0600。</td></tr>
+  <tr><td>daemon</td><td>以 <code>control</code> 角色连接并读取 Snapshot。</td></tr>
+  <tr><td>模型</td><td>固定检查默认模型目录；不读取 <code>--model-dir</code>。</td></tr>
+  <tr><td>音频</td><td>枚举输入设备并显示默认设备名；不打开流。</td></tr>
+  <tr><td>平台前端</td><td>当前 Linux 检查 fcitx5 进程、addon 描述、<code>voime.so</code>、旧 inputmethod 条目与用户配置。</td></tr>
+  <tr><td>输出</td><td>每项 <code>OK</code> / <code>WARN</code> / <code>FAIL</code>；存在 FAIL 时退出码 1。</td></tr>
+</table>
+<ul class="note">
+  <li>doctor 当前是 Linux 实现；Windows 前端落地后按 <a href="../../frontends/windows/USER.html#u4-4">windows USER §4.4</a> 增加平台检查。</li>
+  <li>自定义前缀或 <code>--model-dir</code> 部署需要手工确认；doctor 固定检查默认路径。</li>
+</ul>
+
+<h2 id="u5">5. UI</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u5-1">5.1 调色板</h3>
+<p>
+TUI 只使用终端自身的背景色与前景色，另加一个红色语义色。不得引入边框色、强调底色、状态色或第二强调色；
+终端的主题切换不需要应用适配。
+</p>
+
+<table>
+  <tr><th>预览</th><th>Token</th><th>值</th><th>语义</th></tr>
+  <tr>
+    <td><span class="palette-swatch" style="background:#E5484D"></span></td>
+    <td><code>recording</code></td>
+    <td>ANSI bright red（SGR 91）；真彩色终端回退 <code>#E5484D</code></td>
+    <td>仅用于 recording 标记的圆点。</td>
+  </tr>
+  <tr>
+    <td><span class="palette-swatch" style="background:#101014"></span></td>
+    <td><code>background</code></td>
+    <td>终端默认背景</td>
+    <td>整个界面背景；应用不设置背景色。</td>
+  </tr>
+  <tr>
+    <td><span class="palette-swatch" style="background:#E6E6E6"></span></td>
+    <td><code>text</code></td>
+    <td>终端默认前景</td>
+    <td>临时结果、最终结果与提示文本。</td>
+  </tr>
+</table>
+
+<h3 id="u5-2">5.2 视觉呈现</h3>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>屏幕</td><td>TUI 可选；进入备用屏幕并隐藏光标，退出时恢复。Fcitx / Windows 临时窗口不受 TUI 控制。</td></tr>
+  <tr><td>布局</td><td>两列：左侧 2 个单元格的标记栏，右侧内容列；无边框、标题或状态栏。</td></tr>
+  <tr><td>Recording 标记</td><td><code>●</code>，仅当前语音段采集时显示；Final / 停止后隐藏。</td></tr>
+  <tr><td>内容</td><td>临时结果覆盖当前行；最终结果原位替换并保留到退出；下一段另起一行。</td></tr>
+  <tr><td>提示行</td><td>底部一行显示当前 Mode 与 Hotkey，例如 <code>Mode: ptt  Hotkey: Super+F2  Ctrl+X 清空  q 退出</code>。</td></tr>
+  <tr><td>滚动</td><td><code>PageUp</code> / <code>PageDown</code> / <code>Home</code> / <code>End</code>；用户上翻后停止跟随。</td></tr>
+  <tr><td>错误</td><td>启动错误 stderr；运行期错误不进入 TUI 内容区，写日志 / <code>voime doctor</code>。</td></tr>
+</table>
+
+<h3 id="u5-3">5.3 原型</h3>
+<p>
+原型只示意 TUI 的元素关系；Fcitx / Windows 临时文本窗口由平台前端渲染，不在 TUI 中绘制。
+</p>
+
+<div class="tui-proto-wrap">
+<div class="tui-proto">
+<div class="line"><span class="dim">  </span>今天下午三点开会。</div>
+<div class="line"><span class="dim">  </span>请把会议纪要发给我。</div>
+<div class="line"><span class="rec">●</span> 明天的日程帮我确认一</div>
+<div class="line"><span class="dim">Mode: ptt  Hotkey: Super+F2  Ctrl+X 清空  q 退出</span></div>
+</div>
+</div>
+<ul class="note">
+  <li>前三行是历史结果与当前临时行；底部提示行不属于结果内容。</li>
+  <li>平台输入面板同时显示当前 Partial 的临时窗口；Final 后按平台规则关闭或保留空白。</li>
+  <li>TUI 关闭后热键、临时窗口与提交继续工作。</li>
+</ul>
+
+</body>
+</html>

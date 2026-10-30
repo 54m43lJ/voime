@@ -16,6 +16,7 @@ serde_json.workspace = true
 unicode-width.workspace = true
 voime-core = { path = "../voime-core" }
 voime-ipc = { path = "../voime-ipc" }
+voime-transport = { path = "../voime-transport" }
 
 [dev-dependencies]
 tempfile.workspace = true
