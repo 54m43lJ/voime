@@ -469,7 +469,7 @@
 **2. 解决方法**
 
 - 当前实现按文档只接受 `--socket`，模型目录取默认值。
-- doctor 检查 socket 权限、daemon 快照、manifest/SHA、音频设备、fcitx5 进程、addon/inputmethod/voime.so 与用户配置。
+- doctor 检查 socket 权限、daemon 快照、manifest/SHA、音频设备、fcitx5 进程、addon/voime.so、旧 inputmethod 条目与用户配置。
 - 后续给 doctor 增加 `--model-dir` 和 `--prefix`，或从 daemon 快照返回运行中的模型目录。
 
 **3. 修订建议**
@@ -657,7 +657,26 @@ IpcServer 的 reader 线程在发送 `Disconnected` 事件前先把客户端从 
 | CORE.html | §4.16 ipc_server.rs | 增 | `ServerEvent::Disconnected` 增加 `role` 字段。 |
 | CORE.html | §5.7 断线 | 不动 | 行为描述已存在，见第 34 条。 |
 
-### 35. addon 在 daemon 确认前设置 recording，Busy/Error 后状态卡死
+### 35. 握手被拒绝后 addon 保持连接，不再重试
+
+**1. 问题描述**
+
+Fcitx 执行 `fcitx5 -r` 时，新旧实例可能短暂同时连接 daemon。新 addon 先收到 `RoleConflict`，但 daemon 只返回 Error 而没有断开连接，addon 也只在自身 `connected()` 为 false 时才重连。结果新 addon 的 socket 一直保持“已连接”但从未获得 Fcitx 角色，之后也不会再重试，表现为 addon 永久离线。
+
+**2. 解决方法**
+
+- daemon 在 Hello 的版本不匹配或角色冲突时，发送 Error 后调用 `IpcServer::disconnect(client_id)`。
+- addon 收到 `role_conflict` / `version_mismatch` / `invalid_message` 时主动 `client_.disconnect()`，让 2 s 重连 timer 重新握手。
+- 新增 `IpcServer::disconnect` 只移除广播发送端，writer 线程会先发送已排队的 Error 再关闭 socket。
+
+**3. 修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| CORE.html | §4.16 ipc_server.rs | 增 | 补充 `disconnect(client_id)`，说明握手失败时发送 Error 后断开。 |
+| PROVIDER.html | §4.7 消息与错误 | 不动 | `IpcVersionMismatch` / 角色冲突的处理已列，细节见本条。 |
+
+### 36. addon 在 daemon 确认前设置 recording，Busy/Error 后状态卡死
 
 **1. 问题描述**
 
@@ -677,3 +696,60 @@ addon 最初在按键命中后立即把 `recording_` 设为 true，再发送 `St
 |---|---|---|---|
 | CORE.html | §5.2 热键与模式 | 增 | 增加 `starting_` 状态机，说明收到 State 前不置 recording。 |
 | CORE.html | §4.21 voime.h/cpp | 不动 | 字段清单见第 14 条，避免重复修改。 |
+
+### 37. addon 配置保存到无 `.conf` 后缀的文件
+
+**1. 问题描述**
+
+文档统一写 `~/.config/fcitx5/conf/voime.conf`，但实现使用 `readAsIni(config_, "conf/voime")` / `safeSaveAsIni(config_, "conf/voime")`，Fcitx 把该字符串当作文件名而不是自动补 `.conf`，实际生成的是 `~/.config/fcitx5/conf/voime`。结果文档中的配置文件不存在，`fcitx5-configtool` 保存的设置也与手工编辑的 `voime.conf` 分离。
+
+**2. 解决方法**
+
+- 统一常量 `CONFIG_FILE = "conf/voime.conf"`，`reloadConfig`、`setConfig` 都使用它。
+- 启动时检测旧的无后缀 `conf/voime`：若新文件不存在则读取旧文件，写入 `voime.conf`，再删除旧文件。
+- 重装 addon 后自动完成用户配置迁移。
+
+**3. 修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| USER.html | §4.1 addon 配置 | 不动 | 文档已写 `voime.conf`，实现按此修正，见第 37 条。 |
+| PROVIDER.html | §4.8 addon 描述与配置 | 增 | 说明 `readAsIni` / `safeSaveAsIni` 不会自动补 `.conf`，路径必须写全。 |
+
+### 38. 重连 timer 只触发一次，daemon 重启后 addon 永久离线
+
+**1. 问题描述**
+
+addon 使用 `addTimeEvent` 注册 2 s 重连 timer，但回调直接 `return true`，没有重新设置间隔。当前 Fcitx 事件循环后端下这并不能保证周期触发；daemon 退出后 addon 进入 disconnected，之后 daemon 重新启动，addon 也不会再连接。
+
+**2. 解决方法**
+
+- 在 timer 回调中显式 `time->setNextInterval(2000000)` 和 `time->setOneShot()` 后再返回 true。
+- daemon 停止时 addon 清理预览、目标和按键状态；daemon 恢复后由周期 timer 重新握手。
+- 实测 `voime ctl quit` 后重启 daemon，addon 在数秒内恢复 `addon=Connected`。
+
+**3. 修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| CORE.html | §5.1 启动 | 增 | 说明重连 timer 必须每次重新设置间隔，固定 2 s。 |
+| PROVIDER.html | §4.7 消息与错误 | 不动 | 重连行为已在第 22 条描述，见该条。 |
+
+### 39. 升级后旧的 inputmethod 条目仍残留
+
+**1. 问题描述**
+
+Voime 改为后台 addon 后，如果只停止安装 `share/fcitx5/inputmethod/voime.conf`，已经安装过旧版本的用户目录中仍保留该文件。Fcitx 重启后继续把 Voime 当作输入法加载，用户仍可能通过 Shift 切到它，输入法组里也会保留 voime 条目。
+
+**2. 解决方法**
+
+- CMake 安装时增加 `install(CODE ...)`，删除 `${CMAKE_INSTALL_FULL_DATADIR}/fcitx5/inputmethod/voime.conf`。
+- Fcitx 启动时检测到 `Found 0 input method(s) in addon voime` 后自动移除 profile 中的 voime 条目。
+- 重新安装 addon 并重启 Fcitx 后，输入法组不再出现 Voime。
+
+**3. 修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| BUILD.html | §7 升级 | 增 | 升级时说明旧 inputmethod 条目会被安装脚本删除。 |
+| PROVIDER.html | §4.8 addon 描述 | 不动 | 已注明不安装 inputmethod 条目，本条不重复修改。 |

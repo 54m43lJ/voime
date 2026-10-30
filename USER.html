@@ -25,7 +25,7 @@
   <tr><th>术语</th><th>定义</th></tr>
   <tr>
     <td>Voime addon</td>
-    <td>运行在 Fcitx5 进程内的输入法引擎，负责读取 <code>Mode</code> / <code>Hotkey</code>、匹配热键、维护语音段目标输入框、显示临时文本并提交最终文本。</td>
+    <td>运行在 Fcitx5 进程内的后台 addon，不注册输入法条目；负责读取 <code>Mode</code> / <code>Hotkey</code>、匹配热键、维护语音段目标输入框、显示临时文本并提交最终文本。</td>
   </tr>
   <tr>
     <td>Fcitx5 / 输入法框架</td>
@@ -61,7 +61,7 @@
   </tr>
   <tr>
     <td>Toggle 模式</td>
-    <td><code>Mode=toggle</code>：第一次按热键开始，第二次按结束。</td>
+    <td><code>Mode=toggle</code>：第一次按热键开始，第二次按结束；会话期间 VAD 可连续切分多个段，没有语音时也保持空的临时文本窗口。</td>
   </tr>
   <tr>
     <td>Continuous 模式</td>
@@ -108,7 +108,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
     <td>Fcitx 依赖</td>
-    <td>Fcitx5 必须运行，<code>voime</code> addon 必须加载并加入输入法组；否则热键、临时窗口与提交都不可用。</td>
+    <td>Fcitx5 必须运行，<code>voime</code> addon 必须加载；addon 不注册输入法条目，也不需要加入输入法组。</td>
   </tr>
   <tr>
     <td>模式来源</td>
@@ -121,6 +121,10 @@
   <tr>
     <td>普通按键</td>
     <td>未命中热键的按键完全交给 Fcitx；Voime 不转发、不缓存、不改变 keymap。</td>
+  </tr>
+  <tr>
+    <td>输入法切换</td>
+    <td>Voime 不出现在输入法列表；Shift、Super+Space 等 Fcitx 输入法切换只影响普通键盘输入法，不会切到 Voime。</td>
   </tr>
   <tr>
     <td>热键冲突</td>
@@ -136,7 +140,7 @@
   </tr>
   <tr>
     <td>临时窗口</td>
-    <td>录音期间显示 <code>Partial</code>；Final、停止、空段、ASR 错误、目标丢失或 daemon 断线时清空并关闭。</td>
+    <td>录音期间显示 <code>Partial</code>；Toggle 会话在 Final、空段或 ASR 错误后保持空白窗口，直到再次按热键关闭；停止、目标丢失与 daemon 断线时清空并关闭。</td>
   </tr>
   <tr>
     <td>最终提交</td>
@@ -191,7 +195,7 @@
 <div class="diagram"><img src="diagram/seq-ptt.svg" alt="Fcitx 捕获热键、显示临时文本并提交最终结果的时序图"></div>
 <ul class="note">
   <li><code>ptt</code> 模式按下开始、松开结束；<code>toggle</code> 模式按一下开始、再按一下结束。</li>
-  <li>录音期间 <code>Partial</code> 写入 Fcitx 输入面板；最终结果产生后先关闭窗口，再提交文本。</li>
+  <li>录音期间 <code>Partial</code> 写入 Fcitx 输入面板；最终结果产生后先关闭窗口，再提交文本。Toggle 会话在提交后重新显示空白窗口，直到 toggle off。</li>
   <li>目标输入框失焦时最终结果不提交，保留在 daemon/TUI。</li>
 </ul>
 
@@ -208,7 +212,7 @@
 <ul class="note">
   <li>窗口内容只来自当前语音段的 <code>Partial</code>；不显示候选、按钮或历史。</li>
   <li>Fcitx UI 负责渲染；没有可用 UI 或当前 UI 不渲染 preedit 时不显示窗口，最终提交仍正常。</li>
-  <li>停止、空段、错误、目标丢失与 daemon 断线都走清空路径。</li>
+  <li>停止、目标丢失与 daemon 断线都走清空路径；Toggle 会话中的 Final、空段与单段错误只清空内容，窗口保留到 toggle off。</li>
 </ul>
 
 <h2 id="u4">4. INTERFACES</h2>

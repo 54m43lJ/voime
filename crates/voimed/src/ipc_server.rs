@@ -138,6 +138,16 @@ impl IpcServer {
         }
     }
 
+    /// Drops a client from the broadcast set. The writer thread flushes any
+    /// already queued message (for example an Error) and then closes the
+    /// socket.
+    pub fn disconnect(&self, client_id: u64) {
+        self.clients
+            .lock()
+            .expect("clients mutex poisoned")
+            .remove(&client_id);
+    }
+
     pub fn send_to(&self, client_id: u64, message: &ServerMessage) {
         let mut clients = self.clients.lock().expect("clients mutex poisoned");
         let Some(entry) = clients.get(&client_id) else {

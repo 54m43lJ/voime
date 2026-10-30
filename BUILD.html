@@ -51,7 +51,7 @@ sudo cmake --install build/fcitx</code></pre>
   <tr><td><code>scripts/install_voimed.sh</code></td><td>安装 <code>voimed</code> 到 <code>~/.local/bin</code>，并生成 systemd user unit。</td></tr>
   <tr><td><code>scripts/install_voime.sh</code></td><td>安装 <code>voime</code> TUI / <code>ctl</code> / <code>doctor</code> 到 <code>~/.local/bin</code>。</td></tr>
   <tr><td><code>build/fcitx/voime.so</code></td><td>Fcitx5 addon；安装到 <code>$PREFIX/lib/fcitx5/</code>。</td></tr>
-  <tr><td>addon 描述文件</td><td><code>share/fcitx5/addon/voime.conf</code>、<code>share/fcitx5/inputmethod/voime.conf</code>、图标。</td></tr>
+  <tr><td>addon 描述文件</td><td><code>share/fcitx5/addon/voime.conf</code>、图标。<code>inputmethod</code> 条目不安装，Voime 不进入输入法列表。</td></tr>
   <tr><td>模型包</td><td>由安装脚本生成在用户数据目录，不进入版本库；<code>voimed</code> 只读。</td></tr>
 </table>
 <ul class="note">
@@ -97,7 +97,7 @@ systemctl --user enable --now voime.service
 # 2. 安装 / 更新 addon 后重启 Fcitx
 fcitx5 -r
 
-# 3. 在 fcitx5-configtool 中把 Voime 加入输入法组
+# 3. 确认 addon 已在 Addons 页面加载；不需要加入输入法组
 fcitx5-configtool
 
 # 4. 可选 TUI / 控制
@@ -107,7 +107,7 @@ voime doctor</code></pre>
 
 <table>
   <tr><th>现象</th><th>处理</th></tr>
-  <tr><td>Fcitx 输入法列表没有 <code>Voime</code></td><td>确认 addon 描述文件安装到 Fcitx 前缀；重启 Fcitx；检查 <code>voime.so</code> 的 ABI / 依赖。</td></tr>
+  <tr><td>Fcitx Addons 页面没有 <code>Voime</code></td><td>确认 addon 描述文件安装到 Fcitx 前缀；重启 Fcitx；检查 <code>voime.so</code> 的 ABI / 依赖。</td></tr>
   <tr><td>热键没有反应</td><td>确认 <code>Mode</code> / <code>Hotkey</code> 已加载；热键未被 Fcitx trigger 或合成器绑定；当前窗口有文本焦点。</td></tr>
   <tr><td>没有临时文本窗口</td><td>确认 Fcitx UI addon 正在运行；当前 UI 可能不渲染 preedit；不影响最终提交。</td></tr>
   <tr><td>最终文本没有上屏</td><td>确认目标输入框在录音期间没有失焦；查看 <code>voime doctor</code> 与 Fcitx 日志。</td></tr>
@@ -134,7 +134,7 @@ ctest --test-dir build/fcitx --output-on-failure</code></pre>
   <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长；<code>tests/ipc.rs</code> 覆盖握手 / 角色 / Mode；<code>tests/state.rs</code> 覆盖段 ID / 目标 / 清空；<code>tests/daemon.rs</code> 覆盖 PTT / toggle / continuous / 断线；<code>tests/asr_ctc.rs</code> 覆盖 CMVN / token id / greedy / 10–60 s 解码。</li>
   <li><code>fcitx-addon/tests</code> 覆盖 mode / 热键字符串 / IPC 枚举 / target 空引用。</li>
   <li>模型包校验包含 SHA-256、张量名称、类型、形状与真实 ONNX Runtime 推理；不含音频内容。</li>
-  <li>手工验收需同时在原生 Wayland、XWayland / XIM 与支持 text-input 的终端中测试热键、临时窗口与提交。</li>
+  <li>手工验收需同时在原生 Wayland、XWayland / XIM 与支持 text-input 的终端中测试热键、临时窗口与提交；Toggle 无语音时应出现空白窗口并保持到 toggle off。</li>
 </ul>
 
 <h2 id="b6">6. 发布检查</h2>
@@ -150,8 +150,8 @@ target/release/voime doctor
 scripts/install_models.sh</code></pre>
 
 <ul class="note">
-  <li>发布包包含 <code>voimed</code>、<code>voime</code>、<code>voime.so</code>、addon / inputmethod 描述文件、systemd unit、模型安装脚本与说明。</li>
-  <li>验收：addon 被 Fcitx 加载；Mode 三态与 Hotkey；临时窗口显示 / 关闭；普通打字不受影响；原生 Wayland 提交；XWayland XIM 提交；目标失焦不误提交；TUI detach；daemon 重启重连；CTC final / partial 文本正常、RTF 达标。</li>
+  <li>发布包包含 <code>voimed</code>、<code>voime</code>、<code>voime.so</code>、addon 描述文件、systemd unit、模型安装脚本与说明；不包含 inputmethod 条目。</li>
+  <li>验收：addon 被 Fcitx 后台加载且不出现在输入法组；Mode 三态与 Hotkey；Toggle 无语音时显示空白窗口并保持到 toggle off；普通打字不受影响；原生 Wayland 提交；XWayland XIM 提交；目标失焦不误提交；TUI detach；daemon 重启重连；CTC final / partial 文本正常、RTF 达标。</li>
   <li>模型权重由安装脚本按需下载；发布包不包含模型权重。</li>
 </ul>
 
@@ -160,9 +160,9 @@ scripts/install_models.sh</code></pre>
 
 <table>
   <tr><th>操作</th><th>步骤</th></tr>
-  <tr><td>升级 Fcitx</td><td>重新编译并安装 <code>voime.so</code>；重启 Fcitx；确认 addon ABI 与输入法条目。</td></tr>
-  <tr><td>升级 Voime</td><td>停止 daemon；重新运行 <code>scripts/install_voimed.sh</code> / <code>scripts/install_voime.sh</code>；重新安装 addon 后重启 daemon 与 Fcitx。</td></tr>
-  <tr><td>卸载</td><td><code>systemctl --user disable --now voime.service</code>；删除 addon / inputmethod 描述文件、<code>voime.so</code>、<code>~/.local/bin/voimed</code>、<code>~/.local/bin/voime</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录按需保留或删除。</td></tr>
+  <tr><td>升级 Fcitx</td><td>重新编译并安装 <code>voime.so</code>；重启 Fcitx；确认 addon ABI，且输入法组中没有 Voime。</td></tr>
+  <tr><td>升级 Voime</td><td>停止 daemon；重新运行 <code>scripts/install_voimed.sh</code> / <code>scripts/install_voime.sh</code>；重新安装 addon 后重启 daemon 与 Fcitx。升级会删除旧版本残留的 <code>inputmethod/voime.conf</code>，并从输入法组移除 Voime。</td></tr>
+  <tr><td>卸载</td><td><code>systemctl --user disable --now voime.service</code>；删除 addon 描述文件、<code>voime.so</code>、<code>~/.local/bin/voimed</code>、<code>~/.local/bin/voime</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录按需保留或删除。</td></tr>
   <tr><td>停止顺序</td><td>先停止 daemon，再重启 / 关闭 Fcitx；卸载后 Fcitx 不保留 <code>Voime</code> 条目。</td></tr>
 </table>
 

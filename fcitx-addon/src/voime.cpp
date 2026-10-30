@@ -1,6 +1,8 @@
 #include "voime.h"
 
+#include <cstdlib>
 #include <ctime>
+#include <filesystem>
 
 #include <fcitx-config/iniparser.h>
 #include <fcitx-utils/log.h>
@@ -8,6 +10,44 @@
 #include <fcitx/addonmanager.h>
 #include <fcitx/event.h>
 #include <fcitx/inputcontext.h>
+
+namespace {
+
+constexpr char CONFIG_FILE[] = "conf/voime.conf";
+constexpr char LEGACY_CONFIG_FILE[] = "conf/voime";
+
+std::filesystem::path userConfigPath(const char *relative) {
+    std::filesystem::path base;
+    if (const char *xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg) {
+        base = xdg;
+    } else if (const char *home = std::getenv("HOME"); home && *home) {
+        base = std::filesystem::path(home) / ".config";
+    } else {
+        return {};
+    }
+    return base / "fcitx5" / relative;
+}
+
+void migrateLegacyConfig() {
+    const auto current = userConfigPath(CONFIG_FILE);
+    const auto legacy = userConfigPath(LEGACY_CONFIG_FILE);
+    if (current.empty() || legacy.empty()) {
+        return;
+    }
+    std::error_code error;
+    if (std::filesystem::exists(current, error) ||
+        !std::filesystem::exists(legacy, error)) {
+        return;
+    }
+    VoimeConfig config;
+    fcitx::readAsIni(config, LEGACY_CONFIG_FILE);
+    fcitx::safeSaveAsIni(config, CONFIG_FILE);
+    std::filesystem::remove(legacy, error);
+    FCITX_INFO() << "voime: migrated legacy config " << legacy << " -> "
+                 << current;
+}
+
+} // namespace
 
 VoimeAddon::VoimeAddon(fcitx::Instance *instance)
     : instance_(instance), client_(instance) {
@@ -32,7 +72,11 @@ VoimeAddon::VoimeAddon(fcitx::Instance *instance)
 
     reconnectTimer_ = instance_->eventLoop().addTimeEvent(
         CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 2000000, 0,
-        [this](fcitx::EventSourceTime *, uint64_t) {
+        [this](fcitx::EventSourceTime *time, uint64_t) {
+            // Re-arm explicitly: returning true alone is not a portable
+            // periodic timer across Fcitx event loop backends.
+            time->setNextInterval(2000000);
+            time->setOneShot();
             if (!client_.connected()) {
                 connectDaemon();
             }
@@ -65,13 +109,14 @@ const fcitx::Configuration *VoimeAddon::getConfig() const { return &config_; }
 
 void VoimeAddon::setConfig(const fcitx::RawConfig &config) {
     config_.load(config, true);
-    fcitx::safeSaveAsIni(config_, "conf/voime");
+    fcitx::safeSaveAsIni(config_, CONFIG_FILE);
     const auto current = currentConfig();
     client_.configure(current.mode, current.hotkey);
 }
 
 void VoimeAddon::reloadConfig() {
-    fcitx::readAsIni(config_, "conf/voime");
+    migrateLegacyConfig();
+    fcitx::readAsIni(config_, CONFIG_FILE);
     const auto current = currentConfig();
     client_.setConfig(current);
     if (client_.connected()) {
@@ -162,18 +207,29 @@ void VoimeAddon::handleToggle(fcitx::KeyEvent &event, bool matches) {
     }
     event.filterAndAccept();
     toggleCode_ = code;
-    if (!starting_ && !recording_ && !finalizing_) {
+    if (!toggleActive_ && !starting_ && !recording_ && !finalizing_) {
         auto *inputContext = event.inputContext();
         if (!inputContext) {
             return;
         }
         bindTarget(inputContext);
+        toggleActive_ = true;
         starting_ = true;
+        refreshTogglePreview();
         client_.start(segmentId_.value_or(0), TriggerSource::Toggle);
-    } else if (recording_) {
+    } else if (toggleActive_) {
+        toggleActive_ = false;
+        starting_ = false;
+        finalizing_ = recording_;
         recording_ = false;
-        finalizing_ = true;
-        client_.stop(segmentId_.value_or(0), TriggerSource::Toggle);
+        clearPreview();
+        // 0 lets the daemon stop whatever Toggle segment is current, even if
+        // Final and the next SegmentStarted crossed on the wire.
+        client_.stop(0, TriggerSource::Toggle);
+        if (!finalizing_) {
+            target_.ref.unwatch();
+            segmentId_.reset();
+        }
     }
 }
 
@@ -199,6 +255,20 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             } else {
                 target_.ref.unwatch();
             }
+        } else if (message.source == TriggerSource::Toggle &&
+                   !target_.focused()) {
+            // A toggle session may continue after a segment ended; follow the
+            // current focus if the original input context disappeared.
+            auto *inputContext = instance_->mostRecentInputContext();
+            if (inputContext && inputContext->hasFocus()) {
+                target_.ref = inputContext->watch();
+                target_.segment_id = message.segmentId.value_or(target_.segment_id);
+            } else {
+                target_.ref.unwatch();
+            }
+        }
+        if (toggleActive_) {
+            refreshTogglePreview();
         }
         break;
     case ServerMessageType::State:
@@ -208,12 +278,20 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             starting_ = false;
         }
         if (!recording_) {
-            clearPreview();
+            if (finalizing_) {
+                clearPreview();
+            } else if (toggleActive_) {
+                refreshTogglePreview();
+            } else {
+                clearPreview();
+            }
         }
         if (!recording_ && !finalizing_) {
             starting_ = false;
-            target_.ref.unwatch();
-            segmentId_.reset();
+            if (!toggleActive_) {
+                target_.ref.unwatch();
+                segmentId_.reset();
+            }
         }
         break;
     case ServerMessageType::Partial:
@@ -236,17 +314,32 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
         if (inputContext && inputContext->hasFocus() && !message.text.empty()) {
             inputContext->commitString(message.text);
         }
-        target_.ref.unwatch();
-        segmentId_.reset();
         starting_ = false;
         recording_ = false;
         finalizing_ = false;
+        if (toggleActive_) {
+            refreshTogglePreview();
+        } else {
+            target_.ref.unwatch();
+            segmentId_.reset();
+        }
         break;
     }
     case ServerMessageType::Error:
         FCITX_WARN() << "voime: daemon error " << message.errorCode << ": "
                      << message.errorMessage;
-        if (!recording_) {
+        if (message.errorCode == "role_conflict" ||
+            message.errorCode == "version_mismatch" ||
+            message.errorCode == "invalid_message") {
+            // The daemon rejected the handshake/socket; retry from scratch.
+            client_.disconnect();
+        } else if (message.errorCode == "inference" && toggleActive_) {
+            starting_ = false;
+            recording_ = false;
+            finalizing_ = false;
+            refreshTogglePreview();
+        } else if (!recording_) {
+            toggleActive_ = false;
             starting_ = false;
             holdActive_ = false;
             toggleCode_ = 0;
@@ -276,12 +369,24 @@ void VoimeAddon::onDaemonDisconnected() {
     toggleCode_ = 0;
     recording_ = false;
     finalizing_ = false;
+    toggleActive_ = false;
     FCITX_INFO() << "voime: daemon disconnected; hotkeys are passed through";
 }
 
 void VoimeAddon::clearPreview() {
     if (auto *inputContext = target_.get()) {
         preview_.clear(inputContext);
+    }
+}
+
+void VoimeAddon::refreshTogglePreview() {
+    if (!toggleActive_) {
+        return;
+    }
+    if (target_.focused()) {
+        preview_.showEmpty(target_.get());
+    } else {
+        clearPreview();
     }
 }
 

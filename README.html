@@ -31,11 +31,11 @@ Python。TUI 只是可选的监视器，不参与键盘与上屏路径。
 
 <h3>1.2 GOAL：什么算成功</h3>
 <ul>
-  <li>安装 <code>voime</code> addon 后，Fcitx5 的输入法列表出现 <code>Voime</code>，可以加入输入法组。</li>
+  <li>安装 <code>voime</code> addon 后，addon 随 Fcitx5 在后台加载，不注册输入法条目；切换键盘输入法时不会切到 Voime。</li>
   <li>addon 配置一个模式：<code>ptt</code>（按住说话）、<code>toggle</code>（按一下切换）或 <code>continuous</code>（VAD 自动分段）。</li>
   <li>addon 只配置一个热键；<code>ptt</code> 模式按住说话，<code>toggle</code> 模式切换录音，<code>continuous</code> 模式忽略热键。</li>
   <li>热键由 Fcitx 捕获；普通按键照常输入，不被 Voime 拦截或转发。</li>
-  <li>说话期间，Fcitx 输入面板显示当前段的临时文本窗口；最终结果产生后窗口关闭。</li>
+  <li>说话期间，Fcitx 输入面板显示当前段的临时文本窗口；PTT / continuous 最终结果产生后关闭，Toggle 会话保持空白窗口到 toggle off。</li>
   <li>最终文本通过 Fcitx 提交到语音段开始时聚焦的输入框；输入框失焦时不向其他窗口注入。</li>
   <li>音频、模型、VAD、FireRedASR2-CTC、FireRedPunc 与会话历史由独立 <code>voimed</code> 守护进程持有。</li>
   <li>ASR 使用 FireRedASR2-CTC int8 单 ONNX；CPU 推理成本低，模型约 740 MiB；final 与临时结果共用同一模型。</li>
@@ -60,7 +60,7 @@ Python。TUI 只是可选的监视器，不参与键盘与上屏路径。
   <tr><th>场景</th><th>行为</th><th>详细契约</th></tr>
   <tr>
     <td>安装 addon</td>
-    <td>把 <code>voime.so</code>、addon 描述文件与输入法条目安装到 Fcitx5，重启 Fcitx 后在输入法组中加入 <code>Voime</code>。</td>
+    <td>把 <code>voime.so</code> 与 addon 描述文件安装到 Fcitx5，重启 Fcitx；Voime 作为后台 addon 加载，不需要加入输入法组。</td>
     <td><a href="BUILD.html#b2">BUILD §2</a> · <a href="USER.html#u2">USER §2</a></td>
   </tr>
   <tr>
@@ -75,7 +75,7 @@ Python。TUI 只是可选的监视器，不参与键盘与上屏路径。
   </tr>
   <tr>
     <td>Toggle 模式</td>
-    <td><code>Mode=toggle</code>：按一下 <code>Hotkey</code> 开始，再按一下结束。</td>
+    <td><code>Mode=toggle</code>：按一下 <code>Hotkey</code> 开始，再按一下结束；会话期间没有语音也保持空白临时窗口。</td>
     <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u3-2">USER §3.2</a></td>
   </tr>
   <tr>
@@ -85,7 +85,7 @@ Python。TUI 只是可选的监视器，不参与键盘与上屏路径。
   </tr>
   <tr>
     <td>临时文本窗口</td>
-    <td>说话期间在 Fcitx 输入面板显示当前段的 <code>Partial</code>；Final、停止、空段或断线时关闭。</td>
+    <td>说话期间在 Fcitx 输入面板显示当前段的 <code>Partial</code>；Toggle 会话在 Final/空段后保持空白窗口，直到再次按热键关闭。</td>
     <td><a href="USER.html#u3-4">USER §3.4</a> · <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a></td>
   </tr>
   <tr>

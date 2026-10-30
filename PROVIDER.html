@@ -28,8 +28,8 @@
     <td>Linux 输入法框架；本项目作为 addon 运行在 <code>fcitx5</code> 进程内，由它持有键盘与输入上下文。</td>
   </tr>
   <tr>
-    <td>addon / <code>InputMethodEngineV2</code></td>
-    <td>Fcitx 的可加载输入法组件。Voime addon 负责热键、目标输入框、临时窗口与最终提交。</td>
+    <td>addon</td>
+    <td>Fcitx 的可加载组件。Voime addon 在后台加载，不注册输入法条目；负责热键、目标输入框、临时窗口与最终提交。</td>
   </tr>
   <tr>
     <td>输入上下文（<code>InputContext</code>）</td>
@@ -104,7 +104,7 @@
   </tr>
   <tr>
     <td>addon 加载</td>
-    <td><code>OnDemand=False</code>；Fcitx 启动时加载 addon，输入法条目引用 <code>Addon=voime</code>。</td>
+    <td><code>OnDemand=False</code>；Fcitx 启动时后台加载 addon，不安装 <code>inputmethod</code> 条目。</td>
   </tr>
   <tr>
     <td>键盘所有权</td>
@@ -120,7 +120,7 @@
   </tr>
   <tr>
     <td>临时窗口</td>
-    <td><code>InputPanel::setPreedit</code> + <code>updateUserInterface(InputPanel)</code>；Final / 停止 / 空段 / 错误 / 目标丢失 / 断线清空。</td>
+    <td><code>InputPanel::setPreedit</code> + <code>updateUserInterface(InputPanel)</code>；Toggle 会话在 Final / 空段 / 单段错误后写入空白 preedit 保持窗口，直到 toggle off；停止 / 目标丢失 / 断线清空。</td>
   </tr>
   <tr>
     <td>目标输入框</td>
@@ -200,7 +200,7 @@
 <div class="diagram"><img src="diagram/prov-input-panel.svg" alt="Fcitx InputPanel 临时文本窗口时序图"></div>
 <ul class="note">
   <li><code>Partial</code> 写入 <code>InputPanel::setPreedit</code>，由 Fcitx UI 渲染；Voime 不创建窗口。</li>
-  <li>Final / 停止 / 断线时清空 preedit；最终提交前先关闭窗口。</li>
+  <li>Final / 停止 / 断线时清空 preedit；最终提交前先关闭窗口。Toggle 会话在 Final 后重新写入空白 preedit，直到 toggle off。</li>
 </ul>
 
 <h3 id="p3-5">3.5 Fcitx 提交边界</h3>
@@ -295,7 +295,7 @@
 <h3 id="p4-4">4.4 Fcitx addon API：热键、目标与临时窗口</h3>
 <table>
   <tr><th>消费项</th><th>签名 / 类型</th><th>用途</th></tr>
-  <tr><td>引擎</td><td><code>fcitx::InputMethodEngineV2</code></td><td>addon 的输入法引擎接口。</td></tr>
+  <tr><td>引擎</td><td><code>fcitx::InputMethodEngineV2</code></td><td>addon 实例接口；不注册输入法条目，keyEvent 不参与普通输入。</td></tr>
   <tr><td>按键监听</td><td><code>Instance::watchEvent&lt;EventType::InputContextKeyEvent&gt;(EventWatcherPhase::PreInputMethod, handler)</code></td><td>读取热键。</td></tr>
   <tr><td>匹配</td><td><code>KeyEvent::checkKeyList(keys, KeyEventMatchingMode::MatchAllNormalizedKeys)</code></td><td>按 Mode 解释 <code>Hotkey</code>。</td></tr>
   <tr><td>消费</td><td><code>KeyEvent::filterAndAccept()</code></td><td>阻止热键进入应用与当前输入法。</td></tr>
@@ -357,7 +357,7 @@
   <tr><td><code>CmvnMetadataMissing</code></td><td>CTC ONNX 缺少 CMVN metadata。</td><td>daemon 启动失败。</td></tr>
   <tr><td><code>TokenizerFormat</code></td><td><code>tokens.txt</code> 行格式错误。</td><td>daemon 启动失败。</td></tr>
   <tr><td><code>FcitxUnavailable</code></td><td>Fcitx 未运行或 addon 未加载。</td><td>无热键 / 临时窗口；TUI 可手动控制；日志说明。</td></tr>
-  <tr><td><code>AddonNotLoaded</code></td><td>未加入输入法组或 addon 加载失败。</td><td>日志 / <code>voime doctor</code>；不消费热键。</td></tr>
+  <tr><td><code>AddonNotLoaded</code></td><td>addon 描述文件缺失或加载失败。</td><td>日志 / <code>voime doctor</code>；不消费热键。</td></tr>
   <tr><td><code>NoInputContext</code></td><td>没有聚焦文本输入框。</td><td>不开始语音段；不提交。</td></tr>
   <tr><td><code>CommitTargetLost</code></td><td>目标输入框失焦或销毁。</td><td>清空临时窗口；Final 保留历史。</td></tr>
   <tr><td><code>DaemonUnavailable</code></td><td>addon 无法连接 socket。</td><td>放行热键；重连；不影响普通输入。</td></tr>
@@ -377,21 +377,14 @@ Type=SharedLibrary
 OnDemand=False
 Configurable=True
 
-# share/fcitx5/inputmethod/voime.conf
-[InputMethod]
-Name=Voime
-Icon=voime
-Label=语
-LangCode=zh_CN
-Addon=voime
-Configurable=True
+# 不安装 share/fcitx5/inputmethod/voime.conf：Voime 不进入输入法列表。
 
 # ~/.config/fcitx5/conf/voime.conf
 Mode=ptt
 Hotkey=Super+F2</code></pre>
 <ul class="note">
-  <li><code>OnDemand=False</code> 让 addon 在 Fcitx 启动时加载，从而在其他输入法活动时也能收到按键。</li>
-  <li><code>Library=voime</code> 对应 <code>$PREFIX/lib/fcitx5/voime.so</code>；输入法条目通过 <code>Addon=voime</code> 关联。</li>
+  <li><code>OnDemand=False</code> 让 addon 在 Fcitx 启动时后台加载，从而在其他输入法活动时也能收到按键。</li>
+  <li><code>Library=voime</code> 对应 <code>$PREFIX/lib/fcitx5/voime.so</code>；没有输入法条目引用它，因此不会出现在输入法组。</li>
   <li>socket 使用 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code> 默认路径，不暴露为用户配置。</li>
 </ul>
 

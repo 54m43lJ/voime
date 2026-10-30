@@ -95,14 +95,9 @@ pub fn run(socket: &Path) -> bool {
         ok = false;
     }
     let addon_dir = addon_path("addon/voime.conf");
-    let inputmethod_dir = addon_path("inputmethod/voime.conf");
     let library = library_path();
     let user_config = user_config_path();
-    for (label, path) in [
-        ("addon 描述", addon_dir),
-        ("输入法条目", inputmethod_dir),
-        ("voime.so", library),
-    ] {
+    for (label, path) in [("addon 描述", addon_dir), ("voime.so", library)] {
         match path {
             Some(path) if path.is_file() => println!("  OK   {label} {}", path.display()),
             _ => {
@@ -110,6 +105,16 @@ pub fn run(socket: &Path) -> bool {
                 ok = false;
             }
         }
+    }
+    match addon_path("inputmethod/voime.conf") {
+        Some(path) if path.is_file() => {
+            println!(
+                "  FAIL 旧输入法条目仍在 {}，请重新安装 addon 或删除该文件",
+                path.display()
+            );
+            ok = false;
+        }
+        _ => println!("  OK   未注册输入法条目（Shift 不会切换到 Voime）"),
     }
     match &user_config {
         Some(path) if path.is_file() => println!("  OK   用户配置 {}", path.display()),

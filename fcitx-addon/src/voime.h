@@ -37,6 +37,7 @@ private:
     void connectDaemon();
     void bindTarget(fcitx::InputContext *inputContext);
     void clearPreview();
+    void refreshTogglePreview();
     IpcConfig currentConfig() const;
 
     fcitx::Instance *instance_;
@@ -52,6 +53,7 @@ private:
     bool starting_ = false;
     bool recording_ = false;
     bool finalizing_ = false;
+    bool toggleActive_ = false;
     uint32_t holdCode_ = 0;
     uint32_t toggleCode_ = 0;
     uint64_t nextLocalId_ = 1;

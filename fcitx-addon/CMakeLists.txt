@@ -32,8 +32,9 @@ configure_file(voime-addon.conf.in voime.conf @ONLY)
 install(TARGETS voime LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/fcitx5)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/voime.conf
         DESTINATION ${CMAKE_INSTALL_DATADIR}/fcitx5/addon)
-install(FILES inputmethod/voime.conf
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/fcitx5/inputmethod)
+# Older releases installed an input method entry. Voime is now a background
+# addon, so remove that stale file when upgrading.
+install(CODE "file(REMOVE \"${CMAKE_INSTALL_FULL_DATADIR}/fcitx5/inputmethod/voime.conf\")")
 install(FILES icons/voime.svg
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 

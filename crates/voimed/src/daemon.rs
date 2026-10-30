@@ -20,6 +20,7 @@ pub struct Daemon {
     current_segment: Option<u64>,
     next_segment: u64,
     pending_mode: Option<Mode>,
+    pending_stop: bool,
     shutdown: bool,
     fatal: Option<anyhow::Error>,
 }
@@ -35,6 +36,7 @@ impl Daemon {
             current_segment: None,
             next_segment: 1,
             pending_mode: None,
+            pending_stop: false,
             shutdown: false,
             fatal: None,
         }
@@ -118,6 +120,7 @@ impl Daemon {
                             ),
                         },
                     );
+                    self.ipc.disconnect(client_id);
                     return;
                 }
                 if !self.ipc.set_role(client_id, role) {
@@ -128,6 +131,7 @@ impl Daemon {
                             message: "已有 Fcitx 客户端连接".to_string(),
                         },
                     );
+                    self.ipc.disconnect(client_id);
                     return;
                 }
                 if role == Role::Fcitx {
@@ -149,6 +153,9 @@ impl Daemon {
                 }
                 self.state.apply_mode(mode);
                 self.state.hotkey = Some(hotkey);
+                if mode != Mode::Toggle {
+                    self.pending_stop = false;
+                }
                 if self.state.phase == Phase::Idle {
                     self.apply_pipeline_mode();
                 } else {
@@ -203,6 +210,7 @@ impl Daemon {
             return;
         }
         let _ = segment_id;
+        self.pending_stop = false;
         let id = self.allocate_segment();
         self.current_segment = Some(id);
         self.state.phase = Phase::Recording;
@@ -221,14 +229,19 @@ impl Daemon {
     }
 
     fn request_stop(&mut self, client_id: u64, segment_id: u64) {
+        if self.state.phase != Phase::Recording {
+            // Toggle may stop between a Final and the continuation
+            // SegmentStarted; remember it for the next Recording(true).
+            if self.state.mode == Some(Mode::Toggle) {
+                self.pending_stop = true;
+            }
+            return;
+        }
         let Some(current) = self.current_segment else {
             return;
         };
-        if segment_id != 0 && segment_id != current {
+        if segment_id != 0 && segment_id != current && self.state.mode != Some(Mode::Toggle) {
             self.send_error(client_id, ErrorCode::Busy, "segment_id 不匹配");
-            return;
-        }
-        if self.state.phase != Phase::Recording {
             return;
         }
         if let Err(error) = self.pipeline.finish_segment() {
@@ -244,12 +257,16 @@ impl Daemon {
                     self.current_segment = Some(id);
                     self.ipc.broadcast(&ServerMessage::SegmentStarted {
                         segment_id: id,
-                        source: TriggerSource::Continuous,
+                        source: continuation_source(self.state.mode),
                     });
                 }
                 self.state.phase = Phase::Recording;
                 self.state.partial = None;
                 self.broadcast_state();
+                if self.pending_stop {
+                    self.pending_stop = false;
+                    let _ = self.pipeline.finish_segment();
+                }
             }
             PipelineEvent::Recording(false) => {
                 self.state.phase = Phase::Finalizing;
@@ -343,5 +360,35 @@ impl Daemon {
                 message: message.to_string(),
             },
         );
+    }
+}
+
+/// Source used when the pipeline starts a segment without a matching
+/// client-initiated Start. PTT max-duration splits keep Hold, toggle sessions
+/// continue as Toggle, and continuous mode uses Continuous.
+fn continuation_source(mode: Option<Mode>) -> TriggerSource {
+    match mode {
+        Some(Mode::Ptt) => TriggerSource::Hold,
+        Some(Mode::Toggle) => TriggerSource::Toggle,
+        _ => TriggerSource::Continuous,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toggle_continuation_keeps_toggle_source() {
+        assert_eq!(
+            continuation_source(Some(Mode::Toggle)),
+            TriggerSource::Toggle
+        );
+        assert_eq!(continuation_source(Some(Mode::Ptt)), TriggerSource::Hold);
+        assert_eq!(
+            continuation_source(Some(Mode::Continuous)),
+            TriggerSource::Continuous
+        );
+        assert_eq!(continuation_source(None), TriggerSource::Continuous);
     }
 }

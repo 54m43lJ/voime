@@ -82,7 +82,6 @@
 ├── fcitx-addon/
 │   ├── CMakeLists.txt
 │   ├── voime-addon.conf.in
-│   ├── inputmethod/voime.conf
 │   ├── icons/voime.svg
 │   ├── third_party/nlohmann/json.hpp
 │   ├── tests/addon_test.cpp
@@ -129,12 +128,16 @@
     <td>addon 从 <code>~/.config/fcitx5/conf/voime.conf</code> 读取 <code>Mode</code> / <code>Hotkey</code>；通过 <code>Hello</code> / <code>Configure</code> 同步给 daemon；daemon 不解析命令行模式。</td>
   </tr>
   <tr>
+    <td>addon 加载</td>
+    <td>addon 使用 <code>OnDemand=False</code> 随 Fcitx 启动加载；不安装 <code>inputmethod/voime.conf</code>，因此不出现在输入法组，也不会被 Shift / Super+Space 切换选中。</td>
+  </tr>
+  <tr>
     <td>目标输入框</td>
     <td>每个语音段在开始时保存目标 <code>InputContext</code> 的 <code>TrackableObjectReference</code>；最终提交前检查存在且 <code>hasFocus()</code>。</td>
   </tr>
   <tr>
     <td>临时窗口</td>
-    <td>addon 在收到 <code>Partial</code> 时调用 <code>InputPanel::setPreedit</code> 并 <code>updateUserInterface(InputPanel)</code>；Final / 停止 / 空段 / 错误 / 目标丢失 / 断线时清空。</td>
+    <td>addon 在收到 <code>Partial</code> 时调用 <code>InputPanel::setPreedit</code> 并 <code>updateUserInterface(InputPanel)</code>；Toggle 会话在 Final / 空段 / 单段错误后显示空白 preedit 并保留窗口，直到 toggle off；停止 / 目标丢失 / 断线时清空。</td>
   </tr>
   <tr>
     <td>最终提交</td>
@@ -146,7 +149,7 @@
   </tr>
   <tr>
     <td>单段串行</td>
-    <td>同一时刻只有一个语音段处于识别或收尾状态；Recording / Finalizing 期间新的 Start 被忽略。</td>
+    <td>同一时刻只有一个语音段处于识别或收尾状态；Recording / Finalizing 期间新的 Start 被忽略。Toggle 会话可以连续包含多个顺序语音段，段间保持空白临时窗口。</td>
   </tr>
   <tr>
     <td>有界队列</td>
@@ -488,6 +491,7 @@ impl IpcServer {
     pub fn events(&amp;self) -&gt; &amp;Receiver&lt;ServerEvent&gt;;
     pub fn broadcast(&amp;self, message: &amp;ServerMessage);
     pub fn send_to(&amp;self, client_id: u64, message: &amp;ServerMessage);
+    pub fn disconnect(&amp;self, client_id: u64);
     pub fn set_role(&amp;self, client_id: u64, role: Role) -&gt; bool;
     pub fn role(&amp;self, client_id: u64) -&gt; Option&lt;Role&gt;;
     pub fn shutdown(&amp;mut self);
@@ -563,6 +567,7 @@ private:
     void connectDaemon();
     void bindTarget(fcitx::InputContext *inputContext);
     void clearPreview();
+    void refreshTogglePreview();
     IpcConfig currentConfig() const;
     fcitx::Instance *instance_;
     VoimeConfig config_;
@@ -577,11 +582,15 @@ private:
     bool starting_ = false;
     bool recording_ = false;
     bool finalizing_ = false;
+    bool toggleActive_ = false;
     uint32_t holdCode_ = 0;
     uint32_t toggleCode_ = 0;
     uint64_t nextLocalId_ = 1;
     std::string socketPath_;
 };</code></pre>
+<ul class="note">
+  <li>类继承 <code>InputMethodEngineV2</code> 仅为获得 <code>AddonInstance</code> 生命周期；addon 不安装 inputmethod 条目，<code>keyEvent</code> 不参与普通输入。</li>
+</ul>
 
 <h3 id="c4-22">4.22 fcitx-addon/src/config.h, config.cpp <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>enum class Mode { Ptt, Toggle, Continuous };
@@ -600,10 +609,11 @@ FCITX_CONFIGURATION(
 <pre><code>class Preview {
 public:
     void show(fcitx::InputContext *ic, const std::string &amp;partial);
+    void showEmpty(fcitx::InputContext *ic);
     void clear(fcitx::InputContext *ic);
 };</code></pre>
 <ul class="note">
-  <li><code>show</code> 调用 <code>InputPanel::setPreedit</code> 与 <code>InputContext::updateUserInterface</code>；<code>clear</code> 写空 <code>Text</code> 并刷新。</li>
+  <li><code>show</code> 调用 <code>InputPanel::setPreedit</code> 与 <code>InputContext::updateUserInterface</code>；<code>showEmpty</code> 写入单个空格的 preedit 以保留面板；<code>clear</code> 写空 <code>Text</code> 并刷新。</li>
   <li>只写 Fcitx UI preedit，不调用 <code>setClientPreedit</code>。</li>
 </ul>
 
@@ -652,8 +662,7 @@ public:
     └── daemon::Daemon::run(state, pipeline, audio, ipc)
 
 fcitx5
-├── 加载 share/fcitx5/addon/voime.conf
-├── 加载 share/fcitx5/inputmethod/voime.conf
+├── 加载 share/fcitx5/addon/voime.conf（OnDemand=False，后台加载）
 └── VoimeAddon::VoimeAddon(instance)
     ├── VoimeConfig::load(~/.config/fcitx5/conf/voime.conf)
     ├── IpcClient::connect(default_socket)
@@ -664,7 +673,7 @@ voime（可选）
 └── Client::connect(socket)
     └── Snapshot</code></pre>
 <ul class="note">
-  <li><code>voimed</code> 与 Fcitx 的启动顺序不敏感；addon 重连失败时按退避间隔重试。</li>
+  <li><code>voimed</code> 与 Fcitx 的启动顺序不敏感；addon 每 2 s 检查连接，断线后自动重连。</li>
   <li>模型校验、会话创建与音频流在 socket 服务前完成；任一步失败不进入运行态。</li>
   <li>addon 未连接 daemon 时不消费热键；Fcitx 继续正常输入。</li>
 </ul>
@@ -713,6 +722,7 @@ voime（可选）
     └── Worker::drain_queue()</code></pre>
 <ul class="note">
   <li>continuous 由 daemon 的 <code>Mode=continuous</code> 驱动；addon 不参与分段。</li>
+  <li>Toggle 由 addon 的 Start/Stop 驱动；VAD 结束时 worker 立即开始下一个段并继续收集，直到 Stop。</li>
   <li>VAD 与分段器在同一工作线程串行执行，不需要锁。</li>
 </ul>
 
@@ -757,6 +767,7 @@ VoimeAddon::onIpcMessage(Final(segment_id, text))
 <ul class="note">
   <li>提交前先清空临时窗口；<code>commitString</code> 没有返回值，不能确认应用接受文本。</li>
   <li>Fcitx commit filter 会作用在最终文本上；Voime 不二次转换。</li>
+  <li>Toggle 会话在提交后重新写入空白 preedit，保持输入面板窗口到 toggle off；PTT / continuous 仍然关闭窗口。</li>
 </ul>
 
 <h3 id="c5-6">5.6 TUI、控制与退出</h3>

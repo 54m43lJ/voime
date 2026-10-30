@@ -28,6 +28,15 @@ pub const SEGMENT_QUEUE_CAPACITY: usize = 2;
 
 pub const AUDIO_STREAM_ERROR_LIMIT: u32 = 3;
 
+/// Whether the current speech session survives a VAD segment end.
+fn keeps_collecting_after_end(mode: Mode, reason: SegmentEndReason) -> bool {
+    match mode {
+        Mode::Ptt => reason == SegmentEndReason::MaxDuration,
+        Mode::Toggle => true,
+        Mode::Continuous => false,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum PipelineCommand {
     StartSegment,
@@ -371,10 +380,10 @@ impl Worker {
             SegmenterEvent::SpeechEnd { segment, reason } => {
                 self.send(PipelineEvent::Recording(false));
                 match self.mode {
-                    Mode::Ptt | Mode::Toggle => {
+                    Mode::Ptt => {
                         // A long hold is split at max_segment_ms. Keep
                         // collecting so the rest of the hold is not dropped.
-                        let keep_collecting = reason == SegmentEndReason::MaxDuration;
+                        let keep_collecting = keeps_collecting_after_end(Mode::Ptt, reason);
                         self.collecting = false;
                         if self.finalize(segment).is_err() {
                             self.reset_after_segment();
@@ -387,6 +396,20 @@ impl Worker {
                             self.reset_partial_schedule();
                             self.send(PipelineEvent::Recording(true));
                         }
+                    }
+                    Mode::Toggle => {
+                        // Toggle is one long session: VAD splits it into
+                        // segments, but the session stays active until the
+                        // second hotkey press.
+                        self.collecting = true;
+                        if self.finalize(segment).is_err() {
+                            self.reset_after_segment();
+                            self.send(PipelineEvent::SegmentDropped {
+                                reason: "最终识别失败".to_string(),
+                            });
+                        }
+                        self.reset_partial_schedule();
+                        self.send(PipelineEvent::Recording(true));
                     }
                     Mode::Continuous => self.enqueue(segment),
                 }
@@ -630,5 +653,42 @@ impl Worker {
 
     fn samples_for_ms(&self, ms: u64) -> usize {
         ((TARGET_SAMPLE_RATE as u64 * ms) / 1000).max(1) as usize
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toggle_keeps_collecting_after_silence() {
+        assert!(keeps_collecting_after_end(
+            Mode::Toggle,
+            SegmentEndReason::Silence
+        ));
+        assert!(keeps_collecting_after_end(
+            Mode::Toggle,
+            SegmentEndReason::MaxDuration
+        ));
+    }
+
+    #[test]
+    fn ptt_stops_collecting_after_silence_but_survives_max_duration() {
+        assert!(!keeps_collecting_after_end(
+            Mode::Ptt,
+            SegmentEndReason::Silence
+        ));
+        assert!(keeps_collecting_after_end(
+            Mode::Ptt,
+            SegmentEndReason::MaxDuration
+        ));
+    }
+
+    #[test]
+    fn continuous_hands_segments_to_the_queue() {
+        assert!(!keeps_collecting_after_end(
+            Mode::Continuous,
+            SegmentEndReason::Silence
+        ));
     }
 }
