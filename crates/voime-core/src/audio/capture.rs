@@ -111,6 +111,30 @@ pub fn start(
             error_callback,
             None,
         ),
+        cpal::SampleFormat::I32 => device.build_input_stream(
+            &stream_config,
+            move |data: &[i32], _| {
+                let samples = data
+                    .iter()
+                    .map(|&sample| sample as f32 / 2147483648.0)
+                    .collect();
+                send(&tx, sample_rate, channels, samples);
+            },
+            error_callback,
+            None,
+        ),
+        cpal::SampleFormat::U32 => device.build_input_stream(
+            &stream_config,
+            move |data: &[u32], _| {
+                let samples = data
+                    .iter()
+                    .map(|&sample| (sample as f64 - 2147483648.0) as f32 / 2147483648.0)
+                    .collect();
+                send(&tx, sample_rate, channels, samples);
+            },
+            error_callback,
+            None,
+        ),
         other => return Err(AudioError::UnsupportedSampleFormat(other).into()),
     }
     .map_err(AudioError::BuildStream)

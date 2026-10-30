@@ -23,7 +23,7 @@
 </p>
 
 <p>
-<strong>状态：</strong>目标 P3 / P4。以下文件与签名是起草值，待实现，可以根据实际 Windows API 调整；
+<strong>状态：</strong>P3 已实现；TSF（P4）为可选子工程。以下文件与签名与当前源码一致；
 行为契约以 <a href="USER.html">USER</a> 为准。
 </p>
 
@@ -36,11 +36,12 @@
 │   ├── <a href="#c4-1">main.rs</a>              进程入口、事件循环、单实例
 │   ├── <a href="#c4-2">config.rs</a>            Mode / Hotkey / 设置持久化
 │   ├── <a href="#c4-3">ipc.rs</a>               命名管道客户端 + ServerMessage 分发
-│   ├── <a href="#c4-4">hotkey.rs</a>            RegisterHotKey / 低级键盘钩子
+│   ├── <a href="#c4-4">hotkey.rs</a>            RegisterHotKey / GetAsyncKeyState key-up
 │   ├── <a href="#c4-5">target.rs</a>            前台窗口 + UIA 焦点元素
 │   ├── <a href="#c4-6">preview.rs</a>           无激活浮层
 │   ├── <a href="#c4-7">commit.rs</a>            UTF-8 → UTF-16 + SendInput
-│   └── <a href="#c4-8">tray.rs</a>              托盘图标与菜单
+│   ├── <a href="#c4-8">tray.rs</a>              托盘图标与菜单
+│   └── <a href="#c4-10">settings.rs</a>          设置窗口（模式 / 热键 / daemon）
 └── tsf/                          可选 P4
     ├── CMakeLists.txt
     └── src/
@@ -48,12 +49,8 @@
         ├── <a href="#c4-9">key_sink.cpp</a>      ITfKeyEventSink
         └── <a href="#c4-9">edit_session.cpp</a>  ITfEditSession / ITfRange</code></pre>
 <ul class="note">
-  <li>文件划分是起草结构；实现时可按平台模块拆分，但前端不得依赖 <code>voime-core</code>。</li>
-  <li><code>tsf/</code> 是可选子工程，不进入 Rust workspace；不启用 TSF 时可以不构建。</li>
-</ul>
-
-<ul class="note">
-  <li>本模块尚未实现；文件树描述目标源码结构。</li>
+  <li>文件划分与当前 Rust 源码一致；前端不依赖 <code>voime-core</code>。</li>
+  <li><code>tsf/</code> 是可选子工程，不进入 Rust workspace；当前分支未包含，不启用 TSF 时无需构建。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -178,6 +175,27 @@ class VoimeEditSession : public ITfEditSession {
 
 // COM 注册：CLSID、InprocServer32、x86 / x64 DLL。</code></pre>
 
+<h3 id="c4-10">4.10 settings.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum SettingsAction {
+    Save(Config),
+    StartDaemon,
+    StopDaemon,
+    RunDoctor,
+}
+
+pub fn open(config: Config, status: FrontendStatus,
+            sender: Sender&lt;SettingsAction&gt;,
+            open_flag: Arc&lt;AtomicBool&gt;) -&gt; anyhow::Result&lt;()&gt;;
+pub fn show_error(error: &amp;anyhow::Error);
+pub fn show_text(title: &amp;str, text: &amp;str);
+
+fn run_window(config: Config, status: FrontendStatus,
+              sender: Sender&lt;SettingsAction&gt;) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+<ul class="note">
+  <li>设置窗口在独立线程运行；保存、daemon 启停与诊断通过有界通道回到主线程执行。</li>
+  <li>热键在保存前由 <code>hotkey::parse</code> 校验；注册冲突由主线程返回并提示。</li>
+</ul>
+
 <h2 id="c5">5. Call stack tree</h2>
 <p><a href="#top">↑</a></p>
 
@@ -186,11 +204,18 @@ class VoimeEditSession : public ITfEditSession {
 └── frontends_windows::main()
     ├── ensure_single_instance()
     ├── config::load()
-    ├── IpcClient::connect(&amp;Endpoint::NamedPipe(name))
-    ├── IpcClient::snapshot()
-    ├── HotkeyHandle::register(config.hotkey)
-    ├── Tray::create()
-    └── run(frontend) → Windows 消息循环</code></pre>
+    └── run(Frontend::new(config))
+        ├── Tray::create(&amp;mut frontend)
+        ├── frontend.attach_window(tray.hwnd())
+        ├── Overlay::create()
+        ├── frontend.try_connect()
+        │   ├── IpcClient::connect(&amp;Endpoint::NamedPipe(name))
+        │   ├── IpcClient::send(Hello { role: Frontend, config })
+        │   ├── IpcClient::snapshot()
+        │   ├── frontend.sync_hotkey()
+        │   └── ipc::dispatch(Snapshot)
+        ├── frontend.start_daemon()（连接失败时）
+        └── Windows 消息循环</code></pre>
 
 <h3 id="c5-2">5.2 热键到提交</h3>
 <pre><code>热键事件
@@ -245,6 +270,23 @@ Final
     ├── ITfContext::RequestEditSession(VoimeEditSession)
     └── VoimeEditSession::DoEditSession(ec)
         └── ITfRange::SetText(ec, text)</code></pre>
+
+<h3 id="c5-6">5.6 设置窗口与 daemon 启停</h3>
+<pre><code>Tray::poll_events(ShowSettings) / 左键托盘
+└── frontend.open_settings()
+    ├── 判断 settings_open
+    └── settings::open(config, status, sender, open_flag)
+        └── settings thread
+            ├── CreateWindowExW(VoimeSettings)
+            ├── 控件：Mode / Hotkey / Overlay / StartAtLogin
+            └── 判断 保存 → SettingsAction::Save(Config)
+
+frontend.tick()
+└── settings_rx.try_recv()
+    ├── 判断 Save → frontend.apply_settings(config)
+    ├── 判断 StartDaemon → frontend.start_daemon()
+    ├── 判断 StopDaemon → frontend.stop_daemon()
+    └── 判断 RunDoctor → frontend.run_doctor()</code></pre>
 
 </body>
 </html>

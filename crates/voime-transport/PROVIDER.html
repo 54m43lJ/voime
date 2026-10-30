@@ -52,7 +52,7 @@
   <tr><td>端点命名</td><td>Unix 使用文件系统路径；Windows 使用 <code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td></tr>
   <tr><td>权限</td><td>Unix 父目录 0700、socket 0600；Windows 当前用户 DACL + 拒绝远程客户端。</td></tr>
   <tr><td>陈旧端点</td><td>Unix 启动时尝试连接；失败则删除旧 socket。Windows 管道句柄关闭即消失；bind 前检查已有 daemon。</td></tr>
-  <tr><td>阻塞与取消</td><td>accept / read 可阻塞；shutdown 必须能取消。Unix 使用非阻塞 + 短睡眠或可中断 accept；Windows 使用 overlapped / <code>CancelIoEx</code>。</td></tr>
+  <tr><td>阻塞与取消</td><td>accept / read 可阻塞；shutdown 必须能取消。Unix 使用非阻塞 + 短睡眠或可中断 accept；Windows accept 使用 <code>CancelSynchronousIo</code>，stream read 使用 <code>PeekNamedPipe</code> 轮询 + 取消标志，避免同一管道的挂起读阻塞写。</td></tr>
   <tr><td>读写分离</td><td>Unix <code>try_clone</code> 复制 fd；Windows <code>DuplicateHandle</code>。</td></tr>
   <tr><td>关闭顺序</td><td>先停止 accept，再关闭所有 stream，最后删除端点。</td></tr>
   <tr><td>错误映射</td><td>统一转 <code>io::Error</code>，保留路径 / 管道名 / Win32 错误码上下文。</td></tr>

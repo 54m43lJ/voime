@@ -53,6 +53,7 @@
   <tr><td>平台隔离</td><td><code>lib.rs</code> 只做 <code>cfg</code> 分发；Unix / Windows 模块互不引用。</td></tr>
   <tr><td>句柄所有权</td><td>listener 拥有绑定端点；stream 拥有连接；drop 时释放资源。Unix bind 负责删除自己的 socket 文件，但不能删除其他 daemon 的端点。</td></tr>
   <tr><td>关闭唤醒</td><td>listener 的内部句柄 / 原子标志必须支持跨线程取消，所以 <code>shutdown(&amp;self)</code>。</td></tr>
+  <tr><td>Windows 读写</td><td>同步命名管道的挂起 <code>ReadFile</code> 会阻塞同连接的写；read 先用 <code>PeekNamedPipe</code> 轮询可用字节，再同步读取。shutdown 设置共享取消标志并调用 <code>CancelIoEx</code>。</td></tr>
   <tr><td>错误上下文</td><td>所有 <code>io::Error</code> 在边界处附端点路径 / 管道名；上层不解析 Win32 错误码。</td></tr>
   <tr><td>安全默认</td><td>权限收紧而不是放宽；不提供“允许其他用户连接”的开关。</td></tr>
   <tr><td>测试</td><td>内存 transport 仅用于跨平台契约测试；不进入生产构建。</td></tr>

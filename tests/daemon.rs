@@ -2,10 +2,22 @@ use voime_ipc::{ClientMessage, Role, PROTOCOL_VERSION};
 use voime_transport::{connect, Endpoint};
 use voimed::ipc_server::{daemon_running, IpcServer, ServerEvent};
 
+#[cfg(windows)]
+fn test_endpoint(label: &str) -> Endpoint {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    Endpoint::from_name(format!("voime-test-{label}-{}-{id}", std::process::id()))
+}
+
 #[test]
 fn daemon_running_detects_live_endpoint() {
+    #[cfg(unix)]
     let directory = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
     let endpoint = Endpoint::from_path(directory.path().join("voimed.sock"));
+    #[cfg(windows)]
+    let endpoint = test_endpoint("running");
     assert!(!daemon_running(&endpoint));
     let _server = IpcServer::bind(&endpoint).unwrap();
     assert!(daemon_running(&endpoint));
@@ -13,8 +25,12 @@ fn daemon_running_detects_live_endpoint() {
 
 #[test]
 fn disconnect_event_carries_frontend_role_for_daemon_cleanup() {
+    #[cfg(unix)]
     let directory = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
     let endpoint = Endpoint::from_path(directory.path().join("voimed.sock"));
+    #[cfg(windows)]
+    let endpoint = test_endpoint("disconnect");
     let server = IpcServer::bind(&endpoint).unwrap();
     let mut client = connect(&endpoint).unwrap();
     let outer_id = loop {

@@ -194,4 +194,139 @@ mod tests {
             Some("voimed.sock")
         );
     }
+
+    #[cfg(windows)]
+    fn test_pipe_name(label: &str) -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        format!("voime-test-{}-{}-{id}", label, std::process::id())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_bind_connect_read_write_and_shutdown() {
+        let name = test_pipe_name("io");
+        let endpoint = Endpoint::from_name(&name);
+        let listener = bind(&endpoint).expect("bind");
+        let client = connect(&endpoint).expect("connect");
+        let mut server = listener.accept().expect("accept");
+
+        let mut client = client;
+        client.write_all(b"hello\n").unwrap();
+        let mut line = String::new();
+        BufReader::new(&mut server).read_line(&mut line).unwrap();
+        assert_eq!(line, "hello\n");
+
+        let mut clone = server.try_clone().unwrap();
+        clone.shutdown().unwrap();
+        assert_eq!(clone.read(&mut [0u8; 1]).unwrap(), 0);
+
+        listener.shutdown().unwrap();
+        assert!(listener.accept().is_err());
+        assert!(connect(&endpoint).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_full_duplex_while_both_sides_read() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let name = test_pipe_name("duplex");
+        let endpoint = Endpoint::from_name(&name);
+        let listener = bind(&endpoint).unwrap();
+        let client = connect(&endpoint).unwrap();
+        let mut server = listener.accept().unwrap();
+        let mut client = client;
+
+        let server_reader = server.try_clone().unwrap();
+        let client_reader = client.try_clone().unwrap();
+        let (server_tx, server_rx) = mpsc::channel();
+        let (client_tx, client_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            BufReader::new(server_reader).read_line(&mut line).unwrap();
+            let _ = server_tx.send(line);
+        });
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            BufReader::new(client_reader).read_line(&mut line).unwrap();
+            let _ = client_tx.send(line);
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
+        let (write_tx, write_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = write_tx.send(server.write_all(b"pong\n"));
+        });
+        assert!(write_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .is_ok());
+        client.write_all(b"ping\n").unwrap();
+        assert_eq!(
+            client_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            "pong\n"
+        );
+        assert_eq!(
+            server_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            "ping\n"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shutdown_wakes_blocked_accept() {
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let name = test_pipe_name("wake");
+        let endpoint = Endpoint::from_name(&name);
+        let listener: Arc<dyn Listener> = Arc::from(bind(&endpoint).unwrap());
+        let accepting = Arc::clone(&listener);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let error = accepting.accept().err();
+            let _ = tx.send(error.is_some());
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        listener.shutdown().unwrap();
+        assert!(rx.recv_timeout(Duration::from_secs(2)).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_rejects_a_live_endpoint() {
+        let name = test_pipe_name("live");
+        let endpoint = Endpoint::from_name(&name);
+        let listener = bind(&endpoint).unwrap();
+        let error = match bind(&endpoint) {
+            Ok(_) => panic!("second bind should fail"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        drop(listener);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_default_endpoint_uses_pipe_namespace() {
+        let endpoint = default_endpoint();
+        let text = endpoint.to_string();
+        assert!(text.starts_with(r"\\.\pipe\voime-"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_endpoint_accepts_short_and_full_names() {
+        assert_eq!(
+            Endpoint::from_name("voime-test").to_string(),
+            r"\\.\pipe\voime-test"
+        );
+        assert_eq!(
+            Endpoint::parse(r"\\.\pipe\voime-test").unwrap().to_string(),
+            r"\\.\pipe\voime-test"
+        );
+    }
 }

@@ -1,12 +1,14 @@
-use std::ffi::c_void;
 use std::io::{self, Read, Write};
 use std::ptr::{null, null_mut};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, LocalFree, DUPLICATE_SAME_ACCESS, ERROR_ACCESS_DENIED,
-    ERROR_BROKEN_PIPE, ERROR_OPERATION_ABORTED, ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED,
-    GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, DuplicateHandle, GetLastError, LocalFree, DUPLICATE_SAME_ACCESS,
+    ERROR_ACCESS_DENIED, ERROR_BROKEN_PIPE, ERROR_INVALID_HANDLE, ERROR_NO_DATA,
+    ERROR_OPERATION_ABORTED, ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ,
+    GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -17,15 +19,15 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_SHARE_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
 };
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PeekNamedPipe, PIPE_READMODE_BYTE,
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::System::Threading::{
-    DuplicateHandle, GetCurrentProcess, GetCurrentProcessId,
+    GetCurrentProcess, GetCurrentProcessId, GetCurrentThread,
 };
 use windows_sys::Win32::System::WindowsProgramming::GetUserNameW;
-use windows_sys::Win32::System::IO::CancelIoEx;
+use windows_sys::Win32::System::IO::{CancelIoEx, CancelSynchronousIo};
 
 use crate::{Endpoint, Listener, Stream};
 
@@ -34,6 +36,7 @@ const INVALID: isize = 0;
 struct ListenerState {
     handle: isize,
     connecting: isize,
+    connecting_thread: isize,
     cancelled: bool,
 }
 
@@ -44,6 +47,7 @@ pub struct NamedPipeListener {
 
 struct Shared {
     handles: Mutex<Vec<isize>>,
+    cancelled: AtomicBool,
 }
 
 pub struct NamedPipeStream {
@@ -61,6 +65,7 @@ impl Listener for NamedPipeListener {
             let handle = state.handle;
             state.handle = INVALID;
             state.connecting = handle;
+            state.connecting_thread = duplicate_current_thread();
             handle
         };
 
@@ -73,6 +78,12 @@ impl Listener for NamedPipeListener {
 
         let mut state = self.state.lock().expect("pipe listener poisoned");
         state.connecting = INVALID;
+        if state.connecting_thread != INVALID {
+            unsafe {
+                CloseHandle(state.connecting_thread as HANDLE);
+            }
+            state.connecting_thread = INVALID;
+        }
         if (connected == 0 && error != ERROR_PIPE_CONNECTED) || state.cancelled {
             drop(state);
             unsafe {
@@ -100,16 +111,20 @@ impl Listener for NamedPipeListener {
     }
 
     fn shutdown(&self) -> io::Result<()> {
-        let (current, connecting) = {
+        let (current, connecting, thread) = {
             let mut state = self.state.lock().expect("pipe listener poisoned");
             state.cancelled = true;
             let current = state.handle;
             state.handle = INVALID;
             let connecting = state.connecting;
             state.connecting = INVALID;
-            (current, connecting)
+            let thread = state.connecting_thread;
+            (current, connecting, thread)
         };
         unsafe {
+            if thread != INVALID {
+                CancelSynchronousIo(thread as HANDLE);
+            }
             if connecting != INVALID {
                 CancelIoEx(connecting as HANDLE, null());
             }
@@ -132,6 +147,7 @@ impl NamedPipeStream {
     fn new(handle: isize) -> Self {
         let shared = Arc::new(Shared {
             handles: Mutex::new(vec![handle]),
+            cancelled: AtomicBool::new(false),
         });
         Self { handle, shared }
     }
@@ -168,6 +184,7 @@ impl Stream for NamedPipeStream {
     }
 
     fn shutdown(&mut self) -> io::Result<()> {
+        self.shared.cancelled.store(true, Ordering::SeqCst);
         let handles = self
             .shared
             .handles
@@ -191,24 +208,51 @@ impl Read for NamedPipeStream {
         if buffer.is_empty() {
             return Ok(0);
         }
-        let mut read = 0u32;
-        let result = unsafe {
-            ReadFile(
-                self.handle as HANDLE,
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
-                &mut read,
-                null_mut(),
-            )
-        };
-        if result == 0 {
-            let error = unsafe { GetLastError() };
-            if is_eof(error) {
+        loop {
+            if self.shared.cancelled.load(Ordering::Relaxed) {
                 return Ok(0);
             }
-            return Err(pipe_error("ReadFile", &pipe_name(self.handle), error));
+            let mut available = 0u32;
+            let result = unsafe {
+                PeekNamedPipe(
+                    self.handle as HANDLE,
+                    null_mut(),
+                    0,
+                    null_mut(),
+                    &mut available,
+                    null_mut(),
+                )
+            };
+            if result == 0 {
+                let error = unsafe { GetLastError() };
+                if is_eof(error) {
+                    return Ok(0);
+                }
+                return Err(pipe_error("PeekNamedPipe", &pipe_name(self.handle), error));
+            }
+            if available == 0 {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            let mut read = 0u32;
+            let result = unsafe {
+                ReadFile(
+                    self.handle as HANDLE,
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                    &mut read,
+                    null_mut(),
+                )
+            };
+            if result == 0 {
+                let error = unsafe { GetLastError() };
+                if is_eof(error) {
+                    return Ok(0);
+                }
+                return Err(pipe_error("ReadFile", &pipe_name(self.handle), error));
+            }
+            return Ok(read as usize);
         }
-        Ok(read as usize)
     }
 }
 
@@ -259,6 +303,7 @@ pub fn bind(name: &str) -> io::Result<NamedPipeListener> {
         state: Mutex::new(ListenerState {
             handle: handle as isize,
             connecting: INVALID,
+            connecting_thread: INVALID,
             cancelled: false,
         }),
     })
@@ -294,6 +339,27 @@ pub(crate) fn normalize_name(name: &str) -> String {
         name.to_string()
     } else {
         format!(r"\\.\pipe\{name}")
+    }
+}
+
+fn duplicate_current_thread() -> isize {
+    let process = unsafe { GetCurrentProcess() };
+    let mut thread: HANDLE = null_mut();
+    let result = unsafe {
+        DuplicateHandle(
+            process,
+            GetCurrentThread(),
+            process,
+            &mut thread,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if result == 0 {
+        INVALID
+    } else {
+        thread as isize
     }
 }
 
@@ -369,7 +435,7 @@ fn create_pipe(name: &str, first_instance: bool) -> io::Result<HANDLE> {
         None
     };
     unsafe {
-        LocalFree(descriptor as *mut c_void);
+        LocalFree(descriptor);
     }
 
     if let Some(error) = error {
@@ -387,7 +453,11 @@ fn create_pipe(name: &str, first_instance: bool) -> io::Result<HANDLE> {
 fn is_eof(error: u32) -> bool {
     matches!(
         error,
-        ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED | ERROR_OPERATION_ABORTED
+        ERROR_BROKEN_PIPE
+            | ERROR_PIPE_NOT_CONNECTED
+            | ERROR_OPERATION_ABORTED
+            | ERROR_INVALID_HANDLE
+            | ERROR_NO_DATA
     )
 }
 

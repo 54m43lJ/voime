@@ -29,7 +29,7 @@
 
 <table>
   <tr><th>项目</th><th>要求</th></tr>
-  <tr><td>平台</td><td>Linux + Fcitx5（当前验收平台）；Windows 10 / 11 x64（目标 P2 / P3）。</td></tr>
+  <tr><td>平台</td><td>Linux + Fcitx5（当前验收平台）；Windows 10 / 11 x64（P2 / P3 已实现）。</td></tr>
   <tr><td>Fcitx5</td><td>≥ 5.1.23，运行中；<code>fcitx5-configtool</code> 用于配置 <code>Mode</code> / <code>Hotkey</code>。</td></tr>
   <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）；首次构建需要网络下载 crate 与 ONNX Runtime。</td></tr>
   <tr><td>Linux 构建依赖</td><td>ALSA 开发头文件；Arch：<code>alsa-lib</code>；Debian / Ubuntu：<code>libasound2-dev</code>。</td></tr>
@@ -51,7 +51,7 @@ cargo test -p voime-core -p voime-ipc -p voime-transport -p voimed -p voime
 cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build/fcitx
 
-# Windows 前端（目标 P3）
+# Windows 前端（P3）
 cd frontends/windows
 cargo build --release
 
@@ -175,6 +175,32 @@ voime</code></pre>
   <li>不安装 systemd 时，先手动启动 <code>~/.local/bin/voimed</code>，再启动 <code>voime</code> 或 Fcitx。</li>
 </ul>
 
+<h3 id="b3-6">3.6 Windows 从源码安装</h3>
+<p><a href="#top">↑</a></p>
+
+<pre><code># 每用户安装：构建 voimed / voime / voime-tray，写入登录启动，安装模型
+powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
+
+# 只安装二进制
+powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoModels -NoStartup
+
+# 启动托盘 / 查看状态
+"%LOCALAPPDATA%\Programs\Voime\voime-tray.exe"
+"%LOCALAPPDATA%\Programs\Voime\voime.exe" ctl status
+"%LOCALAPPDATA%\Programs\Voime\voime.exe" doctor</code></pre>
+
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>前缀</td><td>默认 <code>%LOCALAPPDATA%\Programs\Voime</code>；<code>-Prefix</code> 可覆盖。</td></tr>
+  <tr><td>登录启动</td><td>写入 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>；<code>-NoStartup</code> 跳过。</td></tr>
+  <tr><td>模型</td><td>默认调用 <code>scripts/install_models.ps1</code>；<code>-NoModels</code> 跳过。</td></tr>
+  <tr><td>卸载</td><td><code>packaging/windows/uninstall.ps1</code>；<code>-RemoveSettings</code> / <code>-RemoveModels</code> 按需删除配置与模型。</td></tr>
+</table>
+<ul class="note">
+  <li>Windows 不使用 Session 0 服务；托盘负责拉起 <code>voimed.exe</code>，并按登录会话隔离命名管道。</li>
+  <li>TSF（P4）为可选阶段；当前分支不构建或注册 TSF DLL。</li>
+</ul>
+
 <h2 id="b4">4. 安装模型</h2>
 <p><a href="#top">↑</a></p>
 
@@ -183,11 +209,15 @@ scripts/install_models.sh
 
 # 指定模型目录 / 本地官方包
 scripts/install_models.sh --model-dir /path/to/models
-scripts/install_models.sh --source-dir /path/to/official/weights</code></pre>
+scripts/install_models.sh --source-dir /path/to/official/weights
+
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1
+powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -ModelDir D:\voime\models</code></pre>
 
 <table>
   <tr><th>行为</th><th>契约</th></tr>
-  <tr><td>默认目录</td><td>Linux：<code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）；Windows 目标：<code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
+  <tr><td>默认目录</td><td>Linux：<code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）；Windows：<code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
   <tr><td>ASR</td><td>FireRedASR2-CTC int8：官方 <code>.tar.bz2</code>，解出 <code>asr/model.int8.onnx</code> 与 <code>asr/tokens.txt</code>。</td></tr>
   <tr><td>VAD / Punc</td><td>FireRedVAD 与 FireRedPunc 的 ONNX、词表、标签；由安装脚本下载 / 导出并校验。</td></tr>
   <tr><td>Manifest</td><td>schema 2；ASR <code>kind = "fire-red-ctc"</code>；<code>max_segment_ms = 30000</code>；SHA-256 写入清单。</td></tr>
@@ -217,7 +247,13 @@ fcitx5-configtool
 # 4. 可选 TUI / 控制 / 诊断
 voime
 voime ctl status
-voime doctor</code></pre>
+voime doctor
+
+# Windows：托盘负责拉起 daemon，也可手动启动
+"%LOCALAPPDATA%\Programs\Voime\voime-tray.exe"
+"%LOCALAPPDATA%\Programs\Voime\voimed.exe" --verbose
+"%LOCALAPPDATA%\Programs\Voime\voime.exe" ctl status
+"%LOCALAPPDATA%\Programs\Voime\voime.exe" doctor</code></pre>
 
 <table>
   <tr><th>现象</th><th>处理</th></tr>
@@ -234,6 +270,7 @@ voime doctor</code></pre>
   <li><code>scripts/install_voimed.sh</code> 生成 <code>~/.config/systemd/user/voime.service</code>，并把 <code>ExecStart</code> 替换为实际 <code>$BINDIR/voimed</code>。</li>
   <li><code>voime doctor</code> 固定检查默认模型目录与 <code>/usr</code>、<code>/usr/local</code> 下的 addon；自定义前缀或 <code>--model-dir</code> 部署需手工确认。</li>
   <li>TUI 的 <code>q</code> / <code>Ctrl+C</code> 只 detach；停止 daemon 使用 <code>voime ctl quit</code> 或 systemd。</li>
+  <li>Windows 不使用 Session 0 服务；命名管道按当前会话与用户隔离，托盘负责启动与重连 daemon。</li>
 </ul>
 
 <h2 id="b6">6. 测试与验收</h2>
@@ -244,14 +281,20 @@ cargo clippy --all-targets
 cargo fmt --all --check
 
 cmake --build build/fcitx
-ctest --test-dir build/fcitx --output-on-failure</code></pre>
+ctest --test-dir build/fcitx --output-on-failure
+
+# Windows
+cargo test --workspace
+cargo test --manifest-path frontends\windows\Cargo.toml
+cargo clippy --workspace --all-targets
+cargo clippy --manifest-path frontends\windows\Cargo.toml --all-targets</code></pre>
 
 <ul class="note">
   <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长；<code>tests/ipc.rs</code> 覆盖握手 / 角色 / Mode / framing；<code>tests/state.rs</code> 覆盖快照默认值、清空历史与 status；<code>tests/daemon.rs</code> 覆盖 socket 存活与断线角色；<code>tests/asr_ctc.rs</code> 覆盖 CMVN / token id / greedy；10–60 s 真实解码仅在设置 <code>VOIME_CTC_MODEL_DIR</code> 时执行。</li>
   <li><code>frontends/fcitx/tests</code> 覆盖 mode / 热键字符串 / IPC 枚举 / target 空引用；不覆盖真实 Fcitx keymatch 或 preview 渲染。</li>
   <li>RTF 验收参考（2 threads）：10 s ≤ 1.0 s、20 s ≤ 2.0 s、30 s ≤ 3.0 s。</li>
   <li>手工验收需同时在原生 Wayland、XWayland / XIM 与支持 text-input 的终端中测试热键、临时窗口与提交；Toggle 无语音时应出现空白窗口并保持到 toggle off 或目标失焦。</li>
-  <li>Windows 验收矩阵见 <a href="WINDOWS.html#w7-2">WINDOWS §7.2</a>；前端实现后按该矩阵执行。</li>
+  <li>Windows 验收矩阵见 <a href="WINDOWS.html#w7-2">WINDOWS §7.2</a>；<code>frontends/windows</code> 单测覆盖热键解析、配置、UTF-16 分块、UIA 目标标识与命名管道客户端握手。</li>
 </ul>
 
 <h2 id="b7">7. 发布</h2>
@@ -264,12 +307,17 @@ cmake --build build/fcitx
 target/release/voimed --help
 target/release/voime --help
 target/release/voime doctor
-scripts/install_models.sh</code></pre>
+scripts/install_models.sh
+
+# Windows
+cargo build --release -p voimed -p voime
+cargo build --release --manifest-path frontends\windows\Cargo.toml
+powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoBuild</code></pre>
 
 <table>
   <tr><th>平台</th><th>产物</th></tr>
   <tr><td>Linux</td><td><code>voimed</code>、<code>voime</code>、<code>voime.so</code>、addon 描述文件、systemd unit、模型安装脚本</td></tr>
-  <tr><td>Windows（目标）</td><td><code>voimed.exe</code>、<code>voime.exe</code>、<code>voime-tray.exe</code>、<code>onnxruntime.dll</code>、安装器、登录启动项、可选 TSF DLL、模型下载 / 校验</td></tr>
+  <tr><td>Windows</td><td><code>voimed.exe</code>、<code>voime.exe</code>、<code>voime-tray.exe</code>、安装 / 卸载脚本、登录启动项、模型下载 / 校验；<code>onnxruntime</code> 当前静态链接，动态链接构建时附带 <code>onnxruntime.dll</code>；TSF DLL 为可选 P4</td></tr>
   <tr><td>共享</td><td>模型 manifest、模型包、协议金样、文档</td></tr>
 </table>
 <ul class="note">
@@ -287,7 +335,7 @@ scripts/install_models.sh</code></pre>
   <tr><td>升级 Voime（Linux）</td><td>停止 daemon；重新运行 <code>scripts/install_voimed.sh</code> / <code>scripts/install_voime.sh</code>；重新安装 addon 后重启 daemon 与 Fcitx。</td></tr>
   <tr><td>配置迁移</td><td>旧版本无后缀的 <code>~/.config/fcitx5/conf/voime</code> 会在 addon 启动时迁移到 <code>voime.conf</code>，然后删除旧文件。</td></tr>
   <tr><td>卸载（Linux）</td><td><code>systemctl --user disable --now voime.service</code>；删除 addon 描述文件、<code>voime.so</code>、<code>~/.local/bin/voimed</code>、<code>~/.local/bin/voime</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录按需保留或删除。</td></tr>
-  <tr><td>升级 / 卸载（Windows）</td><td>目标流程见 <a href="frontends/windows/BUILD.html">windows BUILD</a>：停止前端与 daemon、替换二进制、按需重新注册 TSF、保留或删除模型目录。</td></tr>
+  <tr><td>升级 / 卸载（Windows）</td><td>重新运行 <code>packaging/windows/install.ps1</code> 覆盖二进制；卸载运行 <code>uninstall.ps1</code>，按需附加 <code>-RemoveSettings</code> / <code>-RemoveModels</code>。TSF 若启用需重新注册。</td></tr>
   <tr><td>停止顺序</td><td>先停止 daemon，再重启 / 关闭平台前端；卸载后宿主不保留 Voime 条目。</td></tr>
 </table>
 

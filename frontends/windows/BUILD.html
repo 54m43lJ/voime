@@ -24,12 +24,8 @@
 </p>
 
 <p>
-<strong>状态：</strong>目标 P3（Rust 托盘）与可选 P4（TSF）。以下命令在组件落地后生效；
-当前仓库尚未包含 <code>frontends/windows/Cargo.toml</code> 与 <code>tsf/</code>。
-</p>
-
-<p>
-本模块尚未实现；以下命令是目标构建流程。
+<strong>状态：</strong>P3（Rust 托盘）已实现；P4（TSF）为可选阶段，当前分支未包含 <code>tsf/</code>。
+以下命令在 Windows MSVC 工具链下执行。
 </p>
 
 <h2 id="b1">1. 环境</h2>
@@ -54,17 +50,17 @@ cargo build --release
 # 共享 crate + daemon / CLI（在仓库根）
 cargo build --release -p voimed -p voime
 
-# 可选 TSF（P4）
-cmake -S frontends/windows/tsf -B build/tsf-x64 -A x64
-cmake -S frontends/windows/tsf -B build/tsf-x86 -A Win32
-cmake --build build/tsf-x64 --config Release
-cmake --build build/tsf-x86 --config Release</code></pre>
+# 可选 TSF（P4，当前分支未包含 tsf/）
+# cmake -S frontends/windows/tsf -B build/tsf-x64 -A x64
+# cmake -S frontends/windows/tsf -B build/tsf-x86 -A Win32
+# cmake --build build/tsf-x64 --config Release
+# cmake --build build/tsf-x86 --config Release</code></pre>
 
 <table>
   <tr><th>产物</th><th>说明</th></tr>
   <tr><td><code>voime-tray.exe</code></td><td>托盘 / 热键 / 目标 / 浮层 / SendInput。</td></tr>
   <tr><td><code>voimed.exe</code> / <code>voime.exe</code></td><td>由根 workspace 构建；前端通过命名管道连接。</td></tr>
-  <tr><td><code>onnxruntime.dll</code></td><td>随 daemon 发布；前端不链接。</td></tr>
+  <tr><td><code>onnxruntime</code></td><td>当前 <code>ort</code> 预编译包在 Windows 静态链接；如切换为动态链接，随 daemon 分发 <code>onnxruntime.dll</code>。前端不链接。</td></tr>
   <tr><td>TSF DLL（可选）</td><td>x86 / x64 两份；COM 注册后由目标应用加载。</td></tr>
 </table>
 <ul class="note">
@@ -75,19 +71,25 @@ cmake --build build/tsf-x86 --config Release</code></pre>
 <h2 id="b3">3. 安装与启动</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code># 每用户安装（目标流程）
-voime-setup.exe
+<pre><code># 每用户安装：构建、复制二进制、登录启动、安装模型
+powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 
-# 登录启动：当前用户 Startup / 计划任务
-# 托盘拉起 daemon：voimed.exe --model-dir %LOCALAPPDATA%\voime\models</code></pre>
+# 跳过构建 / 模型 / 登录启动
+powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoBuild -NoModels -NoStartup
+
+# 单独安装模型
+powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -ModelDir "$env:LOCALAPPDATA\voime\models"
+
+# 卸载（可选删除设置与模型）
+powershell -ExecutionPolicy Bypass -File packaging\windows\uninstall.ps1 -RemoveSettings -RemoveModels</code></pre>
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
-  <tr><td>安装</td><td>每用户安装；不要求管理员，除非启用 TSF 注册。</td></tr>
-  <tr><td>登录启动</td><td>当前用户登录后启动托盘；托盘负责拉起 daemon。</td></tr>
-  <tr><td>模型</td><td><code>%LOCALAPPDATA%\voime\models</code>；由根模型安装流程生成。</td></tr>
-  <tr><td>TSF 注册</td><td>可选阶段；COM / TSF profile 注册通常需要管理员，按用户启用。</td></tr>
-  <tr><td>卸载</td><td>停止托盘与 daemon；删除二进制、登录启动项、TSF 注册与按需保留的模型目录。</td></tr>
+  <tr><td>安装</td><td>每用户安装到 <code>%LOCALAPPDATA%\Programs\Voime</code>；不要求管理员，除非启用 TSF 注册。</td></tr>
+  <tr><td>登录启动</td><td>写入 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>；登录后启动托盘；托盘负责拉起 daemon。</td></tr>
+  <tr><td>模型</td><td><code>%LOCALAPPDATA%\voime\models</code>；由 <code>scripts/install_models.ps1</code> 生成。</td></tr>
+  <tr><td>TSF 注册</td><td>可选 P4；COM / TSF profile 注册通常需要管理员，按用户启用。</td></tr>
+  <tr><td>卸载</td><td>停止托盘与 daemon；删除安装目录与登录启动项；<code>-RemoveSettings</code> / <code>-RemoveModels</code> 按需删除配置与模型。</td></tr>
 </table>
 <ul class="note">
   <li>不要把 daemon 装成 Session 0 服务：无法可靠访问交互用户麦克风，也破坏隐私边界。</li>
@@ -106,9 +108,9 @@ cargo fmt --check
 # 共享 crate（仓库根）
 cargo test -p voime-ipc -p voime-transport
 
-# TSF（可选）
-cmake --build build/tsf-x64 --config Release
-ctest --test-dir build/tsf-x64 -C Release --output-on-failure</code></pre>
+# TSF（可选 P4，当前分支未包含）
+# cmake --build build/tsf-x64 --config Release
+# ctest --test-dir build/tsf-x64 -C Release --output-on-failure</code></pre>
 
 <table>
   <tr><th>类别</th><th>用例</th></tr>
@@ -126,7 +128,7 @@ ctest --test-dir build/tsf-x64 -C Release --output-on-failure</code></pre>
 <table>
   <tr><th>产物</th><th>说明</th></tr>
   <tr><td><code>voimed.exe</code>、<code>voime.exe</code>、<code>voime-tray.exe</code></td><td>daemon、CLI / TUI、托盘前端。</td></tr>
-  <tr><td><code>onnxruntime.dll</code></td><td>与 daemon 一起分发。</td></tr>
+  <tr><td><code>onnxruntime</code></td><td>静态链接进 <code>voimed.exe</code>；动态链接构建时改为随包分发 <code>onnxruntime.dll</code>。</td></tr>
   <tr><td>安装器 / 登录启动项</td><td>每用户安装；托盘拉起 daemon。</td></tr>
   <tr><td>可选 TSF DLL</td><td>x86 / x64 + 注册脚本；版本化，升级需重启应用。</td></tr>
   <tr><td>模型下载 / 校验</td><td>与 Linux 共用 <code>manifest.json</code> 与 SHA-256。</td></tr>

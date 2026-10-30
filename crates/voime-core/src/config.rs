@@ -46,6 +46,12 @@ pub fn resolve(args: Args) -> anyhow::Result<Config> {
 }
 
 pub fn default_model_dir() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(data) = std::env::var_os("LOCALAPPDATA") {
+        if !data.is_empty() {
+            return PathBuf::from(data).join("voime").join("models");
+        }
+    }
     if let Some(data) = std::env::var_os("XDG_DATA_HOME") {
         if !data.is_empty() {
             return PathBuf::from(data).join("voime").join("models");

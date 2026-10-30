@@ -24,7 +24,7 @@
 </p>
 
 <p>
-<strong>状态：</strong>目标 P3 / P4。本文定义 Windows 前端对用户与 daemon 的行为契约；
+<strong>状态：</strong>P3 已实现；P4（TSF）为可选阶段。本文定义 Windows 前端对用户与 daemon 的行为契约；
 平台 API 与安全边界见 <a href="PROVIDER.html">PROVIDER</a>，协议消息见
 <a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>。
 </p>
@@ -116,7 +116,7 @@
   <tr><td><code>OverlayEnabled</code></td><td>布尔</td><td><code>true</code></td><td>关闭后仍正常提交，仅不显示浮层。</td></tr>
 </table>
 <ul class="note">
-  <li>设置载体（文件 / 注册表）由实现决定；字段名与语义固定，托盘菜单负责修改。</li>
+  <li>设置载体为 <code>%APPDATA%\voime\config.json</code>；字段名与语义固定，托盘右键菜单与设置窗口负责修改。</li>
   <li>修改 Mode / Hotkey 后立即通过 Configure 同步；新模式在下一段生效。</li>
 </ul>
 
@@ -140,7 +140,7 @@
 <table>
   <tr><th>消息</th><th>前端行为</th></tr>
   <tr><td><code>Hello { role: Fcitx, version, config }</code></td><td>连接命名管道后发送；P1 后角色泛化为 Frontend。</td></tr>
-  <tr><td><code>Configure</code></td><td>托盘设置变化时发送。</td></tr>
+  <tr><td><code>Configure</code></td><td>托盘菜单 / 设置窗口的配置变化时发送。</td></tr>
   <tr><td><code>Start</code> / <code>Stop</code> / <code>Toggle</code></td><td>PTT / Toggle 热键触发；携带目标提示与 Hold / Toggle 来源。</td></tr>
   <tr><td><code>SegmentStarted</code></td><td>记录最终 <code>segment_id</code>；Continuous / Toggle 续段绑定当前前台焦点。</td></tr>
   <tr><td><code>State</code></td><td>更新浮层与录音标记。</td></tr>
@@ -155,6 +155,7 @@
   <tr><td>托盘状态</td><td>显示 daemon 连接、当前 Mode / Hotkey、最近错误码；不显示识别文本。</td></tr>
   <tr><td>日志</td><td>记录端点、热键注册、目标变化、注入失败；不记录按键内容或识别文本。</td></tr>
   <tr><td>doctor（目标）</td><td>Windows 版检查命名管道、麦克风隐私、设备、前端进程、模型与 TSF 注册（若启用）。</td></tr>
+  <tr><td>托盘诊断</td><td>托盘菜单 / 设置窗口的“诊断”调用 <code>voime doctor</code>，在消息框显示检查结果。</td></tr>
 </table>
 
 <h3 id="u4-5">4.5 覆盖与错误</h3>
@@ -170,25 +171,37 @@
   <tr><td>锁屏 / 安全桌面</td><td>不可用；不承诺。</td></tr>
 </table>
 
+<h3 id="u4-6">4.6 daemon 生命周期</h3>
+<table>
+  <tr><th>操作</th><th>契约</th></tr>
+  <tr><td>登录启动</td><td>安装脚本写入当前用户 <code>Run</code> 项启动 <code>voime-tray.exe</code>；不使用 Session 0 服务。</td></tr>
+  <tr><td>自动启动</td><td>托盘连接失败时启动同目录 <code>voimed.exe</code>，并按 2 s / 10 s 间隔重连与重试。</td></tr>
+  <tr><td>手动启停</td><td>托盘菜单与设置窗口提供“启动 daemon”“停止 daemon”；停止通过 <code>voime ctl quit</code> 执行。</td></tr>
+  <tr><td>手动诊断</td><td>“诊断”调用 <code>voime doctor</code> 并在消息框显示结果；不修改配置。</td></tr>
+  <tr><td>退出托盘</td><td>关闭浮层与 IPC 连接；daemon 是否继续运行由“停止 daemon”单独控制。</td></tr>
+</table>
+
 <h2 id="u5">5. UI</h2>
 <p><a href="#top">↑</a></p>
 
 <p>
-Windows 前端使用系统托盘与一个无激活浮层。视觉稿与具体尺寸在实现前补齐；本章先固定元素关系与状态，
+Windows 前端使用系统托盘与一个无激活浮层。浮层只使用系统字体与系统前景 / 背景色，
 不复制 Linux TUI 的调色板。
 </p>
 
 <table>
   <tr><th>元素</th><th>契约</th></tr>
-  <tr><td>托盘图标</td><td>常驻通知区域；菜单包含 Mode、Hotkey、Overlay、StartAtLogin、连接状态、退出。</td></tr>
-  <tr><td>浮层</td><td>无激活、置顶、点击穿透；不进入 Alt+Tab；不抢焦点；跟随目标窗口 / 光标位置与 DPI。</td></tr>
+  <tr><td>托盘图标</td><td>常驻通知区域；左键打开设置窗口，右键菜单包含设置、Mode、Hotkey、Overlay、StartAtLogin、连接状态、启动 / 停止 daemon、诊断、退出。</td></tr>
+  <tr><td>设置窗口</td><td>标题“Voime 设置”；96 DPI 客户端约 440×330；系统字体与系统配色；包含模式下拉框、热键输入框、浮层 / 登录启动复选框、daemon 启停 / 诊断按钮与保存 / 取消。</td></tr>
+  <tr><td>浮层</td><td>无激活、置顶、点击穿透（<code>WS_EX_NOACTIVATE</code> / <code>WS_EX_TOOLWINDOW</code> / <code>WS_EX_TRANSPARENT</code> / <code>WS_EX_TOPMOST</code>）；不进入 Alt+Tab；不抢焦点。</td></tr>
   <tr><td>浮层内容</td><td>当前 Partial 的纯文本；不显示候选、按钮或历史。</td></tr>
   <tr><td>状态</td><td>隐藏 / 录音 / 收尾 / 错误；错误只显示简短提示，不显示识别文本。</td></tr>
-  <tr><td>主题</td><td>使用系统字体与前景 / 背景色；不引入独立品牌色板。</td></tr>
+  <tr><td>主题</td><td>字体 <code>DEFAULT_GUI_FONT</code>；文字 <code>COLOR_INFOTEXT</code>；背景 <code>COLOR_INFOBK</code>；整体不透明度 235/255；方角，无品牌色。</td></tr>
+  <tr><td>几何</td><td>96 DPI 基准：内边距 10、最小宽度 120、最大文本宽度 560、最小高度 20；随目标窗口 DPI 等比缩放。</td></tr>
+  <tr><td>定位</td><td>优先放在目标光标下方 4 px；无光标矩形时放在目标窗口左下外侧；限制在当前显示器工作区内。</td></tr>
   <tr><td>无浮层</td><td><code>OverlayEnabled=false</code> 或浮层创建失败时仍正常提交。</td></tr>
 </table>
 <ul class="note">
-  <li>本组件尚未有视觉稿；实现前必须在本文补充几何、字体、圆角与多显示器定位的数值契约。</li>
   <li>浮层不是闭环的必要条件；最终提交与目标校验优先。</li>
 </ul>
 

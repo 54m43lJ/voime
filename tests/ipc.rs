@@ -47,10 +47,22 @@ fn framing_round_trips_all_documented_client_messages() {
     }
 }
 
+#[cfg(windows)]
+fn test_endpoint(label: &str) -> Endpoint {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    Endpoint::from_name(format!("voime-test-{label}-{}-{id}", std::process::id()))
+}
+
 #[test]
 fn server_enforces_single_frontend_client_and_broadcasts() {
+    #[cfg(unix)]
     let directory = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
     let endpoint = Endpoint::from_path(directory.path().join("voime").join("voimed.sock"));
+    #[cfg(windows)]
+    let endpoint = test_endpoint("broadcast");
     let server = IpcServer::bind(&endpoint).unwrap();
 
     let mut frontend = connect(&endpoint).unwrap();

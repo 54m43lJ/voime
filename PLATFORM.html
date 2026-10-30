@@ -20,7 +20,7 @@
 </p>
 
 <p>
-<strong>状态：</strong>提案；P0 传输、P1 协议去 Fcitx 化与 P4 源码迁移已在 <code>dev/windows</code> 落地，P2/P3 待实现。基线 <code>dev/fcitx@07d9cfa</code>。
+<strong>状态：</strong>提案；P0 传输、P1 协议去 Fcitx 化、P2 Windows 传输 / 构建、P3 Windows 托盘前端与 P4 源码迁移已在 <code>dev/windows</code> 落地；TSF 子工程保持可选。基线 <code>dev/fcitx@07d9cfa</code>。
 运行时契约以 <a href="README.html#r4">根 README §4</a> 的组件文档树为准；本文不复制组件内部契约。
 </p>
 
@@ -135,7 +135,7 @@
 ├── tools/                     # 模型导出/安装/校验
 └── *.html                     # 文档</code></pre>
 <ul class="note">
-  <li>现状到目标：<code>crates/voime-transport</code> 与 <code>frontends/fcitx</code> 源码已落地；<code>systemd</code> 已移入 <code>packaging/linux</code>；<code>frontends/windows</code>、<code>packaging/windows</code> 待实现。</li>
+  <li>现状到目标：<code>crates/voime-transport</code>、<code>frontends/fcitx</code>、<code>frontends/windows</code> 与 <code>packaging/windows</code> 源码已落地；<code>systemd</code> 已移入 <code>packaging/linux</code>；TSF 子工程保持可选。</li>
   <li>迁移期允许旧路径继续工作；不要为了目录整齐先做一次无关的大搬家。</li>
   <li>文档随项目走：每个组件目录拥有自己的 <code>README / USER / CORE / PROVIDER / BUILD</code>；根目录只保留产品级同名文档与 PLATFORM / WINDOWS 提案。组件文档树见 <a href="README.html#r3">根 README §3</a>。</li>
 </ul>
@@ -440,8 +440,8 @@ cmake --build build/tsf-x86 --config Release</code></pre>
   </tr>
   <tr>
     <td>P4</td>
-    <td>源码迁移：把 <code>fcitx-addon</code> 移到 <code>frontends/fcitx</code>（文档已先行迁移）；新增 TSF C++ 子工程。</td>
-    <td>目录与文档一致；Linux/Windows 各自构建不受影响。</td>
+    <td>源码迁移：把 <code>fcitx-addon</code> 移到 <code>frontends/fcitx</code>；TSF C++ 子工程作为可选后续。</td>
+    <td>目录与文档一致；Linux/Windows 各自构建不受影响；TSF 未启用时不构建。</td>
   </tr>
 </table>
 <ul class="note">

@@ -47,11 +47,21 @@ def fail(message: str) -> None:
 
 
 def default_cache_dir() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or str(
+            Path.home() / "AppData" / "Local"
+        )
+        return Path(base) / "voime" / "cache"
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(base) / "voime"
 
 
 def default_model_dir() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or str(
+            Path.home() / "AppData" / "Local"
+        )
+        return Path(base) / "voime" / "models"
     base = os.environ.get("XDG_DATA_HOME") or str(
         Path.home() / ".local" / "share"
     )

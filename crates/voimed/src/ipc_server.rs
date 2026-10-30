@@ -323,10 +323,22 @@ mod tests {
     use voime_ipc::{write_message, ClientMessage, PROTOCOL_VERSION};
     use voime_transport::connect;
 
+    #[cfg(windows)]
+    fn test_endpoint(label: &str) -> Endpoint {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        Endpoint::from_name(format!("voime-test-{label}-{}-{id}", std::process::id()))
+    }
+
     #[test]
     fn binds_private_socket_and_accepts_messages() {
+        #[cfg(unix)]
         let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
         let endpoint = Endpoint::from_path(directory.path().join("voime").join("voimed.sock"));
+        #[cfg(windows)]
+        let endpoint = test_endpoint("accept");
         let server = IpcServer::bind(&endpoint).unwrap();
 
         let mut client = connect(&endpoint).unwrap();
@@ -362,8 +374,12 @@ mod tests {
 
     #[test]
     fn rejects_second_frontend_role() {
+        #[cfg(unix)]
         let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
         let endpoint = Endpoint::from_path(directory.path().join("voimed.sock"));
+        #[cfg(windows)]
+        let endpoint = test_endpoint("role");
         let server = IpcServer::bind(&endpoint).unwrap();
         let mut first = connect(&endpoint).unwrap();
         let first_id = match server.next_event().unwrap() {

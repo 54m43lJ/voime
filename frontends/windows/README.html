@@ -32,8 +32,7 @@
 </p>
 
 <p>
-<strong>状态：</strong>目标 P3（Rust 托盘 / 后台听写）与可选 P4（TSF DLL）。代码尚未落地；
-本文先固定边界、行为契约与构建根，实现时可以根据平台 API 调整细节。
+<strong>状态：</strong>P3（Rust 托盘 / 后台听写）已实现；P4（TSF DLL）保持可选，当前分支未包含。
 TSF 是 <code>frontends/windows/tsf</code> 下的可选子工程，文档暂并入本组件；若独立发布，再拆成子树。
 </p>
 
@@ -72,7 +71,8 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
 <table>
   <tr><th>场景</th><th>行为</th><th>契约</th></tr>
   <tr><td>安装 / 启动</td><td>每用户安装，登录后启动托盘与 daemon；托盘显示连接状态。</td><td><a href="BUILD.html#b3">BUILD §3</a></td></tr>
-  <tr><td>配置</td><td>托盘菜单设置 Mode / Hotkey；默认组合避开系统保留键。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
+  <tr><td>配置</td><td>托盘右键菜单或设置窗口设置 Mode / Hotkey / 浮层 / 登录启动；默认组合避开系统保留键。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
+  <tr><td>daemon 生命周期</td><td>登录启动托盘，托盘自动拉起 daemon；托盘菜单与设置窗口提供启动、停止、诊断。</td><td><a href="USER.html#u4-6">USER §4.6</a></td></tr>
   <tr><td>PTT</td><td>按住热键开始，松开结束；需要 key-up。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
   <tr><td>Toggle</td><td>按一下开始，再按一下结束；目标失焦自动结束。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
   <tr><td>Continuous</td><td>VAD 自动分段；热键不参与。</td><td><a href="USER.html#u3-2">USER §3.2</a></td></tr>
