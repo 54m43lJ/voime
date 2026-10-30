@@ -2,13 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>PROPOSAL — Voime 基于 Fcitx5 的语音输入法</title>
+<title>PROPOSAL — Voime 基于 Fcitx5 的语音输入法与 CTC 迁移</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <a id="top"></a>
-<h1>PROPOSAL — Voime 基于 Fcitx5 的语音输入法</h1>
+<h1>PROPOSAL — Voime 基于 Fcitx5 的语音输入法与 CTC 迁移</h1>
 
 <p class="doc-links">
 <a href="README.html">README</a>
@@ -16,6 +16,7 @@
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
 <a href="BUILD.html">BUILD</a>
+<a href="ASR.html">ASR</a>
 </p>
 
 <h2 id="pr1">1. 结论与决策</h2>
@@ -60,7 +61,11 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
   </tr>
   <tr>
     <td>ASR 链路</td>
-    <td>保持现有 FireRedVAD → FireRedASR2-AED → FireRedPunc；本提案只替换输入集成，不改模型、分段、临时结果或标点。</td>
+    <td>FireRedVAD → <strong>FireRedASR2-CTC int8</strong> → FireRedPunc。CTC 是单 ONNX（约 740 MiB），直接走现有 <code>ort</code>，运行时从 metadata 读 CMVN，greedy 解码；final 与尾部 partial 共用同一模型。VAD 分段、临时结果和标点链路保持不变，CPU 推理耗时与模型内存低于 AED。</td>
+  </tr>
+  <tr>
+    <td>分段上限</td>
+    <td>CTC 的 RTF 允许把 <code>max_segment_ms</code> 推荐值从 10 s 提高到 30 s；PTT 达到上限自动切段并继续收集，continuous 仍由 VAD 提前切分。本提案不新增倒计时 UI。</td>
   </tr>
   <tr>
     <td>剪贴板</td>
@@ -94,6 +99,7 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
 
 <ul class="note">
   <li>Fcitx5 不再是“必须停用”的冲突对象，而是宿主。Voime 与拼音、键盘布局、候选窗口等 Fcitx 能力共存；Voime 只增加一个语音输入法条目。</li>
+  <li>ASR 从 AED 切换到 CTC 的目标是降低 CPU 推理耗时与模型内存：本机 2 threads 实测 RTF 约 0.066–0.094，模型约 740 MiB；详细事实、预处理和 ONNX 输入输出见 <a href="ASR.html">ASR 研究</a>。</li>
   <li>PTT 只在 Fcitx 能收到按键的输入上下文中生效：原生 Wayland 的 text-input 输入框、通过 Fcitx XIM 连接的 XWayland/X11 应用。桌面空白处、未使用 Fcitx 的应用、没有文本焦点的窗口不保证 PTT。</li>
   <li>不实现独立的 input-method-v2 对象、virtual-keyboard、XIM server、StatusNotifierItem 托盘或剪贴板回退；这些职责全部交给 Fcitx 或删除。</li>
   <li>最终文本只有 <code>commitString</code> 一条正式路径；没有“提交失败就粘贴”的降级。没有焦点时文本保留在 daemon/TUI，用户可手动处理。</li>
@@ -112,8 +118,10 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
   <li>PTT 不要求当前输入法是 <code>Voime</code>；用户可以在拼音、键盘布局或其他 Fcitx 输入法处于活动状态时直接按 PTT。</li>
   <li>把音频、模型、ASR、标点与会话历史放进独立 <code>voimed</code> 守护进程；Fcitx addon 只负责热键、目标输入框、IPC 与提交。</li>
   <li>TUI 变成可选监视器：显示临时结果 / 历史、发送 Start / Stop / Toggle / Clear；关闭 TUI 不影响 PTT 与上屏。</li>
-  <li>保留现有的纯本地、离线、无 GPU、无 Python 运行时约束；ASR 模型与识别链路不变。</li>
+  <li>ASR 切换为 FireRedASR2-CTC int8：单 ONNX、<code>ort</code> CPU 推理、CMVN 从 metadata 读取、greedy CTC；降低 CPU 推理耗时与模型内存，同时保持 VAD 分段、临时结果与 FireRedPunc 不变。</li>
+  <li>保留现有的纯本地、离线、无 GPU、无 Python 运行时约束；CTC 模型包由安装脚本下载，不在运行期联网或导出。</li>
   <li>把 PTT 组合键、socket 路径、可选 preedit 暴露为 Fcitx addon 配置，可在 <code>fcitx5-configtool</code> 或配置文件中修改。</li>
+  <li>CTC 的 CPU 目标（2 threads）：RTF ≤ 0.1；10 s 音频 ≤ 1.0 s，30 s 音频 ≤ 3.0 s；真实麦克风数据上的 CER 不明显差于 AED。</li>
   <li>提供可重复的安装 / 构建流程：Rust workspace 产物 + C++ addon + Fcitx 描述文件 + 可选 systemd user service。</li>
 </ul>
 
@@ -126,7 +134,9 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
   <li>不自动写剪贴板，不恢复用户原剪贴板，不通过 <code>Ctrl+V</code> / <code>Ctrl+Shift+V</code> 注入文本。</li>
   <li>不保证桌面空白处、锁屏、未使用 Fcitx 的应用、没有 text-input 的窗口中的 PTT；这些场景没有可提交的输入上下文。</li>
   <li>v1 不写客户端 preedit，不显示输入框内的临时文本；临时结果只在 TUI。</li>
-  <li>不改变 ASR 模型、VAD 分段、临时识别节奏、标点模型或最大段长。</li>
+  <li>不引入第二个 ASR 模型、FireRedASR2-LLM、GPU / NPU 推理或云端识别；AED 只作为 legacy 对比后端，默认不启用。</li>
+  <li>不改变 VAD 分段算法、临时识别节奏或 FireRedPunc；只替换 ASR 后端，并把默认 <code>max_segment_ms</code> 调整为 30 s。</li>
+  <li>不承诺 int8 CTC 在英文子词上的完美准确率；官方 <code>0.wav</code> 的已知英文错误需要真实麦克风数据评估。</li>
   <li>不支持 Windows；X11 只覆盖通过 Fcitx XIM 收到按键的应用，不承诺裸 X11 全局热键。</li>
   <li>不保存音频、按键或识别历史到磁盘；daemon 退出后会话历史丢失。</li>
   <li>不把 Fcitx 的按键事件或用户输入写入日志；addon 只记录连接状态与错误码。</li>
@@ -176,6 +186,22 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
     <td>socket 读写必须非阻塞；不能调用阻塞的 ASR、文件下载或长耗时操作，否则会卡住整个输入法。</td>
   </tr>
   <tr>
+    <td>CTC 是离线全序列模型</td>
+    <td>没有帧级 cache 或流式状态；仍按 VAD / PTT 切成完整语音段后一次性编码。分段不能无限增长，默认 <code>max_segment_ms</code> 取 30 s。</td>
+  </tr>
+  <tr>
+    <td>CTC 预处理必须对齐 sherpa</td>
+    <td>16 kHz / 80 bins / 25 ms 窗 / 10 ms 帧移 / <code>snip_edges=true</code> / <code>high_freq=0</code> / 32768 缩放；CMVN 从 ONNX metadata 读取，不能依赖 <code>cmvn.ark</code>。</td>
+  </tr>
+  <tr>
+    <td>CTC 词表是 <code>token id</code> 两列</td>
+    <td>现有 tokenizer 需要支持 id 后缀；id 0 为 blank；英文 <code>▁</code> 需要转换为空格，中文 token 直接拼接。</td>
+  </tr>
+  <tr>
+    <td>int8 CTC 英文质量有限</td>
+    <td>官方 <code>0.wav</code> 存在英文子词缺失；上线前用真实麦克风数据评估 CER，必要时保留 AED legacy 或评估 FP32。</td>
+  </tr>
+  <tr>
     <td>单实例与多显示</td>
     <td>一个 Fcitx 进程只加载一个 addon；只允许一个 <code>Fcitx</code> 角色连接 daemon。第二个连接被拒绝并记录日志。</td>
   </tr>
@@ -219,6 +245,10 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
     <td><code>q</code> / <code>Ctrl+C</code> 只 detach TUI；<code>voime ctl quit</code> 停止 daemon。</td>
   </tr>
   <tr>
+    <td>ASR 使用 FireRedASR2-AED：encoder + decoder 两个 ONNX，beam search，模型 1.3 GB 级。</td>
+    <td>FireRedASR2-CTC int8：单个 ONNX（约 740 MiB），CMVN + greedy CTC；final 与尾部 partial 共用；RTF 约 0.08（2 threads）。</td>
+  </tr>
+  <tr>
     <td><code>arboard</code> 写剪贴板；剪贴板不可用时启动失败。</td>
     <td>删除 <code>arboard</code> 与自动剪贴板路径；TUI 只使用终端原生选择。</td>
   </tr>
@@ -230,6 +260,7 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
   <li>现有 <a href="CORE.html#c2">CORE §2</a> 的“主线程拥有终端、App 与 ClipboardWriter”不再成立；线程边界改为“Fcitx 主循环 / addon / daemon / pipeline / TUI”。</li>
   <li>现有 <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a> 的剪贴板边界替换为 Fcitx addon API；<a href="PROVIDER.html#p3-3">PROVIDER §3.3</a> 的剪贴板时序图删除。</li>
   <li>现有 <a href="BUILD.html#b1">BUILD §1</a> 的“运行期不需要系统输入法框架”改为“必须安装并运行 Fcitx5”；构建增加 CMake、C++ 与 Fcitx5 开发头文件。</li>
+  <li>ASR 的模型事实、RTF、预处理与 manifest 差异集中到新增的 <a href="ASR.html">ASR 研究</a>；README / USER / CORE / PROVIDER / BUILD 只保留结论与链接，不复制研究数据。</li>
 </ul>
 
 <h2 id="pr4">4. 目标架构</h2>
@@ -719,14 +750,59 @@ Preedit=False</code></pre>
   </tr>
 </table>
 
-<h3 id="pr6-6">6.6 ASR 链路不变</h3>
+<h3 id="pr6-6">6.6 ASR：切换 FireRedASR2-CTC</h3>
 <p>
-本提案只改变输入集成。现有 FireRedVAD → FireRedASR2-AED → FireRedPunc、临时结果、分段、
-<code>max_segment_ms</code> 与标点策略保持不变；<code>voimed</code> 继续复用当前 <code>pipeline</code>。
+详细数据、预处理和 ONNX 输入输出见 <a href="ASR.html">ASR 研究</a>。本版把现有 FireRedASR2-AED
+换成 FireRedASR2-CTC int8：单 ONNX、直接走现有 <code>ort</code>，final 与现有尾部 partial 共用同一个
+模型；VAD 分段、临时结果和 FireRedPunc 标点链路保持不变。CTC 在 2 threads 下 RTF 约 0.066–0.094，
+模型约 740 MiB，明显低于 AED 的 CPU 成本。
 </p>
+
+<table>
+  <tr><th>项目</th><th>方案</th></tr>
+  <tr>
+    <td>模型</td>
+    <td><code>sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25</code>：单个 <code>model.int8.onnx</code>（约 740 MiB）+ <code>tokens.txt</code>；官方包不含 <code>cmvn.ark</code>。</td>
+  </tr>
+  <tr>
+    <td>运行</td>
+    <td>现有 <code>ort</code>；CMVN 从 ONNX metadata 的 <code>cmvn_mean</code> / <code>cmvn_inv_stddev</code> 读取；greedy CTC。</td>
+  </tr>
+  <tr>
+    <td>预处理</td>
+    <td>16 kHz / 80 bins / 25 ms 窗 / 10 ms 帧移 / <code>snip_edges=true</code> / <code>high_freq=0</code> / 32768 缩放；现有 <code>asr/features.rs</code> 已基本对齐，主要新增 CMVN 与 CTC 解码。</td>
+  </tr>
+  <tr>
+    <td>词表</td>
+    <td><code>tokens.txt</code> 是 <code>token id</code> 两列；id 0 为 <code>&lt;blank&gt;</code>；英文 <code>▁</code> 转空格，中文 token 直接拼接。</td>
+  </tr>
+  <tr>
+    <td>分段</td>
+    <td>默认 <code>max_segment_ms</code> 从 10_000 提高到 30_000；PTT 达到上限自动切段并继续收集，continuous 由 VAD 提前切分。本提案不新增倒计时 UI。</td>
+  </tr>
+  <tr>
+    <td>安装</td>
+    <td>安装脚本直接下载官方 <code>.tar.bz2</code> 并解出 <code>model.int8.onnx</code> / <code>tokens.txt</code>，不再为 CTC 运行 Python/PyTorch 导出；SHA-256 写入 manifest。</td>
+  </tr>
+  <tr>
+    <td>Legacy</td>
+    <td>保留现有 AED 后端一个发布周期用于对比 / 回退；manifest 用 tagged enum 区分 <code>fire-red-ctc</code> 与 <code>fire-red-aed</code>，默认 <code>fire-red-ctc</code>。</td>
+  </tr>
+</table>
+
+<table>
+  <tr><th>输入长度</th><th>解码耗时（2 threads）</th><th>RTF</th></tr>
+  <tr><td>10 s</td><td>0.66–0.78 s</td><td>0.066–0.077</td></tr>
+  <tr><td>20 s</td><td>1.40 s</td><td>0.070</td></tr>
+  <tr><td>30 s</td><td>2.26 s</td><td>0.075</td></tr>
+  <tr><td>60 s</td><td>5.64 s</td><td>0.094</td></tr>
+</table>
 <ul class="note">
-  <li>不引入第二个 ASR 模型，不切换到 CTC，不改变模型包 manifest。</li>
-  <li>安装脚本与 <code>tools/</code> 只在与输入无关的范围内保持现状；<code>voimed</code> 仍负责模型校验。</li>
+  <li>CTC 仍是离线全序列编码器，没有帧级 cache；沿用现有 VAD 分段与尾部 partial，只是把 ASR 后端换成 CTC。</li>
+  <li>临时结果沿用现有尾部重解码机制，只显示在 TUI；不进入历史，也不通过 Fcitx 提交。</li>
+  <li>30 s 是推荐上限，不是 CTC 的硬依赖；PTT 超时后自动切段并继续收集，用户不需要额外按键。</li>
+  <li>int8 CTC 在官方 <code>0.wav</code> 上有英文子词缺失；最终上线前用真实麦克风数据评估 CER，必要时保留 AED legacy 或评估 FP32。</li>
+  <li>安装包约 740 MiB；模型由安装脚本下载，运行期仍完全离线，不需要 Python / PyTorch / GPU。</li>
 </ul>
 
 <h2 id="pr7">7. 与 TUI / daemon 解耦</h2>
@@ -942,10 +1018,12 @@ WantedBy=default.target</code></pre>
 │   │       ├── vad/firered.rs
 │   │       ├── vad/segmenter.rs
 │   │       ├── asr.rs
+│   │       ├── asr/engine.rs             final / partial 统一接口
 │   │       ├── asr/features.rs
-│   │       ├── asr/firered_aed.rs
-│   │       ├── asr/decoder.rs
-│   │       ├── asr/tokenizer.rs
+│   │       ├── asr/firered_ctc.rs        FireRedASR2-CTC 单 ONNX
+│   │       ├── asr/firered_aed.rs        legacy 后端
+│   │       ├── asr/decoder.rs            AED beam search（legacy）
+│   │       ├── asr/tokenizer.rs          token id 两列词表
 │   │       ├── punc.rs
 │   │       ├── punc/firered.rs
 │   │       ├── infer.rs
@@ -999,6 +1077,9 @@ WantedBy=default.target</code></pre>
 <table>
   <tr><th>模块</th><th>职责</th></tr>
   <tr><td><code>voime-core</code></td><td>现有音频、VAD、ASR、标点、模型与 pipeline；不依赖 Fcitx、socket 或 TUI。</td></tr>
+  <tr><td><code>voime-core::asr::engine</code></td><td><code>AsrEngine</code> 统一 final / partial 的转写接口；默认 CTC，AED 作为 legacy。</td></tr>
+  <tr><td><code>voime-core::asr::firered_ctc</code></td><td>单 ONNX 会话、CMVN、greedy CTC、token 解码；复用现有 <code>ort</code> 与 fbank。</td></tr>
+  <tr><td><code>voime-core::asr::tokenizer</code></td><td>支持 <code>token id</code> 两列词表；处理 <code>▁</code> 空格与 blank 0。</td></tr>
   <tr><td><code>voime-ipc</code></td><td>IPC 消息、角色、<code>TriggerSource</code>、JSON 行编解码、版本常量；Rust 侧共享给 daemon / TUI。</td></tr>
   <tr><td><code>voimed::daemon</code></td><td>状态机、段生成与所有权、历史、pipeline 事件与 IPC 事件的汇总。</td></tr>
   <tr><td><code>voimed::ipc_server</code></td><td>Unix socket 监听、握手、角色校验、订阅者队列、命令分发。</td></tr>
@@ -1021,6 +1102,10 @@ WantedBy=default.target</code></pre>
   <tr><td><code>cpal</code> / <code>rubato</code> / <code>kaldi-native-fbank</code> / <code>ort</code> / <code>tokenizers</code></td><td><code>voime-core</code></td><td>保留，职责不变。</td></tr>
   <tr><td><code>clap</code> / <code>serde</code> / <code>serde_json</code> / <code>crossbeam-channel</code> / <code>anyhow</code> / <code>thiserror</code> / <code>unicode-width</code></td><td>Rust workspace</td><td>保留；IPC 继续使用 <code>serde_json</code>。</td></tr>
 </table>
+<ul class="note">
+  <li>CTC 不新增运行时依赖：仍使用 <code>ort</code>、<code>kaldi-native-fbank</code> 与 <code>tokenizers</code>；只新增模型文件与 ASR 代码路径。</li>
+  <li>安装脚本仍使用现有 Python 工具链下载 / 解包官方模型；CTC 不再需要 PyTorch 导出图。</li>
+</ul>
 
 <h4 id="pr8-3-1">8.3.1 addon 描述文件</h4>
 <pre><code># share/fcitx5/addon/voime.conf
@@ -1105,6 +1190,31 @@ pub enum ServerMessage {
     Bye,
 }</code></pre>
 
+<pre><code>// crates/voime-core/src/asr/engine.rs
+pub enum AsrBackend {
+    Ctc(FireRedCtc),
+    Aed(FireRedAed),        // legacy，可选
+}
+
+impl AsrBackend {
+    pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;])
+        -&gt; anyhow::Result&lt;AsrOutput&gt;;
+}
+
+// crates/voime-core/src/asr/firered_ctc.rs
+pub struct FireRedCtc {
+    session: ort::session::Session,
+    tokens: CtcTokenizer,
+    cmvn_mean: Vec&lt;f32&gt;,
+    cmvn_inv_stddev: Vec&lt;f32&gt;,
+}
+
+impl FireRedCtc {
+    pub fn new(model: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;])
+        -&gt; anyhow::Result&lt;AsrOutput&gt;;
+}</code></pre>
+
 <ul class="note">
   <li>C++ 与 Rust 不共享结构体定义；IPC schema 是唯一契约，字段名、版本与 JSON 编码在 <code>voime-ipc</code> 与 <code>fcitx-addon/src/ipc.cpp</code> 两端同步维护。</li>
   <li><code>InputContext</code> 弱引用不是线程安全的；addon 的所有 Fcitx 调用都必须在 Fcitx 事件循环线程内完成。</li>
@@ -1116,7 +1226,8 @@ pub enum ServerMessage {
   <tr><th>当前模块</th><th>迁移</th></tr>
   <tr><td><code>src/main.rs</code> / <code>src/lib.rs</code></td><td>拆为 <code>crates/voimed</code> 与 <code>crates/voime</code> 的入口；公共逻辑进 <code>voime-core</code>。</td></tr>
   <tr><td><code>src/app.rs</code></td><td>TUI 事件循环保留在 <code>voime::app</code>，但状态来自 socket 快照，不再拥有 pipeline / clipboard。</td></tr>
-  <tr><td><code>src/pipeline.rs</code>、<code>audio/</code>、<code>vad/</code>、<code>asr/</code>、<code>punc/</code>、<code>model.rs</code>、<code>infer/</code></td><td>原样迁入 <code>voime-core</code>；只把事件出口从 TUI 改成 daemon 的 IPC / 状态。</td></tr>
+  <tr><td><code>src/pipeline.rs</code>、<code>audio/</code>、<code>vad/</code>、<code>punc/</code>、<code>model.rs</code>、<code>infer/</code></td><td>原样迁入 <code>voime-core</code>；只把事件出口从 TUI 改成 daemon 的 IPC / 状态。</td></tr>
+  <tr><td><code>src/asr/</code></td><td>新增 <code>engine.rs</code> 与 <code>firered_ctc.rs</code>；保留 <code>firered_aed.rs</code> / <code>decoder.rs</code> 作为 legacy；final 与尾部 partial 默认走 CTC。</td></tr>
   <tr><td><code>src/clipboard.rs</code></td><td>删除；<code>arboard</code> 依赖删除；相关测试删除。</td></tr>
   <tr><td><code>src/ui.rs</code> / <code>ui/theme.rs</code></td><td>迁入 <code>voime</code> TUI；保留视觉契约，增加 Fcitx 连接状态与 PTT 提示。</td></tr>
   <tr><td><code>src/cli.rs</code> / <code>config.rs</code></td><td>拆成 <code>voimed</code> 与 <code>voime</code> 的命令行；模型 / 音频配置留在 daemon。</td></tr>
@@ -1144,15 +1255,15 @@ pub enum ServerMessage {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="README.html#r1">§1.1 IDEAL</a></td>
-    <td>把“单个 Rust 可执行程序 / 终端界面 / 粘贴闭环”改成“Fcitx5 addon + 本地 ASR daemon：Fcitx 捕获 PTT 并提交文本；TUI 可选；音频与模型仍在本机”。明确 Fcitx 是运行前提，而不是要避开的输入法框架。</td>
+    <td>把“单个 Rust 可执行程序 / 终端界面 / 粘贴闭环”改成“Fcitx5 addon + 本地 ASR daemon：Fcitx 捕获 PTT 并提交文本；TUI 可选；音频与模型仍在本机”。明确 Fcitx 是运行前提，而不是要避开的输入法框架；ASR 改用 CTC 以降低 CPU 推理成本，详细数据链接到 ASR.html。</td>
   </tr>
   <tr>
     <td><a href="README.html#r1">§1.2 GOAL</a></td>
-    <td>新增：安装 <code>voime.so</code> addon、注册 <code>Voime</code> 输入法、Fcitx 内 hold / toggle PTT、普通按键不受影响、<code>commitString</code> 上屏、原生 Wayland / XWayland XIM 覆盖、daemon &amp; TUI 分离、TUI 可选、Fcitx 配置热键、无剪贴板。删除“终端必须获得焦点”“不注册输入法”“Windows 一致”。ASR 仍写 FireRedVAD / FireRedASR2-AED / FireRedPunc。</td>
+    <td>新增：安装 <code>voime.so</code> addon、注册 <code>Voime</code> 输入法、Fcitx 内 hold / toggle PTT、普通按键不受影响、<code>commitString</code> 上屏、原生 Wayland / XWayland XIM 覆盖、daemon &amp; TUI 分离、TUI 可选、Fcitx 配置热键、无剪贴板。删除“终端必须获得焦点”“不注册输入法”“Windows 一致”。ASR 改为 FireRedVAD / FireRedASR2-CTC / FireRedPunc，并指向 <a href="ASR.html">ASR 研究</a>。</td>
   </tr>
   <tr>
     <td><a href="README.html#r1">§1.3 非目标</a></td>
-    <td>删除“不监听全局热键 / 不向其他窗口注入 / 不注册 TSF / IBus / Fcitx”；新增：不做拼音与候选、不取代 Fcitx、不实现独立 input-method-v2 / XIM / virtual-keyboard / portal / 托盘、不自动写剪贴板、不支持 Windows、PTT 只在 Fcitx 能收到按键的输入上下文中生效、v1 不做 preedit。</td>
+    <td>删除“不监听全局热键 / 不向其他窗口注入 / 不注册 TSF / IBus / Fcitx”；新增：不做拼音与候选、不取代 Fcitx、不实现独立 input-method-v2 / XIM / virtual-keyboard / portal / 托盘、不自动写剪贴板、不支持 Windows、PTT 只在 Fcitx 能收到按键的输入上下文中生效、v1 不做 preedit；ASR 不承诺 int8 CTC 的英文子词完美准确率。</td>
   </tr>
   <tr>
     <td><a href="README.html#r2">§2 用户交互</a></td>
@@ -1160,7 +1271,7 @@ pub enum ServerMessage {
   </tr>
   <tr>
     <td><a href="README.html#r3">§3 Credits</a></td>
-    <td>加入 Fcitx5 / Fcitx5Core（LGPL-2.1+）、<code>nlohmann/json</code>（MIT）、CMake；删除 <code>arboard</code>；保留 ratatui / crossterm（TUI）、cpal、rubato、kaldi-native-fbank、ONNX Runtime、tokenizers 与 FireRed 模型。</td>
+    <td>加入 Fcitx5 / Fcitx5Core（LGPL-2.1+）、<code>nlohmann/json</code>（MIT）、CMake；删除 <code>arboard</code>；保留 ratatui / crossterm（TUI）、cpal、rubato、kaldi-native-fbank、ONNX Runtime、tokenizers；ASR 条目改为 FireRedASR2-CTC（sherpa-onnx 模型包），保留 FireRedVAD / FireRedPunc。</td>
   </tr>
 </table>
 
@@ -1169,11 +1280,11 @@ pub enum ServerMessage {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="USER.html#u1">§1 TERMS</a></td>
-    <td>新增：Fcitx5、addon、输入法引擎、输入法条目、<code>InputContext</code>、输入上下文焦点、<code>InputContextKeyEvent</code>、<code>PreInputMethod</code>、hold / toggle PTT、目标输入框、<code>commitString</code>、Fcitx 配置、daemon、TUI 客户端、addon 连接状态。改写“会话文本”为 daemon 内存历史；“输入焦点”从终端改为 Fcitx 输入上下文；“PTT 模式”改为 Fcitx 热键；“Recording 标记”保留但仅 TUI。</td>
+    <td>新增：Fcitx5、addon、输入法引擎、输入法条目、<code>InputContext</code>、输入上下文焦点、<code>InputContextKeyEvent</code>、<code>PreInputMethod</code>、hold / toggle PTT、目标输入框、<code>commitString</code>、Fcitx 配置、daemon、TUI 客户端、addon 连接状态。改写“会话文本”为 daemon 内存历史；“输入焦点”从终端改为 Fcitx 输入上下文；“PTT 模式”改为 Fcitx 热键；“Recording 标记”保留但仅 TUI；“模型包”改为 CTC 单 ONNX + <code>tokens.txt</code>。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u2">§2 CONVENTIONS</a></td>
-    <td>替换“PTT 按键 / 终端焦点 / 剪贴板写入 / 手动复制 / 退出”；新增：Fcitx 依赖与 addon 加载、PTT hold / toggle 与消费、PTT 配置、目标输入框绑定与失焦策略、<code>commitString</code> 上屏、无剪贴板、addon 断线放行、TUI detach、daemon 生命周期、continuous 不消费 PTT。保留模式固定、模型安装、静音自动结束、临时结果、最终结果、空段、滚动、队列、分段上限。</td>
+    <td>替换“PTT 按键 / 终端焦点 / 剪贴板写入 / 手动复制 / 退出”；新增：Fcitx 依赖与 addon 加载、PTT hold / toggle 与消费、PTT 配置、目标输入框绑定与失焦策略、<code>commitString</code> 上屏、无剪贴板、addon 断线放行、TUI detach、daemon 生命周期、continuous 不消费 PTT。保留模式固定、模型安装（改为 CTC 模型包）、静音自动结束、临时结果、最终结果、空段、滚动、队列；分段上限改为默认 30 s。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u3">§3 DIAGRAMS</a></td>
@@ -1193,7 +1304,7 @@ pub enum ServerMessage {
   </tr>
   <tr>
     <td><a href="USER.html#u5">§5 UI</a></td>
-    <td>TUI 标记为可选；提示行改为 Fcitx PTT 组合键 + 手动控制；删除“每次 Final 自动写剪贴板”；空状态 / 启动失败 / daemon 未运行 / addon 断线补齐；新增 §5.3 “Fcitx 状态与 TUI 的关系”：Fcitx 图标显示当前输入法，Voime 不自建托盘，录音状态以 TUI 为准。保留 recording 红点与结果行视觉契约。</td>
+    <td>TUI 标记为可选；提示行改为 Fcitx PTT 组合键 + 手动控制；删除“每次 Final 自动写剪贴板”；空状态 / 启动失败 / daemon 未运行 / addon 断线补齐；新增 §5.3 “Fcitx 状态与 TUI 的关系”：Fcitx 图标显示当前输入法，Voime 不自建托盘，录音状态以 TUI 为准。保留 recording 红点与结果行视觉契约；30 s 分段不新增倒计时 UI。</td>
   </tr>
 </table>
 
@@ -1202,27 +1313,27 @@ pub enum ServerMessage {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="CORE.html#c1">§1 File tree</a></td>
-    <td>换成 §8.1 的 workspace 树；现有音频 / VAD / ASR / 标点模块移到 <code>crates/voime-core</code>；新增 <code>voime-ipc</code>、<code>voimed</code>、<code>voime</code>、<code>fcitx-addon</code> 与 <code>systemd/</code>；删除 <code>src/clipboard.rs</code>。</td>
+    <td>换成 §8.1 的 workspace 树；现有音频 / VAD / 标点模块移到 <code>crates/voime-core</code>；ASR 新增 <code>asr/engine.rs</code>、<code>asr/firered_ctc.rs</code>，<code>firered_aed.rs</code> / <code>decoder.rs</code> 标为 legacy；新增 <code>voime-ipc</code>、<code>voimed</code>、<code>voime</code>、<code>fcitx-addon</code> 与 <code>systemd/</code>；删除 <code>src/clipboard.rs</code>。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c2">§2 CONVENTIONS</a></td>
-    <td>重写线程 / 进程边界：Fcitx 主循环（addon + key watcher + IPC client）、<code>voimed</code> 事件循环、pipeline 工作线程、socket 读写、TUI 线程；新增“状态所有权”“addon 只做桥接”“目标 InputContext 弱引用”“<code>segment_id</code>”“<code>commitString</code>”“无剪贴板”“addon 断线放行”“单 Fcitx 连接”“非阻塞 IPC”“Fcitx 配置归 addon”。</td>
+    <td>重写线程 / 进程边界：Fcitx 主循环（addon + key watcher + IPC client）、<code>voimed</code> 事件循环、pipeline 工作线程、socket 读写、TUI 线程；新增“状态所有权”“addon 只做桥接”“目标 InputContext 弱引用”“<code>segment_id</code>”“<code>commitString</code>”“无剪贴板”“addon 断线放行”“单 Fcitx 连接”“非阻塞 IPC”“Fcitx 配置归 addon”；ASR 增加“CTC 全序列 / CMVN metadata / greedy / 30 s 上限 / AED legacy”约定。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c3">§3 SBOM</a></td>
-    <td>新增 <code>Fcitx5Core</code>、<code>nlohmann/json</code>、CMake / C++ 工具链；删除 <code>arboard</code>；保留现有 Rust 依赖，标注 TUI 与 daemon / core 的归属。</td>
+    <td>新增 <code>Fcitx5Core</code>、<code>nlohmann/json</code>、CMake / C++ 工具链；删除 <code>arboard</code>；CTC 不新增运行时依赖，保留 <code>ort</code> / <code>tokenizers</code> / <code>kaldi-native-fbank</code>；保留现有 Rust 依赖，标注 TUI 与 daemon / core 的归属。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c4">§4 Internal types</a></td>
-    <td>保留音频 / VAD / ASR / 标点签名并移动到 <code>voime-core</code>；新增 <code>voime-ipc</code> 消息、<code>voimed::state</code>、<code>ipc_server</code>、<code>voime::client</code>、<code>fcitx-addon</code> 的 <code>VoimeAddon</code> / <code>VoimeConfig</code> / <code>IpcClient</code> / <code>TargetRef</code> 小节；删除 <code>clipboard.rs</code> 签名。</td>
+    <td>保留音频 / VAD / 标点签名并移动到 <code>voime-core</code>；ASR 改为 <code>AsrBackend</code> / <code>FireRedCtc</code> + legacy AED，删除 AED 作为默认路径的签名；新增 <code>voime-ipc</code> 消息、<code>voimed::state</code>、<code>ipc_server</code>、<code>voime::client</code>、<code>fcitx-addon</code> 的 <code>VoimeAddon</code> / <code>VoimeConfig</code> / <code>IpcClient</code> / <code>TargetRef</code> 小节；删除 <code>clipboard.rs</code> 签名。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c5">§5 Call stack</a></td>
-    <td>重写：5.1 启动（systemd + addon 加载 + 连接）；5.2 PTT 热键（Fcitx 事件 → addon 匹配 / 消费 → daemon Start/Stop）；5.3 continuous（VAD → SegmentStarted → Final）；5.4 临时识别（daemon → TUI）；5.5 最终识别与提交（ASR / Punc → Final → 目标检查 → commitString）；5.6 TUI / ctl / 退出 / 重连；新增 5.7 addon 断线、目标丢失与 Fcitx 重启。</td>
+    <td>重写：5.1 启动（systemd + addon 加载 + 连接）；5.2 PTT 热键（Fcitx 事件 → addon 匹配 / 消费 → daemon Start/Stop）；5.3 continuous（VAD → SegmentStarted → Final）；5.4 临时识别（CTC 尾部重解码 → TUI）；5.5 最终识别与提交（CTC + Punc → Final → 目标检查 → commitString）；5.6 TUI / ctl / 退出 / 重连；新增 5.7 addon 断线、目标丢失与 Fcitx 重启。</td>
   </tr>
   <tr>
     <td><code>tests/</code></td>
-    <td>删除 <code>clipboard.rs</code>；新增 <code>ipc.rs</code>（握手 / 角色 / 编解码 / 背压）、<code>state.rs</code>（段 ID / 目标 / 清空）、<code>daemon.rs</code>（PTT / continuous / 断线）；在 <code>fcitx-addon/tests</code> 增加 <code>keymatch.cpp</code>（hold / toggle / repeat / release）与 <code>target.cpp</code>（弱引用 / 失焦 / 销毁）。保留 <code>segmenter.rs</code>。</td>
+    <td>删除 <code>clipboard.rs</code>；新增 <code>ipc.rs</code>（握手 / 角色 / 编解码 / 背压）、<code>state.rs</code>（段 ID / 目标 / 清空）、<code>daemon.rs</code>（PTT / continuous / 断线）、<code>asr_ctc.rs</code>（CMVN / token id / greedy / 10–60 s 解码）；在 <code>fcitx-addon/tests</code> 增加 <code>keymatch.cpp</code>（hold / toggle / repeat / release）与 <code>target.cpp</code>（弱引用 / 失焦 / 销毁）。保留 <code>segmenter.rs</code>。</td>
   </tr>
 </table>
 
@@ -1231,15 +1342,23 @@ pub enum ServerMessage {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="PROVIDER.html#p1">§1 TERMS</a></td>
-    <td>新增：Fcitx5、addon、<code>InputMethodEngineV2</code>、<code>InputContext</code>、frontend、<code>InputContextKeyEvent</code>、<code>PreInputMethod</code>、commit string、commit filter、preedit、Fcitx trigger key、输入法组、XIM、Fcitx 状态 / 托盘。删除“剪贴板所有者 / Clipboard owner”或把它移到 TUI 手动复制说明；删除 <code>arboard</code> 相关术语。</td>
+    <td>新增：Fcitx5、addon、<code>InputMethodEngineV2</code>、<code>InputContext</code>、frontend、<code>InputContextKeyEvent</code>、<code>PreInputMethod</code>、commit string、commit filter、preedit、Fcitx trigger key、输入法组、XIM、Fcitx 状态 / 托盘；ASR 新增 FireRedASR2-CTC、CTC、CMVN、greedy、<code>token id</code> 词表。删除“剪贴板所有者 / Clipboard owner”或把它移到 TUI 手动复制说明；删除 <code>arboard</code> 相关术语。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p2">§2 CONVENTIONS</a></td>
-    <td>新增：Fcitx5 ≥ 5.1.23、addon 必须加载、<code>OnDemand=False</code>、Fcitx 拥有键盘与 frontend、Voime 不抓键盘 / 不转发 / 不注入、PTT 只在 Fcitx 能收到按键时生效、目标 InputContext 绑定策略、<code>commitString</code> 无确认、commit filter、长文本由 Fcitx 拆分、addon ABI、配置路径、无剪贴板。保留音频格式、模型不可变、量化、清单权威、CPU 推理等。</td>
+    <td>新增：Fcitx5 ≥ 5.1.23、addon 必须加载、<code>OnDemand=False</code>、Fcitx 拥有键盘与 frontend、Voime 不抓键盘 / 不转发 / 不注入、PTT 只在 Fcitx 能收到按键时生效、目标 InputContext 绑定策略、<code>commitString</code> 无确认、commit filter、长文本由 Fcitx 拆分、addon ABI、配置路径、无剪贴板；ASR 增加 CTC 单 ONNX、CMVN metadata、greedy、token id 两列词表、默认 <code>max_segment_ms=30000</code>、AED legacy。保留音频格式、模型不可变、量化、清单权威、CPU 推理等。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p3">§3 DIAGRAMS</a></td>
-    <td>保留 3.1 音频 / 3.2 推理；删除 3.3 剪贴板边界；新增 3.3 Fcitx 按键 / PTT 边界（<code>proposal-fcitx-hotkey</code>）与 3.4 Fcitx commit 边界（<code>proposal-fcitx-delivery</code>）；必要时新增 3.5 addon 生命周期 / 重连。</td>
+    <td>保留 3.1 音频；3.2 推理改为 CTC 单 ONNX / CMVN / greedy；删除 3.3 剪贴板边界；新增 3.3 Fcitx 按键 / PTT 边界（<code>proposal-fcitx-hotkey</code>）与 3.4 Fcitx commit 边界（<code>proposal-fcitx-delivery</code>）；必要时新增 3.5 addon 生命周期 / 重连。</td>
+  </tr>
+  <tr>
+    <td><a href="PROVIDER.html#p4-2">§4.2 模型包</a></td>
+    <td>ASR 条目改为 FireRedASR2-CTC：单 <code>model.int8.onnx</code> + <code>tokens.txt</code>；manifest schema 2，<code>asr.kind = "fire-red-ctc"</code>，<code>max_segment_ms</code> 默认 30000；保留 VAD / Punc。安装改为官方 tar.bz2 直接下载，不再导出 AED encoder/decoder。</td>
+  </tr>
+  <tr>
+    <td><a href="PROVIDER.html#p4-3">§4.3 推理运行时</a></td>
+    <td>补充 CTC 输入输出：<code>x[1,T,80]</code> / <code>x_lens[1]</code> → <code>log_probs[1,T',8667]</code> / <code>log_probs_len[1]</code>；CMVN 从 metadata 读取；greedy CTC；不引入新运行时。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4-4">§4.4 剪贴板：arboard</a></td>
@@ -1251,7 +1370,7 @@ pub enum ServerMessage {
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4-6">§4.6 消息与错误</a></td>
-    <td>删除剪贴板错误；新增 <code>FcitxUnavailable</code>、<code>AddonNotLoaded</code>、<code>NoInputContext</code>、<code>CommitTargetLost</code>、<code>DaemonUnavailable</code>、<code>IpcDisconnected</code>、<code>IpcVersionMismatch</code>、<code>AddonAbiMismatch</code>；说明启动期 / 运行期处理（addon 断线放行 PTT，TUI 保留历史）。</td>
+    <td>删除剪贴板错误；新增 <code>FcitxUnavailable</code>、<code>AddonNotLoaded</code>、<code>NoInputContext</code>、<code>CommitTargetLost</code>、<code>DaemonUnavailable</code>、<code>IpcDisconnected</code>、<code>IpcVersionMismatch</code>、<code>AddonAbiMismatch</code>、<code>CtcModelMismatch</code>、<code>CmvnMetadataMissing</code>、<code>TokenizerFormat</code>；说明启动期 / 运行期处理（addon 断线放行 PTT，TUI 保留历史；CTC 模型错误在启动期失败）。</td>
   </tr>
   <tr>
     <td><code>§4 新增小节</code></td>
@@ -1264,7 +1383,7 @@ pub enum ServerMessage {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="BUILD.html#b1">§1 环境</a></td>
-    <td>运行期改为 Linux + Fcitx5 ≥ 5.1.23 + 可用的 Fcitx frontend；构建增加 C++17、CMake、<code>Fcitx5Core</code> 开发头文件（Arch：<code>fcitx5</code>；Debian / Ubuntu：<code>fcitx5</code> / <code>libfcitx5core-dev</code> 等，按发行版为准）；<code>voimed</code> 不需要 TTY；TUI 才需要终端；删除 Windows 验收；模型安装保持 Python 3.10+ / 网络 / 磁盘要求。</td>
+    <td>运行期改为 Linux + Fcitx5 ≥ 5.1.23 + 可用的 Fcitx frontend；构建增加 C++17、CMake、<code>Fcitx5Core</code> 开发头文件（Arch：<code>fcitx5</code>；Debian / Ubuntu：<code>fcitx5</code> / <code>libfcitx5core-dev</code> 等，按发行版为准）；<code>voimed</code> 不需要 TTY；TUI 才需要终端；删除 Windows 验收；模型安装需要网络与约 740 MiB 磁盘，CTC 不再需要 PyTorch 导出（AED legacy 可选）。</td>
   </tr>
   <tr>
     <td><a href="BUILD.html#b2">§2 构建</a></td>
@@ -1272,7 +1391,7 @@ pub enum ServerMessage {
   </tr>
   <tr>
     <td><a href="BUILD.html#b3">§3 安装模型</a></td>
-    <td>保持不变；补充“模型只由 <code>voimed</code> 使用，addon 不加载模型；Fcitx 重启不需要重新安装模型”。</td>
+    <td>改为 CTC：安装脚本直接下载官方 <code>.tar.bz2</code>（约 740 MiB），解出 <code>model.int8.onnx</code> / <code>tokens.txt</code> 并写入 manifest schema 2；不再为 CTC 运行 Python/PyTorch 导出。AED legacy 可选保留；模型只由 <code>voimed</code> 使用，addon 不加载模型；Fcitx 重启不需要重新安装模型。</td>
   </tr>
   <tr>
     <td><a href="BUILD.html#b4">§4 运行</a></td>
@@ -1280,11 +1399,11 @@ pub enum ServerMessage {
   </tr>
   <tr>
     <td><a href="BUILD.html#b5">§5 测试</a></td>
-    <td>新增 <code>cargo test</code> 的 IPC / state / daemon 测试、CMake addon 的 keymatch / target 测试、Fcitx 手工冒烟（addon 加载、PTT、commit、普通打字、XWayland、TUI detach）；删除剪贴板测试说明。</td>
+    <td>新增 <code>cargo test</code> 的 IPC / state / daemon / <code>asr_ctc</code> 测试（CMVN metadata、token id、<code>▁</code> 空格、blank 0、10–60 s 解码）、CMake addon 的 keymatch / target 测试、Fcitx 手工冒烟（addon 加载、PTT、commit、普通打字、XWayland、TUI detach）；删除剪贴板测试说明。</td>
   </tr>
   <tr>
     <td><a href="BUILD.html#b6">§6 发布检查</a></td>
-    <td>验收改为：addon 被 Fcitx 加载、<code>Voime</code> 出现在输入法列表、PTT hold / toggle、普通打字无影响、原生 Wayland 提交、XWayland XIM 提交、目标失焦不误提交、TUI detach、daemon 重启重连、无剪贴板写入、Fcitx 版本 / ABI 匹配。</td>
+    <td>验收改为：addon 被 Fcitx 加载、<code>Voime</code> 出现在输入法列表、PTT hold / toggle、普通打字无影响、原生 Wayland 提交、XWayland XIM 提交、目标失焦不误提交、TUI detach、daemon 重启重连、无剪贴板写入、Fcitx 版本 / ABI 匹配；CTC final / partial 文本正常、RTF 达标、AED legacy 可选回退。</td>
   </tr>
   <tr>
     <td><code>新增 §7</code></td>
@@ -1295,13 +1414,14 @@ pub enum ServerMessage {
 <h3 id="pr9-6">9.6 图表</h3>
 <table>
   <tr><th>源文件</th><th>用途</th><th>落地位置</th></tr>
-  <tr><td><code>proposal-fcitx-architecture.puml</code></td><td>Fcitx5 + addon + daemon + TUI 的目标组件架构</td><td>USER §3.1 / README</td></tr>
+  <tr><td><code>proposal-fcitx-architecture.puml</code></td><td>Fcitx5 + addon + daemon + TUI 的目标组件架构；模型包标注 CTC</td><td>USER §3.1 / README</td></tr>
   <tr><td><code>proposal-fcitx-hotkey.puml</code></td><td>Fcitx 捕获 PTT、消费按键、daemon 识别与最终提交</td><td>USER §3.2 / PROVIDER §3.3</td></tr>
   <tr><td><code>proposal-fcitx-delivery.puml</code></td><td>Final → 目标 InputContext → Fcitx frontend 的提交路径</td><td>USER §3.4 / PROVIDER §3.4</td></tr>
   <tr><td><code>diagram/general-architecture.puml</code></td><td>替换为 Fcitx 架构图；旧图不再描述 Voime 独占输入法</td><td>USER §3.1</td></tr>
   <tr><td><code>diagram/seq-ptt.puml</code></td><td>替换为 Fcitx PTT / commit 时序；删除 Space / 剪贴板路径</td><td>USER §3.2</td></tr>
   <tr><td><code>diagram/seq-continuous.puml</code></td><td>保留 VAD 流程，把 Final 的终点从剪贴板改成 addon → Fcitx commit</td><td>USER §3.3</td></tr>
   <tr><td><code>diagram/prov-clipboard.puml</code></td><td>删除；由 Fcitx commit 边界图替代</td><td>—</td></tr>
+  <tr><td><code>diagram/prov-inference.puml</code></td><td>更新为 CTC：单 ONNX、CMVN、greedy；去掉 AED encoder/decoder 与 beam search</td><td>PROVIDER §3.2</td></tr>
   <tr><td><code>diagram/prov-fcitx-key.puml</code></td><td>新增：Fcitx 按键事件 / PreInputMethod / PTT 消费边界</td><td>PROVIDER §3.3</td></tr>
   <tr><td><code>diagram/prov-fcitx-commit.puml</code></td><td>新增：Fcitx commit / frontend 覆盖边界</td><td>PROVIDER §3.4</td></tr>
 </table>
@@ -1316,13 +1436,15 @@ pub enum ServerMessage {
   <tr><th>顺序</th><th>文档</th><th>原因</th></tr>
   <tr><td>1</td><td>README.html</td><td>先固定产品定位、用户交互与非目标；其他文档的事实以 README 为准。</td></tr>
   <tr><td>2</td><td>USER.html</td><td>定义术语、PTT 行为、提交契约、CLI / IPC 与 TUI；CORE / PROVIDER 都引用这里。</td></tr>
-  <tr><td>3</td><td>CORE.html</td><td>按 USER 契约拆分 workspace、线程 / 进程边界、类型与调用栈。</td></tr>
-  <tr><td>4</td><td>PROVIDER.html</td><td>把剪贴板边界替换为 Fcitx addon API、配置与 frontend 限制。</td></tr>
-  <tr><td>5</td><td>BUILD.html</td><td>最后写构建 / 安装 / 运行，确保命令与已定稿的结构一致。</td></tr>
-  <tr><td>6</td><td>图表</td><td>图随文档定稿；先改 <code>.puml</code>，再导出 <code>.svg</code>，最后替换引用。</td></tr>
+  <tr><td>3</td><td>ASR.html</td><td>固定 CTC 模型事实、预处理、ONNX 输入输出、RTF、manifest 与验收；作为 CORE / PROVIDER / BUILD 的引用源。</td></tr>
+  <tr><td>4</td><td>CORE.html</td><td>按 USER / ASR 契约拆分 workspace、线程 / 进程边界、类型与调用栈。</td></tr>
+  <tr><td>5</td><td>PROVIDER.html</td><td>把剪贴板边界替换为 Fcitx addon API、配置与 frontend 限制；模型包 / 推理边界改成 CTC。</td></tr>
+  <tr><td>6</td><td>BUILD.html</td><td>最后写构建 / 安装 / 运行，确保命令与已定稿的结构一致。</td></tr>
+  <tr><td>7</td><td>图表</td><td>图随文档定稿；先改 <code>.puml</code>，再导出 <code>.svg</code>，最后替换引用。</td></tr>
 </table>
 <ul class="note">
   <li>不要先改 BUILD：构建命令依赖最终的 crate / addon 布局，过早写会产生返工。</li>
+  <li>正式文档稳定后把 <code>ASR.html</code> 加入 README / USER / CORE / PROVIDER / BUILD 的 <code>doc-links</code>；CTC 的事实只在 ASR.html 维护，其他文档链接过去。</li>
   <li>正式文档稳定后删除 <code>PROPOSAL.html</code> 或把它移出文档集；不要把提案内容复制进多份文档，定义只保留一处并链接。</li>
 </ul>
 
@@ -1337,9 +1459,9 @@ pub enum ServerMessage {
     <td>Fcitx 能加载 addon 并显示 <code>Voime</code>；PTT 键被消费且不输入应用；<code>commitString</code> 在 GTK / Qt / Firefox / XWayland XIM 中可见；普通打字、拼音输入、快捷键不受影响；记录 Fcitx 是否在终端 / 无 text-input 窗口发送按键。</td>
   </tr>
   <tr>
-    <td>P1 · 拆分 core / IPC / daemon / TUI</td>
-    <td>workspace；<code>voime-core</code> 搬移现有模块；<code>voime-ipc</code>；<code>voimed</code> socket 服务；<code>voime</code> TUI 通过 socket 连接；先由 TUI Start / Stop 驱动，最终文本仍由 addon 提交（可先用固定 addon 回显）。</td>
-    <td>现有 PTT / continuous / 临时结果 / 清空行为回归通过；TUI detach 不影响 daemon；socket 断线重连；不再依赖剪贴板。</td>
+    <td>P1 · 拆分 core / IPC / daemon / TUI + CTC</td>
+    <td>workspace；<code>voime-core</code> 搬移现有模块；新增 <code>asr/engine</code> + <code>asr/firered_ctc</code>，默认 CTC、AED legacy；manifest schema 2、CMVN、token id、30 s 分段；<code>voime-ipc</code>；<code>voimed</code> socket 服务；<code>voime</code> TUI 通过 socket 连接；先由 TUI Start / Stop 驱动，最终文本仍由 addon 提交（可先用固定 addon 回显）。</td>
+    <td>现有 PTT / continuous / 临时结果 / 清空行为回归通过；CTC final / partial 文本正常；10 / 20 / 30 / 60 s 可解码；RTF 与模型内存达到目标；TUI detach 不影响 daemon；socket 断线重连；不再依赖剪贴板。</td>
   </tr>
   <tr>
     <td>P2 · 完整 addon</td>
@@ -1348,7 +1470,7 @@ pub enum ServerMessage {
   </tr>
   <tr>
     <td>P3 · 文档落笔</td>
-    <td>按 §9 修改 README / USER / CORE / PROVIDER / BUILD；替换图表；新增 BUILD 的 Fcitx 安装 / 配置 / 验收。</td>
+    <td>按 §9 修改 README / USER / ASR / CORE / PROVIDER / BUILD；替换图表；新增 BUILD 的 Fcitx 安装 / 配置 / 验收与 CTC 安装 / RTF 验收。</td>
     <td>文档之间无重复定义；所有链接可达；USER 的 PTT / 提交契约与 addon 行为一致；CORE 的调用栈能对应实现；PROVIDER 不再出现剪贴板主路径。</td>
   </tr>
   <tr>
@@ -1408,6 +1530,26 @@ pub enum ServerMessage {
     <td>依赖 Fcitx frontend 的分块逻辑；测试长文本；Voime 不自行截断；文档说明由 Fcitx 处理。</td>
   </tr>
   <tr>
+    <td>CTC int8 英文子词质量不足</td>
+    <td>英文识别出现缺失或错词；官方 <code>0.wav</code> 已复现。</td>
+    <td>用真实麦克风数据评估 CER；保留 AED legacy 与 manifest tagged enum；必要时评估 FP32（约 2.9 GB，CPU 成本更高）。</td>
+  </tr>
+  <tr>
+    <td>CTC 预处理 / CMVN / 词表不一致</td>
+    <td>文本整体错乱、空输出或 token 拼接错误。</td>
+    <td>固定 80 bins / 25 ms / 10 ms / <code>snip_edges=true</code> / <code>high_freq=0</code> / 32768；CMVN 从 metadata 读取；token id 两列解析与 <code>▁</code> 处理加单元测试。</td>
+  </tr>
+  <tr>
+    <td>CTC 模型 / 安装包过大</td>
+    <td>下载与磁盘占用约 740 MiB，首次安装慢。</td>
+    <td>安装脚本显示进度与校验；不再保留 AED encoder/decoder 默认包；用户可选用本地 <code>--source-dir</code>。</td>
+  </tr>
+  <tr>
+    <td>默认分段提高到 30 s 的延迟</td>
+    <td>PTT 最长 30 s 才出 final，长段端到端延迟变高。</td>
+    <td>保留 VAD 提前切分；PTT 达到上限自动切段并继续收集；不新增倒计时 UI；用户可用更短 <code>max_segment_ms</code>。</td>
+  </tr>
+  <tr>
     <td>Fcitx ABI / 版本不匹配</td>
     <td>addon 加载失败或运行时崩溃。</td>
     <td>要求 Fcitx5 ≥ 5.1.23；BUILD 记录开发包；Fcitx 升级后重编译；加载失败写日志。</td>
@@ -1458,6 +1600,11 @@ pub enum ServerMessage {
   <tr><td>toggle PTT</td><td>第一次按下开始，第二次结束；Finalizing 时再按不产生新段。</td></tr>
   <tr><td>普通打字</td><td>字母、数字、空格、修饰键、快捷键、组合键与未安装 Voime 时一致；无丢键、无重复。</td></tr>
   <tr><td>拼音输入法同时活动</td><td>PTT 仍可用；拼音候选、上屏、切换正常；PTT 键不进入拼音。</td></tr>
+  <tr><td>CTC final</td><td>官方 <code>1.wav</code> 与方言样例文本正常；<code>0.wav</code> 英文错误记录为已知限制；真实麦克风 CER 不明显差于 AED。</td></tr>
+  <tr><td>CTC partial</td><td>录音期间按现有节奏刷新；不进入历史 / 提交；final 后正常 commit。</td></tr>
+  <tr><td>CTC 安装</td><td>tar.bz2 下载、解包、SHA-256 / manifest 校验通过；约 740 MiB；无需 PyTorch 导出。</td></tr>
+  <tr><td>CTC RTF</td><td>2 threads：10 s ≤ 1.0 s，20 s ≤ 2.0 s，30 s ≤ 3.0 s；与 <a href="ASR.html#a6">ASR §6</a> 一致。</td></tr>
+  <tr><td>30 s 分段</td><td>PTT 达到 30 s 自动切段并继续收集；不丢后续语音；continuous 由 VAD 提前切分。</td></tr>
   <tr><td>原生 Wayland（GTK4 / Qt6 / Firefox）</td><td>最终文本在光标处插入；中文、英文、标点、emoji 正确；剪贴板不变。</td></tr>
   <tr><td>XWayland / X11 XIM</td><td>PTT 可用；最终文本通过 XIM 插入；不使用 XIM 的应用不承诺。</td></tr>
   <tr><td>终端（支持 text-input / XIM）</td><td>PTT 可用；最终文本插入终端输入行；TUI 仍可独立运行。</td></tr>
@@ -1506,12 +1653,14 @@ pub enum ServerMessage {
   <tr><td>daemon 启动</td><td>推荐 systemd user service；也可由桌面 <code>exec-once</code> 启动。</td></tr>
   <tr><td>TUI 退出</td><td><code>q</code> / <code>Ctrl+C</code> 只 detach；<code>voime ctl quit</code> 停止 daemon。</td></tr>
   <tr><td>continuous 模式</td><td>不消费 PTT 键；VAD 自动切分；Final 仍通过 addon 提交。</td></tr>
-  <tr><td>ASR</td><td>FireRedVAD → FireRedASR2-AED → FireRedPunc；本提案不改模型。</td></tr>
+  <tr><td>ASR</td><td>FireRedVAD → FireRedASR2-CTC int8 → FireRedPunc；CTC 单 ONNX、CMVN、greedy；AED legacy 可选。</td></tr>
+  <tr><td>分段上限</td><td><code>max_segment_ms = 30_000</code>；PTT 达到上限自动切段并继续收集；continuous 由 VAD 提前切分；不新增倒计时 UI。</td></tr>
+  <tr><td>CTC 安装</td><td>官方 <code>.tar.bz2</code>，约 740 MiB；SHA-256 写入 manifest；不运行 PyTorch 导出。</td></tr>
   <tr><td>平台</td><td>Linux + Fcitx5；Windows 不支持；X11 仅 Fcitx XIM 覆盖。</td></tr>
 </table>
 
 <ul class="note">
-  <li>待确认项全部是 P0 实测问题，不是设计分叉：如果 Fcitx 在某个应用不送按键，就缩小该应用的承诺；如果 <code>commitString</code> 行为不同，就在 PROVIDER 记录边界，不增加自定义注入路径。</li>
+  <li>Fcitx 相关待确认项是 P0 实测问题，不是设计分叉：如果 Fcitx 在某个应用不送按键，就缩小该应用的承诺；如果 <code>commitString</code> 行为不同，就在 PROVIDER 记录边界，不增加自定义注入路径。CTC 的验收在 P1 与 <a href="ASR.html#a6">ASR §6</a>。</li>
   <li>如果产品必须支持“无文本焦点也能录音并稍后粘贴”，那是一个新的剪贴板 / 历史功能，应另立提案，不要悄悄恢复 <code>arboard</code>。</li>
   <li>如果必须支持 Windows，应评估 Fcitx5 的 Windows 前端或 TSF，不要假设 Linux addon 可以直接复用。</li>
 </ul>
@@ -1520,6 +1669,9 @@ pub enum ServerMessage {
 <p><a href="#top">↑</a></p>
 
 <ul>
+  <li><a href="ASR.html">ASR 研究</a> — FireRedASR2-CTC 的模型事实、预处理、CMVN、ONNX 输入输出、RTF 与 manifest 差异。</li>
+  <li><a href="https://k2-fsa.github.io/sherpa/onnx/FireRedAsr/pretrained.html">sherpa-onnx FireRedAsr 预训练模型</a> — CTC 模型包、VAD 分段示例与官方 RTF。</li>
+  <li><a href="https://huggingface.co/csukuangfj2/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25">FireRedASR2-CTC int8 模型包</a> — 文件、大小与 SHA-256。</li>
   <li><a href="https://fcitx-im.org/wiki/Develop_an_simple_input_method">Fcitx: Develop a simple input method</a> — addon 目录结构、<code>InputMethodEngineV2</code>、addon / inputmethod 描述文件。</li>
   <li><a href="https://fcitx-im.org/wiki/Setup_Fcitx_5">Fcitx5 Setup</a> — 输入法组、环境变量、<code>fcitx5-configtool</code> 与自启动。</li>
   <li><a href="https://fcitx-im.org/wiki/Using_Fcitx_5_on_Wayland">Using Fcitx 5 on Wayland</a> — Wayland frontend、text-input 与 XWayland 边界。</li>
