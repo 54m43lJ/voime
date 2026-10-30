@@ -62,15 +62,22 @@ def feeds_for(runtime, kind: str, frames: int = 100) -> dict[str, np.ndarray]:
     feeds: dict[str, np.ndarray] = {}
     for value in runtime.get_inputs():
         shape = [dim if isinstance(dim, int) and dim > 0 else 1 for dim in value.shape]
+        if kind == "punc" and len(shape) == 2:
+            shape = [shape[0], 8]
         name = value.name
         if value.type == "tensor(int64)":
             data = np.zeros(shape, dtype=np.int64)
             if kind == "asr" and len(shape) == 1:
                 data[0] = frames
-            elif kind == "punc" and "mask" in name:
-                data.fill(1)
-            elif kind == "punc" and "ids" in name:
-                data = np.random.randint(100, 1000, size=shape, dtype=np.int64)
+            elif kind == "punc":
+                if "token_type" in name:
+                    # token_type_ids are 0/1 sentence ids, never token ids.
+                    data.fill(0)
+                elif "mask" in name:
+                    data.fill(1)
+                elif name == "input_ids" or name.endswith("_input_ids"):
+                    rng = np.random.default_rng(0)
+                    data = rng.integers(100, 1000, size=shape, dtype=np.int64)
             feeds[name] = data
         elif value.type == "tensor(float)":
             if kind == "asr" and len(shape) == 3 and shape[-1] == 80:
