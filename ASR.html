@@ -2,13 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>ASR — FireRedASR2-CTC 替换 AED</title>
+<title>ASR — FireRedASR2-CTC</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <a id="top"></a>
-<h1>ASR — FireRedASR2-CTC 替换 AED</h1>
+<h1>ASR — FireRedASR2-CTC</h1>
 
 <p class="doc-links">
 <a href="README.html">README</a>
@@ -24,9 +24,8 @@
 
 <p>
 <code>sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25</code> 是
-<strong>离线 CTC 模型</strong>。本方案只是把现有 FireRedASR2-AED 换成 FireRedASR2-CTC，
-用同一个 <code>ort</code> 运行时，降低 CPU 推理耗时和模型内存。
-分段、VAD、临时结果（尾部重解码）和标点链路保持不变。
+<strong>离线 CTC 模型</strong>。本方案使用 FireRedASR2-CTC，用现有 <code>ort</code> 运行时，
+降低 CPU 推理耗时和模型内存。分段、VAD、临时结果（尾部重解码）和标点链路保持不变。
 </p>
 
 <ul class="note">
@@ -50,7 +49,7 @@
   </tr>
   <tr>
     <td>来源</td>
-    <td>FireRedASR2-AED 的编码器 + CTC 分支；attention decoder 不导出。许可证 Apache-2.0。</td>
+    <td>FireRedASR2 的编码器 + CTC 分支；许可证 Apache-2.0。</td>
   </tr>
   <tr>
     <td>结构</td>
@@ -75,16 +74,16 @@
 </table>
 
 <ul class="note">
-  <li>模型支持中文（普通话 + 20 多种方言）和英文；不包含 FireRedLID 或 FireRedPunc。</li>
-  <li>FireRedASR2-AED 的 60 s 输入上限同样来自编码器；实测 CTC 在 10 / 20 / 30 / 60 s 上都能正常解码，RTF 基本稳定。</li>
-  <li>int8 英文子词质量不是完美：官方 <code>0.wav</code> 在本机输出 <code>MOAY TOAY … THEAY</code>，而官方文档期望 <code>MONDAY TODAY … THE DAY</code>；<code>1.wav</code> 与方言样例正常。上线前要用真实麦克风数据评估。</li>
+  <li>模型支持中文（普通话 + 20 多种方言）和英文。</li>
+  <li>实测 CTC 在 10 / 20 / 30 / 60 s 上都能正常解码，RTF 基本稳定；默认 <code>max_segment_ms</code> 取 30 s。</li>
+  <li>int8 英文子词质量不是完美：官方 <code>0.wav</code> 在本机输出 <code>MOAY TOAY … THEAY</code>；<code>1.wav</code> 与方言样例正常。发布前要用真实麦克风数据评估。</li>
 </ul>
 
 <h2 id="a3">3. 直接用 <code>ort</code> 跑 ONNX</h2>
 <p><a href="#top">↑</a></p>
 
 <p>
-模型只有一个 ONNX 图，输入输出都是普通张量，没有 transducer 的 decoder/joiner 或帧级 cache。
+模型只有一个 ONNX 图，输入输出都是普通张量，没有帧级 cache。
 项目现有的 <code>ort</code>、<code>kaldi-native-fbank</code>、<code>Fbank</code> 和 tokenizer 已经足够；
 只需新增一个 CTC 前端、CMVN 和 greedy CTC 解码。
 </p>
@@ -97,12 +96,12 @@ shift_ms    = 10
 dither      = 0
 snip_edges  = true
 low_freq    = 20
-high_freq   = 0          # 注意：不是文档打印的 -400
+high_freq   = 0          # 固定 0
 use_power   = true
 use_log_fbank = true
 sample_scale  = 32768    # 输入到 fbank 前乘 32768</code></pre>
 <ul class="note">
-  <li>sherpa 的 FireRed-CTC 实现会在 <code>Init()</code> 中把 <code>normalize_samples</code> 设为 false、<code>high_freq</code> 设为 0、<code>snip_edges</code> 设为 true；命令行打印的 <code>-400 / false</code> 是覆盖前的配置，不能照抄。</li>
+  <li>FireRed-CTC 的预处理以 <code>normalize_samples=false</code>、<code>high_freq=0</code>、<code>snip_edges=true</code> 为准。</li>
   <li>项目现有 <code>asr/features.rs</code> 已经使用 32768 缩放、<code>snip_edges=true</code>、默认 <code>high_freq=0</code>，与上面一致；主要新增的是 CMVN 与 CTC 解码。</li>
 </ul>
 
@@ -154,9 +153,8 @@ let text = tokenizer.decode(&amp;ids);</code></pre>
 </table>
 
 <ul class="note">
-  <li>官方 1 thread 的 RTF 为 0.173（5.1 s 用 0.883 s）；本机 2 threads 约 0.08，属于正常加速。</li>
-  <li>0.wav 的英文错误在其他运行方式（sherpa-onnx Python 1.12.27）下同样出现，不是本项目预处理错误；它是 int8 CTC 模型在该样本上的实际输出。</li>
-  <li>如果最终准确率不达标，可以保留 FireRedASR2-AED 作为 legacy 后端，或评估 FP32 CTC（约 2.9 GB）但 CPU 成本更高。</li>
+  <li>本机 2 threads RTF 约 0.08，满足 CPU 推理目标。</li>
+  <li>0.wav 的英文子词缺失是 int8 CTC 模型在该样本上的实际输出；发布前用真实麦克风数据评估，并记录为已知限制。</li>
 </ul>
 
 <h2 id="a5">5. 切换带来的代码与安装变更</h2>
@@ -183,18 +181,17 @@ let text = tokenizer.decode(&amp;ids);</code></pre>
 }</code></pre>
 <ul class="note">
   <li>完整 manifest、张量与目录契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>；本节只记录 CTC 相关差异。</li>
-  <li><code>max_segment_ms</code> 从 10_000 改为 30_000；PTT 默认上限 30_000，达到上限自动结束并开始下一段。</li>
-  <li>保留 AED 作为 legacy 后端时，manifest 用 tagged enum：<code>kind = "fire-red-aed"</code> 时有 encoder/decoder，<code>"fire-red-ctc"</code> 时只有 model。</li>
-  <li>安装脚本直接下载官方 <code>.tar.bz2</code> 并解出 <code>model.int8.onnx</code> / <code>tokens.txt</code>，不再需要 Python/PyTorch 导出 CTC；SHA-256 写入 manifest。</li>
+  <li><code>max_segment_ms</code> 取 30_000；PTT 达到上限自动结束并开始下一段。</li>
+  <li>manifest 只描述 <code>kind = "fire-red-ctc"</code>：单个 <code>model.int8.onnx</code> + <code>tokens.txt</code>。</li>
+  <li>安装脚本直接下载官方 <code>.tar.bz2</code> 并解出 <code>model.int8.onnx</code> / <code>tokens.txt</code>；SHA-256 写入 manifest。</li>
 </ul>
 
 <h3 id="a5-2">5.2 代码落点</h3>
 <ul>
   <li><code>voime-core/src/asr/firered_ctc.rs</code>：单 ONNX 会话、CMVN、CTC greedy、token 解码。</li>
-  <li><code>voime-core/src/asr/engine.rs</code>：<code>AsrEngine</code> enum，统一 AED / CTC 的 <code>transcribe</code>；默认 CTC，AED 作为 legacy。</li>
   <li><code>voime-core/src/asr/tokenizer.rs</code>：支持 <code>token id</code> 两列词表；<code>decode</code> 复用。</li>
-  <li><code>voime-core/src/pipeline.rs</code>：final 和现有尾部 partial 都调用 CTC；保持 VAD / 分段 / 标点链路不变。</li>
-  <li><code>voime-core/src/model.rs</code> / <code>config.rs</code>：manifest schema 2；<code>AsrArtifact</code> 改为 tagged enum。</li>
+  <li><code>voime-core/src/pipeline.rs</code>：final 和尾部 partial 都调用 CTC；保持 VAD / 分段 / 标点链路不变。</li>
+  <li><code>voime-core/src/model.rs</code> / <code>config.rs</code>：manifest schema 2；ASR artifact 只描述 CTC 单模型。</li>
 </ul>
 
 <h2 id="a6">6. 验收</h2>
@@ -202,9 +199,9 @@ let text = tokenizer.decode(&amp;ids);</code></pre>
 
 <table>
   <tr><th>项目</th><th>标准</th></tr>
-  <tr><td>CTC final</td><td>官方 1.wav 与方言样例文本一致；0.wav 英文错误记录为已知限制；真实麦克风数据 CER 不明显差于 AED。</td></tr>
+  <tr><td>CTC final</td><td>官方 1.wav 与方言样例文本一致；0.wav 英文错误记录为已知限制；真实麦克风数据 CER 达到发布门槛。</td></tr>
   <tr><td>CTC partial</td><td>沿用当前尾部重解码机制；界面可正常刷新；不进入历史或提交。</td></tr>
-  <tr><td>RTF</td><td>10 s ≤ 1.0 s；20 s ≤ 2.0 s；30 s ≤ 3.0 s；4 threads 下不低于此标准。</td></tr>
+  <tr><td>RTF</td><td>2 threads：10 s ≤ 1.0 s；20 s ≤ 2.0 s；30 s ≤ 3.0 s。</td></tr>
   <tr><td>CMVN / tokenizer</td><td>单元测试覆盖 metadata 读取、<code>token id</code> 解析、<code>▁</code> 空格、blank 0 过滤。</td></tr>
   <tr><td>分段</td><td>10 / 20 / 30 / 60 s 均能解码；PTT 达到 30 s 自动切段；continuous 由 VAD 提前切分。</td></tr>
 </table>
@@ -218,7 +215,7 @@ let text = tokenizer.decode(&amp;ids);</code></pre>
   <li><a href="https://github.com/k2-fsa/sherpa-onnx/blob/master/sherpa-onnx/csrc/offline-recognizer-ctc-impl.h">sherpa-onnx CTC 参数覆盖</a> — <code>normalize_samples=false</code>、<code>high_freq=0</code>、<code>snip_edges=true</code>。</li>
   <li><a href="https://github.com/k2-fsa/sherpa-onnx/blob/master/sherpa-onnx/csrc/offline-fire-red-asr-ctc-model.cc">FireRed-CTC ONNX 模型实现</a> — CMVN metadata 与输入输出。</li>
   <li><a href="https://github.com/k2-fsa/sherpa-onnx/blob/master/sherpa-onnx/csrc/offline-ctc-greedy-search-decoder.cc">CTC greedy decoder</a> — blank / 重复合并规则。</li>
-  <li><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedASR2S</a> — 模型架构与 AED 的 60 s 限制。</li>
+  <li><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedASR2S</a> — 模型架构与 FireRedASR2 模型来源。</li>
 </ul>
 
 </body>
