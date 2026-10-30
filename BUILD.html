@@ -140,6 +140,7 @@ ctest --test-dir build/fcitx --output-on-failure</code></pre>
   <li><code>fcitx-addon/tests</code> 覆盖 mode / 热键字符串 / IPC 枚举 / target 空引用；不覆盖真实 Fcitx keymatch 或 preview 渲染。</li>
   <li>根 <code>Cargo.toml</code> 同时是 <code>voime-tests</code> 包，通过显式 <code>[[test]]</code> 声明 <code>tests/</code>；直接 <code>cargo test</code> 即可发现。</li>
   <li>模型包校验包含 SHA-256、张量名称、类型、形状与真实 ONNX Runtime 推理；不含音频内容。</li>
+  <li>RTF 验收参考（2 threads）：10 s ≤ 1.0 s、20 s ≤ 2.0 s、30 s ≤ 3.0 s；本机 Ryzen 7 9800X3D 实测约 0.08。</li>
   <li>手工验收需同时在原生 Wayland、XWayland / XIM 与支持 text-input 的终端中测试热键、临时窗口与提交；Toggle 无语音时应出现空白窗口并保持到 toggle off 或目标失焦。</li>
 </ul>
 
@@ -168,6 +169,7 @@ scripts/install_models.sh</code></pre>
   <tr><th>操作</th><th>步骤</th></tr>
   <tr><td>升级 Fcitx</td><td>重新编译并安装 <code>voime.so</code>；重启 Fcitx；确认 addon ABI，且输入法组中没有 Voime。</td></tr>
   <tr><td>升级 Voime</td><td>停止 daemon；重新运行 <code>scripts/install_voimed.sh</code> / <code>scripts/install_voime.sh</code>；重新安装 addon 后重启 daemon 与 Fcitx。升级会删除旧版本残留的 <code>inputmethod/voime.conf</code>，并从输入法组移除 Voime。</td></tr>
+  <tr><td>配置迁移</td><td>旧版本无后缀的 <code>~/.config/fcitx5/conf/voime</code> 会在 addon 启动时迁移到 <code>voime.conf</code>，然后删除旧文件。</td></tr>
   <tr><td>卸载</td><td><code>systemctl --user disable --now voime.service</code>；删除 addon 描述文件、<code>voime.so</code>、<code>~/.local/bin/voimed</code>、<code>~/.local/bin/voime</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录按需保留或删除。</td></tr>
   <tr><td>停止顺序</td><td>先停止 daemon，再重启 / 关闭 Fcitx；卸载后 Fcitx 不保留 <code>Voime</code> 条目。</td></tr>
 </table>

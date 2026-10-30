@@ -273,7 +273,10 @@
 <ul class="note">
   <li>VAD / Punc 的 manifest 字段与张量契约沿用项目现有结构；ASR 只描述 CTC 单模型。</li>
   <li>模型包在运行期只读；启动校验失败不进入 TUI / daemon 运行态。</li>
-  <li>CTC 模型包约 740 MiB；只包含单个 <code>model.int8.onnx</code> 与 <code>tokens.txt</code>。</li>
+  <li>官方模型包为 <code>sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25</code>（<a href="https://huggingface.co/csukuangfj2/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25">Hugging Face</a>）；<code>model.int8.onnx</code> 775,861,420 bytes，SHA-256 <code>ca3dbabd82170110cc0b343c2890866d449984bc9cd92b9a18371ff80a81bb99</code>；<code>tokens.txt</code> SHA-256 <code>1bc613de2112d257e61a349c3e72d1b1a9cf19c33d3ca954197ad2171e5ea07b</code>。官方包不含 <code>cmvn.ark</code>。</li>
+  <li>预处理与 sherpa 对齐：<code>normalize_samples=false</code>、<code>dither=0</code>、<code>snip_edges=true</code>、<code>low_freq=20</code>、<code>high_freq=0</code>、<code>use_power=true</code>、<code>use_log_fbank=true</code>，输入乘 <code>32768</code>。</li>
+  <li>模型为 Conformer 编码器 + 线性 CTC head，没有帧级 cache；VAD 负责流式切分，CTC 每次处理完整语音段。</li>
+  <li>参考性能（AMD Ryzen 7 9800X3D、2 threads）：RTF 约 0.08；10 s 约 0.7–0.8 s，30 s 约 2.3 s，60 s 约 5.6 s。int8 英文子词质量有限（官方 <code>0.wav</code> 有缺失），发布前需用真实麦克风数据评估。</li>
 </ul>
 
 <h3 id="p4-3">4.3 推理运行时：ONNX Runtime / <code>ort</code></h3>

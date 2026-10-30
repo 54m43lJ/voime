@@ -370,7 +370,7 @@ impl StreamingFbank {
         -&gt; anyhow::Result&lt;Vec&lt;Vec&lt;f32&gt;&gt;&gt;;
 }</code></pre>
 <ul class="note">
-  <li><code>Fbank</code> 处理完整语音段；<code>StreamingFbank</code> 保留滑动窗口服务 VAD；两者都使用 16 kHz、80 bin、25 ms 窗长、10 ms 帧移和 32768 样本缩放。</li>
+  <li><code>Fbank</code> 处理完整语音段；<code>StreamingFbank</code> 保留滑动窗口服务 VAD；两者都使用 16 kHz、80 bin、25 ms 窗长、10 ms 帧移和 32768 样本缩放；完整预处理参数见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
 </ul>
 
 <h3 id="c4-8">4.8 crates/voime-core/src/asr/firered_ctc.rs <a class="backlink" href="#c1">文件树</a></h3>
