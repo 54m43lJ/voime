@@ -43,8 +43,12 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
     <td>Voime 实现为 Fcitx5 addon（<code>voime.so</code>，<code>fcitx::InputMethodEngineV2</code>），并在 Fcitx 输入法组中注册 <code>Voime</code> 条目。Fcitx 负责键盘、frontend、焦点、preedit 与提交。</td>
   </tr>
   <tr>
-    <td>PTT 热键</td>
-    <td>addon 在 <code>InputContextKeyEvent</code> 的 <code>PreInputMethod</code> 阶段匹配 hold / toggle 组合键，命中后 <code>filterAndAccept()</code> 消费；热键来自 Fcitx 的输入上下文。</td>
+    <td>模式</td>
+    <td>addon 配置 <code>Mode</code> 在 <code>ptt</code> / <code>toggle</code> / <code>continuous</code> 三选一；模式由 addon 持有，并通过 IPC 同步给 <code>voimed</code> 与 TUI。</td>
+  </tr>
+  <tr>
+    <td>热键</td>
+    <td>addon 只配置一个 <code>Hotkey</code>：<code>ptt</code> 模式下为按住说话，<code>toggle</code> 模式下为按一下切换，<code>continuous</code> 模式忽略。匹配在 <code>InputContextKeyEvent</code> 的 <code>PreInputMethod</code> 阶段完成，命中后 <code>filterAndAccept()</code> 消费。</td>
   </tr>
   <tr>
     <td>上屏</td>
@@ -67,8 +71,8 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
     <td>默认 <code>max_segment_ms</code> 取 30 s；PTT 达到上限自动切段并继续收集，continuous 由 VAD 提前切分。本提案不新增倒计时 UI。</td>
   </tr>
   <tr>
-    <td>Preedit</td>
-    <td>v1 不写客户端 preedit；临时结果只在 TUI 显示。Phase 2 可在 Voime 是当前输入法且用户显式启用时调用 <code>inputPanel().setClientPreedit()</code> + <code>updatePreedit()</code>。</td>
+    <td>临时文本窗口</td>
+    <td>使用 Fcitx 输入面板的 preedit 显示 <code>Partial</code>：<code>inputPanel().setPreedit()</code> + <code>updateUserInterface()</code>。说话过程中显示部分识别文本，Final / 停止 / 空段 / 断线时清空并关闭；不实现自绘窗口，不写客户端 preedit。</td>
   </tr>
   <tr>
     <td>状态显示</td>
@@ -84,7 +88,7 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
   </tr>
   <tr>
     <td>配置位置</td>
-    <td>PTT 组合键、socket 路径、可选 preedit 放在 Fcitx addon 配置 <code>~/.config/fcitx5/conf/voime.conf</code>；模型、音频、模式与线程数仍由 <code>voimed</code> 命令行决定。</td>
+    <td>Fcitx addon 配置 <code>~/.config/fcitx5/conf/voime.conf</code> 只保留 <code>Mode</code> 与 <code>Hotkey</code>；socket 使用固定默认路径，模型、音频与线程数由 <code>voimed</code> 命令行决定。</td>
   </tr>
   <tr>
     <td>生命周期</td>
@@ -106,15 +110,17 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
 <h3 id="pr2-1">2.1 目标</h3>
 <ul>
   <li>把 Voime 注册为 Fcitx5 输入法引擎：安装 addon 后，Fcitx 的输入法列表出现 <code>Voime</code>，可以加入输入法组。</li>
-  <li>由 Fcitx 捕获 PTT 热键：按住说话与按一下切换两种语义都在 addon 内匹配，命中后消费按键；普通按键完全交给 Fcitx。</li>
+  <li>addon 配置一个模式（<code>ptt</code> / <code>toggle</code> / <code>continuous</code>）与一个热键；<code>ptt</code> 为按住说话，<code>toggle</code> 为按一下切换，<code>continuous</code> 忽略热键并由 VAD 自动切分。</li>
+  <li>由 Fcitx 捕获热键：命中后消费按键，普通按键完全交给 Fcitx。</li>
   <li>在任意聚焦的 Fcitx 输入框中工作：原生 Wayland 应用、通过 Fcitx XIM 的 XWayland/X11 应用，以及支持 text-input 的终端。</li>
   <li>最终文本通过 Fcitx 的 <code>commitString</code> 插入光标位置。</li>
   <li>PTT 不要求当前输入法是 <code>Voime</code>；用户可以在拼音、键盘布局或其他 Fcitx 输入法处于活动状态时直接按 PTT。</li>
   <li>把音频、模型、ASR、标点与会话历史放进独立 <code>voimed</code> 守护进程；Fcitx addon 只负责热键、目标输入框、IPC 与提交。</li>
-  <li>TUI 变成可选监视器：显示临时结果 / 历史、发送 Start / Stop / Toggle / Clear；关闭 TUI 不影响 PTT 与上屏。</li>
+  <li>录音期间通过 Fcitx 输入面板显示临时文本窗口，内容是当前段的 <code>Partial</code>；Final、停止、空段或断线时立即清空。</li>
+  <li>TUI 变成可选监视器：显示模式 / 热键 / 历史、发送 Start / Stop / Toggle / Clear；关闭 TUI 不影响热键、临时窗口与上屏。</li>
   <li>ASR 切换为 FireRedASR2-CTC int8：单 ONNX、<code>ort</code> CPU 推理、CMVN 从 metadata 读取、greedy CTC；降低 CPU 推理耗时与模型内存，同时保持 VAD 分段、临时结果与 FireRedPunc 不变。</li>
   <li>保留现有的纯本地、离线、无 GPU、无 Python 运行时约束；CTC 模型包由安装脚本下载，不在运行期联网或导出。</li>
-  <li>把 PTT 组合键、socket 路径、可选 preedit 暴露为 Fcitx addon 配置，可在 <code>fcitx5-configtool</code> 或配置文件中修改。</li>
+  <li>把 <code>Mode</code> 与 <code>Hotkey</code> 暴露为 Fcitx addon 配置，可在 <code>fcitx5-configtool</code> 或配置文件中修改。</li>
   <li>CTC 的 CPU 目标（2 threads）：RTF ≤ 0.1；10 s 音频 ≤ 1.0 s，30 s 音频 ≤ 3.0 s；真实麦克风数据上的 CER 达到发布门槛。</li>
   <li>提供可重复的安装 / 构建流程：Rust workspace 产物 + C++ addon + Fcitx 描述文件 + 可选 systemd user service。</li>
 </ul>
@@ -125,7 +131,7 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
   <li>Voime 是 Fcitx 的一个 addon，不实现通用输入法框架。</li>
   <li>不实现自绘候选窗口、状态图标或设置 GUI；这些由 Fcitx 及 <code>fcitx5-configtool</code> 提供。</li>
   <li>不保证桌面空白处、锁屏、未使用 Fcitx 的应用、没有 text-input 的窗口中的 PTT；这些场景没有可提交的输入上下文。</li>
-  <li>v1 不写客户端 preedit，不显示输入框内的临时文本；临时结果只在 TUI。</li>
+  <li>不写客户端 preedit；临时文本只通过 Fcitx 输入面板显示，不显示在应用输入框内。</li>
   <li>不引入第二个 ASR 模型或额外推理后端。</li>
   <li>不改变 VAD 分段算法、临时识别节奏或 FireRedPunc；ASR 使用 CTC，默认 <code>max_segment_ms=30_000</code>。</li>
   <li>不承诺 int8 CTC 在英文子词上的完美准确率；官方 <code>0.wav</code> 的已知英文错误需要真实麦克风数据评估。</li>
@@ -154,7 +160,15 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
   </tr>
   <tr>
     <td><code>PreInputMethod</code> 早于 Fcitx 全局热键处理</td>
-    <td>addon 在 Fcitx 的 trigger / alt-trigger / enumerate 键之前看到事件。PTT 组合键不得与这些全局热键重叠，否则会先被 Voime 消费。</td>
+    <td>addon 在 Fcitx 的 trigger / alt-trigger / enumerate 键之前看到事件。Hotkey 不得与这些全局热键重叠，否则会先被 Voime 消费。</td>
+  </tr>
+  <tr>
+    <td>Mode 的唯一来源是 addon 配置</td>
+    <td><code>voimed</code> 不通过命令行选择模式；它通过 addon 的 <code>Hello</code> / <code>Configure</code> 获得 <code>ptt</code> / <code>toggle</code> / <code>continuous</code>，TUI 从 Snapshot 显示同一值。</td>
+  </tr>
+  <tr>
+    <td>临时文本由 Fcitx 输入面板渲染</td>
+    <td>通过 <code>InputPanel::setPreedit</code> 写 preedit，由 Fcitx UI 显示窗口；不保证所有 UI addon 都渲染，且当前输入法可能更新同一面板。</td>
   </tr>
   <tr>
     <td><code>commitString</code> 没有返回值和确认</td>
@@ -215,9 +229,10 @@ addon、ASR daemon 与可选 TUI。下面只描述本方案最终要落地的形
   <tr><td>输入宿主</td><td>Fcitx5（≥ 5.1.23）运行并持有输入法 seat；Voime 作为 addon 加载。</td></tr>
   <tr><td>Voime addon</td><td><code>voime.so</code> 实现 <code>InputMethodEngineV2</code>，在 <code>PreInputMethod</code> 阶段匹配 PTT，消费 PTT 键，并通过 <code>commitString</code> 提交最终文本。</td></tr>
   <tr><td>ASR daemon</td><td><code>voimed</code> 独立进程：音频采集、VAD、FireRedASR2-CTC、FireRedPunc、会话历史与 Unix socket 服务。</td></tr>
-  <tr><td>TUI</td><td><code>voime</code> 可选监视器：显示临时结果 / 历史，发送 Start / Stop / Toggle / Clear；不拥有键盘或提交路径。</td></tr>
+  <tr><td>临时文本窗口</td><td>说话期间由 addon 把 <code>Partial</code> 写入 Fcitx <code>InputPanel</code> 的 preedit；Fcitx UI 显示，Final / 停止 / 空段 / 断线时清空。</td></tr>
+  <tr><td>TUI</td><td><code>voime</code> 可选监视器：显示模式 / 热键 / 历史，发送 Start / Stop / Toggle / Clear；不拥有键盘或提交路径。</td></tr>
   <tr><td>ASR</td><td>FireRedASR2-CTC int8 单 ONNX，CMVN 从 metadata 读取，greedy CTC；final 与尾部 partial 共用；默认 <code>max_segment_ms=30_000</code>。</td></tr>
-  <tr><td>配置</td><td>PTT 键、socket、可选 preedit 在 Fcitx addon 配置；模型、音频、模式与线程在 <code>voimed</code> 命令行。</td></tr>
+  <tr><td>配置</td><td>Fcitx addon 只配置 <code>Mode</code>（<code>ptt</code> / <code>toggle</code> / <code>continuous</code>）与 <code>Hotkey</code>；socket 使用默认路径；模型、音频与线程在 <code>voimed</code> 命令行。</td></tr>
   <tr><td>平台</td><td>Linux + Fcitx5；原生 Wayland、XWayland / X11 通过 Fcitx 对应 frontend 覆盖。</td></tr>
 </table>
 
@@ -250,17 +265,17 @@ addon、ASR daemon 与可选 TUI。下面只描述本方案最终要落地的形
   </tr>
   <tr>
     <td><code>voime.so</code>（addon）</td>
-    <td>实现 <code>InputMethodEngineV2</code>；注册 <code>Voime</code> 输入法；在 <code>PreInputMethod</code> 阶段监听按键；匹配 hold / toggle；消费 PTT 键；维护当前语音段的目标 <code>InputContext</code> 弱引用；通过 Unix socket 与 daemon 通信；调用 <code>commitString</code>；可选 preedit；读取 addon 配置。</td>
+    <td>实现 <code>InputMethodEngineV2</code>；注册 <code>Voime</code> 输入法；读取 <code>Mode</code> / <code>Hotkey</code>；在 <code>PreInputMethod</code> 阶段按模式匹配热键并消费；维护当前语音段的目标 <code>InputContext</code> 弱引用；通过 Unix socket 与 daemon 通信；把 Partial 写入 Fcitx <code>InputPanel</code> 的 preedit；调用 <code>commitString</code>。</td>
     <td>音频采集、模型推理、ASR、标点、会话历史。</td>
   </tr>
   <tr>
     <td><code>voimed</code></td>
-    <td>模型校验与加载；音频采集；VAD / ASR / 标点；语音段状态机；会话历史；Unix socket 服务；TUI / ctl 命令处理；daemon 生命周期。</td>
+    <td>模型校验与加载；音频采集；VAD / ASR / 标点；语音段状态机；会话历史；Unix socket 服务；接收 addon 的 Mode / Hotkey 并同步给 TUI；TUI / ctl 命令处理；daemon 生命周期。</td>
     <td>Fcitx API、键盘、输入上下文、最终文本提交、PTT 匹配。</td>
   </tr>
   <tr>
     <td><code>voime</code>（TUI）</td>
-    <td>可选监视器：连接 socket、显示临时结果 / 历史 / 状态；发送 Start / Stop / Toggle / Clear；手动复制使用终端原生选择。</td>
+    <td>可选监视器：连接 socket、显示模式 / 热键 / 临时结果 / 历史 / 状态；发送 Start / Stop / Toggle / Clear；手动复制使用终端原生选择。</td>
     <td>音频、模型、键盘、上屏、PTT 配置。</td>
   </tr>
   <tr>
@@ -286,7 +301,9 @@ fcitx5
 ├── 加载 share/fcitx5/inputmethod/voime.conf  Addon=voime
 ├── VoimeAddon::VoimeAddon(instance)
 │   ├── 读取 ~/.config/fcitx5/conf/voime.conf
+│   │   └── Mode / Hotkey
 │   ├── ipc::Client::connect(socket)（失败时重试）
+│   ├── Hello { role: Fcitx, mode, hotkey }
 │   └── watchEvent(InputContextKeyEvent, PreInputMethod)
 └── 正常输入法路由
 
@@ -299,22 +316,23 @@ voime（可选）
   <li><code>voimed</code> 与 Fcitx 的启动顺序不敏感：daemon 先起时 addon 直接连接；addon 先起时按退避间隔重连。任一进程重启都不需要重启另一个。</li>
   <li>addon 未连接 daemon 时，不得消费 PTT 键；按键原样交给 Fcitx / 应用，并在 Fcitx 日志中记录一次 warning。这样不会因为 daemon 未启动而破坏正常打字。</li>
   <li>推荐使用 systemd user service 启动 <code>voimed</code>，因为它需要在登录后长期驻留，并且不依赖 TTY；也可以由桌面会话的 <code>exec-once</code> 启动。</li>
-  <li>退出顺序：停止录音 → 取消当前段 → 关闭 socket → 停止 pipeline → 停止音频。addon 收到 EOF 后清除 hold / toggle 状态与目标引用；Fcitx 继续正常运行。</li>
+  <li>退出顺序：停止录音 → 取消当前段 → 关闭 socket → 停止 pipeline → 停止音频。addon 收到 EOF 后清除 hold / toggle 锁存、临时窗口与目标引用；Fcitx 继续正常运行。</li>
   <li><code>voime ctl quit</code> 只停止 daemon，不关闭 Fcitx；Fcitx 中的 <code>Voime</code> 条目仍存在，但 PTT 会因 daemon 不可用而放行按键。</li>
+  <li>addon 配置重载时向 daemon 发送 <code>Configure { mode, hotkey }</code>；模式变更在下一个语音段生效，当前段继续到结束。addon 断线时 daemon 停止 continuous 自动分段，保留 TUI / ctl 手动 Start / Stop。</li>
 </ul>
 
 <h3 id="pr4-4">4.4 状态机</h3>
 <pre><code>Idle
-├── addon PTT hold press / toggle press
+├── Mode=ptt：Hotkey 按下 / Mode=toggle：Hotkey 按下
 │   ├── 生成 segment_id，记录目标 InputContext
 │   └── Start / Toggle → Recording
-├── continuous VAD 语音起点
+├── Mode=continuous：VAD 语音起点
 │   └── SegmentStarted → Recording
 └── TUI / ctl Start
     └── SegmentStarted → Recording
 
 Recording
-├── hold release / toggle press / TUI Stop / ctl Stop
+├── Mode=ptt：Hotkey 松开 / Mode=toggle：Hotkey 按下 / TUI Stop / ctl Stop
 │   └── Finalizing
 ├── VAD 静音 / max_segment_ms
 │   └── Finalizing
@@ -330,15 +348,17 @@ Finalizing
     └── Idle（不产生 Final）
 
 Delivering
+├── 清空临时文本窗口
 ├── 目标 InputContext 存在且 hasFocus()
 │   └── commitString(text) → Idle
 └── 目标丢失 / 失焦 / 不存在
     └── 保留在 daemon 历史与 TUI → Idle</code></pre>
 <ul class="note">
   <li>同一时刻只允许一个语音段；Recording / Finalizing 期间新的 Start 被忽略，toggle 在 Finalizing 期间不产生新段。</li>
-  <li>PTT 的 hold 与 toggle 都由 addon 产生 <code>segment_id</code>；continuous、TUI 与 ctl 由 daemon 产生。addon 用同一个 ID 关联目标输入框与最终文本。</li>
-  <li>continuous 模式不消费 PTT 键：所有按键按普通输入处理，VAD 自动开始 / 结束语音段；如果用户需要手动控制，使用 TUI 或 <code>voime ctl</code>。</li>
+  <li>addon 按 <code>Mode</code> 产生 <code>segment_id</code>：<code>ptt</code> 松开时 Stop，<code>toggle</code> 再按时 Stop；continuous、TUI 与 ctl 由 daemon 产生。addon 用同一个 ID 关联目标输入框与最终文本。</li>
+  <li>continuous 模式不消费 Hotkey：所有按键按普通输入处理，VAD 自动开始 / 结束语音段；如果用户需要手动控制，使用 TUI 或 <code>voime ctl</code>。</li>
   <li>目标输入框只在语音段开始时绑定一次；录音期间切换窗口不会改变目标。最终文本不会进入录音开始之后才聚焦的另一个窗口。</li>
+  <li>停止、空段、ASR 错误、目标失焦 / 销毁、daemon 断线时都先清空临时文本窗口；Final 提交前也先清空。</li>
   <li>daemon 断线时 addon 立即清除当前段与目标；如果 daemon 之后恢复，未完成段不会补交。</li>
 </ul>
 
@@ -346,11 +366,12 @@ Delivering
 <table>
   <tr><th>边界</th><th>规则</th></tr>
   <tr><td>键盘与焦点</td><td>由 Fcitx 持有；Voime 不直接读取键盘，也不保存 Fcitx 之外的焦点状态。</td></tr>
-  <tr><td>PTT</td><td>addon 在 <code>PreInputMethod</code> 阶段匹配并消费；普通按键继续由 Fcitx 路由。</td></tr>
+  <tr><td>模式与热键</td><td>addon 配置 <code>Mode</code> / <code>Hotkey</code>；<code>ptt</code> 按住、<code>toggle</code> 切换、<code>continuous</code> 忽略热键；模式同步给 daemon。</td></tr>
+  <tr><td>临时文本</td><td>addon 把 <code>Partial</code> 写入目标 <code>InputContext</code> 的 <code>InputPanel</code>；Fcitx UI 渲染临时窗口，结束即清空。</td></tr>
   <tr><td>文本提交</td><td>addon 对语音段开始时的目标 <code>InputContext</code> 调用 <code>commitString</code>；目标失焦则不提交。</td></tr>
   <tr><td>ASR</td><td><code>voimed</code> 独占音频、模型、VAD、CTC、标点与会话历史。</td></tr>
   <tr><td>TUI</td><td>只读 daemon 状态并发送控制命令；不拥有键盘、音频或提交路径。</td></tr>
-  <tr><td>配置</td><td>PTT / socket / preedit 归 Fcitx addon；模型 / 音频 / 模式归 <code>voimed</code>。</td></tr>
+  <tr><td>配置</td><td><code>Mode</code> / <code>Hotkey</code> 归 Fcitx addon；模型 / 音频 / 线程归 <code>voimed</code>。</td></tr>
 </table>
 <ul class="note">
   <li>Fcitx 的 frontend、焦点、键盘与文本提交是方案的组成部分；Voime 只实现 addon 桥接与 ASR 守护进程。</li>
@@ -366,7 +387,7 @@ Delivering
 <p>
 Fcitx 的 frontend 收到按键后，会构造 <code>InputContextKeyEvent</code> 并按阶段执行事件处理器。addon 在
 <code>PreInputMethod</code> 阶段注册监听：它比当前输入法引擎更早看到按键，但晚于 Fcitx 的内部保留阶段。
-命中 hold / toggle 后，addon 调用 <code>filterAndAccept()</code>，按键不再进入当前输入法或应用；未命中的按键
+命中 Hotkey 后，addon 调用 <code>filterAndAccept()</code>，按键不再进入当前输入法或应用；未命中的按键
 完全不动，由 Fcitx 继续处理。
 </p>
 
@@ -377,16 +398,24 @@ Fcitx 的 frontend 收到按键后，会构造 <code>InputContextKeyEvent</code>
     <td><code>Instance::watchEvent&lt;EventType::InputContextKeyEvent&gt;(EventWatcherPhase::PreInputMethod, handler)</code>。</td>
   </tr>
   <tr>
-    <td>匹配</td>
-    <td>使用 addon 配置中的 <code>KeyListOption</code>；<code>KeyEvent::checkKeyList(keys, KeyEventMatchingMode::MatchAllNormalizedKeys)</code>。</td>
+    <td>模式</td>
+    <td>addon 配置 <code>Mode</code>：<code>ptt</code>、<code>toggle</code>、<code>continuous</code>。模式只影响 addon 的热键语义；<code>continuous</code> 不匹配热键。</td>
   </tr>
   <tr>
-    <td>按住说话（hold）</td>
+    <td>匹配</td>
+    <td>使用 addon 配置中的单个 <code>Hotkey</code>；<code>KeyEvent::checkKeyList(keys, KeyEventMatchingMode::MatchAllNormalizedKeys)</code>。</td>
+  </tr>
+  <tr>
+    <td><code>ptt</code> 模式</td>
     <td>按下匹配 → 记录目标 <code>InputContext</code>、生成 <code>segment_id</code>、发送 <code>Start</code>、<code>filterAndAccept()</code>；松开按记录的 raw keycode 匹配（不依赖松开时的 modifiers），发送 <code>Stop</code>，同样消费。</td>
   </tr>
   <tr>
-    <td>切换说话（toggle）</td>
+    <td><code>toggle</code> 模式</td>
     <td>按下匹配 → 若 Idle 则 <code>Start</code>，若 Recording 则 <code>Stop</code>；按下与松开都消费；Finalizing 期间按下只消费、不产生新段。</td>
+  </tr>
+  <tr>
+    <td><code>continuous</code> 模式</td>
+    <td>不匹配、不消费热键；所有按键交给 Fcitx。daemon 根据 <code>Mode=continuous</code> 用 VAD 自动开始 / 结束语音段。</td>
   </tr>
   <tr>
     <td>普通按键</td>
@@ -438,52 +467,74 @@ void VoimeAddon::handleKey(fcitx::KeyEvent &amp;event) {
     if (!client_.connected()) {
         return;                                  // daemon 不可用时放行
     }
+    if (config_.mode.value() == Mode::Continuous) {
+        return;                                  // 连续监听：热键完全交给 Fcitx
+    }
+
+    const bool matches = event.checkKeyList(
+        config_.hotkey.value(), fcitx::KeyEventMatchingMode::MatchAllNormalizedKeys);
+    if (config_.mode.value() == Mode::Ptt) {
+        handlePtt(event, matches);
+    } else {
+        handleToggle(event, matches);
+    }
+}
+
+void VoimeAddon::handlePtt(fcitx::KeyEvent &amp;event, bool matches) {
     if (holdActive_ &amp;&amp; event.isRelease() &amp;&amp; event.rawKey().code() == holdCode_) {
         holdActive_ = false;
         client_.stop(segmentId_, TriggerSource::Hold);
         event.filterAndAccept();
         return;
     }
+    if (event.isRelease()) {
+        if (matches) {
+            event.filterAndAccept();             // 被忽略的 press 的 release 也不放行
+        }
+        return;
+    }
+    if (!matches) {
+        return;
+    }
+
+    event.filterAndAccept();
+    if (finalizing_ || recording_) {
+        return;                                  // 收尾 / 已有段：消费但忽略
+    }
+    holdActive_ = true;
+    holdCode_ = event.rawKey().code();
+    segmentId_ = nextSegmentId();
+    target_ = event.inputContext()-&gt;watch();      // 弱引用，IC 销毁后失效
+    client_.start(segmentId_, TriggerSource::Hold);
+}
+
+void VoimeAddon::handleToggle(fcitx::KeyEvent &amp;event, bool matches) {
     if (toggleCode_ &amp;&amp; event.isRelease() &amp;&amp; event.rawKey().code() == toggleCode_) {
         toggleCode_ = 0;
         event.filterAndAccept();
         return;
     }
     if (event.isRelease()) {
+        if (matches) {
+            event.filterAndAccept();
+        }
+        return;
+    }
+    if (!matches) {
         return;
     }
 
-    const bool hold = event.checkKeyList(
-        config_.holdKey.value(), fcitx::KeyEventMatchingMode::MatchAllNormalizedKeys);
-    const bool toggle = event.checkKeyList(
-        config_.toggleKey.value(), fcitx::KeyEventMatchingMode::MatchAllNormalizedKeys);
-    if (!hold &amp;&amp; !toggle) {
-        return;                                  // 普通键交给 Fcitx
-    }
-
-    event.filterAndAccept();                     // PTT 键不进入应用
+    event.filterAndAccept();
+    toggleCode_ = event.rawKey().code();
     if (finalizing_) {
-        return;                                  // 收尾期间不接受新段
+        return;
     }
-
-    if (hold) {
-        if (recording_) {
-            return;                              // 已有段，忽略重复 Start
-        }
-        holdActive_ = true;
-        holdCode_ = event.rawKey().code();
+    if (!recording_) {
         segmentId_ = nextSegmentId();
-        target_ = event.inputContext()-&gt;watch();  // 弱引用，IC 销毁后失效
-        client_.start(segmentId_, TriggerSource::Hold);
+        target_ = event.inputContext()-&gt;watch();
+        client_.start(segmentId_, TriggerSource::Toggle);
     } else {
-        toggleCode_ = event.rawKey().code();
-        if (!recording_) {
-            segmentId_ = nextSegmentId();
-            target_ = event.inputContext()-&gt;watch();
-            client_.start(segmentId_, TriggerSource::Toggle);
-        } else {
-            client_.stop(segmentId_, TriggerSource::Toggle);
-        }
+        client_.stop(segmentId_, TriggerSource::Toggle);
     }
 }</code></pre>
 <ul class="note">
@@ -494,26 +545,22 @@ void VoimeAddon::handleKey(fcitx::KeyEvent &amp;event) {
   <li>组合键中的修饰键可能在按下时已被 Fcitx 送到应用；应用会看到一次单独的修饰键 press / release，这是输入法热键可接受的噪声。</li>
 </ul>
 
-<h3 id="pr5-2">5.2 热键配置</h3>
+<h3 id="pr5-2">5.2 addon 配置</h3>
 <table>
   <tr><th>配置项</th><th>默认</th><th>说明</th></tr>
-  <tr><td><code>HoldKey</code></td><td><code>Super+F2</code></td><td>按住说话：按下开始，松开结束。设为空可禁用。</td></tr>
-  <tr><td><code>ToggleKey</code></td><td><code>Super+F3</code></td><td>按一下开始，再按一下结束。设为空可禁用。</td></tr>
-  <tr><td><code>Socket</code></td><td>空 → <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code></td><td>addon 连接 daemon 的 Unix socket；通常不需要改。</td></tr>
-  <tr><td><code>Preedit</code></td><td><code>False</code></td><td>Phase 2 才生效；v1 保持关闭。</td></tr>
+  <tr><td><code>Mode</code></td><td><code>ptt</code></td><td><code>ptt</code> / <code>toggle</code> / <code>continuous</code> 三选一；决定热键语义与 daemon 是否自动连续分段。</td></tr>
+  <tr><td><code>Hotkey</code></td><td><code>Super+F2</code></td><td><code>ptt</code> 模式按住说话，<code>toggle</code> 模式按一下切换；<code>continuous</code> 模式忽略。设为空可禁用。</td></tr>
 </table>
 
 <pre><code># ~/.config/fcitx5/conf/voime.conf
-HoldKey=Super+F2
-ToggleKey=Super+F3
-Socket=
-Preedit=False</code></pre>
+Mode=ptt
+Hotkey=Super+F2</code></pre>
 
 <ul class="note">
+  <li>用户可见配置只有 <code>Mode</code> 与 <code>Hotkey</code>；socket 使用 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code> 默认路径，不作为常规配置项。</li>
   <li>配置通过 <code>fcitx5-configtool</code> 的 Addons 页面或直接编辑文件完成；修改后让 Fcitx 重新加载 addon 配置，或重启 Fcitx。</li>
-  <li>两个组合键不能相同；至少包含一个非修饰键。默认值避开了 Fcitx 的 <code>Control+space</code> trigger 与常见合成器绑定。</li>
-  <li><code>HoldKey</code> / <code>ToggleKey</code> 使用 Fcitx 的 key 语法（<code>Control</code> / <code>Shift</code> / <code>Alt</code> / <code>Super</code> + keysym 名称）。</li>
-  <li>热键只在 Fcitx addon 配置中；<code>voimed</code> 不接受热键参数，也不参与 PTT 匹配。</li>
+  <li><code>Hotkey</code> 使用 Fcitx 的 key 语法（<code>Control</code> / <code>Shift</code> / <code>Alt</code> / <code>Super</code> + keysym 名称）；不得与 Fcitx trigger / alt-trigger / enumerate / preedit 切换键或常见合成器绑定冲突。</li>
+  <li><code>voimed</code> 不接受模式或热键参数；Mode / Hotkey 只由 addon 配置提供。</li>
 </ul>
 
 <h3 id="pr5-3">5.3 边界与失败行为</h3>
@@ -526,6 +573,8 @@ Preedit=False</code></pre>
   <tr><td>录音中切换窗口</td><td>目标输入框不变；最终文本只提交到开始时的目标，失焦则保留历史。</td></tr>
   <tr><td>录音中关闭目标窗口</td><td><code>TrackableObjectReference</code> 失效；最终文本不提交，保留在 daemon/TUI。</td></tr>
   <tr><td>Finalizing 时再次按 PTT</td><td>消费按键但忽略，不产生新段；避免与同一 ASR 会话并发。</td></tr>
+  <tr><td>continuous 模式</td><td>热键不匹配、不消费；daemon 根据 <code>Mode=continuous</code> 用 VAD 自动切分；TUI / ctl 仍可手动 Start / Stop。</td></tr>
+  <tr><td>模式切换</td><td>addon 配置重载后通过 <code>Configure</code> 同步；新模式在下一个语音段生效，当前段继续到结束。</td></tr>
   <tr><td>hold 松开事件丢失</td><td>VAD 静音自动结束仍然兜底；松开事件幂等。若 daemon 已自动 final，Stop 不重复提交。</td></tr>
   <tr><td>锁屏 / 会话切换</td><td>由 Fcitx 的 frontend 行为决定；Voime 不额外抓键盘，也不在锁屏时保留独立 grab。</td></tr>
 </table>
@@ -590,19 +639,19 @@ Preedit=False</code></pre>
 <table>
   <tr><th>语音段来源</th><th>目标输入框</th><th>失焦 / 销毁时</th></tr>
   <tr>
-    <td>PTT（hold / toggle）</td>
-    <td>addon 收到 PTT 按键时的 <code>InputContext</code>。</td>
-    <td>不提交；Final 保留在 daemon/TUI。</td>
+    <td><code>ptt</code> / <code>toggle</code> 模式</td>
+    <td>addon 收到 Hotkey 时的 <code>InputContext</code>。</td>
+    <td>清空临时窗口；不提交；Final 保留在 daemon/TUI。</td>
   </tr>
   <tr>
-    <td>continuous（VAD）</td>
+    <td><code>continuous</code>（VAD）</td>
     <td>daemon 广播 <code>SegmentStarted</code> 时 addon 当前聚焦的 <code>InputContext</code>。</td>
-    <td>不提交；避免把背景语音送进后续窗口。</td>
+    <td>清空临时窗口；不提交；避免把背景语音送进后续窗口。</td>
   </tr>
   <tr>
     <td>TUI / <code>voime ctl</code> 手动 Start</td>
     <td><code>SegmentStarted</code> 到达时 addon 当前聚焦的 <code>InputContext</code>。</td>
-    <td>不提交；保留历史。</td>
+    <td>清空临时窗口；不提交；保留历史。</td>
   </tr>
   <tr>
     <td>没有焦点 / 不是文本输入框</td>
@@ -613,34 +662,62 @@ Preedit=False</code></pre>
 
 <ul class="note">
   <li>固定“开始时的目标”而不是“Final 时的焦点”，避免用户在录音期间切换窗口后文本落到错误的输入框。</li>
-  <li>如果产品后续希望“提交到 Final 时的焦点”，需要新增显式配置与文档契约；不要在没有说明的情况下改变。</li>
+  <li>目标失焦或销毁时立即清空临时文本窗口；最终文本不提交，保留在 daemon/TUI。</li>
   <li>多显示环境下每个 <code>InputContext</code> 独立；addon 只保存自己看到的那个引用，不跨 display 猜测。</li>
 </ul>
 
-<h3 id="pr6-3">6.3 Preedit（默认关闭）</h3>
+<h3 id="pr6-3">6.3 临时文本窗口</h3>
+<p>
+说话期间，addon 把当前段的 <code>Partial</code> 写入目标 <code>InputContext</code> 的 Fcitx 输入面板：
+<code>inputPanel().setPreedit(fcitx::Text(partial))</code>，再调用
+<code>updateUserInterface(fcitx::UserInterfaceComponent::InputPanel)</code>。Fcitx 的当前 UI 负责渲染一个简单的临时
+文本窗口；Voime 不自绘窗口，也不使用客户端 preedit。
+</p>
+
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr>
-    <td>v1 默认</td>
-    <td>不调用 <code>setClientPreedit</code> / <code>updatePreedit</code>；临时结果只在 TUI 显示。</td>
+    <td>显示 API</td>
+    <td><code>InputPanel::setPreedit(Text)</code> + <code>InputContext::updateUserInterface(UserInterfaceComponent::InputPanel)</code>。</td>
   </tr>
   <tr>
-    <td>Phase 2 可选</td>
-    <td><code>ic-&gt;inputPanel().setClientPreedit(fcitx::Text(partial))</code> 后调用 <code>ic-&gt;updatePreedit()</code>；最终结果或停止录音时清空。</td>
+    <td>内容</td>
+    <td>只显示当前语音段的 <code>Partial</code> 文本；没有候选词、按钮、历史或光标编辑。文本为空时不显示窗口。</td>
   </tr>
   <tr>
-    <td>启用条件</td>
-    <td>仅当 <code>Preedit=True</code> 且当前输入法是 <code>Voime</code>；其他输入法活动时不写 preedit，避免覆盖拼音 / 候选状态。</td>
+    <td>显示条件</td>
+    <td>仅当语音段正在录音，且目标 <code>InputContext</code> 仍存在并 <code>hasFocus()</code>。</td>
   </tr>
   <tr>
-    <td>兼容性</td>
-    <td>客户端是否显示 preedit 由 Fcitx 与前端能力决定；XIM / 部分终端可能不支持。不能把 preedit 当作最终上屏路径。</td>
+    <td>更新时机</td>
+    <td>每次收到 <code>Partial</code> 时整体替换 preedit；不追加、不保留上一段文本。</td>
   </tr>
   <tr>
-    <td>候选窗口</td>
-    <td>不创建候选列表；Voime 没有候选词。</td>
+    <td>关闭时机</td>
+    <td>收到 <code>Final</code>、停止录音、空段、ASR 错误、目标失焦 / 销毁、daemon 断线时清空 preedit 并刷新 UI。</td>
+  </tr>
+  <tr>
+    <td>与最终提交的顺序</td>
+    <td>先清空临时窗口，再调用 <code>commitString(final)</code>；避免最终文本插入后窗口仍残留。</td>
+  </tr>
+  <tr>
+    <td>UI 可用性</td>
+    <td>是否显示由 Fcitx UI addon 决定；没有可用 UI 或当前 UI 不渲染 preedit 时不显示窗口，最终提交仍正常。</td>
+  </tr>
+  <tr>
+    <td>与当前输入法</td>
+    <td>临时窗口使用当前 <code>InputPanel</code>；如果当前输入法也在更新该面板，可能覆盖预览。Voime 在每次 Partial 时重设，停止时清空。</td>
+  </tr>
+  <tr>
+    <td>客户端 preedit</td>
+    <td>不调用 <code>setClientPreedit</code> / <code>updatePreedit</code>；文本不进入应用自己的 preedit 区域。</td>
   </tr>
 </table>
+<ul class="note">
+  <li>临时窗口只在说话过程中存在；说话结束后关闭，最终文本进入历史与目标输入框。</li>
+  <li>TUI 的预览仍可作为可选监视器；Fcitx 输入面板是默认的说话中预览。</li>
+  <li>不在窗口中显示候选、录音按钮或历史；录音状态仍由 TUI 的 recording 标记表达。</li>
+</ul>
 
 <h3 id="pr6-4">6.4 应用覆盖范围</h3>
 <table>
@@ -753,9 +830,10 @@ FireRedPunc 标点链路保持不变。CTC 在 2 threads 下 RTF 约 0.066–0.0
 <table>
   <tr><th>状态</th><th>所有者</th><th>说明</th></tr>
   <tr><td>current input method / focus / keymap</td><td>Fcitx</td><td>Voime 只读；不持有键盘。</td></tr>
-  <tr><td>PTT 配置 / hold 状态 / toggle 锁存</td><td>addon</td><td>来自 <code>~/.config/fcitx5/conf/voime.conf</code>。</td></tr>
+  <tr><td><code>Mode</code> / <code>Hotkey</code> / hold 状态 / toggle 锁存</td><td>addon</td><td>来自 <code>~/.config/fcitx5/conf/voime.conf</code>。</td></tr>
   <tr><td>目标 <code>InputContext</code> / segment 关联</td><td>addon</td><td>弱引用 + <code>segment_id</code>；不跨段复用。</td></tr>
-  <tr><td>mode / phase / recording / finalizing</td><td><code>voimed</code></td><td>通过 Snapshot / State 事件同步给 TUI。</td></tr>
+  <tr><td>临时文本窗口 / InputPanel preedit</td><td>addon 写入，Fcitx UI 渲染</td><td>只在录音期间显示；Final / 停止 / 断线时清空。</td></tr>
+  <tr><td>mode / phase / recording / finalizing</td><td><code>voimed</code></td><td>mode 来自 addon 的 Hello / Configure；phase 通过 Snapshot / State 同步给 TUI。</td></tr>
   <tr><td>partial / transcript</td><td><code>voimed</code></td><td>只在内存；TUI 退出不丢失，daemon 退出丢失。</td></tr>
   <tr><td>scroll / viewport / 选择</td><td>TUI</td><td>纯本地视图状态。</td></tr>
   <tr><td>addon 连接状态</td><td><code>voimed</code></td><td>由 Hello / EOF 维护；TUI 通过 Snapshot 查看。</td></tr>
@@ -765,10 +843,12 @@ FireRedPunc 标点链路保持不变。CTC 在 2 threads 下 RTF 约 0.066–0.0
 <pre><code>socket: $XDG_RUNTIME_DIR/voime/voimed.sock
 目录 0700，socket 0600；仅同 UID 可连接
 framing: 一行一个 JSON；最大 1 MiB；UTF-8
-握手: Hello { role, version }；版本不匹配返回 Error 并断开
+握手: Hello { role, version, config? }；版本不匹配返回 Error 并断开
 
 ClientMessage =
-  | Hello { role: Fcitx | Tui | Control, version: u32, hotkeys?: Hotkeys }
+  | Hello { role: Fcitx | Tui | Control, version: u32,
+            config?: FcitxConfig }
+  | Configure { mode: Mode, hotkey: String }        // Fcitx only
   | Start { segment_id: u64, source: TriggerSource }
   | Stop  { segment_id: u64, source: TriggerSource }
   | Toggle { segment_id: u64, source: TriggerSource }
@@ -777,7 +857,7 @@ ClientMessage =
   | Quit
 
 ServerMessage =
-  | Snapshot { mode, phase, partial, transcript, addon, hotkeys? }
+  | Snapshot { mode?: Mode, phase, partial, transcript, addon, hotkey? }
   | SegmentStarted { segment_id: u64, source: TriggerSource }
   | State { recording, finalizing, segment_id?: u64 }
   | Partial { segment_id: u64, text }
@@ -787,17 +867,19 @@ ServerMessage =
   | Error { code, message }
   | Bye
 
+FcitxConfig = { mode: Ptt | Toggle | Continuous, hotkey: String }
 TriggerSource = Hold | Toggle | Tui | Cli | Continuous</code></pre>
 
 <table>
   <tr><th>消息</th><th>方向</th><th>语义</th></tr>
-  <tr><td><code>Hello</code></td><td>client → daemon</td><td>声明角色与协议版本；<code>Fcitx</code> 额外上报热键用于 TUI 提示；daemon 回 <code>Snapshot</code>。</td></tr>
+  <tr><td><code>Hello</code></td><td>client → daemon</td><td>声明角色、协议版本；<code>Fcitx</code> 额外携带 <code>{ mode, hotkey }</code>；daemon 回 <code>Snapshot</code>。</td></tr>
+  <tr><td><code>Configure</code></td><td>Fcitx → daemon</td><td>addon 配置重载时更新 <code>mode</code> / <code>hotkey</code>；mode 在下一个语音段生效。</td></tr>
   <tr><td><code>Start</code> / <code>Stop</code> / <code>Toggle</code></td><td>client → daemon</td><td>手动或 PTT 触发；带 <code>segment_id</code> 与来源。Recording / Finalizing 时 Start 被忽略；Stop 对已结束段幂等。</td></tr>
   <tr><td><code>SegmentStarted</code></td><td>daemon → clients</td><td>continuous / TUI / ctl 段开始时广播；addon 用它捕获目标 <code>InputContext</code>。</td></tr>
-  <tr><td><code>Final</code></td><td>daemon → clients</td><td>最终文本；addon 用 <code>segment_id</code> 找到目标并提交；TUI 用于显示历史。</td></tr>
-  <tr><td><code>Snapshot</code></td><td>daemon → client</td><td>连接时全量状态；包含 addon 连接状态与热键提示。</td></tr>
+  <tr><td><code>Final</code></td><td>daemon → clients</td><td>最终文本；addon 用 <code>segment_id</code> 找到目标、清空临时窗口并提交；TUI 用于显示历史。</td></tr>
+  <tr><td><code>Snapshot</code></td><td>daemon → client</td><td>连接时全量状态；包含 mode、hotkey、addon 连接状态与 transcript。</td></tr>
   <tr><td><code>State</code></td><td>daemon → client</td><td>recording / finalizing / 当前 segment_id。</td></tr>
-  <tr><td><code>Partial</code></td><td>daemon → client</td><td>未加标点的临时文本；TUI 显示，addon 可忽略或用于 Phase 2 preedit。</td></tr>
+  <tr><td><code>Partial</code></td><td>daemon → client</td><td>未加标点的临时文本；addon 写入 Fcitx InputPanel 显示临时窗口，TUI 同步显示。</td></tr>
   <tr><td><code>ClearHistory</code></td><td>client → daemon</td><td>清空已完成 transcript；保留 current segment 与 partial。</td></tr>
   <tr><td><code>Quit</code></td><td>Control → daemon</td><td>停止 daemon；TUI 的 <code>q</code> 不发送 Quit，只 detach。</td></tr>
   <tr><td><code>Bye</code></td><td>daemon → client</td><td>daemon 关闭；TUI 恢复终端，addon 清除状态并等待重连。</td></tr>
@@ -805,14 +887,14 @@ TriggerSource = Hold | Toggle | Tui | Cli | Continuous</code></pre>
 <ul class="note">
   <li>只允许一个 <code>role=Fcitx</code> 连接；第二个连接返回 <code>Error</code> 并断开，避免重复提交。</li>
   <li>addon 的 <code>Final</code> / <code>State</code> 不可丢；<code>Partial</code> 可在队列满时丢弃。TUI 慢客户端使用有界队列，队列满时断开该 TUI，不阻塞 daemon。</li>
-  <li>addon 断线时 daemon 继续识别并保留历史；Final 照常广播给 TUI，但没有提交者。重连后不做历史补交。</li>
+  <li>addon 断线时 daemon 继续识别并保留历史；Final 照常广播给 TUI，但没有提交者。重连后不做历史补交；continuous 自动分段停止，保留 TUI / ctl 手动控制。</li>
   <li><code>Start</code> 被 daemon 拒绝（例如已有段）时，addon 必须清除该 <code>segment_id</code> 的目标与本地 recording 状态，不能保留一个不存在的段。</li>
-  <li>如果 <code>XDG_RUNTIME_DIR</code> 未设置，回退到 <code>/tmp/voime-$UID/</code>，目录仍为 0700；socket 路径可由 addon 配置覆盖。</li>
+  <li>如果 <code>XDG_RUNTIME_DIR</code> 未设置，回退到 <code>/tmp/voime-$UID/</code>，目录仍为 0700；addon 使用默认 socket 路径。</li>
+
 </ul>
 
 <h3 id="pr7-4">7.4 CLI</h3>
-<pre><code>voimed [--mode &lt;ptt|continuous&gt;]
-       [--model-dir &lt;DIR&gt;]
+<pre><code>voimed [--model-dir &lt;DIR&gt;]
        [--input-device &lt;NAME&gt;]
        [--threads &lt;N&gt;]
        [--socket &lt;PATH&gt;]
@@ -828,9 +910,9 @@ voime doctor [--socket &lt;PATH&gt;]</code></pre>
   <tr><td><code>2</code></td><td>命令行参数非法。</td></tr>
 </table>
 <ul class="note">
-  <li>热键只在 Fcitx addon 配置中；<code>voimed</code> 不接受热键参数。</li>
-  <li><code>--mode</code> 仍决定 PTT / continuous；continuous 不消费 PTT 键，VAD 自动切分。</li>
-  <li><code>voime doctor</code> 检查 socket、daemon 版本、模型、音频、Fcitx addon 连接与热键配置；输出到 stdout，不进入 TUI。</li>
+  <li><code>Mode</code> 与 <code>Hotkey</code> 只在 Fcitx addon 配置中；<code>voimed</code> 不接受模式或热键参数。</li>
+  <li>daemon 从 addon 的 <code>Hello</code> / <code>Configure</code> 获取模式：<code>continuous</code> 时 VAD 自动切分，<code>ptt</code> / <code>toggle</code> 时等待 addon 的 Start / Stop。</li>
+  <li><code>voime doctor</code> 检查 socket、daemon 版本、模型、音频、Fcitx addon 连接、Mode / Hotkey；输出到 stdout，不进入 TUI。</li>
   <li>TUI 连不上 daemon 时写 stderr 并以 1 退出；它不尝试自行启动 daemon。</li>
 </ul>
 
@@ -838,8 +920,10 @@ voime doctor [--socket &lt;PATH&gt;]</code></pre>
 <table>
   <tr><th>项目</th><th>行为</th></tr>
   <tr><td>启动</td><td><code>voimed</code> 常驻；<code>voime</code> 可选连接；连不上时 stderr 报错退出。</td></tr>
-  <tr><td>PTT</td><td>Fcitx addon 的 hold / toggle 是主路径；TUI 的 <code>Space</code> 只作为手动调试控制。</td></tr>
-  <tr><td>提示行</td><td><code>Super+F2 按住  Super+F3 切换  Ctrl+X 清空  q 退出</code>；实际热键由 Snapshot 提供。</td></tr>
+  <tr><td>模式</td><td>从 Snapshot 读取 <code>ptt</code> / <code>toggle</code> / <code>continuous</code> 并显示；模式只由 Fcitx addon 配置改变。</td></tr>
+  <tr><td>PTT</td><td>按 Mode 解释 <code>Hotkey</code>：<code>ptt</code> 按住说话，<code>toggle</code> 按一下切换，<code>continuous</code> 无热键；TUI 的 <code>Space</code> 只作为手动调试控制。</td></tr>
+  <tr><td>临时窗口</td><td>Fcitx 输入面板显示 Partial；TUI 只同步显示同一 Partial，不创建额外窗口。</td></tr>
+  <tr><td>提示行</td><td>显示当前 Mode 与 Hotkey，例如 <code>Mode: ptt  Hotkey: Super+F2  Ctrl+X 清空  q 退出</code>；实际值由 Snapshot 提供。</td></tr>
   <tr><td>历史</td><td><code>voimed</code> 内存保存；TUI 重连后从 Snapshot 恢复。</td></tr>
   <tr><td>退出</td><td><code>q</code> / <code>Ctrl+C</code> 只 detach；<code>voime ctl quit</code> 停止 daemon。</td></tr>
   <tr><td>错误</td><td>启动错误 stderr；addon / 提交错误写日志与 <code>voime doctor</code>；TUI 内容区仍不显示错误行。</td></tr>
@@ -854,8 +938,12 @@ voime doctor [--socket &lt;PATH&gt;]</code></pre>
     <td>使用 Fcitx 自己的状态图标；<code>Voime</code> 条目按 Fcitx 规则显示名称、Label 与 Icon。</td>
   </tr>
   <tr>
+    <td>临时文本窗口</td>
+    <td>由 Fcitx <code>InputPanel</code> 的 preedit 渲染；不是状态图标，也不是候选窗口。Partial 到达即更新，Final / 停止时清空。</td>
+  </tr>
+  <tr>
     <td>录音状态</td>
-    <td>v1 由 TUI 显示；没有 TUI 时不显示额外图标。可选 Phase 2：用 Fcitx 的 <code>showCustomInputMethodInformation</code> 在开始 / 结束时显示短暂提示。</td>
+    <td>v1 由 TUI 的 recording 标记显示；没有 TUI 时不显示额外图标，临时窗口只显示 Partial。</td>
   </tr>
   <tr>
     <td>Voime 不是当前输入法</td>
@@ -944,13 +1032,17 @@ WantedBy=default.target</code></pre>
 │   ├── src/
 │   │   ├── voime.h
 │   │   ├── voime.cpp                InputMethodEngineV2 + addon
+│   │   ├── preview.h
+│   │   ├── preview.cpp              InputPanel preedit / 临时窗口
 │   │   ├── config.h
-│   │   ├── config.cpp
+│   │   ├── config.cpp               Mode / Hotkey
 │   │   ├── ipc.h
 │   │   ├── ipc.cpp                  非阻塞 socket 客户端
 │   │   └── target.h                 InputContext 弱引用 + segment 关联
 │   └── tests/
 │       ├── keymatch.cpp
+│       ├── mode.cpp
+│       ├── preview.cpp
 │       └── target.cpp
 ├── systemd/voime.service
 ├── scripts/
@@ -970,11 +1062,12 @@ WantedBy=default.target</code></pre>
   <tr><td><code>voime-ipc</code></td><td>IPC 消息、角色、<code>TriggerSource</code>、JSON 行编解码、版本常量；Rust 侧共享给 daemon / TUI。</td></tr>
   <tr><td><code>voimed::daemon</code></td><td>状态机、段生成与所有权、历史、pipeline 事件与 IPC 事件的汇总。</td></tr>
   <tr><td><code>voimed::ipc_server</code></td><td>Unix socket 监听、握手、角色校验、订阅者队列、命令分发。</td></tr>
-  <tr><td><code>voimed::state</code></td><td>当前段、目标来源、partial / transcript、addon 连接状态、热键快照。</td></tr>
-  <tr><td><code>fcitx-addon/src/voime.cpp</code></td><td><code>VoimeAddon</code>：实现 <code>InputMethodEngineV2</code>，注册 key watcher，处理 PTT，维护目标引用，调用 <code>commitString</code>。</td></tr>
-  <tr><td><code>fcitx-addon/src/config.cpp</code></td><td><code>VoimeConfig</code>：<code>HoldKey</code> / <code>ToggleKey</code> / <code>Socket</code> / <code>Preedit</code>；读写 <code>~/.config/fcitx5/conf/voime.conf</code>。</td></tr>
+  <tr><td><code>voimed::state</code></td><td>当前段、目标来源、partial / transcript、addon 连接状态、Mode / Hotkey 快照。</td></tr>
+  <tr><td><code>fcitx-addon/src/voime.cpp</code></td><td><code>VoimeAddon</code>：实现 <code>InputMethodEngineV2</code>，注册 key watcher，按 Mode 处理热键，维护目标引用，调用 <code>commitString</code>。</td></tr>
+  <tr><td><code>fcitx-addon/src/preview.cpp</code></td><td>把 <code>Partial</code> 写入目标 <code>InputContext</code> 的 <code>InputPanel</code> preedit；Final / 停止 / 断线时清空。</td></tr>
+  <tr><td><code>fcitx-addon/src/config.cpp</code></td><td><code>VoimeConfig</code>：<code>Mode</code> / <code>Hotkey</code>；读写 <code>~/.config/fcitx5/conf/voime.conf</code>。</td></tr>
   <tr><td><code>fcitx-addon/src/ipc.cpp</code></td><td>非阻塞 Unix socket 客户端；<code>EventLoop::addIOEvent</code>；JSON 行 framing；重连与有界队列。</td></tr>
-  <tr><td><code>voime::client</code></td><td>连接 daemon、处理 Snapshot / 事件、断线提示。</td></tr>
+  <tr><td><code>voime::client</code></td><td>连接 daemon、处理 Snapshot / 事件、断线提示；显示 Mode / Hotkey。</td></tr>
   <tr><td><code>voime::ui</code></td><td>原 <code>ui.rs</code> 与 <code>app.rs</code> 的绘制、滚动与快捷键；只读 daemon 状态。</td></tr>
 </table>
 
@@ -1037,10 +1130,15 @@ public:
 
 private:
     void handleKey(fcitx::KeyEvent &amp;event);
+    void handlePtt(fcitx::KeyEvent &amp;event, bool matches);
+    void handleToggle(fcitx::KeyEvent &amp;event, bool matches);
     void onIpcMessage(const ServerMessage &amp;message);
+    void showPreview(const std::string &amp;partial);
+    void clearPreview();
     fcitx::Instance *instance_;
-    VoimeConfig config_;
+    VoimeConfig config_;                         // Mode + Hotkey
     IpcClient client_;
+    Preview preview_;
     std::unique_ptr&lt;fcitx::HandlerTableEntry&lt;fcitx::EventHandler&gt;&gt; keyWatcher_;
     fcitx::TrackableObjectReference&lt;fcitx::InputContext&gt; target_;
     std::optional&lt;uint64_t&gt; segmentId_;
@@ -1051,9 +1149,24 @@ private:
     uint32_t toggleCode_ = 0;
 };</code></pre>
 
+<pre><code>// fcitx-addon/src/preview.h
+class Preview {
+public:
+    void show(fcitx::InputContext *ic, const std::string &amp;partial);
+    void clear(fcitx::InputContext *ic);
+};</code></pre>
+
 <pre><code>// crates/voime-ipc/src/lib.rs
+pub enum Mode { Ptt, Toggle, Continuous }
+
+pub struct FcitxConfig {
+    pub mode: Mode,
+    pub hotkey: String,
+}
+
 pub enum ClientMessage {
-    Hello { role: Role, version: u32, hotkeys: Option&lt;Hotkeys&gt; },
+    Hello { role: Role, version: u32, config: Option&lt;FcitxConfig&gt; },
+    Configure { mode: Mode, hotkey: String },
     Start { segment_id: u64, source: TriggerSource },
     Stop  { segment_id: u64, source: TriggerSource },
     Toggle { segment_id: u64, source: TriggerSource },
@@ -1063,9 +1176,9 @@ pub enum ClientMessage {
 }
 
 pub enum ServerMessage {
-    Snapshot { mode: Mode, phase: Phase, partial: Option&lt;String&gt;,
+    Snapshot { mode: Option&lt;Mode&gt;, phase: Phase, partial: Option&lt;String&gt;,
                transcript: Vec&lt;String&gt;, addon: AddonState,
-               hotkeys: Option&lt;Hotkeys&gt; },
+               hotkey: Option&lt;String&gt; },
     SegmentStarted { segment_id: u64, source: TriggerSource },
     State { recording: bool, finalizing: bool, segment_id: Option&lt;u64&gt; },
     Partial { segment_id: u64, text: String },
@@ -1129,15 +1242,15 @@ impl FireRedCtc {
   </tr>
   <tr>
     <td><a href="README.html#r1">§1.2 GOAL</a></td>
-    <td>写入：安装 <code>voime.so</code> addon、注册 <code>Voime</code> 输入法、Fcitx 内 hold / toggle PTT、普通按键不受影响、<code>commitString</code> 上屏、原生 Wayland / XWayland XIM 覆盖、daemon &amp; TUI 分离、TUI 可选、Fcitx 配置热键、CTC 单 ONNX 与 CPU 目标、systemd 启动。</td>
+    <td>写入：安装 <code>voime.so</code> addon、注册 <code>Voime</code> 输入法、addon 配置 <code>Mode</code>（<code>ptt</code> / <code>toggle</code> / <code>continuous</code>）与单个 <code>Hotkey</code>、普通按键不受影响、<code>commitString</code> 上屏、说话期间 Fcitx 输入面板显示 Partial 临时窗口、原生 Wayland / XWayland XIM 覆盖、daemon &amp; TUI 分离、TUI 可选、CTC 单 ONNX 与 CPU 目标、systemd 启动。</td>
   </tr>
   <tr>
     <td><a href="README.html#r1">§1.3 非目标</a></td>
-    <td>限定为：不做通用键盘输入法、不做拼音 / 候选、不实现自绘 UI、不保证无输入焦点时的 PTT、v1 不做 preedit、不引入第二个 ASR 模型；int8 CTC 的英文子词准确率列为已知限制。</td>
+    <td>限定为：不做通用键盘输入法、不做拼音 / 候选、不实现自绘 UI、不保证无输入焦点时的 PTT、不写客户端 preedit（临时文本只走 Fcitx InputPanel）、不引入第二个 ASR 模型；int8 CTC 的英文子词准确率列为已知限制。</td>
   </tr>
   <tr>
     <td><a href="README.html#r2">§2 用户交互</a></td>
-    <td>写成目标交互表：安装 addon 并加入 Fcitx 输入法组；hold / toggle PTT；录音；最终文本提交到当前输入框；普通打字不受影响；TUI attach / detach；<code>voime ctl</code>；Fcitx / daemon 未运行；无文本焦点；热键冲突；daemon 退出。</td>
+    <td>写成目标交互表：安装 addon 并加入 Fcitx 输入法组；配置 Mode / Hotkey；ptt 按住、toggle 切换、continuous 自动切分；说话期间显示临时文本窗口；最终文本提交到当前输入框；普通打字不受影响；TUI attach / detach；<code>voime ctl</code>；Fcitx / daemon 未运行；无文本焦点；热键冲突；daemon 退出。</td>
   </tr>
   <tr>
     <td><a href="README.html#r3">§3 Credits</a></td>
@@ -1150,31 +1263,31 @@ impl FireRedCtc {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="USER.html#u1">§1 TERMS</a></td>
-    <td>写入：Fcitx5、addon、输入法引擎、输入法条目、<code>InputContext</code>、输入上下文焦点、<code>InputContextKeyEvent</code>、<code>PreInputMethod</code>、hold / toggle PTT、目标输入框、<code>commitString</code>、Fcitx 配置、daemon、TUI 客户端、addon 连接状态、CTC 模型包；会话文本定义为 daemon 内存历史。</td>
+    <td>写入：Fcitx5、addon、输入法引擎、输入法条目、<code>InputContext</code>、输入上下文焦点、<code>InputContextKeyEvent</code>、<code>PreInputMethod</code>、<code>Mode</code>（ptt / toggle / continuous）、<code>Hotkey</code>、目标输入框、<code>commitString</code>、Fcitx 配置、临时文本窗口、Partial、daemon、TUI 客户端、addon 连接状态、CTC 模型包；会话文本定义为 daemon 内存历史。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u2">§2 CONVENTIONS</a></td>
-    <td>写入：Fcitx 依赖与 addon 加载、PTT hold / toggle 与消费、PTT 配置、目标输入框绑定与失焦策略、<code>commitString</code> 上屏、addon 断线放行、TUI detach、daemon 生命周期、continuous 不消费 PTT、模型安装（CTC 模型包）、静音自动结束、临时结果、最终结果、空段、滚动、队列、<code>max_segment_ms=30_000</code>。</td>
+    <td>写入：Fcitx 依赖与 addon 加载、Mode 三态语义（ptt 按住 / toggle 切换 / continuous 忽略热键）、Hotkey 配置、PTT 键消费、目标输入框绑定与失焦策略、<code>commitString</code> 上屏、临时文本窗口的显示 / 清空、addon 断线放行、TUI detach、daemon 生命周期、模型安装（CTC 模型包）、静音自动结束、临时结果、最终结果、空段、滚动、队列、<code>max_segment_ms=30_000</code>。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u3">§3 DIAGRAMS</a></td>
-    <td>3.1 总体架构使用 <code>proposal-fcitx-architecture</code>；3.2 PTT 流程使用 <code>proposal-fcitx-hotkey</code>；3.3 continuous 使用 VAD → addon → Fcitx commit；3.4 使用 <code>proposal-fcitx-delivery</code> 展示目标输入框检查。</td>
+    <td>3.1 总体架构使用 <code>proposal-fcitx-architecture</code>；3.2 PTT 流程使用 <code>proposal-fcitx-hotkey</code>；3.3 continuous 使用 VAD → addon → Fcitx commit；3.4 使用 <code>proposal-fcitx-delivery</code> 展示目标输入框检查；3.5 使用 <code>proposal-fcitx-preview</code> 展示 Partial 临时窗口与清空。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u4-1">§4.1 命令行</a></td>
-    <td>拆成 <code>voimed</code> / <code>voime</code> / <code>voime ctl</code> 三张表；写入 <code>--socket</code>、<code>voime doctor</code>；说明热键在 Fcitx addon 配置；退出码按进程分别列出。</td>
+    <td>拆成 <code>voimed</code> / <code>voime</code> / <code>voime ctl</code> 三张表；<code>voimed</code> 不提供 <code>--mode</code> / 热键参数；写入 <code>--socket</code>、<code>voime doctor</code>；说明 Mode / Hotkey 在 Fcitx addon 配置；退出码按进程分别列出。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u4-2">§4.2 输出契约</a></td>
-    <td>写成“Fcitx 文本提交”：目标输入框、<code>commitString</code>、UTF-8、Fcitx frontend、长文本、commit filter、失焦 / 无目标、无提交确认；保留最终结果的格式与空段规则。</td>
+    <td>写成“Fcitx 文本提交”：目标输入框、<code>commitString</code>、UTF-8、Fcitx frontend、长文本、commit filter、失焦 / 无目标、无提交确认；保留最终结果的格式与空段规则。临时文本窗口使用 <code>InputPanel::setPreedit</code>，在 Final / 停止时清空。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u4-3">§4.3 对外 API</a></td>
-    <td>写成 Unix socket IPC：路径、权限、Hello 角色、ClientMessage / ServerMessage、<code>segment_id</code>、版本、错误、背压。新增 §4.4 “Fcitx addon 配置”：<code>HoldKey</code> / <code>ToggleKey</code> / <code>Socket</code> / <code>Preedit</code> 与默认值。</td>
+    <td>写成 Unix socket IPC：路径、权限、Hello 角色 / 配置、Configure、ClientMessage / ServerMessage、<code>segment_id</code>、版本、错误、背压。新增 §4.4 “Fcitx addon 配置”：<code>Mode</code> / <code>Hotkey</code> 与默认值；socket 使用默认路径。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u5">§5 UI</a></td>
-    <td>TUI 标记为可选；提示行使用 Fcitx PTT 组合键 + 手动控制；补齐空状态、启动失败、daemon 未运行、addon 断线；新增 §5.3 “Fcitx 状态与 TUI 的关系”：Fcitx 图标显示当前输入法，录音状态以 TUI 为准；保留 recording 红点与结果行视觉契约；30 s 分段不新增倒计时 UI。</td>
+    <td>TUI 标记为可选；提示行显示 Mode / Hotkey + 手动控制；补齐空状态、启动失败、daemon 未运行、addon 断线；新增 §5.3 “Fcitx 状态与 TUI 的关系”：Fcitx 图标显示当前输入法，临时文本窗口由 Fcitx InputPanel 显示，录音状态以 TUI 为准；保留 recording 红点与结果行视觉契约；30 s 分段不新增倒计时 UI。</td>
   </tr>
 </table>
 
@@ -1183,11 +1296,11 @@ impl FireRedCtc {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="CORE.html#c1">§1 File tree</a></td>
-    <td>使用 §8.1 的 workspace 树；音频 / VAD / 标点 / 模型 / infer 放在 <code>crates/voime-core</code>；ASR 使用 <code>asr/firered_ctc.rs</code>；新增 <code>voime-ipc</code>、<code>voimed</code>、<code>voime</code>、<code>fcitx-addon</code> 与 <code>systemd/</code>。</td>
+    <td>使用 §8.1 的 workspace 树；音频 / VAD / 标点 / 模型 / infer 放在 <code>crates/voime-core</code>；ASR 使用 <code>asr/firered_ctc.rs</code>；新增 <code>voime-ipc</code>、<code>voimed</code>、<code>voime</code>、<code>fcitx-addon</code>（含 <code>preview.cpp</code>）与 <code>systemd/</code>。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c2">§2 CONVENTIONS</a></td>
-    <td>写入线程 / 进程边界：Fcitx 主循环（addon + key watcher + IPC client）、<code>voimed</code> 事件循环、pipeline 工作线程、socket 读写、TUI 线程；写入状态所有权、addon 桥接、目标 InputContext 弱引用、<code>segment_id</code>、<code>commitString</code>、addon 断线放行、单 Fcitx 连接、非阻塞 IPC、Fcitx 配置归 addon、CTC 全序列 / CMVN metadata / greedy / 30 s 上限。</td>
+    <td>写入线程 / 进程边界：Fcitx 主循环（addon + key watcher + preview + IPC client）、<code>voimed</code> 事件循环、pipeline 工作线程、socket 读写、TUI 线程；写入 Mode / Hotkey 所有权、状态所有权、addon 桥接、目标 InputContext 弱引用、<code>segment_id</code>、<code>commitString</code>、临时窗口 InputPanel、addon 断线放行、单 Fcitx 连接、非阻塞 IPC、CTC 全序列 / CMVN metadata / greedy / 30 s 上限。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c3">§3 SBOM</a></td>
@@ -1195,15 +1308,15 @@ impl FireRedCtc {
   </tr>
   <tr>
     <td><a href="CORE.html#c4">§4 Internal types</a></td>
-    <td>写入音频 / VAD / 标点签名、<code>FireRedCtc</code>、<code>voime-ipc</code> 消息、<code>voimed::state</code>、<code>ipc_server</code>、<code>voime::client</code>，以及 <code>VoimeAddon</code> / <code>VoimeConfig</code> / <code>IpcClient</code> / <code>TargetRef</code> 小节。</td>
+    <td>写入音频 / VAD / 标点签名、<code>FireRedCtc</code>、<code>voime-ipc</code> 消息（Mode / Hotkey / Configure）、<code>voimed::state</code>、<code>ipc_server</code>、<code>voime::client</code>，以及 <code>VoimeAddon</code> / <code>VoimeConfig</code> / <code>Preview</code> / <code>IpcClient</code> / <code>TargetRef</code> 小节。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c5">§5 Call stack</a></td>
-    <td>重写：5.1 启动（systemd + addon 加载 + 连接）；5.2 PTT 热键（Fcitx 事件 → addon 匹配 / 消费 → daemon Start/Stop）；5.3 continuous（VAD → SegmentStarted → Final）；5.4 临时识别（CTC 尾部重解码 → TUI）；5.5 最终识别与提交（CTC + Punc → Final → 目标检查 → commitString）；5.6 TUI / ctl / 退出 / 重连；新增 5.7 addon 断线、目标丢失与 Fcitx 重启。</td>
+    <td>重写：5.1 启动（systemd + addon 加载 + Mode / Hotkey 读取 + 连接）；5.2 热键（按 Mode 解释 Hotkey → 消费 → daemon Start/Stop）；5.3 continuous（VAD → SegmentStarted → Final）；5.4 临时识别（CTC 尾部重解码 → addon InputPanel 临时窗口 + TUI）；5.5 最终识别与提交（CTC + Punc → Final → 清空临时窗口 → 目标检查 → commitString）；5.6 TUI / ctl / 退出 / 重连；新增 5.7 addon 断线、目标丢失、模式切换与 Fcitx 重启。</td>
   </tr>
   <tr>
     <td><code>tests/</code></td>
-    <td>写入 <code>ipc.rs</code>（握手 / 角色 / 编解码 / 背压）、<code>state.rs</code>（段 ID / 目标 / 清空）、<code>daemon.rs</code>（PTT / continuous / 断线）、<code>asr_ctc.rs</code>（CMVN / token id / greedy / 10–60 s 解码）、<code>segmenter.rs</code>；<code>fcitx-addon/tests</code> 写入 <code>keymatch.cpp</code> 与 <code>target.cpp</code>。</td>
+    <td>写入 <code>ipc.rs</code>（握手 / 角色 / Mode / Configure / 编解码 / 背压）、<code>state.rs</code>（段 ID / 目标 / 清空）、<code>daemon.rs</code>（PTT / toggle / continuous / 断线）、<code>asr_ctc.rs</code>（CMVN / token id / greedy / 10–60 s 解码）、<code>segmenter.rs</code>；<code>fcitx-addon/tests</code> 写入 <code>keymatch.cpp</code>、<code>mode.cpp</code>、<code>preview.cpp</code> 与 <code>target.cpp</code>。</td>
   </tr>
 </table>
 
@@ -1212,15 +1325,15 @@ impl FireRedCtc {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="PROVIDER.html#p1">§1 TERMS</a></td>
-    <td>写入：Fcitx5、addon、<code>InputMethodEngineV2</code>、<code>InputContext</code>、frontend、<code>InputContextKeyEvent</code>、<code>PreInputMethod</code>、commit string、commit filter、preedit、Fcitx trigger key、输入法组、XIM、Fcitx 状态、FireRedASR2-CTC、CTC、CMVN、greedy、<code>token id</code> 词表。</td>
+    <td>写入：Fcitx5、addon、<code>InputMethodEngineV2</code>、<code>InputContext</code>、frontend、<code>InputContextKeyEvent</code>、<code>PreInputMethod</code>、commit string、commit filter、<code>InputPanel</code>、preedit、<code>Mode</code>、<code>Hotkey</code>、临时文本窗口、Fcitx trigger key、输入法组、XIM、Fcitx 状态、FireRedASR2-CTC、CTC、CMVN、greedy、<code>token id</code> 词表。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p2">§2 CONVENTIONS</a></td>
-    <td>写入：Fcitx5 ≥ 5.1.23、addon 必须加载、<code>OnDemand=False</code>、Fcitx 拥有键盘与 frontend、Voime 不抓键盘 / 不转发 / 不注入、PTT 只在 Fcitx 能收到按键时生效、目标 InputContext 绑定策略、<code>commitString</code> 无确认、commit filter、长文本由 Fcitx 拆分、addon ABI、配置路径、CTC 单 ONNX、CMVN metadata、greedy、token id 两列词表、默认 <code>max_segment_ms=30000</code>。</td>
+    <td>写入：Fcitx5 ≥ 5.1.23、addon 必须加载、<code>OnDemand=False</code>、Fcitx 拥有键盘与 frontend、Voime 不抓键盘 / 不转发 / 不注入、PTT 只在 Fcitx 能收到按键时生效、目标 InputContext 绑定策略、<code>commitString</code> 无确认、commit filter、<code>InputPanel</code> preedit 临时窗口、Mode / Hotkey 配置、长文本由 Fcitx 拆分、addon ABI、CTC 单 ONNX、CMVN metadata、greedy、token id 两列词表、默认 <code>max_segment_ms=30000</code>。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p3">§3 DIAGRAMS</a></td>
-    <td>3.1 音频；3.2 推理改为 CTC 单 ONNX / CMVN / greedy；3.3 Fcitx 按键 / PTT 边界（<code>proposal-fcitx-hotkey</code>）；3.4 Fcitx commit 边界（<code>proposal-fcitx-delivery</code>）；需要时 3.5 addon 生命周期 / 重连。</td>
+    <td>3.1 音频；3.2 推理改为 CTC 单 ONNX / CMVN / greedy；3.3 Fcitx 按键 / PTT 边界（<code>proposal-fcitx-hotkey</code>）；3.4 Fcitx commit 边界（<code>proposal-fcitx-delivery</code>）；3.5 InputPanel 临时窗口（<code>proposal-fcitx-preview</code>）；需要时 3.6 addon 生命周期 / 重连。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4-2">§4.2 模型包</a></td>
@@ -1232,7 +1345,7 @@ impl FireRedCtc {
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4-4">§4.4 Fcitx addon API</a></td>
-    <td>写成 <code>InputMethodEngineV2</code>、<code>Instance::watchEvent</code>、<code>KeyEvent::checkKeyList</code> / <code>filterAndAccept</code>、<code>InputContext::commitString</code>、<code>TrackableObjectReference</code>、<code>InputPanel::setClientPreedit</code> / <code>updatePreedit</code>（Phase 2）。</td>
+    <td>写成 <code>InputMethodEngineV2</code>、<code>Instance::watchEvent</code>、<code>KeyEvent::checkKeyList</code> / <code>filterAndAccept</code>、<code>InputContext::commitString</code>、<code>TrackableObjectReference</code>、<code>InputPanel::setPreedit</code> / <code>InputContext::updateUserInterface</code>。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4-5">§4.5 终端：crossterm</a></td>
@@ -1244,7 +1357,7 @@ impl FireRedCtc {
   </tr>
   <tr>
     <td><code>§4 新增小节</code></td>
-    <td>追加 §4.7 “Fcitx addon 描述文件与配置”（addon / inputmethod / 配置键 / 安装路径）、§4.8 “Fcitx frontend 覆盖与限制”（Wayland text-input、XIM、无 text-input）、§4.9 “Fcitx 生命周期与状态”（加载 / 重载 / 重启 / 状态图标）。</td>
+    <td>追加 §4.7 “Fcitx addon 描述文件与配置”（<code>Mode</code> / <code>Hotkey</code> / 安装路径）、§4.8 “Fcitx frontend 与临时窗口”（Wayland text-input、XIM、<code>InputPanel</code> preedit、无 text-input / 无 UI）、§4.9 “Fcitx 生命周期与状态”（加载 / 重载 / 重启 / 状态图标）。</td>
   </tr>
 </table>
 
@@ -1265,15 +1378,15 @@ impl FireRedCtc {
   </tr>
   <tr>
     <td><a href="BUILD.html#b4">§4 运行</a></td>
-    <td>写成：启动 <code>voimed</code>（systemd user service 或手动）；安装 addon 并重启 Fcitx；在 <code>fcitx5-configtool</code> 中把 <code>Voime</code> 加入输入法组；配置 <code>HoldKey</code> / <code>ToggleKey</code>；在编辑器中测试 PTT 与提交；TUI 可选；<code>voime ctl</code> 控制；说明无文本焦点不提交、addon / daemon 未运行的故障处理。</td>
+    <td>写成：启动 <code>voimed</code>（systemd user service 或手动）；安装 addon 并重启 Fcitx；在 <code>fcitx5-configtool</code> 中把 <code>Voime</code> 加入输入法组；配置 <code>Mode</code>（ptt / toggle / continuous）与 <code>Hotkey</code>；在编辑器中测试 PTT / toggle、临时文本窗口与提交；TUI 可选；<code>voime ctl</code> 控制；说明无文本焦点不提交、addon / daemon 未运行的故障处理。</td>
   </tr>
   <tr>
     <td><a href="BUILD.html#b5">§5 测试</a></td>
-    <td>写入 <code>cargo test</code> 的 IPC / state / daemon / <code>asr_ctc</code> 测试、CMake addon 的 keymatch / target 测试、Fcitx 手工冒烟（addon 加载、PTT、commit、普通打字、XWayland、TUI detach）。</td>
+    <td>写入 <code>cargo test</code> 的 IPC / state / daemon / <code>asr_ctc</code> 测试、CMake addon 的 keymatch / mode / preview / target 测试、Fcitx 手工冒烟（addon 加载、ptt / toggle / continuous、临时窗口、commit、普通打字、XWayland、TUI detach）。</td>
   </tr>
   <tr>
     <td><a href="BUILD.html#b6">§6 发布检查</a></td>
-    <td>写成：addon 被 Fcitx 加载、<code>Voime</code> 出现在输入法列表、PTT hold / toggle、普通打字无影响、原生 Wayland 提交、XWayland XIM 提交、目标失焦不误提交、TUI detach、daemon 重启重连、Fcitx 版本 / ABI 匹配、CTC final / partial 文本正常、RTF 达标。</td>
+    <td>写成：addon 被 Fcitx 加载、<code>Voime</code> 出现在输入法列表、Mode 三态与 Hotkey、临时文本窗口显示 / 关闭、普通打字无影响、原生 Wayland 提交、XWayland XIM 提交、目标失焦不误提交、TUI detach、daemon 重启重连、Fcitx 版本 / ABI 匹配、CTC final / partial 文本正常、RTF 达标。</td>
   </tr>
   <tr>
     <td><code>新增 §7</code></td>
@@ -1284,9 +1397,10 @@ impl FireRedCtc {
 <h3 id="pr9-6">9.6 图表</h3>
 <table>
   <tr><th>源文件</th><th>用途</th><th>落地位置</th></tr>
-  <tr><td><code>proposal-fcitx-architecture.puml</code></td><td>Fcitx5 + addon + daemon + TUI 的目标组件架构；模型包标注 CTC</td><td>USER §3.1 / README</td></tr>
-  <tr><td><code>proposal-fcitx-hotkey.puml</code></td><td>Fcitx 捕获 PTT、消费按键、daemon 识别与最终提交</td><td>USER §3.2 / PROVIDER §3.3</td></tr>
+  <tr><td><code>proposal-fcitx-architecture.puml</code></td><td>Fcitx5 + addon + daemon + TUI 的目标组件架构；含 InputPanel 临时窗口与 CTC 模型包</td><td>USER §3.1 / README</td></tr>
+  <tr><td><code>proposal-fcitx-hotkey.puml</code></td><td>Fcitx 捕获 Hotkey（按 Mode）、消费按键、daemon 识别与最终提交</td><td>USER §3.2 / PROVIDER §3.3</td></tr>
   <tr><td><code>proposal-fcitx-delivery.puml</code></td><td>Final → 目标 InputContext → Fcitx frontend 的提交路径</td><td>USER §3.4 / PROVIDER §3.4</td></tr>
+  <tr><td><code>proposal-fcitx-preview.puml</code></td><td>Partial → Fcitx InputPanel preedit 临时窗口 → Final / 停止清空</td><td>USER §3.5 / PROVIDER §3.5</td></tr>
   <tr><td><code>diagram/general-architecture.puml</code></td><td>使用 Fcitx 架构图，模型包标注 CTC</td><td>USER §3.1</td></tr>
   <tr><td><code>diagram/seq-ptt.puml</code></td><td>使用 Fcitx PTT / commit 时序</td><td>USER §3.2</td></tr>
   <tr><td><code>diagram/seq-continuous.puml</code></td><td>VAD 流程，Final 经 addon → Fcitx commit</td><td>USER §3.3</td></tr>
@@ -1334,8 +1448,8 @@ impl FireRedCtc {
   </tr>
   <tr>
     <td>P2 · 完整 addon</td>
-    <td>hold / toggle 配置；目标 <code>InputContext</code> 弱引用；<code>segment_id</code> 关联；daemon 断线放行；Fcitx addon 配置；<code>SegmentStarted</code> / <code>Final</code> / 目标检查；systemd unit。</td>
-    <td>PTT 在任意 Fcitx 输入上下文工作；普通打字无影响；录音中切换窗口不误提交；目标销毁不崩溃；Fcitx 重启后 addon 重连；daemon 重启后 TUI 重连。</td>
+    <td><code>Mode</code> / <code>Hotkey</code> 配置；<code>ptt</code> / <code>toggle</code> / <code>continuous</code> 三态；目标 <code>InputContext</code> 弱引用；<code>segment_id</code> 关联；<code>Partial</code> → Fcitx <code>InputPanel</code> 临时窗口；daemon 断线放行；<code>Configure</code> 同步；<code>SegmentStarted</code> / <code>Final</code> / 目标检查；systemd unit。</td>
+    <td>三种模式都按预期工作；临时窗口显示 Partial 并在 Final / 停止时关闭；普通打字无影响；录音中切换窗口不误提交；目标销毁不崩溃；Fcitx 重启后 addon 重连；daemon 重启后 TUI 重连。</td>
   </tr>
   <tr>
     <td>P3 · 文档落笔</td>
@@ -1344,8 +1458,8 @@ impl FireRedCtc {
   </tr>
   <tr>
     <td>P4 · 可选增强</td>
-    <td>Phase 2 preedit；Fcitx 状态区录音图标 / 提示；<code>voime doctor</code> 的 Fcitx 诊断；多显示 / 多 Fcitx 实例策略。</td>
-    <td>默认关闭时不影响 v1；开启后不破坏普通输入法；文档明确可选与限制。</td>
+    <td>Fcitx 状态区录音图标 / 提示；<code>voime doctor</code> 的 Fcitx / InputPanel 诊断；多显示 / 多 Fcitx 实例策略；临时窗口的样式微调。</td>
+    <td>不影响三种模式、临时窗口与提交；文档明确可选与限制。</td>
   </tr>
 </table>
 <ul class="note">
@@ -1388,6 +1502,21 @@ impl FireRedCtc {
     <td>应用拒绝或丢弃提交时 Voime 不知道。</td>
     <td>文档不承诺“必然上屏”；<code>voime doctor</code> 做基础检查；失败时保留历史。</td>
 
+  </tr>
+  <tr>
+    <td>Mode / Hotkey 与 daemon 不同步</td>
+    <td>TUI 显示的模式与实际 PTT 语义不一致，或 continuous 没有自动分段。</td>
+    <td>addon 在 Hello / Configure 中发送配置；daemon 只接受 addon 的 Mode；TUI 从 Snapshot 读取；P0 覆盖配置重载。</td>
+  </tr>
+  <tr>
+    <td>临时窗口不可用 / 被覆盖</td>
+    <td>说话时看不到 Partial，或窗口内容被当前输入法更新。</td>
+    <td>使用 Fcitx InputPanel preedit；每次 Partial 重设，Final / 停止 / 断线清空；文档说明 UI addon 与其他输入法可能覆盖；TUI 保留预览。</td>
+  </tr>
+  <tr>
+    <td>临时窗口残留</td>
+    <td>说话结束后仍显示上一段 Partial。</td>
+    <td>Final、停止、空段、错误、目标失焦 / 销毁、daemon 断线均清空 preedit；提交前先清空再 <code>commitString</code>。</td>
   </tr>
   <tr>
     <td>Fcitx commit filter / 全角转换</td>
@@ -1447,9 +1576,9 @@ impl FireRedCtc {
     <td>默认避开常见绑定；文档要求检查 Hyprland <code>bind</code> 与 Fcitx trigger；提供配置与 doctor 提示。</td>
   </tr>
   <tr>
-    <td>无 TUI 时缺少录音反馈</td>
-    <td>用户不知道是否在录音。</td>
-    <td>TUI 为可选但推荐；Phase 2 用 Fcitx 短暂提示；文档说明 v1 的反馈边界。</td>
+    <td>无 TUI 时缺少 recording 标记</td>
+    <td>用户看不到红点，但仍可通过临时文本窗口判断正在识别。</td>
+    <td>Fcitx 输入面板显示 Partial；TUI 仍是完整状态视图；文档说明两者关系。</td>
   </tr>
   <tr>
     <td>安全 / 隐私</td>
@@ -1463,12 +1592,16 @@ impl FireRedCtc {
   <tr><th>场景</th><th>预期</th></tr>
   <tr><td>Fcitx 启动</td><td>addon 加载成功；输入法列表出现 <code>Voime</code>；日志无 ABI / 配置错误。</td></tr>
   <tr><td>加入输入法组</td><td><code>Voime</code> 可被选中；状态图标显示其 Label / Icon；切回拼音仍正常。</td></tr>
-  <tr><td>hold PTT</td><td>按下开始录音，松开结束；PTT 键不进入应用；最终文本插入当前输入框。</td></tr>
-  <tr><td>toggle PTT</td><td>第一次按下开始，第二次结束；Finalizing 时再按不产生新段。</td></tr>
+  <tr><td>ptt 模式</td><td>按下 Hotkey 开始录音，松开结束；Hotkey 不进入应用；最终文本插入当前输入框。</td></tr>
+  <tr><td>toggle 模式</td><td>第一次按下 Hotkey 开始，第二次结束；Finalizing 时再按不产生新段。</td></tr>
+  <tr><td>continuous 模式</td><td>Hotkey 不消费、不触发录音；VAD 自动开始 / 结束语音段；最终文本仍通过 addon 提交。</td></tr>
+  <tr><td>模式切换</td><td>修改 <code>Mode</code> 后新语音段按新模式工作；当前段继续到结束；TUI 显示更新。</td></tr>
   <tr><td>普通打字</td><td>字母、数字、空格、修饰键、快捷键、组合键正常；无丢键、无重复。</td></tr>
   <tr><td>拼音输入法同时活动</td><td>PTT 仍可用；拼音候选、上屏、切换正常；PTT 键不进入拼音。</td></tr>
   <tr><td>CTC final</td><td>官方 <code>1.wav</code> 与方言样例文本正常；<code>0.wav</code> 英文错误记录为已知限制；真实麦克风 CER 达到发布门槛。</td></tr>
-  <tr><td>CTC partial</td><td>录音期间按现有节奏刷新；不进入历史 / 提交；final 后正常 commit。</td></tr>
+  <tr><td>CTC partial</td><td>录音期间按现有节奏刷新；Fcitx 输入面板显示临时窗口；不进入历史 / 提交；final 后正常 commit。</td></tr>
+  <tr><td>临时文本窗口</td><td>开始录音后出现，内容随 Partial 更新；Final / 停止 / 空段 / 断线时立即关闭。</td></tr>
+  <tr><td>输入面板不可用</td><td>当前 Fcitx UI 不渲染 preedit 时窗口不出现；最终提交仍正常，TUI 预览仍可用。</td></tr>
   <tr><td>CTC 安装</td><td>tar.bz2 下载、解包、SHA-256 / manifest 校验通过；约 740 MiB。</td></tr>
   <tr><td>CTC RTF</td><td>2 threads：10 s ≤ 1.0 s，20 s ≤ 2.0 s，30 s ≤ 3.0 s；与 <a href="ASR.html#a6">ASR §6</a> 一致。</td></tr>
   <tr><td>30 s 分段</td><td>PTT 达到 30 s 自动切段并继续收集；不丢后续语音；continuous 由 VAD 提前切分。</td></tr>
@@ -1483,15 +1616,18 @@ impl FireRedCtc {
   <tr><td>Fcitx 重启</td><td>addon 重新加载；PTT 恢复；daemon 不受影响；TUI 显示 addon 重连。</td></tr>
   <tr><td>TUI attach / detach</td><td>Snapshot 正确；detach 后 PTT 与提交继续；重连恢复历史。</td></tr>
   <tr><td><code>voime ctl quit</code></td><td>daemon 关闭；TUI 收到 Bye / EOF 并退出；Fcitx 继续运行；PTT 放行。</td></tr>
-  <tr><td>热键配置</td><td>修改 <code>voime.conf</code> 后新组合键生效；原组合键不再消费；配置文件语法错误有日志。</td></tr>
+  <tr><td>配置</td><td>修改 <code>Mode</code> / <code>Hotkey</code> 后新值生效；原热键不再消费；配置文件语法错误有日志。</td></tr>
   <tr><td>长文本</td><td>最终文本完整提交；Fcitx 自动分块；无协议错误。</td></tr>
   <tr><td>卸载 / 升级</td><td>删除 addon 后 Fcitx 正常；升级 Fcitx 后重编译 addon 可加载；systemd unit 可停用。</td></tr>
 </table>
 
 <h3 id="pr11-2">11.2 P0 必须实测的问题</h3>
 <ul>
-  <li>Fcitx 在拼音 / 键盘布局 / Voime 三种当前输入法下，是否都把 PTT 键送到 <code>PreInputMethod</code> watcher。</li>
+  <li>Fcitx 在拼音 / 键盘布局 / Voime 三种当前输入法下，是否都把 Hotkey 送到 <code>PreInputMethod</code> watcher。</li>
   <li>Fcitx 是否在终端、XWayland、无 text-input 的原生窗口中发送按键；哪些应用需要缩小承诺。</li>
+  <li><code>Mode=continuous</code> 时，daemon 能否仅靠 addon 的 Hello / Configure 进入 VAD 自动分段；addon 断线后是否正确停止自动分段。</li>
+  <li><code>InputPanel::setPreedit</code> 在当前 Fcitx UI 中是否显示为临时窗口；Partial 更新、Final 清空、目标失焦清空是否符合预期。</li>
+  <li>拼音 / 其他输入法更新同一 <code>InputPanel</code> 时，临时窗口是否被覆盖；是否需要限制为 Voime 当前输入法才显示。</li>
   <li><code>filterAndAccept()</code> 是否完全阻止 PTT 键进入应用与当前输入法。</li>
   <li><code>commitString</code> 在 GTK4 / Qt6 / Firefox / Electron / XWayland XIM / 终端中的实际行为与长度限制。</li>
   <li>Fcitx 的 commit filter 是否改变中文、英文、标点或 emoji。</li>
@@ -1508,16 +1644,16 @@ impl FireRedCtc {
   <tr><th>项目</th><th>默认</th></tr>
   <tr><td>Fcitx 版本</td><td>≥ 5.1.23；低于该版本不保证 <code>KeyEventMatchingMode::MatchAllNormalizedKeys</code>。</td></tr>
   <tr><td>addon 加载</td><td><code>OnDemand=False</code>；Fcitx 启动时加载，输入法条目 <code>Addon=voime</code>。</td></tr>
-  <tr><td>按住说话</td><td><code>Super+F2</code>；<code>HoldKey</code> 可改；设为空禁用。</td></tr>
-  <tr><td>切换说话</td><td><code>Super+F3</code>；<code>ToggleKey</code> 可改；设为空禁用。</td></tr>
+  <tr><td><code>Mode</code></td><td><code>ptt</code>；可切换为 <code>toggle</code> / <code>continuous</code>；只由 addon 配置提供。</td></tr>
+  <tr><td><code>Hotkey</code></td><td><code>Super+F2</code>；<code>ptt</code> 按住、<code>toggle</code> 切换、<code>continuous</code> 忽略；设为空可禁用。</td></tr>
   <tr><td>其他热键</td><td>不与 Fcitx trigger / alt-trigger / enumerate / preedit 切换键重叠；不与 Hyprland 常用绑定重叠。</td></tr>
-  <tr><td>目标输入框</td><td>语音段开始时聚焦的 <code>InputContext</code>；失焦 / 销毁不提交。</td></tr>
-  <tr><td>Preedit</td><td>关闭；Phase 2 可选，仅 Voime 当前输入法时启用。</td></tr>
+  <tr><td>目标输入框</td><td>语音段开始时聚焦的 <code>InputContext</code>；失焦 / 销毁不提交，并清空临时窗口。</td></tr>
+  <tr><td>临时文本窗口</td><td>使用 Fcitx <code>InputPanel::setPreedit</code>；Partial 更新，Final / 停止 / 空段 / 断线清空；不写客户端 preedit。</td></tr>
   <tr><td>daemon socket</td><td><code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>；目录 0700，socket 0600。</td></tr>
   <tr><td>Fcitx 配置</td><td><code>~/.config/fcitx5/conf/voime.conf</code>；addon / inputmethod 描述文件在 Fcitx 安装前缀下。</td></tr>
   <tr><td>daemon 启动</td><td>推荐 systemd user service；也可由桌面 <code>exec-once</code> 启动。</td></tr>
   <tr><td>TUI 退出</td><td><code>q</code> / <code>Ctrl+C</code> 只 detach；<code>voime ctl quit</code> 停止 daemon。</td></tr>
-  <tr><td>continuous 模式</td><td>不消费 PTT 键；VAD 自动切分；Final 仍通过 addon 提交。</td></tr>
+  <tr><td>continuous 模式</td><td>忽略、不消费 Hotkey；VAD 自动切分；Final 仍通过 addon 提交。</td></tr>
   <tr><td>ASR</td><td>FireRedVAD → FireRedASR2-CTC int8 → FireRedPunc；CTC 单 ONNX、CMVN、greedy。</td></tr>
   <tr><td>分段上限</td><td><code>max_segment_ms = 30_000</code>；PTT 达到上限自动切段并继续收集；continuous 由 VAD 提前切分；不新增倒计时 UI。</td></tr>
   <tr><td>CTC 安装</td><td>官方 <code>.tar.bz2</code>，约 740 MiB；SHA-256 写入 manifest。</td></tr>
@@ -1541,7 +1677,8 @@ impl FireRedCtc {
   <li><a href="https://fcitx-im.org/wiki/Using_Fcitx_5_on_Wayland">Using Fcitx 5 on Wayland</a> — Wayland frontend、text-input 与 XWayland 边界。</li>
   <li><a href="https://github.com/fcitx/fcitx5/blob/master/src/lib/fcitx/inputmethodengine.h">fcitx5: inputmethodengine.h</a> — <code>InputMethodEngineV2</code> / <code>keyEvent</code> / <code>activate</code> / <code>deactivate</code>。</li>
   <li><a href="https://github.com/fcitx/fcitx5/blob/master/src/lib/fcitx/event.h">fcitx5: event.h</a> — <code>InputContextKeyEvent</code>、<code>KeyEvent</code>、<code>checkKeyList</code>、<code>filterAndAccept</code>、<code>KeyEventMatchingMode</code>。</li>
-  <li><a href="https://github.com/fcitx/fcitx5/blob/master/src/lib/fcitx/inputcontext.h">fcitx5: inputcontext.h</a> — <code>commitString</code>、<code>hasFocus</code>、<code>inputPanel</code>、<code>updatePreedit</code>、<code>TrackableObject</code>。</li>
+  <li><a href="https://github.com/fcitx/fcitx5/blob/master/src/lib/fcitx/inputcontext.h">fcitx5: inputcontext.h</a> — <code>commitString</code>、<code>hasFocus</code>、<code>inputPanel</code>、<code>updateUserInterface</code>、<code>TrackableObject</code>。</li>
+  <li><a href="https://github.com/fcitx/fcitx5/blob/master/src/lib/fcitx/inputpanel.h">fcitx5: inputpanel.h</a> — <code>setPreedit</code>、<code>setClientPreedit</code>、<code>setAuxUp</code> / <code>setAuxDown</code>。</li>
   <li><a href="https://github.com/fcitx/fcitx5/blob/master/src/lib/fcitx/instance.h">fcitx5: instance.h</a> — <code>watchEvent</code>、<code>EventWatcherPhase</code>、<code>lastFocusedInputContext</code>。</li>
   <li><a href="https://github.com/fcitx/fcitx5/blob/master/src/lib/fcitx-utils/trackableobject.h">fcitx5: trackableobject.h</a> — <code>TrackableObjectReference</code> 的弱引用语义。</li>
   <li><a href="https://github.com/fcitx/fcitx5/blob/master/src/frontend/waylandim/waylandimserverv2.cpp">fcitx5: waylandimserverv2.cpp</a> — Wayland frontend 的 <code>grab_keyboard</code>、keymap / key 转发与 <code>commit_string</code> 分块。</li>

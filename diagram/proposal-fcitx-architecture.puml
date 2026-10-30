@@ -18,6 +18,7 @@ component "Fcitx 配置\naddon / inputmethod / voime.conf" as Config
 User --> Keyboard : 按键
 Keyboard --> Fcitx : 输入事件
 Fcitx --> Addon : InputContextKeyEvent\nPreInputMethod
+Addon --> Fcitx : setPreedit(partial)\nupdateUserInterface(InputPanel)
 Addon --> Fcitx : commitString(final)
 Fcitx --> App : 普通按键 / 最终文本
 Addon <--> Daemon : Unix socket\nStart / Stop / Partial / Final
@@ -26,5 +27,5 @@ Daemon --> Models : 只读加载
 Tui <--> Daemon : Unix socket\n快照 / 命令
 Fcitx --> Config : 加载 addon / IM 条目
 
-note right of Addon : PTT 键在 PreInputMethod 阶段被消费；\n普通键继续由 Fcitx 路由，Voime 不抓键盘、不转发。
+note right of Addon : Hotkey 按 Mode 在 PreInputMethod 阶段被消费；\n普通键继续由 Fcitx 路由，Voime 不抓键盘、不转发。
 @enduml
