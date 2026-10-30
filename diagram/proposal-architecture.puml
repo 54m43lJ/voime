@@ -8,7 +8,7 @@ actor "用户" as User
 component "物理键盘" as Keyboard
 component "Hyprland\nWayland 合成器" as Hyprland
 component "原生 Wayland 应用\ntext-input-v3" as WaylandApp
-component "XWayland 应用\nX11" as XApp
+component "XWayland 应用\nX11 / XIM" as XApp
 component "voimed\n守护进程 / 唯一输入法" as Daemon
 component "voime TUI\n可选监视器" as Tui
 component "StatusNotifier 托盘宿主\nWaybar / Vicinae" as Tray
@@ -24,8 +24,9 @@ Daemon --> Hyprland : virtual-keyboard\n转发非 PTT 按键
 Daemon --> Hyprland : input-method-v2\ncommit_string
 Hyprland --> WaylandApp : text-input-v3\n插入文本 / 转发按键
 Hyprland --> XApp : 转发按键 / X11 事件
+Daemon --> XApp : XIM_COMMIT\n（XWayland）
 Daemon --> Hyprland : virtual-keyboard\nCtrl+V / Ctrl+Shift+V
-Daemon --> Clip : 写入回退文本
+Daemon --> Clip : XIM 不可用时写回退文本
 Daemon --> XApp : XTest Ctrl+V 兜底
 Clip ..> XApp : 读取
 Daemon --> Mic : PCM

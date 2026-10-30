@@ -6,22 +6,24 @@ hide footbox
 actor "用户" as User
 participant "Voime\ndaemon" as Voime
 participant "Hyprland" as Compositor
-participant "系统剪贴板" as Clip
 participant "XWayland\nX server" as Xwayland
-participant "XWayland 应用" as App
+participant "XWayland 应用\nXIM client" as App
+participant "系统剪贴板" as Clip
 
 User -> Compositor : 按下 / 松开 PTT 组合键
 Compositor -> Voime : grab key（IM 消费）
 Voime -> Voime : ASR + 标点 → Final
 Voime -> Compositor : 查询 activewindow
-Compositor --> Voime : class / xwayland=true
-Voime -> Clip : set_text(单条 Final)
-Voime -> Compositor : VK 发送 Ctrl+V\n（终端 Ctrl+Shift+V）
-Compositor -> App : 转发粘贴按键
-alt VK 粘贴失败
-  Voime -> Xwayland : XTest Ctrl+V
-  Xwayland -> App : 粘贴按键
+Compositor --> Voime : xwayland=true / class
+
+Voime -> Xwayland : XIM_COMMIT(单条 Final)
+Xwayland -> App : XIM_COMMIT
+App -> App : 在 XIM 焦点输入框插入文本
+
+opt XIM 不可用 / 无 focused IC / COMMIT 失败
+  Voime -> Clip : set_text(单条 Final)
+  Voime -> Compositor : VK 发送 Ctrl+V
+  Compositor -> App : 粘贴按键
+  App -> Clip : 读取
 end
-App -> Clip : 读取剪贴板
-App -> App : 在光标处插入文本
 @enduml

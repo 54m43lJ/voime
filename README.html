@@ -35,7 +35,7 @@ PTT、把识别结果直接写进当前输入框，同时把非 PTT 按键原样
   <li>用户在任意窗口按住 <code>Super+F2</code>（可配置）说话、松开结束；再提供一个“按一下开始 / 再按一下结束”组合键。</li>
   <li>普通键盘输入不受影响：除 PTT 组合键外，字符、修饰键、快捷键、组合键和长按重复都保持原有行为。</li>
   <li>原生 Wayland 应用通过输入法协议在光标处插入最终文本；中文、英文、标点和 emoji 都按 UTF-8 原样提交。</li>
-  <li>XWayland 应用与没有 text-input 的应用通过剪贴板 + 粘贴回退，保证“能输入”。</li>
+  <li>XWayland 应用通过 XIM 接收最终文本；只有 XIM 不可用或应用不使用 XIM 时，才通过剪贴板 + 粘贴回退。</li>
   <li>PTT 每次录音硬上限 30 s；TUI 显示 <code>● Remaining: xx s</code>，达到上限自动结束当前句并立即开始下一段。</li>
   <li>daemon 与 TUI 分离：<code>voimed</code> 拥有音频、模型、输入法、键盘抓取、上屏与会话历史；<code>voime</code> 只是可选监视器。</li>
   <li>TUI 关闭、崩溃或从未启动时，PTT、普通打字与上屏仍然工作。</li>
@@ -49,10 +49,10 @@ PTT、把识别结果直接写进当前输入框，同时把非 PTT 按键原样
 <ul>
   <li>不实现拼音、形码、候选词、云输入或屏幕软键盘；Voime 只负责语音文本上屏。</li>
   <li>不与 Fcitx5 / IBus 共存为两个输入法，也不实现 Fcitx5 插件；运行 <code>voimed</code> 前必须停用其他输入法。</li>
-  <li>不实现 X11 与 Windows 后端；本版只支持 Hyprland / Wayland，XWayland 仅做兼容回退。</li>
-  <li>不保证 XWayland 的 preedit、临时结果或光标位置；XWayland 只保证最终文本能粘贴进去。</li>
+  <li>不实现 X11 与 Windows 后端；本版只支持 Hyprland / Wayland，XWayland 通过 XIM 兼容。</li>
+  <li>不保证 XWayland 的 preedit、临时结果或光标位置；XIM 只保证最终文本能提交到焦点输入框，失败才转剪贴板。</li>
   <li>不保存音频或识别历史到磁盘；daemon 退出后会话历史丢失。</li>
-  <li>不自动把整段会话写入剪贴板；剪贴板只在回退粘贴时承载单条最终文本。</li>
+  <li>不自动把整段会话写入剪贴板；剪贴板只在 XIM 不可用或非 XWayland 无 text-input 时承载单条最终文本。</li>
   <li>不提供设置界面、悬浮窗、通知或托盘菜单之外的 GUI；所有配置在命令行完成。</li>
   <li>不调用云 ASR、云标点，不做说话人分离、语种识别、翻译、润色或大模型改写。</li>
 </ul>
@@ -93,8 +93,13 @@ PTT、把识别结果直接写进当前输入框，同时把非 PTT 按键原样
     <td><a href="USER.html#u2">USER §2</a> · <a href="USER.html#u3">USER §3</a></td>
   </tr>
   <tr>
-    <td>最终结果（XWayland / 终端）</td>
-    <td>写入单条最终文本到剪贴板并发送粘贴快捷键；终端使用 <code>Ctrl+Shift+V</code>，普通应用使用 <code>Ctrl+V</code>。</td>
+    <td>最终结果（XWayland）</td>
+    <td>通过 XIM 提交到当前 XIM 焦点输入框，不覆盖剪贴板；应用未启用 XIM 时才粘贴。</td>
+    <td><a href="USER.html#u2">USER §2</a> · <a href="PROVIDER.html#p4-10">PROVIDER §4.10</a></td>
+  </tr>
+  <tr>
+    <td>最终结果（剪贴板兜底）</td>
+    <td>XIM 不可用，或焦点是非 XWayland 且没有 text-input 时，写入单条最终文本到剪贴板并发送粘贴快捷键；终端用 <code>Ctrl+Shift+V</code>，普通应用用 <code>Ctrl+V</code>。</td>
     <td><a href="USER.html#u2">USER §2</a> · <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a></td>
   </tr>
   <tr>
@@ -193,6 +198,11 @@ PTT、把识别结果直接写进当前输入框，同时把非 PTT 按键原样
     <td><a href="https://github.com/Smithay/wayland-rs">wayland-rs</a> / <a href="https://gitlab.freedesktop.org/xorg/lib/libxkbcommon">xkbcommon</a></td>
     <td>input-method-v2、virtual-keyboard、键盘布局与组合键匹配</td>
     <td>Rust / C · MIT</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/psychon/x11rb">x11rb</a> / <a href="https://github.com/Riey/xim-rs">xim-rs</a></td>
+    <td>X11 / XWayland 连接、XIM server 与 XTEST 兜底</td>
+    <td>Rust · MIT / Apache-2.0</td>
   </tr>
   <tr>
     <td><a href="https://github.com/iovxw/ksni">ksni</a></td>

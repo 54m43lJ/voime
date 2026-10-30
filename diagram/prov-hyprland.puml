@@ -11,9 +11,9 @@ Voime -> Ipc : j/activewindow
 Ipc --> Voime : class / title / xwayland
 
 note over Voime
-  class 命中终端列表时用 Ctrl+Shift+V，
-  其余用 Ctrl+V；XWayland 或终端走剪贴板回退。
-  普通原生 Wayland 应用不查询窗口，
+  xwayland=true 时先尝试 XIM；
+  XIM 不可用才走剪贴板，终端用 Ctrl+Shift+V，
+  其余用 Ctrl+V。普通原生 Wayland 应用不查询窗口，
   直接使用 input-method 提交。
 end note
 @enduml

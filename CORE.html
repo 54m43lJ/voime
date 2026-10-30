@@ -78,26 +78,28 @@
 │   │       ├── <a href="#c4-19">state.rs</a>                            Phase、段所有权、历史与倒计时
 │   │       ├── <a href="#c4-20">ipc_server.rs</a>                      Unix socket 监听与订阅者
 │   │       ├── <a href="#c4-21">hotkey.rs</a>                           PTT 组合键解析与匹配
+│   │       ├── <a href="#c4-22">xim.rs</a>                              XIM server / focused IC
 │   │       ├── wayland.rs                           Wayland 模块声明
-│   │       ├── <a href="#c4-22">wayland/im.rs</a>                      input-method-v2 对象与键盘抓取
-│   │       ├── <a href="#c4-23">wayland/keyboard.rs</a>                grab key / modifiers → PTT 或转发
-│   │       ├── <a href="#c4-24">wayland/virtual_keyboard.rs</a>        VK keymap、转发与粘贴快捷键
-│   │       ├── <a href="#c4-25">sink.rs</a>                            im / clipboard 投递选择
-│   │       ├── <a href="#c4-26">sink/im.rs</a>                         input-method-v2 提交
-│   │       ├── <a href="#c4-27">sink/clipboard.rs</a>                  单条 Final 写入并粘贴
-│   │       ├── <a href="#c4-28">focus/hyprland.rs</a>                  activewindow 查询与终端识别
-│   │       ├── <a href="#c4-29">tray.rs</a>                            StatusNotifierItem 注册与退出
+│   │       ├── <a href="#c4-23">wayland/im.rs</a>                      input-method-v2 对象与键盘抓取
+│   │       ├── <a href="#c4-24">wayland/keyboard.rs</a>                grab key / modifiers → PTT 或转发
+│   │       ├── <a href="#c4-25">wayland/virtual_keyboard.rs</a>        VK keymap、转发与粘贴快捷键
+│   │       ├── <a href="#c4-26">sink.rs</a>                            im / xim / clipboard 投递选择
+│   │       ├── <a href="#c4-27">sink/im.rs</a>                         input-method-v2 提交
+│   │       ├── <a href="#c4-28">sink/xim.rs</a>                        XIM_COMMIT
+│   │       ├── <a href="#c4-29">sink/clipboard.rs</a>                  单条 Final 写入并粘贴
+│   │       ├── <a href="#c4-30">focus/hyprland.rs</a>                  activewindow 查询与终端识别
+│   │       ├── <a href="#c4-31">tray.rs</a>                            StatusNotifierItem 注册与退出
 │   │       ├── tray/sni.rs
 │   │       ├── tray/menu.rs
 │   │       └── tray/icon.rs
 │   └── voime/
 │       ├── Cargo.toml
 │       └── src/
-│           ├── <a href="#c4-30">main.rs</a>                            TUI 与 ctl 入口
-│           ├── <a href="#c4-31">cli.rs</a>                             TUI / ctl 参数
-│           ├── <a href="#c4-32">client.rs</a>                          连接 socket、快照与事件
-│           ├── <a href="#c4-33">app.rs</a>                             视图状态、按键与重连
-│           ├── <a href="#c4-34">ui.rs</a>                               TUI 绘制与终端恢复
+│           ├── <a href="#c4-32">main.rs</a>                            TUI 与 ctl 入口
+│           ├── <a href="#c4-33">cli.rs</a>                             TUI / ctl 参数
+│           ├── <a href="#c4-34">client.rs</a>                          连接 socket、快照与事件
+│           ├── <a href="#c4-35">app.rs</a>                             视图状态、按键与重连
+│           ├── <a href="#c4-36">ui.rs</a>                               TUI 绘制与终端恢复
 │           └── ui/theme.rs                         终端颜色 token
 ├── scripts/
 │   └── install_models.sh                           Linux 安装入口
@@ -110,7 +112,8 @@
     ├── segmenter.rs                                端点与最大段长测试
     ├── ipc.rs                                      握手、编解码与慢客户端
     ├── keyboard.rs                                 PTT 匹配、转发与 keymap 变化
-    ├── sink.rs                                     投递选择
+    ├── xim.rs                                      XIM 注册、focused IC 与 COMMIT
+    ├── sink.rs                                     投递选择 im / xim / clipboard
     ├── tray.rs                                     托盘退出与无宿主
     ├── asr_ctc.rs                                  CMVN、token id 与 greedy CTC
     ├── countdown.rs                                30 s 计时与切段
@@ -146,6 +149,10 @@
   <tr>
     <td>透明转发</td>
     <td>非 PTT 的 <code>key</code> / <code>modifiers</code> 立即转发到 <code>zwp_virtual_keyboard_v1</code>；不缓存、不延迟、不改变 keycode / state / time。转发失败视为 <code>KeyForwardFailed</code> 并退出，不能持有 grab 却不转发。</td>
+  </tr>
+  <tr>
+    <td>XIM 边界</td>
+    <td>XIM server 只注册、跟踪 focused IC 并发送 <code>XIM_COMMIT</code>；不请求 forward-event，不处理普通按键或 PTT。XIM 不可用只影响 XWayland 上屏，不阻断 daemon；XWayland 延迟启动时由 daemon tick 周期性重试注册。</td>
   </tr>
   <tr>
     <td>同连接</td>
@@ -197,7 +204,7 @@
   </tr>
   <tr>
     <td>投递链</td>
-    <td><code>auto</code> 按 <code>im</code> → <code>clipboard</code> 顺序选择；<code>im</code> 仅在 IM active 时可用；<code>clipboard</code> 写单条 Final 后经 virtual-keyboard 发送粘贴键，XWayland 失败时用 XTest 兜底。显式指定 sink 时失败不自动切换。</td>
+    <td><code>auto</code> 按 <code>im</code> → <code>xim</code> → <code>clipboard</code> 顺序选择；<code>im</code> 仅在 IM active 时可用；<code>xim</code> 仅在焦点为 XWayland 且 XIM 有 focused IC 时可用；<code>clipboard</code> 写单条 Final 后经 virtual-keyboard 发送粘贴键，XWayland 失败时用 XTest 兜底。显式指定 sink 时失败不自动切换。</td>
   </tr>
   <tr>
     <td>清空工作区</td>
@@ -213,11 +220,11 @@
   </tr>
   <tr>
     <td>关停顺序</td>
-    <td>停止采集 → 取消当前段 → 关闭托盘 → 销毁 keyboard grab → 销毁 virtual-keyboard → 销毁 input-method-v2 → 关闭 IPC socket；所有退出路径复用同一条 shutdown。</td>
+    <td>停止采集 → 取消当前段 → 关闭托盘 → 关闭 XIM server → 销毁 keyboard grab → 销毁 virtual-keyboard → 销毁 input-method-v2 → 关闭 IPC socket；所有退出路径复用同一条 shutdown。</td>
   </tr>
   <tr>
     <td>错误策略</td>
-    <td>启动期致命错误写 stderr 并以 1 退出；单段推理失败丢弃该段并继续监听；IM / grab / VK / 音频流持续失败时关闭 daemon。运行期错误不进入 TUI 内容区。</td>
+    <td>启动期致命错误写 stderr 并以 1 退出；单段推理失败丢弃该段并继续监听；IM / grab / VK / 音频流持续失败时关闭 daemon；XIM 注册或提交失败只记录并回退剪贴板。运行期错误不进入 TUI 内容区。</td>
   </tr>
   <tr>
     <td>无异步运行时</td>
@@ -244,8 +251,9 @@
   <tr><td><code>wayland-client</code> / <code>wayland-backend</code></td><td><code>voimed</code></td><td>Wayland 连接、registry、seat 与事件队列。</td></tr>
   <tr><td><code>wayland-scanner</code></td><td><code>voimed</code>（build）</td><td>从 <code>protocols/*.xml</code> 生成 input-method-v2 / virtual-keyboard 绑定。</td></tr>
   <tr><td><code>xkbcommon</code></td><td><code>voimed</code></td><td>解析 grab keymap、keycode + modifiers → keysym、组合键匹配。</td></tr>
-  <tr><td><code>arboard</code></td><td><code>voimed</code></td><td>XWayland / 终端的回退剪贴板写入。</td></tr>
-  <tr><td><code>x11rb</code>（可选 feature）</td><td><code>voimed</code></td><td>XWayland 的 XTest 粘贴兜底。</td></tr>
+  <tr><td><code>arboard</code></td><td><code>voimed</code></td><td>XIM 不可用时 XWayland / 终端的剪贴板兜底写入。</td></tr>
+  <tr><td><code>x11rb</code></td><td><code>voimed</code></td><td>X11 / XWayland 连接、XIM server 的 atom / selection / event，以及 XTEST 粘贴兜底。</td></tr>
+  <tr><td><code>xim</code>（server feature）</td><td><code>voimed</code></td><td>XIM 协议解析与 server 状态机。</td></tr>
   <tr><td><code>ksni</code></td><td><code>voimed</code></td><td>StatusNotifierItem + DBusMenu 托盘；blocking API。</td></tr>
   <tr><td><code>clap</code></td><td><code>voimed</code> / <code>voime</code></td><td>命令行参数解析、帮助与版本输出。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td><code>voimed</code></td><td>音频、Wayland、pipeline、IPC 与托盘线程之间的有界通道。</td></tr>
@@ -299,7 +307,7 @@ pub struct Config {
 }
 
 pub enum Mode { Ptt, Continuous }
-pub enum SinkChoice { Auto, Im, Clipboard }
+pub enum SinkChoice { Auto, Im, Xim, Clipboard }
 pub enum HotkeyChoice { Im, None }
 
 impl Config {
@@ -773,13 +781,14 @@ fn run(args: cli::Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 </ul>
 
 <h3 id="c4-18">4.18 voimed/src/daemon.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct Daemon { /* state, wayland, pipeline, sink, subscribers, tray */ }
+<pre><code>pub struct Daemon { /* state, wayland, xim, pipeline, sink, subscribers, tray */ }
 
 impl Daemon {
     pub fn new(config: Config) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn run(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
     pub fn on_hotkey(&amp;mut self, event: HotkeyEvent) -&gt; anyhow::Result&lt;()&gt;;
     pub fn on_im(&amp;mut self, event: ImEvent) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn on_xim(&amp;mut self, event: XimEvent) -&gt; anyhow::Result&lt;()&gt;;
     pub fn on_pipeline(&amp;mut self, event: PipelineEvent) -&gt; anyhow::Result&lt;()&gt;;
     pub fn on_client(&amp;mut self, client: ClientId, msg: ClientMessage) -&gt; anyhow::Result&lt;()&gt;;
     pub fn on_tray(&amp;mut self, event: TrayEvent) -&gt; anyhow::Result&lt;()&gt;;
@@ -789,9 +798,9 @@ impl Daemon {
     fn shutdown(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
 }</code></pre>
 <ul class="note">
-  <li>主循环用 <code>crossbeam_channel::select</code> 汇总 <code>HotkeyEvent</code>、<code>ImEvent</code>、<code>PipelineEvent</code>、<code>ClientMessage</code>、<code>TrayEvent</code> 与 100 ms tick。</li>
-  <li>tick 更新 <code>remaining_ms</code> 并广播 <code>State</code>；达到 30 s 时结束当前段。</li>
-  <li><code>deliver</code> 读取当前 <code>im_active</code> 与焦点，选择 <code>SinkKind</code> 并返回 <code>Delivery</code>。</li>
+  <li>主循环用 <code>crossbeam_channel::select</code> 汇总 <code>HotkeyEvent</code>、<code>ImEvent</code>、<code>XimEvent</code>、<code>PipelineEvent</code>、<code>ClientMessage</code>、<code>TrayEvent</code> 与 100 ms tick。</li>
+  <li>tick 更新 <code>remaining_ms</code> 并广播 <code>State</code>；达到 30 s 时结束当前段；XIM 未注册时按退避间隔重试 <code>XimServer::start</code>。</li>
+  <li><code>deliver</code> 读取当前 <code>im_active</code>、<code>xim_focused</code> 与焦点，按 im → xim → clipboard 选择 <code>SinkKind</code> 并返回 <code>Delivery</code>。</li>
 </ul>
 
 <h3 id="c4-19">4.19 voimed/src/state.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -883,7 +892,36 @@ pub const MOD_SHIFT: &amp;str;      // SHIFT</code></pre>
   <li>匹配只比较 Shift / Ctrl / Alt / Super；CapsLock / NumLock / group 不参与。组合键必须包含一个非修饰键。</li>
 </ul>
 
-<h3 id="c4-22">4.22 voimed/src/wayland/im.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-22">4.22 voimed/src/xim.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub type IcId = u32;
+
+pub enum XimEvent {
+    Focused(IcId),
+    Unfocused(IcId),
+    Unavailable,
+}
+
+pub struct XimServer { /* X11 connection + XIM server state */ }
+
+impl XimServer {
+    pub fn start() -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn focused_ic(&amp;self) -&gt; Option&lt;IcId&gt;;
+    pub fn commit(&amp;mut self, text: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn shutdown(self);
+}
+
+pub struct XimStatus {
+    pub available: bool,
+    pub focused: bool,
+}</code></pre>
+<ul class="note">
+  <li><code>start</code> 在 <code>DISPLAY</code> 可用时注册 <code>XIM_SERVERS</code> 与 <code>voime</code> selection，并监听 XIM 会话事件；连接失败时返回 <code>XimUnavailable</code>，由 daemon tick 周期性重试，直到 XWayland 启动或注册成功。</li>
+  <li>XIM 只做 commit：不请求 forward-event，不实现 preedit / status / candidate；<code>commit</code> 只发给 focused IC。</li>
+  <li>XIM 协议报文由 <code>xim</code> crate 的 server feature 处理；X11 连接、atom、selection 与事件由 <code>x11rb</code> 提供。</li>
+  <li>编码优先 UTF-8；客户端不接受时使用当前 locale，仍失败则返回 <code>XimUnavailable</code>，由 sink 回退剪贴板。</li>
+</ul>
+
+<h3 id="c4-23">4.23 voimed/src/wayland/im.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct InputMethod { /* IM + grab + VK stay on one thread */ }
 
 pub enum ImEvent {
@@ -908,7 +946,7 @@ impl InputMethod {
   <li>Wayland 对象不能跨线程移动；<code>InputMethod</code> 只在 Wayland 线程使用。</li>
 </ul>
 
-<h3 id="c4-23">4.23 voimed/src/wayland/keyboard.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-24">4.24 voimed/src/wayland/keyboard.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct KeyboardForwarder { /* grab + virtual-keyboard + xkb state */ }
 
 impl KeyboardForwarder {
@@ -925,7 +963,7 @@ impl KeyboardForwarder {
   <li><code>on_keymap</code> 同时更新 xkb state 与 VK keymap；未收到 keymap 前不转发任何 key。</li>
 </ul>
 
-<h3 id="c4-24">4.24 voimed/src/wayland/virtual_keyboard.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-25">4.25 voimed/src/wayland/virtual_keyboard.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct VirtualKeyboard { /* zwp_virtual_keyboard_v1 */ }
 
 pub enum PasteTarget { Gui, Terminal }
@@ -943,9 +981,10 @@ impl VirtualKeyboard {
   <li>发送失败映射为 <code>KeyForwardFailed</code>；daemon 停止持有 grab 并退出。</li>
 </ul>
 
-<h3 id="c4-25">4.25 voimed/src/sink.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-26">4.26 voimed/src/sink.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct SinkContext {
     pub im_active: bool,
+    pub xim_focused: bool,
     pub focus: FocusInfo,
 }
 
@@ -953,25 +992,20 @@ pub trait TextSink {
     fn deliver(&amp;mut self, text: &amp;str, ctx: &amp;SinkContext) -&gt; Delivery;
 }
 
-pub enum SinkKind { Im, ClipboardPaste }
+pub use voime_ipc::{Delivery, SinkKind};   // 见 USER §4.2
 
-pub struct Delivery {
-    pub kind: SinkKind,
-    pub ok: bool,
-    pub error: Option&lt;String&gt;,
-}
-
-pub struct Sink { /* im + clipboard + vk */ }
+pub struct Sink { /* im + xim + clipboard + vk */ }
 
 impl Sink {
     pub fn deliver(&amp;mut self, text: &amp;str, ctx: &amp;SinkContext) -&gt; Delivery;
 }</code></pre>
 <ul class="note">
-  <li><code>auto</code> 先看 <code>im_active</code>；inactive 时写剪贴板并粘贴。显式 sink 只尝试指定后端。</li>
+  <li><code>auto</code> 按 im → xim → clipboard 选择：<code>im_active</code> 用 IM；XWayland 且有 focused IC 用 XIM；否则写剪贴板并粘贴。显式 sink 只尝试指定后端。</li>
+
   <li><code>Delivery</code> 通过 IPC <code>Final</code> 广播给 TUI，也写入日志供 <code>voime doctor</code> 查看。</li>
 </ul>
 
-<h3 id="c4-26">4.26 voimed/src/sink/im.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-27">4.27 voimed/src/sink/im.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct ImSink { /* handle to Wayland IM thread */ }
 
 impl TextSink for ImSink {
@@ -982,7 +1016,18 @@ impl TextSink for ImSink {
   <li>提交命令通过 channel 发往 Wayland 线程；主线程不直接持有 Wayland 对象。</li>
 </ul>
 
-<h3 id="c4-27">4.27 voimed/src/sink/clipboard.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-28">4.28 voimed/src/sink/xim.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct XimSink { /* XIM server handle */ }
+
+impl TextSink for XimSink {
+    fn deliver(&amp;mut self, text: &amp;str, ctx: &amp;SinkContext) -&gt; Delivery;
+}</code></pre>
+<ul class="note">
+  <li>只有 <code>ctx.focus.xwayland</code> 且 <code>ctx.xim_focused</code> 为真时调用 <code>XimServer::commit</code>；否则返回失败，让 sink 链进入剪贴板。</li>
+  <li>XIM 只提交最终文本；不处理普通按键、PTT 或 preedit。</li>
+</ul>
+
+<h3 id="c4-29">4.29 voimed/src/sink/clipboard.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct ClipboardSink {
     clipboard: Option&lt;arboard::Clipboard&gt;,
 }
@@ -1001,7 +1046,7 @@ pub fn paste_target(focus: &amp;FocusInfo) -&gt; PasteTarget;</code></pre>
   <li>写入内容为单条 Final，不含会话前缀；不恢复用户原剪贴板。终端的 <code>Ctrl+Shift+V</code> 由 <code>FocusInfo.terminal</code> 决定。</li>
 </ul>
 
-<h3 id="c4-28">4.28 voimed/src/focus/hyprland.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-30">4.30 voimed/src/focus/hyprland.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct FocusInfo {
     pub class: String,
     pub title: String,
@@ -1013,11 +1058,11 @@ pub fn active_window(extra_terminals: &amp;[String]) -&gt; anyhow::Result&lt;Foc
 
 pub const TERMINAL_CLASSES: &amp;[&amp;str];    // kitty / foot / Alacritty / wezterm / ghostty / XTerm</code></pre>
 <ul class="note">
-  <li>通过 Hyprland IPC <code>j/activewindow</code> 查询；<code>xwayland</code> 与终端 class 用于选择粘贴键。</li>
+  <li>通过 Hyprland IPC <code>j/activewindow</code> 查询；<code>xwayland</code> 决定是否尝试 XIM，终端 class 只影响 XIM 失败后的粘贴键。</li>
   <li>查询失败返回 <code>NoFocusedWindow</code>；投递仍把文本留在剪贴板。</li>
 </ul>
 
-<h3 id="c4-29">4.29 voimed/src/tray.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-31">4.31 voimed/src/tray.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub enum TrayEvent { Quit }
 
 pub struct TrayService { /* ksni handle + event sender */ }
@@ -1031,7 +1076,7 @@ impl TrayService {
   <li><code>tray/sni.rs</code>、<code>tray/menu.rs</code> 与 <code>tray/icon.rs</code> 分别负责 item 注册、DBusMenu 与内嵌图标，不持有 daemon 状态。</li>
 </ul>
 
-<h3 id="c4-30">4.30 voime/src/main.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-32">4.32 voime/src/main.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>fn main() -&gt; std::process::ExitCode;
 
 fn run(args: cli::Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
@@ -1040,7 +1085,7 @@ fn run(args: cli::Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
   <li>TUI 连接失败时写 stderr 并以 1 退出；不尝试启动 daemon。</li>
 </ul>
 
-<h3 id="c4-31">4.31 voime/src/cli.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-33">4.33 voime/src/cli.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Args {
     pub socket: Option&lt;std::path::PathBuf&gt;,
     pub command: Command,
@@ -1064,7 +1109,7 @@ pub enum CtlCommand {
   <li><code>--socket</code> 省略时使用与 daemon 相同的默认路径；<code>voime ctl</code> 的 source 固定为 <code>TriggerSource::Cli</code>。</li>
 </ul>
 
-<h3 id="c4-32">4.32 voime/src/client.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-34">4.34 voime/src/client.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Client { /* socket + reader */ }
 
 impl Client {
@@ -1078,7 +1123,7 @@ impl Client {
   <li>TUI 断线后提示重连；不缓存未确认命令，避免重复触发录音。</li>
 </ul>
 
-<h3 id="c4-33">4.33 voime/src/app.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-35">4.35 voime/src/app.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct App {
     pub snapshot: Snapshot,
     pub partial: String,
@@ -1101,7 +1146,7 @@ pub enum Control { Continue, Detach }</code></pre>
   <li>滚动只修改本地 <code>ScrollState</code>；<code>on_event</code> 更新 partial / transcript / remaining_ms。</li>
 </ul>
 
-<h3 id="c4-34">4.34 voime/src/ui.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-36">4.36 voime/src/ui.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Tui {
     terminal: Option&lt;ratatui::Terminal&lt;ratatui::backend::CrosstermBackend&lt;std::io::Stdout&gt;&gt;&gt;,
     restored: bool,
@@ -1141,6 +1186,9 @@ pub fn hint_text(mode: Mode, hold: &amp;str, toggle: &amp;str) -&gt; String;</co
 │   │   ├── zwp_input_method_v2.grab_keyboard()
 │   │   └── wayland::virtual_keyboard::VirtualKeyboard::create(seat)
 │   ├── hotkey::HotkeyMatcher::parse(config.hold_key, config.toggle_key)
+│   ├── xim::XimServer::start()
+│   │   ├── X11 atom / selection
+│   │   └── focused input context tracking
 │   ├── crossbeam_channel::bounded(AUDIO_CHANNEL_CAPACITY)
 │   ├── pipeline::spawn(&amp;config, factory, audio_rx)
 │   │   ├── vad::firered::FireRedVad::new(...)
@@ -1156,6 +1204,7 @@ pub fn hint_text(mode: Mode, hold: &amp;str, toggle: &amp;str) -&gt; String;</co
   <li>模型校验、会话创建、Wayland 对象、音频流与 IPC 都在进入事件循环前完成；任一步失败都不会创建托盘或监听 socket。</li>
   <li>pipeline 工作线程先于音频流启动，保证第一批 <code>AudioChunk</code> 不会落入无人接收的通道。</li>
   <li>Wayland 线程在 <code>InputMethod::connect</code> 后接管 IM / grab / VK；主线程只通过 channel 发送 commit / paste 命令。</li>
+  <li><code>XimServer::start</code> 失败（无 <code>DISPLAY</code> / XWayland 尚未启动 / 注册冲突）只记录 <code>XimUnavailable</code>，不阻断原生 Wayland 路径；daemon tick 周期性重试，成功后 XWayland 上屏自动切回 XIM，失败期间走剪贴板。</li>
 </ul>
 
 <h3 id="c5-2">5.2 键盘事件与 PTT 匹配</h3>
@@ -1272,7 +1321,9 @@ pub fn hint_text(mode: Mode, hold: &amp;str, toggle: &amp;str) -&gt; String;</co
 │   ├── sink::Sink::deliver(text, SinkContext)
 │   │   ├── 判断 im_active → sink::im::ImSink::deliver(text)
 │   │   │   └── wayland::im::InputMethod::commit(text)
-│   │   └── 判断 !im_active → sink::clipboard::ClipboardSink::deliver(text)
+│   │   ├── 判断 !im_active 且 focus.xwayland 且 xim_focused → sink::xim::XimSink::deliver(text)
+│   │   │   └── xim::XimServer::commit(text)
+│   │   └── 判断其他情况 → sink::clipboard::ClipboardSink::deliver(text)
 │   │       ├── arboard::Clipboard::set_text(text)
 │   │       ├── wayland::virtual_keyboard::VirtualKeyboard::paste(target)
 │   │       └── 判断 XWayland 失败 → x11rb::XTest 粘贴兜底
@@ -1316,6 +1367,7 @@ daemon::Daemon::on_tray(TrayEvent::Quit)
     ├── audio::capture::CaptureHandle::stop(capture)
     ├── pipeline::Pipeline::shutdown()
     ├── tray::TrayService::shutdown()
+    ├── xim::XimServer::shutdown()
     ├── wayland::im::InputMethod::destroy()
     ├── ipc_server::IpcServer::shutdown()
     └── std::fs::remove_file(socket)</code></pre>

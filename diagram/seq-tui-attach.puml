@@ -16,7 +16,7 @@ Voime --> Tui : Snapshot(mode, phase, transcript, partial)
 User -> Compositor : 按下 PTT 组合键
 Compositor -> Voime : grab key / modifiers
 Voime -> Voime : PTT 匹配 → 录音 → VAD → ASR → 标点
-Voime -> Compositor : VK 转发非 PTT 按键\ncommit_string 上屏
+Voime -> Compositor : VK 转发非 PTT 按键\n按投递链上屏
 Compositor -> App : 转发按键 / 插入文本
 Voime --> Tui : Recording / Partial / Final
 

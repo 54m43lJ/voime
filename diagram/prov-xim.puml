@@ -1,0 +1,23 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Voime" as Voime
+participant "X server\nXWayland" as X
+participant "XWayland 应用\nXIM client" as App
+
+Voime -> X : 写 XIM_SERVERS(voime)\n持有 voime selection
+App -> X : XOpenIM / XCreateIC
+X -> Voime : XIM_CONNECT / XIM_OPEN\nXIM_CREATE_IC
+App -> X : XSetICFocus
+X -> Voime : XIM_SET_IC_FOCUS
+
+Voime -> X : XIM_COMMIT(text)
+X -> App : XIM_COMMIT
+App -> App : 在焦点输入框插入文本
+
+opt 无 focused IC / 注册失败 / COMMIT 失败
+  Voime -> Voime : XimUnavailable
+end
+@enduml

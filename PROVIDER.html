@@ -105,11 +105,27 @@
   </tr>
   <tr>
     <td>XWayland</td>
-    <td>在 Wayland 合成器内运行 X11 应用的兼容层；X11 客户端不使用 text-input-v3，因此不能接收 input-method-v2 的提交。</td>
+    <td>在 Wayland 合成器内运行 X11 应用的兼容层；X11 客户端不使用 text-input-v3，因此通过 XIM 接收最终文本。</td>
+  </tr>
+  <tr>
+    <td>XIM</td>
+    <td>X Input Method：X11 / XWayland 应用使用的输入法协议。Voime 注册 XIM server，通过 <code>XIM_COMMIT</code> 提交最终文本。</td>
+  </tr>
+  <tr>
+    <td><code>XIM_SERVERS</code></td>
+    <td>root window 上的属性，列出可用 XIM server 的 atom；Voime 把自己的名字 <code>voime</code> 加入其中。</td>
+  </tr>
+  <tr>
+    <td>XIM focused IC</td>
+    <td>XIM 客户端通过 <code>XIM_SET_IC_FOCUS</code> 选中的 input context；只有存在 focused IC 时才能提交。</td>
+  </tr>
+  <tr>
+    <td><code>XMODIFIERS</code></td>
+    <td>X11 / XWayland 应用选择 XIM server 的环境变量；推荐 <code>@im=voime</code>。</td>
   </tr>
   <tr>
     <td>XTEST</td>
-    <td>X11 扩展，用于向 X server 注入按键；本项目只在 XWayland 粘贴兜底时使用。</td>
+    <td>X11 扩展，用于向 X server 注入按键；本项目只在 XIM 失败后的剪贴板粘贴兜底使用。</td>
   </tr>
   <tr>
     <td>StatusNotifierItem</td>
@@ -188,7 +204,15 @@
   </tr>
   <tr>
     <td>XWayland 边界</td>
-    <td>XWayland 不使用 text-input-v3，<code>commit_string</code> 到不了；最终文本走剪贴板 + 粘贴，PTT 与普通按键转发仍可用。</td>
+    <td>XWayland 不使用 text-input-v3，<code>commit_string</code> 到不了；最终文本先走 XIM <code>XIM_COMMIT</code>，XIM 不可用才走剪贴板 + 粘贴。PTT 与普通按键转发仍可用。</td>
+  </tr>
+  <tr>
+    <td>XIM 语义</td>
+    <td>XIM server 只做 commit：不请求 forward-event，不实现 preedit / status / candidate；键盘与 PTT 仍由 Wayland grab 处理。</td>
+  </tr>
+  <tr>
+    <td>XIM 注册</td>
+    <td><code>DISPLAY</code> 可用时注册 <code>XIM_SERVERS</code> 与 <code>voime</code> selection；<code>TRANSPORT</code> 返回 <code>X/</code>；推荐客户端设置 <code>XMODIFIERS=@im=voime</code>。</td>
   </tr>
   <tr>
     <td>剪贴板文本</td>
@@ -243,21 +267,28 @@
   <li>IM 自己注入的按键必须被合成器识别为同一客户端，否则会再次进入 grab。</li>
 </ul>
 
-<h3 id="p3-5">3.5 剪贴板与粘贴回退</h3>
+<h3 id="p3-5">3.5 XIM 提交边界</h3>
+<div class="diagram"><img src="diagram/prov-xim.svg" alt="XIM server 注册、focused IC 与 XIM_COMMIT 时序图"></div>
+<ul class="note">
+  <li>Voime 在 XWayland 的 X server 上注册 <code>XIM_SERVERS</code> / <code>voime</code> selection，并跟踪 <code>XIM_SET_IC_FOCUS</code>。</li>
+  <li>XIM 只接收 focused IC 并发送 <code>XIM_COMMIT</code>；不请求 forward-event，不参与普通按键或 PTT。</li>
+</ul>
+
+<h3 id="p3-6">3.6 剪贴板兜底</h3>
 <div class="diagram"><img src="diagram/prov-clipboard.svg" alt="剪贴板写入与粘贴回退时序图"></div>
 <ul class="note">
-  <li>只有输入法 inactive 或显式 clipboard sink 才写剪贴板；内容为单条 Final，不写会话。</li>
+  <li>只有 XIM 不可用、焦点不是 XWayland，或显式 clipboard sink 才写剪贴板；内容为单条 Final，不写会话。</li>
   <li>粘贴键优先经 virtual-keyboard；XWayland 下失败时用 XTEST 兜底。</li>
 </ul>
 
-<h3 id="p3-6">3.6 Hyprland 焦点与终端识别</h3>
+<h3 id="p3-7">3.7 Hyprland 焦点与终端识别</h3>
 <div class="diagram"><img src="diagram/prov-hyprland.svg" alt="Hyprland activewindow 查询与终端识别时序图"></div>
 <ul class="note">
   <li><code>j/activewindow</code> 的 <code>xwayland</code> 标志与 class 决定粘贴键；普通 GUI 用 <code>Ctrl+V</code>，终端用 <code>Ctrl+Shift+V</code>。</li>
   <li>查询失败不阻塞 PTT 或普通按键转发；只影响 Final 的粘贴目标。</li>
 </ul>
 
-<h3 id="p3-7">3.7 StatusNotifierItem 托盘</h3>
+<h3 id="p3-8">3.8 StatusNotifierItem 托盘</h3>
 <div class="diagram"><img src="diagram/prov-tray.svg" alt="StatusNotifierItem 注册与退出时序图"></div>
 <ul class="note">
   <li>托盘只提供图标与“退出”菜单；没有宿主时静默降级。</li>
@@ -435,7 +466,7 @@ pub enum AudioError {
   <li>CTC 的 CMVN、token 文件与 greedy 解码细节见 <a href="ASR.html">ASR</a>。</li>
 </ul>
 
-<h3 id="p4-4">4.4 剪贴板与粘贴：arboard / virtual-keyboard / XTEST</h3>
+<h3 id="p4-4">4.4 剪贴板兜底：arboard / virtual-keyboard / XTEST</h3>
 <table>
   <tr><th>消费项</th><th>签名 / 类型</th><th>用途</th></tr>
   <tr><td>建立句柄</td><td><code>arboard::Clipboard::new() -&gt; Result&lt;Clipboard, arboard::Error&gt;</code></td><td>首次使用时建立；失败只影响回退粘贴，不阻断 daemon。</td></tr>
@@ -458,7 +489,7 @@ pub enum PasteError {
 <ul class="note">
   <li>写入 UTF-8 纯文本，内容为单条最终文本，不含会话前缀、临时结果、空行或错误信息；空文本不写入。</li>
   <li>剪贴板不可用不阻断 daemon 启动；原生 Wayland 提交仍可用，只有回退粘贴记录 <code>ClipboardFailed</code>。</li>
-  <li>原生 Wayland 提交不修改剪贴板；只有 XWayland / 无 text-input / 显式 clipboard sink 才写入。</li>
+  <li>原生 Wayland 提交与 XIM 提交都不修改剪贴板；只有 XIM 不可用、焦点不是 XWayland，或显式 clipboard sink 才写入。</li>
   <li>Linux Wayland 由合成器管理剪贴板；X11 / XWayland 下本进程是剪贴板所有者，退出后能否保留取决于剪贴板管理器。</li>
   <li>粘贴键只是按键事件，不逐字输入文本；终端使用 <code>Ctrl+Shift+V</code>。</li>
 </ul>
@@ -484,11 +515,20 @@ pub enum PasteError {
 </ul>
 
 <h3 id="p4-6">4.6 消息与错误</h3>
-<pre><code>pub enum ProviderError {
+<pre><code>pub enum XimError {
+    NoDisplay,
+    RegisterFailed,
+    NoFocusedIc,
+    EncodingUnsupported,
+    CommitFailed,
+}
+
+pub enum ProviderError {
     Audio(AudioError),
     Model(ModelError),
     Clipboard(ClipboardError),
     Paste(PasteError),
+    Xim(XimError),
     Terminal(TerminalError),
     Wayland(WaylandError),
     Tray(TrayError),
@@ -508,6 +548,7 @@ pub enum PasteError {
   <tr><td><code>ImUnavailable</code></td><td>seat 已被其他输入法占用。</td><td>启动失败，提示停用 Fcitx5 / IBus。</td></tr>
   <tr><td><code>GrabFailed</code></td><td>键盘抓取失败、keymap 超时或 grab 被销毁。</td><td>关闭 daemon；没有 grab 就没有 PTT。</td></tr>
   <tr><td><code>KeyForwardFailed</code></td><td>virtual-keyboard 发送失败。</td><td>关闭 daemon，不能继续持有 grab 却不转发。</td></tr>
+  <tr><td><code>XimUnavailable</code></td><td>无 <code>DISPLAY</code>、XIM 注册失败、无 focused IC 或 COMMIT 失败。</td><td>XWayland 最终文本回退剪贴板；不影响原生 Wayland。</td></tr>
   <tr><td><code>NoFocusedWindow</code></td><td>Final 产生时没有可投递焦点。</td><td>文本留在剪贴板；记录 <code>DeliveryFailed</code>。</td></tr>
   <tr><td><code>PasteFailed</code> / <code>ClipboardFailed</code></td><td>粘贴键或剪贴板写入失败。</td><td>文本可能仍在剪贴板；记录错误，下一次 Final 重试。</td></tr>
   <tr><td><code>WaylandProtocol</code></td><td>协议版本、对象状态或 4000 字节限制异常。</td><td>启动期失败；运行期关闭 daemon。</td></tr>
@@ -554,20 +595,38 @@ pub enum PasteError {
   <li>不通过 virtual-keyboard 逐字输入最终文本；最终文本走 input-method 提交或剪贴板。</li>
 </ul>
 
-<h3 id="p4-9">4.9 Hyprland 焦点与粘贴</h3>
+<h3 id="p4-9">4.9 Hyprland 焦点与 XIM / 粘贴</h3>
 <table>
   <tr><th>项目</th><th>消费契约</th></tr>
   <tr><td>查询</td><td>Hyprland IPC <code>j/activewindow</code>；返回 <code>class</code>、<code>title</code>、<code>xwayland</code>。</td></tr>
-  <tr><td>终端识别</td><td>默认 class：<code>kitty</code>、<code>foot</code>、<code>Alacritty</code>、<code>org.wezfurlong.wezterm</code>、<code>com.mitchellh.ghostty</code>、<code>XTerm</code>；可用 <code>--terminal-class</code> 追加。</td></tr>
+  <tr><td>XIM 选择</td><td><code>xwayland: true</code> 时才尝试 XIM；focused IC 由 XIM server 维护。</td></tr>
+  <tr><td>终端识别</td><td>默认 class：<code>kitty</code>、<code>foot</code>、<code>Alacritty</code>、<code>org.wezfurlong.wezterm</code>、<code>com.mitchellh.ghostty</code>、<code>XTerm</code>；可用 <code>--terminal-class</code> 追加；只影响 XIM 失败后的粘贴键。</td></tr>
   <tr><td>粘贴键</td><td>普通 GUI：<code>Ctrl+V</code>；终端：<code>Ctrl+Shift+V</code>。优先经 VK 发送；XWayland 下 VK 失败时用 XTEST 兜底。</td></tr>
   <tr><td>无焦点</td><td>不发送粘贴键，记录 <code>NoFocusedWindow</code>；文本留在剪贴板。</td></tr>
 </table>
 <ul class="note">
-  <li>XWayland 只保证“能输入”，不保证 preedit、临时结果或光标位置。</li>
+  <li>XIM 只保证最终文本能提交到当前 focused IC，不保证 preedit、临时结果或光标位置；XIM 失败才转剪贴板。</li>
   <li>终端里粘贴的是命令文本，用户按 PTT 时应当明确目标；项目不额外做终端安全确认。</li>
 </ul>
 
-<h3 id="p4-10">4.10 preedit（Phase 2）</h3>
+<h3 id="p4-10">4.10 XIM：X11 / XWayland 提交</h3>
+<table>
+  <tr><th>项目</th><th>消费契约</th></tr>
+  <tr><td>连接</td><td><code>DISPLAY</code> 可用时建立 X11 连接；XWayland 可能延迟启动，连接失败时 daemon 周期性重试；未注册期间 XWayland 上屏走剪贴板。</td></tr>
+  <tr><td>注册</td><td>在 screen 0 的 root window 写 <code>XIM_SERVERS</code> 属性，加入 atom <code>voime</code>；持有 <code>voime</code> selection。选择目标 <code>TRANSPORT</code> 返回 <code>X/</code>，<code>LOCALES</code> 返回当前 UTF-8 locale。</td></tr>
+  <tr><td>客户端选择</td><td>XWayland 应用使用 <code>XMODIFIERS=@im=voime</code>；未设置时按 <code>XIM_SERVERS</code> first-fit 选择唯一 server。</td></tr>
+  <tr><td>会话</td><td><code>XIM_CONNECT</code> / <code>XIM_OPEN</code> / <code>XIM_CREATE_IC</code> / <code>XIM_SET_IC_FOCUS</code> / <code>XIM_UNSET_IC_FOCUS</code> / <code>XIM_DESTROY_IC</code> / <code>XIM_CLOSE</code> / <code>XIM_DISCONNECT</code>。</td></tr>
+  <tr><td>事件</td><td>不发送 <code>XIM_SET_EVENT_MASK</code> 请求 forward-event；XIM 客户端继续把按键直接送给应用，键盘与 PTT 由 Wayland grab 处理。</td></tr>
+  <tr><td>提交</td><td><code>XIM_COMMIT</code> 只发给当前 focused IC；UTF-8 优先，客户端不接受时用当前 locale；超过单包长度时按 UTF-8 字符边界分块。</td></tr>
+  <tr><td>失败</td><td>无 <code>DISPLAY</code>、注册失败、无 focused IC、编码不支持或 <code>XIM_COMMIT</code> 失败：返回 <code>XimUnavailable</code>，sink 回退剪贴板。</td></tr>
+</table>
+<ul class="note">
+  <li>XIM 只用于最终文本提交，不实现拼音、候选、preedit 或 status；不请求 forward-event，避免与 Wayland grab 重复消费按键。</li>
+  <li>协议报文由 <code>xim</code> crate 的 server feature 处理；X11 连接、atom、selection 与事件由 <code>x11rb</code> 提供。</li>
+  <li>XIM 不可用不影响原生 Wayland input-method-v2 路径，也不影响 PTT 或普通按键转发。</li>
+</ul>
+
+<h3 id="p4-11">4.11 preedit（Phase 2）</h3>
 <table>
   <tr><th>项目</th><th>消费契约</th></tr>
   <tr><td>提交</td><td><code>set_preedit_string(text, cursor_begin, cursor_end)</code>；cursor 以字节计，隐藏光标时两者为 -1。</td></tr>
@@ -580,7 +639,7 @@ pub enum PasteError {
   <li>临时结果更新频率与 ASR 相同，不额外增加推理。</li>
 </ul>
 
-<h3 id="p4-11">4.11 X11 / Windows 预留</h3>
+<h3 id="p4-12">4.12 X11 / Windows 预留</h3>
 <table>
   <tr><th>平台</th><th>预留接口</th><th>行为</th></tr>
   <tr><td>X11</td><td><code>XGrabKey</code> + <code>KeyPress</code> / <code>KeyRelease</code></td><td>在 root window 抓取热键并吞掉；支持 hold / toggle；本版不实现。</td></tr>
@@ -588,7 +647,7 @@ pub enum PasteError {
   <tr><td>文本注入</td><td>X11 XTEST / Windows <code>SendInput(KEYEVENTF_UNICODE)</code></td><td>预留给 X11 / Windows 的上屏后端；本版只实现 Wayland / XWayland 路径。</td></tr>
 </table>
 
-<h3 id="p4-12">4.12 StatusNotifierItem / DBusMenu 托盘</h3>
+<h3 id="p4-13">4.13 StatusNotifierItem / DBusMenu 托盘</h3>
 <table>
   <tr><th>项目</th><th>消费契约</th></tr>
   <tr><td>服务</td><td>D-Bus session bus 上的 <code>org.kde.StatusNotifierItem</code>；通过 StatusNotifierWatcher 注册。</td></tr>

@@ -3,21 +3,26 @@ skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
 
 start
-:voimed 收到 Final 文本;
+:Voimed 收到 Final 文本;
 if (input-method-v2 处于 active?) then (是)
   :commit_string(text);
-  :Hyprland 把文本提交给当前 text-input-v3;
-  :目标应用在光标处插入;
+  :Hyprland 把文本提交给当前 text-input 应用;
+  stop
+endif
+
+if (焦点是 XWayland 且 XIM 有 focused IC?) then (是)
+  :XIM_COMMIT(text);
+  :XWayland 把文本提交给 XIM 焦点输入框;
+  stop
+endif
+
+:写剪贴板，保留单条 Final;
+if (virtual-keyboard 可用?) then (是)
+  :VK 发送 Ctrl+V / Ctrl+Shift+V;
+  :Hyprland 转发粘贴按键;
   stop
 else (否)
-  :写剪贴板，保留识别文本;
-  if (virtual-keyboard 可用?) then (是)
-    :VK 发送 Ctrl+V / Ctrl+Shift+V;
-    :Hyprland 转发粘贴按键;
-  else (否)
-    :XTest 发送粘贴键（XWayland 兜底）;
-  endif
-  :目标应用从剪贴板粘贴;
+  :XTest 发送粘贴键（XWayland 兜底）;
   stop
 endif
 @enduml

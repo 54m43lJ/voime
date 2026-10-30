@@ -8,6 +8,7 @@ participant "Hyprland" as Compositor
 participant "Voime\ndaemon" as Voime
 participant "TUI\n可选" as Tui
 participant "麦克风" as Mic
+participant "XWayland" as Xwayland
 participant "目标应用" as App
 participant "系统剪贴板" as Clip
 
@@ -28,7 +29,11 @@ Voime -> Tui : State(finalizing)
 alt IM active（原生 Wayland）
   Voime -> Compositor : commit_string(text) + commit(serial)
   Compositor -> App : 光标处插入文本
-else IM inactive（XWayland / 终端）
+else 焦点是 XWayland 且 XIM 有 focused IC
+  Voime -> Xwayland : XIM_COMMIT(text)
+  Xwayland -> App : XIM_COMMIT
+  App -> App : 插入文本
+else XIM 不可用 / 非 XWayland 无 text-input
   Voime -> Clip : set_text(单条 Final)
   Voime -> Compositor : VK Ctrl+V / Ctrl+Shift+V
   Compositor -> App : 粘贴按键

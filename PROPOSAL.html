@@ -36,7 +36,8 @@
 每个 seat 只允许一个 input-method-v2 对象；Fcitx5 必须先停用。若 seat 已被占用，Voime 收到
 <code>unavailable</code> 后按启动失败处理，并提示停用 Fcitx5 / IBus，不降级为粘贴：没有输入法对象
 就没有键盘抓取，也就没有 PTT。XWayland 不使用 <code>text-input-v3</code>，<code>commit_string</code>
-到不了，因此最终文本仍走剪贴板 + 粘贴回退；但 PTT 与普通按键转发不受影响。
+到不了，但 XWayland 使用 XIM：Voime 同时注册 XIM server，最终文本通过 <code>XIM_COMMIT</code>
+直接送进 X11 应用；只有 XIM 也不可用时才回退剪贴板 + 粘贴。PTT 与普通按键转发不受影响。
 </p>
 
 <table>
@@ -59,7 +60,11 @@
   </tr>
   <tr>
     <td>上屏方式</td>
-    <td>原生 Wayland：input-method-v2 <code>commit_string</code>；XWayland / 无 text-input：剪贴板 + 粘贴。</td>
+    <td>原生 Wayland：input-method-v2 <code>commit_string</code>；XWayland：XIM <code>XIM_COMMIT</code>；XIM 不可用或非 XWayland 且无 text-input：剪贴板 + 粘贴。</td>
+  </tr>
+  <tr>
+    <td>XIM</td>
+    <td>Voime 在 <code>DISPLAY</code> 可用时注册 XIM server（<code>XIM_SERVERS</code> / <code>voime</code>），只做 commit，不请求 forward-event；键盘仍由 Wayland grab 统一处理。</td>
   </tr>
   <tr>
     <td>全局热键</td>
@@ -88,7 +93,8 @@
 </table>
 
 <ul class="note">
-  <li>上屏策略是分层的：<strong>commit 优先</strong>，粘贴只做 XWayland / 无 text-input 回退；virtual-keyboard 只负责按键转发与粘贴快捷键，不作为文本上屏后端。</li>
+  <li>上屏策略是分层的：<strong>IM commit → XIM commit → 剪贴板粘贴</strong>。原生 Wayland 走 input-method-v2，XWayland 走 XIM，只有 XIM 不可用（或非 XWayland 且无 text-input）才回退剪贴板。</li>
+  <li>virtual-keyboard 只负责按键转发与粘贴快捷键，不作为文本上屏后端。</li>
   <li>当前验收环境：Hyprland 0.56.2；Fcitx5 5.1.23 正在运行（用于验证 <code>unavailable</code>）；不再依赖 xdg-desktop-portal-hyprland。</li>
   <li>键盘抓取与普通按键转发是 input-method-v2 路线的一部分；不是可选优化，也不是“只抓 PTT 键”。</li>
   <li>本文件只是提案，不修改现有 README / USER / CORE / PROVIDER / BUILD。批准后按 <a href="#pr9">§9</a> 的顺序落笔。</li>
@@ -104,7 +110,7 @@
   <li>同时支持两种热键语义：按住说话（按下开始、松开结束）与按一下开始 / 再按一下结束；两者可分别绑定，互不冲突。</li>
   <li>普通键盘输入保持可用：除 PTT 键外，所有 key / modifiers 事件经 <code>zwp_virtual_keyboard_v1</code> 原样转发，普通字符、快捷键、组合键的行为不变。</li>
   <li>原生 Wayland 应用通过 input-method-v2 在光标处插入最终文本；中文、英文、标点和 emoji 都按 UTF-8 原样提交。</li>
-  <li>XWayland 应用与没有 text-input-v3 的应用通过剪贴板 + 粘贴回退，保证“能输入”。</li>
+  <li>XWayland 应用通过 XIM 接收最终文本；XIM 不可用或应用不使用 XIM 时，才通过剪贴板 + 粘贴回退。</li>
   <li>daemon 与 TUI 进程分离：daemon 拥有音频、模型、输入法、键盘抓取、按键转发、上屏与会话历史；TUI 只通过 Unix socket 观察和发命令。</li>
   <li>TUI 关闭、崩溃或从未启动时，全局热键、正常打字与上屏仍然工作。</li>
   <li>PTT 每次录音硬上限 30 s；TUI 在录音红点旁显示独立状态行 <code>● Remaining: xx s</code>；达到 30 s 自动结束当前句并立即开始下一段，不丢后续语音。</li>
@@ -119,10 +125,10 @@
   <li>不实现拼音、形码、候选词、云输入等键盘输入法能力；Voime 只负责语音文本上屏。</li>
   <li>不与 Fcitx5 / IBus 共存为两个输入法；也不实现 Fcitx5 插件。运行 Voime 前必须停用 Fcitx5。</li>
   <li>不实现 X11 与 Windows 后端；只在 CORE / PROVIDER 中预留 <code>XGrabKey</code>、<code>WH_KEYBOARD_LL</code>、<code>SendInput</code> 等接口位置。XWayland 的 XTest 粘贴只是兼容路径，不等于支持 X11 桌面。</li>
-  <li>不保证 XWayland 的 preedit、临时结果或光标位置；XWayland 只保证最终文本能粘贴进去。</li>
+  <li>不保证 XWayland 的 preedit、临时结果或光标位置；XIM 只保证最终文本能提交到当前 XIM 焦点输入框，失败才转剪贴板。</li>
   <li>不引入第二个 ASR 模型；本版只做 CTC 替换，沿用现有 VAD 分段与尾部 partial。</li>
-  <li>不把 Voime 做成通用键盘输入法：抓取键盘只为 PTT 与透明转发。XWayland 回退只发送一次粘贴快捷键，不逐字模拟按键。</li>
-  <li>虚拟键盘只用于转发物理按键和发送粘贴快捷键，不作为逐字文本上屏后端；XWayland / 无 text-input 的最终文本统一走剪贴板 + 粘贴。</li>
+  <li>不把 Voime 做成通用键盘输入法：抓取键盘只为 PTT 与透明转发。XIM 只用于提交最终文本，不实现拼音 / 候选 / preedit。</li>
+  <li>虚拟键盘只用于转发物理按键和发送粘贴快捷键，不作为逐字文本上屏后端；XWayland 先走 XIM，XIM 不可用才走剪贴板。</li>
   <li>不保存音频或识别历史到磁盘；daemon 退出后会话历史丢失。</li>
   <li>不自动把整段会话写入剪贴板；剪贴板只在回退粘贴时承载单条最终文本。</li>
   <li>不提供设置界面、悬浮窗、通知或托盘菜单之外的 GUI；托盘只保留图标与右键菜单（仅“退出”），不显示录音状态、历史或设置项。所有配置在命令行或 Hyprland 配置中完成。</li>
@@ -137,7 +143,7 @@
   </tr>
   <tr>
     <td>XWayland 不实现 text-input-v3</td>
-    <td>input-method-v2 的 <code>commit_string</code> 到不了 XWayland 应用；必须准备剪贴板 + 粘贴回退。</td>
+    <td>input-method-v2 的 <code>commit_string</code> 到不了 XWayland 应用；必须注册 XIM server 并通过 <code>XIM_COMMIT</code> 上屏，XIM 失败才转剪贴板。</td>
   </tr>
   <tr>
     <td><code>grab_keyboard</code> 会截获 seat 的全部键盘事件</td>
@@ -150,6 +156,10 @@
   <tr>
     <td>virtual-keyboard 与 IM grab 必须使用同一个 Wayland 连接</td>
     <td>Hyprland 通过 <code>grabClient() == client</code> 识别并忽略 IM 自己注入的按键，避免转发回环。</td>
+  </tr>
+  <tr>
+    <td>XIM 依赖 X11 / XWayland</td>
+    <td>XIM server 通过 <code>DISPLAY</code> 注册 <code>XIM_SERVERS</code> 与 <code>voime</code> selection；XWayland 客户端需设置 <code>XMODIFIERS=@im=voime</code> 或默认选中唯一 XIM。</td>
   </tr>
   <tr>
     <td>input-method-v2 仍是 unstable 协议</td>
@@ -172,7 +182,7 @@
   </tr>
   <tr>
     <td>识别完成后只写剪贴板，用户手动粘贴。</td>
-    <td>原生 Wayland 直接 <code>commit_string</code> 到当前输入框；XWayland 才回退剪贴板粘贴。</td>
+    <td>原生 Wayland 直接 <code>commit_string</code>；XWayland 走 XIM；剪贴板只做最后的回退。</td>
   </tr>
   <tr>
     <td>单进程：<code>App</code> 同时拥有 TUI、pipeline、剪贴板与历史。</td>
@@ -210,7 +220,8 @@
 <ul class="note">
   <li>热键与上屏走同一个 input-method-v2 对象：<code>grab_keyboard</code> 收键，<code>commit_string</code> 写入文本。</li>
   <li>非 PTT 按键经 <code>zwp_virtual_keyboard_v1</code> 原样转发；合成器键绑定仍然优先于 IM grab。</li>
-  <li>XWayland 应用与没有 text-input-v3 的应用走剪贴板 + 粘贴回退；粘贴快捷键优先用 virtual-keyboard 发送，XTest 只作兜底。</li>
+  <li>XWayland 应用优先走 XIM；XIM 不可用或应用不使用 XIM 时才走剪贴板 + 粘贴回退。</li>
+  <li>粘贴快捷键优先用 virtual-keyboard 发送，XTest 只作兜底。</li>
   <li>TUI 只通过 Unix socket 连接 daemon；daemon 不依赖 ratatui / crossterm。</li>
 </ul>
 
@@ -218,7 +229,7 @@
 <div class="diagram"><img src="diagram/proposal-layers.svg" alt="Voime 输入法分层图"></div>
 <ul class="note">
   <li>Voime 进入 Layer 3（输入法层），与 Fcitx5 互斥；它不是 Layer 2 的应用内注入器。</li>
-  <li>XWayland 应用没有 text-input-v3，因此虚线回退到剪贴板粘贴，而不是 input-method-v2。</li>
+  <li>XWayland 应用没有 text-input-v3，因此走 XIM；XIM 不可用才是剪贴板粘贴，而不是 input-method-v2。</li>
   <li>普通键盘输入经过 Voime：Voime 抓取全部按键，但只消费 PTT 组合键，其余按键经 virtual-keyboard 原样转发。</li>
 </ul>
 
@@ -227,7 +238,7 @@
   <tr><th>进程</th><th>职责</th><th>不负责</th></tr>
   <tr>
     <td><code>voimed</code></td>
-    <td>模型校验与加载；音频采集；VAD / ASR / 标点；input-method-v2 对象；<code>grab_keyboard</code>；PTT 键匹配；virtual-keyboard 按键转发；PTT 30 s 计时；最小托盘；会话历史；上屏；Unix socket 服务；daemon 生命周期。</td>
+    <td>模型校验与加载；音频采集；VAD / ASR / 标点；input-method-v2 对象；<code>grab_keyboard</code>；PTT 键匹配；virtual-keyboard 按键转发；XIM server；PTT 30 s 计时；最小托盘；会话历史；上屏；Unix socket 服务；daemon 生命周期。</td>
     <td>TUI 绘制、终端 raw mode、滚动视图、鼠标选择；拼音 / 候选 / 软键盘。</td>
   </tr>
   <tr>
@@ -253,6 +264,9 @@
     │   ├── grab_keyboard() → zwp_input_method_keyboard_grab_v2
     │   └── create_virtual_keyboard(seat)（同一 wl_display）
     ├── wayland::keyboard::KeyboardForwarder::new(vk, matcher)
+    ├── xim::XimServer::start()（DISPLAY 可用时）
+    │   ├── XIM_SERVERS / voime selection
+    │   └── 跟踪 focused input context
     ├── pipeline::spawn(config, factory, audio_rx)
     ├── audio::capture::start(...)
     ├── ipc_server::bind($XDG_RUNTIME_DIR/voime/voimed.sock)
@@ -273,7 +287,7 @@ voime ctl quit
   <li>daemon 必须先于 TUI 启动，因为 TUI 只是观察者；推荐用 Hyprland <code>exec-once = voimed</code>，或 systemd user service 并导入 <code>WAYLAND_DISPLAY</code>。</li>
   <li>单实例由 socket bind 保证：同一路径第二次 bind 失败；若 socket 存在但连接失败，视为陈旧 socket 并清理。</li>
   <li>input-method-v2 对象、键盘抓取、virtual-keyboard 必须创建在同一个 Wayland 连接上；Hyprland 据此忽略 IM 自己注入的按键，避免转发回环。</li>
-  <li>daemon 退出顺序：停止采集 → 取消当前段 → 关闭托盘 → 销毁 keyboard grab → 销毁 virtual-keyboard → 销毁 input-method-v2 → 删除 socket。托盘“退出”走同一条路径。</li>
+  <li>daemon 退出顺序：停止采集 → 取消当前段 → 关闭托盘 → 销毁 XIM server → 销毁 keyboard grab → 销毁 virtual-keyboard → 销毁 input-method-v2 → 删除 socket。托盘“退出”走同一条路径。</li>
   <li>托盘是可选能力：<code>tray::spawn</code> 失败或没有 StatusNotifierWatcher / 宿主时只记录 warning，daemon 继续运行；<code>--no-tray</code> 显式关闭。</li>
 </ul>
 
@@ -483,7 +497,12 @@ on_modifiers(serial, depressed, latched, locked, group):
     <td>文本插入当前光标位置；不碰剪贴板。</td>
   </tr>
   <tr>
-    <td>IM inactive：XWayland 应用，或终端 / 无 text-input-v3 的原生应用</td>
+    <td>IM inactive，焦点是 XWayland，且 XIM server 有 focused input context</td>
+    <td><code>sink::xim</code>：<code>XIM_COMMIT(text)</code></td>
+    <td>文本插入 XIM 焦点输入框；不碰剪贴板。</td>
+  </tr>
+  <tr>
+    <td>IM inactive，且 XIM 不可用 / 非 XWayland（终端或无 text-input 的原生应用）</td>
     <td><code>sink::clipboard</code>：写剪贴板 + 粘贴快捷键</td>
     <td>普通 GUI 用 <code>Ctrl+V</code>；终端用 <code>Ctrl+Shift+V</code>。快捷键优先经 virtual-keyboard 发送；XWayland 失败时用 XTest 兜底。</td>
   </tr>
@@ -494,7 +513,8 @@ on_modifiers(serial, depressed, latched, locked, group):
   </tr>
 </table>
 <ul class="note">
-  <li>投递只看 <code>im_active</code>，不看窗口类型：有 text-input-v3 焦点才能 <code>commit_string</code>，否则只能粘贴。</li>
+  <li>投递顺序固定：<code>im</code> → <code>xim</code> → <code>clipboard</code>。XWayland 有 XIM 焦点的输入框时不应降级到粘贴。</li>
+  <li>XIM server 只做 commit，不请求 forward-event；键盘与 PTT 仍由 Wayland grab 统一处理，避免重复消费按键。</li>
   <li>virtual-keyboard 是按键转发基础设施，不承担逐字文本上屏；粘贴快捷键就是一组普通 key 事件。</li>
 </ul>
 
@@ -547,7 +567,7 @@ on_modifiers(serial, depressed, latched, locked, group):
   <li>Hyprland 的 IM grab 是 seat 级：即使当前没有 text-input-v3 焦点，grab 仍然接收按键，因此 PTT 在终端和 XWayland 窗口也生效；P0 必须在 0.56.2 上实测确认。</li>
   <li>其他合成器可能只在 active 时路由按键；本版只承诺 Hyprland / Wayland，不承诺其他合成器的 grab 行为。</li>
   <li>多 seat 环境（多指针 / 多键盘组）需要为每个 seat 建立独立的 IM 与 grab；v1 只接管默认 seat，其余 seat 不保证。</li>
-  <li>如果应用没有 text-input（例如 XWayland，或未启用 text-input 的原生应用），<code>activate</code> 不会发生，走粘贴回退。</li>
+  <li>如果应用没有 text-input（例如 XWayland，或未启用 text-input 的原生应用），<code>activate</code> 不会发生：XWayland 走 XIM，其他应用走剪贴板回退。</li>
   <li>锁屏是 grab 的边界：P0 验证锁屏时按键是否仍进入 IM；若仍进入，则监听 Hyprland lock notify / logind <code>Lock</code>，在锁定期间释放 grab，解锁后重建。</li>
 </ul>
 
@@ -576,14 +596,30 @@ on_modifiers(serial, depressed, latched, locked, group):
 
 <div class="diagram"><img src="diagram/proposal-im-vs-voime.svg" alt="Fcitx5 与 Voime 的输入法路径对比"></div>
 
-<h3 id="pr6-3">6.3 XWayland 粘贴回退</h3>
-<div class="diagram"><img src="diagram/proposal-xwayland.svg" alt="XWayland 粘贴回退时序图"></div>
+<h3 id="pr6-3">6.3 XWayland：XIM 与剪贴板兜底</h3>
+<div class="diagram"><img src="diagram/proposal-xwayland.svg" alt="XWayland XIM 提交与剪贴板兜底时序图"></div>
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr>
-    <td>焦点识别</td>
-    <td>Hyprland IPC <code>j/activewindow</code> 返回 <code>class</code>、<code>title</code>、<code>xwayland</code>；<code>xwayland: true</code> 或 <code>class</code> 命中终端列表时走粘贴。</td>
+    <td>XIM 注册</td>
+    <td><code>DISPLAY</code> 可用时，在 root window 的 <code>XIM_SERVERS</code> 属性加入 <code>voime</code>，并持有 <code>voime</code> selection；<code>TRANSPORT</code> 返回 <code>X/</code>，<code>LOCALES</code> 返回当前 UTF-8 locale。XWayland 延迟启动时 daemon 周期性重试注册。XWayland 客户端使用 <code>XMODIFIERS=@im=voime</code>，或在只有 Voime 时按 first-fit 选中。</td>
+  </tr>
+  <tr>
+    <td>XIM 会话</td>
+    <td>处理 <code>XIM_CONNECT</code> / <code>XIM_OPEN</code> / <code>XIM_CREATE_IC</code> / <code>XIM_SET_IC_FOCUS</code> / <code>XIM_UNSET_IC_FOCUS</code>；记录当前 focused input context。</td>
+  </tr>
+  <tr>
+    <td>输入风格</td>
+    <td>只做 commit：不请求 forward-event，不实现 preedit / status / candidate；键盘与 PTT 仍由 Wayland grab 统一处理。</td>
+  </tr>
+  <tr>
+    <td>提交</td>
+    <td><code>XIM_COMMIT</code> 发送 UTF-8 最终文本到 focused IC；客户端不接受 UTF-8 时使用当前 locale；超过 XIM 单包长度时按 UTF-8 字符边界分块。</td>
+  </tr>
+  <tr>
+    <td>兜底条件</td>
+    <td>没有 <code>DISPLAY</code>、XIM 注册失败、没有 focused IC、XIM_COMMIT 失败，或焦点不是 XWayland：写剪贴板 + 粘贴快捷键。</td>
   </tr>
   <tr>
     <td>剪贴板</td>
@@ -604,7 +640,8 @@ on_modifiers(serial, depressed, latched, locked, group):
 </table>
 
 <ul class="note">
-  <li>XWayland 只保证“能输入”，不保证 preedit、临时结果、光标位置；这与“能输入即可”的验收口径一致。</li>
+  <li>XIM 只保证最终文本能提交到当前 XIM 焦点输入框，不保证 preedit、临时结果或光标位置；XIM 失败才降级到剪贴板。</li>
+  <li>XWayland 的普通按键已经由 virtual-keyboard 送进 X11 应用；XIM server 不请求 forward-event，避免同一按键在 Wayland grab 与 XIM 两处重复处理。</li>
   <li>终端里粘贴的是命令文本，用户按热键时应当明确目标；本提案不额外做终端安全确认。</li>
   <li>剪贴板保留识别文本，不回滚用户原内容；这是为了避开 Wayland 异步剪贴板的恢复竞态。</li>
 </ul>
@@ -630,7 +667,7 @@ on_modifiers(serial, depressed, latched, locked, group):
   </tr>
   <tr>
     <td>文本上屏</td>
-    <td>不以 transient keymap 逐字输入最终文本；最终文本走 <code>commit_string</code> 或剪贴板粘贴。</td>
+    <td>不以 transient keymap 逐字输入最终文本；最终文本走 <code>commit_string</code>、XIM 或剪贴板粘贴。</td>
   </tr>
 </table>
 <ul class="note">
@@ -642,7 +679,8 @@ on_modifiers(serial, depressed, latched, locked, group):
 <table>
   <tr><th>场景</th><th>剪贴板</th></tr>
   <tr><td>原生 Wayland <code>commit_string</code></td><td>不修改。</td></tr>
-  <tr><td>XWayland / 终端粘贴回退</td><td>写入单条 Final；保留，不恢复。</td></tr>
+  <tr><td>XWayland XIM <code>XIM_COMMIT</code></td><td>不修改。</td></tr>
+  <tr><td>XWayland / 终端剪贴板兜底</td><td>写入单条 Final；保留，不恢复。</td></tr>
   <tr><td>TUI <code>Ctrl+X</code> 清空历史</td><td>不修改。</td></tr>
   <tr><td>TUI 手动复制</td><td>终端原生选择 / 复制；应用不捕获鼠标。</td></tr>
   <tr><td>daemon 退出</td><td>不修改；X11 下是否保留取决于剪贴板管理器，Wayland 由合成器管理。</td></tr>
@@ -701,6 +739,7 @@ final 与现有尾部 partial 共用同一个模型，分段与临时结果机�
   <tr><td>remaining_ms</td><td>daemon</td><td>PTT 录音时每秒广播；TUI 只负责渲染状态行，不自行计时。</td></tr>
   <tr><td>scroll / viewport / 选择</td><td>TUI</td><td>纯本地视图状态，不影响 daemon。</td></tr>
   <tr><td>IM 对象 / grab / keymap / 普通按键转发</td><td>daemon</td><td>由 Wayland 线程持有；TUI 不参与，不接触键盘抓取。</td></tr>
+  <tr><td>XIM server / focused input context</td><td>daemon</td><td>X11 线程或 daemon 事件循环持有；TUI 不参与。</td></tr>
   <tr><td>PTT 组合键匹配 / 热键事件</td><td>daemon</td><td>在 Wayland 线程中匹配后送入 daemon 事件循环。</td></tr>
   <tr><td>上屏 / 剪贴板</td><td>daemon</td><td>TUI 不写剪贴板。</td></tr>
   <tr><td>段所有权</td><td>daemon</td><td>记录启动来源，TUI 断开只取消自己拥有的段。</td></tr>
@@ -725,7 +764,7 @@ ClientMessage =
   | Quit
 
 ServerMessage =
-  | Snapshot { mode, phase, partial, transcript, im, keyboard, remaining_ms? }
+  | Snapshot { mode, phase, partial, transcript, im, keyboard, xim, remaining_ms? }
   | State { recording, finalizing, remaining_ms? }
   | Partial { text }
   | Final { text, delivery }
@@ -746,7 +785,7 @@ TriggerSource = ImHold | ImToggle | Tui | Cli | Continuous
   <tr><td><code>Quit</code></td><td>Control → daemon</td><td>停止 daemon；TUI 的 <code>q</code> 不发送 Quit，只 Detach。</td></tr>
   <tr><td><code>Snapshot</code></td><td>daemon → client</td><td>连接时全量状态；新 TUI 不需要回放事件。</td></tr>
   <tr><td><code>State</code></td><td>daemon → client</td><td><code>recording</code> / <code>finalizing</code> / <code>remaining_ms</code>；PTT 录音时每秒更新，continuous 为 <code>None</code>。</td></tr>
-  <tr><td><code>Final</code></td><td>daemon → client</td><td>已尝试投递的最终文本；<code>delivery</code> 说明走的是 im / clipboard / failed。</td></tr>
+  <tr><td><code>Final</code></td><td>daemon → client</td><td>已尝试投递的最终文本；<code>delivery</code> 说明走的是 im / xim / clipboard / failed。</td></tr>
   <tr><td><code>HistoryCleared</code></td><td>daemon → client</td><td>任一客户端清空后广播；所有 TUI 同步清空本地 transcript 视图。</td></tr>
 </table>
 
@@ -764,7 +803,7 @@ TriggerSource = ImHold | ImToggle | Tui | Cli | Continuous
        [--model-dir &lt;DIR&gt;]
        [--input-device &lt;NAME&gt;]
        [--threads &lt;N&gt;]
-       [--sink &lt;auto|im|clipboard&gt;]
+       [--sink &lt;auto|im|xim|clipboard&gt;]
        [--hotkey &lt;im|none&gt;]
        [--hold-key &lt;COMBO&gt;]
        [--toggle-key &lt;COMBO&gt;]
@@ -785,7 +824,8 @@ voime doctor [--socket &lt;PATH&gt;]
   <tr><td><code>2</code></td><td>命令行参数非法。</td></tr>
 </table>
 <ul class="note">
-  <li><code>--sink auto</code> 是默认值：按 im → clipboard 的顺序回退；显式指定 <code>im</code> / <code>clipboard</code> 时只使用该后端，失败不自动切换，便于测试与排查。</li>
+  <li><code>--sink auto</code> 是默认值：按 im → xim → clipboard 的顺序回退；显式指定 <code>im</code> / <code>xim</code> / <code>clipboard</code> 时只使用该后端，失败不自动切换，便于测试与排查。</li>
+
   <li><code>--hotkey im</code> 是默认值：抓取键盘并匹配 PTT；<code>--hotkey none</code> 仍抓取键盘并转发普通按键，但禁用 PTT 匹配，只保留 TUI / <code>voime ctl</code>，用于调试。</li>
   <li><code>--hold-key</code> / <code>--toggle-key</code> 使用 <code>MOD+KEY</code> 语法（<code>SUPER</code> / <code>CTRL</code> / <code>ALT</code> / <code>SHIFT</code> + xkb keysym 名），默认 <code>SUPER+F2</code> / <code>SUPER+F3</code>；设为 <code>none</code> 可禁用。</li>
   <li><code>--no-tray</code> 不创建 StatusNotifierItem；用于无托盘宿主、无 D-Bus 或纯 headless 场景；不影响 <code>voime ctl quit</code>。</li>
@@ -808,7 +848,7 @@ voime doctor [--socket &lt;PATH&gt;]
   <tr>
     <td>剪贴板</td>
     <td>每次 Final 后写整段会话。</td>
-    <td>不写；只有 daemon 的粘贴回退会写单条 Final。</td>
+    <td>不写；只有 daemon 的剪贴板兜底会写单条 Final。</td>
   </tr>
   <tr>
     <td>历史</td>
@@ -958,8 +998,10 @@ voime doctor [--socket &lt;PATH&gt;]
 │   │       ├── state.rs
 │   │       ├── ipc_server.rs
 │   │       ├── hotkey.rs              PTT 组合键解析与匹配
+│   │       ├── xim.rs                 XIM server / focused IC
 │   │       ├── sink.rs
 │   │       ├── sink/im.rs
+│   │       ├── sink/xim.rs            XIM_COMMIT
 │   │       ├── sink/clipboard.rs
 │   │       ├── wayland.rs
 │   │       ├── wayland/im.rs
@@ -999,8 +1041,9 @@ voime doctor [--socket &lt;PATH&gt;]
   <tr><td><code>voimed::wayland::keyboard</code></td><td>处理 grab 的 keymap / key / modifiers / repeat_info；PTT 匹配；非 PTT 事件立即交给 virtual-keyboard 转发。</td></tr>
   <tr><td><code>voimed::wayland::virtual_keyboard</code></td><td><code>zwp_virtual_keyboard_v1</code> 创建、keymap 同步、按键 / modifiers 转发、粘贴快捷键发送。</td></tr>
   <tr><td><code>voimed::hotkey</code></td><td>解析 <code>SUPER+F2</code> 等组合键；把 xkb keysym + modifiers 映射为 <code>HotkeyEvent</code>。</td></tr>
-  <tr><td><code>voimed::sink</code></td><td>按条件选择 im / clipboard；返回 <code>Delivery</code>。</td></tr>
-  <tr><td><code>voimed::focus::hyprland</code></td><td>查询 activewindow，判断 xwayland / 终端 class；供粘贴回退选择快捷键。</td></tr>
+  <tr><td><code>voimed::xim</code></td><td>XIM server 注册、XIM 会话、focused input context、<code>XIM_COMMIT</code>；只做 commit，不请求 forward-event。</td></tr>
+  <tr><td><code>voimed::sink</code></td><td>按 im → xim → clipboard 选择后端；返回 <code>Delivery</code>。</td></tr>
+  <tr><td><code>voimed::focus::hyprland</code></td><td>查询 activewindow，判断 xwayland / 终端 class；供 XIM / 剪贴板选择。</td></tr>
   <tr><td><code>voimed::ipc_server</code></td><td>Unix socket 监听、握手、订阅者队列、命令分发。</td></tr>
   <tr><td><code>voimed::tray</code></td><td>StatusNotifierItem 注册、DBusMenu 菜单、图标像素图；只发 <code>TrayEvent::Quit</code>，不持有 daemon 状态。</td></tr>
   <tr><td><code>voime::client</code></td><td>连接 socket、处理 Snapshot / 事件、断线重连提示。</td></tr>
@@ -1021,14 +1064,15 @@ voime doctor [--socket &lt;PATH&gt;]
   <tr><td><code>ksni</code></td><td><code>voimed</code></td><td>StatusNotifierItem + DBusMenu 托盘；使用 blocking feature，不引入 tokio 运行时。</td></tr>
   <tr><td><code>serde</code> / <code>serde_json</code></td><td><code>voime-ipc</code></td><td>IPC 消息与错误结构。</td></tr>
   <tr><td><code>arboard</code></td><td><code>voimed</code></td><td>回退粘贴的剪贴板写入；TUI 不再使用。</td></tr>
-  <tr><td><code>x11rb</code>（可选 feature）</td><td><code>voimed</code></td><td>XWayland 的 XTest 粘贴兜底；X11 预留。</td></tr>
+  <tr><td><code>x11rb</code></td><td><code>voimed</code></td><td>X11 / XWayland 连接；XIM server 的 atom / selection / event，以及 XTEST 粘贴兜底。</td></tr>
+  <tr><td><code>xim</code>（server feature）</td><td><code>voimed</code></td><td>XIM 协议解析与 server 状态机；X11 连接由 <code>x11rb</code> 提供。</td></tr>
   <tr><td><code>ratatui</code> / <code>crossterm</code></td><td><code>voime</code></td><td>仅 TUI；不进入 core / daemon。</td></tr>
 </table>
 <ul class="note">
   <li>不引入 tokio / async-std；Wayland 用独立线程 + 事件队列，D-Bus 由 <code>ksni</code> 的 blocking API 使用。</li>
   <li><code>xkbcommon</code> 是必需依赖，不是可选 feature；没有它就无法匹配组合键或正确转发布局。</li>
   <li><code>input-method-unstable-v2.xml</code> 与 <code>virtual-keyboard-unstable-v1.xml</code> 来自固定版本的 wlroots 协议目录，随仓库提交；不依赖系统安装的协议包。</li>
-  <li><code>x11rb</code> 用 Cargo feature 隔离；默认构建不启用 X11。</li>
+  <li><code>x11rb</code> 是 XWayland / XIM 的必需依赖；XIM 不可用时只影响 XWayland 上屏，不影响原生 Wayland 路径。</li>
   <li><code>ksni</code> 使用 blocking feature（<code>default-features = false, features = [&quot;async-io&quot;, &quot;blocking&quot;]</code>），不启动 tokio。</li>
 </ul>
 
@@ -1132,8 +1176,20 @@ impl TrayService {
     pub fn shutdown(self);
 }
 
+// voimed/src/xim.rs
+pub enum XimEvent { Focused(IcId), Unfocused(IcId), Unavailable }
+
+pub struct XimServer { /* X11 connection + XIM server state */ }
+
+impl XimServer {
+    pub fn start() -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn focused_ic(&amp;self) -&gt; Option&lt;IcId&gt;;
+    pub fn commit(&amp;mut self, text: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn shutdown(self);
+}
+
 // voimed/src/sink.rs
-pub enum SinkKind { Im, ClipboardPaste }
+pub enum SinkKind { Im, Xim, ClipboardPaste }
 
 pub struct Delivery {
     pub kind: SinkKind,
@@ -1143,6 +1199,7 @@ pub struct Delivery {
 
 pub struct SinkContext {
     pub im_active: bool,
+    pub xim_focused: bool,
     pub vk_available: bool,
     pub focus: FocusInfo,   // class / title / xwayland / terminal
 }
@@ -1152,11 +1209,12 @@ pub trait TextSink {
 }
 
 // voimed/src/daemon.rs
-pub struct Daemon { /* mode, phase, transcript, im, keyboard, sink, subscribers */ }
+pub struct Daemon { /* mode, phase, transcript, im, keyboard, xim, sink, subscribers */ }
 
 impl Daemon {
     pub fn run(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
     pub fn on_hotkey(&amp;mut self, event: HotkeyEvent) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn on_xim(&amp;mut self, event: XimEvent) -&gt; anyhow::Result&lt;()&gt;;
     pub fn on_pipeline(&amp;mut self, event: PipelineEvent) -&gt; anyhow::Result&lt;()&gt;;
     pub fn on_client(&amp;mut self, client: ClientId, msg: ClientMessage) -&gt; anyhow::Result&lt;()&gt;;
     pub fn on_tray(&amp;mut self, event: TrayEvent) -&gt; anyhow::Result&lt;()&gt;;
@@ -1169,8 +1227,8 @@ impl Daemon {
   <tr><th>当前文件</th><th>目标位置</th><th>处理</th></tr>
   <tr><td><code>src/lib.rs::run</code></td><td><code>crates/voimed/src/main.rs</code> + <code>daemon.rs</code></td><td>拆成 daemon 启动、状态机与关闭顺序；不再检查 stdin / stdout 是 TTY。</td></tr>
   <tr><td><code>src/app.rs</code> / <code>src/ui.rs</code> / <code>src/ui/theme.rs</code></td><td><code>crates/voime/src/app.rs</code> / <code>ui.rs</code> / <code>ui/theme.rs</code></td><td>改为 socket 客户端；删除 <code>ClipboardWriter</code> 字段与 <code>on_pipeline</code> 里的剪贴板写入；保留滚动与绘制。</td></tr>
-  <tr><td><code>src/clipboard.rs</code></td><td><code>crates/voimed/src/sink/clipboard.rs</code></td><td>只保留“写单条 Final + 发粘贴键”；删除 <code>join_transcript</code> 与会话拼接测试；粘贴键改为 VK 优先、XTest 兜底。</td></tr>
-  <tr><td>（当前无对应文件）</td><td><code>crates/voimed/src/wayland/im.rs</code> / <code>wayland/keyboard.rs</code> / <code>wayland/virtual_keyboard.rs</code> / <code>hotkey.rs</code></td><td>新增 IM 对象、<code>grab_keyboard</code>、keymap / key / modifiers 处理、PTT 匹配、VK 转发与粘贴快捷键；Wayland 对象同线程同连接。</td></tr>
+  <tr><td><code>src/clipboard.rs</code></td><td><code>crates/voimed/src/sink/clipboard.rs</code></td><td>只保留“写单条 Final + 发粘贴键”；删除 <code>join_transcript</code> 与会话拼接测试；只在 XIM 不可用时调用。</td></tr>
+  <tr><td>（当前无对应文件）</td><td><code>crates/voimed/src/wayland/im.rs</code> / <code>wayland/keyboard.rs</code> / <code>wayland/virtual_keyboard.rs</code> / <code>hotkey.rs</code> / <code>xim.rs</code> / <code>sink/xim.rs</code></td><td>新增 IM 对象、<code>grab_keyboard</code>、keymap / key / modifiers 处理、PTT 匹配、VK 转发、XIM server 与 <code>XIM_COMMIT</code>；Wayland 对象同线程同连接。</td></tr>
   <tr><td>（当前无对应文件）</td><td><code>crates/voimed/src/tray.rs</code> / <code>tray/*</code></td><td>新增最小托盘：<code>ksni</code> blocking + 32×32 图标 + 单项“退出”菜单；<code>TrayEvent::Quit</code> 进入 daemon 事件循环。</td></tr>
   <tr><td><code>src/pipeline.rs</code></td><td><code>crates/voime-core/src/pipeline.rs</code></td><td>保持音频 / VAD / 标点逻辑；ASR 改为 <code>AsrEngine</code>；新增 partial / final 两条识别路径；<code>PipelineEvent::Final</code> 由 daemon 消费。</td></tr>
   <tr><td><code>src/asr/firered_aed.rs</code></td><td><code>crates/voime-core/src/asr/firered_aed.rs</code></td><td>保留 legacy；新增 <code>asr/firered_ctc.rs</code> 作为默认 final。</td></tr>
@@ -1196,23 +1254,23 @@ impl Daemon {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="README.html#r1">§1.1 IDEAL</a></td>
-    <td>把“只通过极简终端界面完成说话 → 看到文字 → 粘贴”改成“常驻 daemon 作为唯一输入法：键盘抓取 + PTT + 原生上屏；TUI 可选；XWayland 用剪贴板回退”。</td>
+    <td>把“只通过极简终端界面完成说话 → 看到文字 → 粘贴”改成“常驻 daemon 作为唯一输入法：键盘抓取 + PTT + 原生上屏；XWayland 走 XIM；TUI 可选；最后才用剪贴板”。</td>
   </tr>
   <tr>
     <td><a href="README.html#r1">§1.2 GOAL</a></td>
-    <td>新增：input-method-v2 键盘抓取与透明转发、IM 内 PTT（hold / toggle）、<code>commit_string</code> 直接上屏、XWayland 粘贴回退、daemon/TUI 分离；把 ASR 从“固定 AED”改为“FireRedASR2-CTC（final 与尾部 partial 共用）”；删除“终端必须获得焦点”；把 Windows 一致性移出本版 GOAL，标注为旧分支 / 后续。</td>
+    <td>新增：input-method-v2 键盘抓取与透明转发、IM 内 PTT（hold / toggle）、<code>commit_string</code> 直接上屏、XWayland XIM 上屏、剪贴板最后兜底、daemon &amp; TUI 分离；把 ASR 从“固定 AED”改为“FireRedASR2-CTC（final 与尾部 partial 共用）”；删除“终端必须获得焦点”；把 Windows 一致性移出本版 GOAL，标注为旧分支 / 后续。</td>
   </tr>
   <tr>
     <td><a href="README.html#r1">§1.3 非目标</a></td>
-    <td>删除“不监听全局热键 / 不向其他窗口模拟键盘输入 / 不注册输入法”；新增：成为唯一 input-method-v2 输入法、抓取键盘并透明转发普通按键、不实现拼音与候选、不与 Fcitx5 共存、不实现 X11/Windows、不保证 XWayland preedit、不自动镜像整段会话到剪贴板；把“不提供托盘”改成“只提供最小托盘（图标 + 右键退出）”；说明 XWayland 回退只发送一次粘贴快捷键，不逐字模拟按键。</td>
+    <td>删除“不监听全局热键 / 不向其他窗口模拟键盘输入 / 不注册输入法”；新增：成为唯一 input-method-v2 输入法、抓取键盘并透明转发普通按键、不实现拼音与候选、不与 Fcitx5 共存、不实现 X11/Windows、不保证 XWayland preedit、不自动镜像整段会话到剪贴板；把“不提供托盘”改成“只提供最小托盘（图标 + 右键退出）”；说明 XWayland 优先走 XIM，XIM 不可用才发送一次粘贴快捷键，不逐字模拟按键。</td>
   </tr>
   <tr>
     <td><a href="README.html#r2">§2 用户交互</a></td>
-    <td>重写表格：启动 daemon / 可选 TUI；IM 键盘抓取与 PTT；普通按键透明转发；原生上屏；XWayland 回退；PTT 30 s 上限与 <code>Remaining: xx s</code>；托盘右键退出；清空；TUI detach；daemon quit；Fcitx5 冲突启动失败。</td>
+    <td>重写表格：启动 daemon / 可选 TUI；IM 键盘抓取与 PTT；普通按键透明转发；原生上屏；XWayland XIM / 剪贴板兜底；PTT 30 s 上限与 <code>Remaining: xx s</code>；托盘右键退出；清空；TUI detach；daemon quit；Fcitx5 冲突启动失败。</td>
   </tr>
   <tr>
     <td><a href="README.html#r3">§3 Credits</a></td>
-    <td>加入 <code>wayland-rs</code>、<code>wayland-scanner</code>、<code>xkbcommon</code>、<code>ksni</code>（Unlicense）、wlroots 的 input-method-v2 / virtual-keyboard 协议 XML；不再列 xdg-desktop-portal；模型表加入 FireRedASR2-CTC；保留 ratatui / crossterm（TUI 仍用）、arboard（回退用）。</td>
+    <td>加入 <code>wayland-rs</code>、<code>wayland-scanner</code>、<code>xkbcommon</code>、<code>x11rb</code>、<code>xim</code>、<code>ksni</code>（Unlicense）、wlroots 的 input-method-v2 / virtual-keyboard 协议 XML；不再列 xdg-desktop-portal；模型表加入 FireRedASR2-CTC；保留 ratatui / crossterm（TUI 仍用）、arboard（回退用）。</td>
   </tr>
 </table>
 
@@ -1221,7 +1279,7 @@ impl Daemon {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="USER.html#u1">§1 TERMS</a></td>
-    <td>新增：input-method-v2、键盘抓取、PTT 组合键、按住说话、切换说话、按键透明转发、<code>commit_string</code>、preedit、目标输入框、粘贴回退、daemon、TUI 客户端、会话历史、Fcitx5 冲突、托盘图标、托盘宿主、PTT 倒计时、录音状态行。</td>
+    <td>新增：input-method-v2、键盘抓取、PTT 组合键、按住说话、切换说话、按键透明转发、<code>commit_string</code>、XIM、XIM_COMMIT、preedit、目标输入框、剪贴板兜底、daemon、TUI 客户端、会话历史、Fcitx5 冲突、托盘图标、托盘宿主、PTT 倒计时、录音状态行。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u2">§2 CONVENTIONS</a></td>
@@ -1229,11 +1287,11 @@ impl Daemon {
   </tr>
   <tr>
     <td><a href="USER.html#u3">§3 DIAGRAMS</a></td>
-    <td>3.1 总体架构换成 <code>proposal-architecture</code>；新增 3.2 键盘抓取 / PTT / 按键转发、3.3 原生上屏、3.4 XWayland 回退、3.5 TUI attach、3.6 托盘；原 PTT / continuous 时序保留在识别链路部分或合并。</td>
+    <td>3.1 总体架构换成 <code>proposal-architecture</code>；新增 3.2 键盘抓取 / PTT / 按键转发、3.3 原生上屏、3.4 XWayland XIM / 剪贴板兜底、3.5 TUI attach、3.6 托盘；原 PTT / continuous 时序保留在识别链路部分或合并。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u4-1">§4.1 命令行</a></td>
-    <td>拆成 <code>voimed</code> / <code>voime</code> / <code>voime ctl</code> 三张表；新增 <code>--sink</code>、<code>--hotkey</code>、<code>--hold-key</code>、<code>--toggle-key</code>、<code>--socket</code>、<code>--preedit</code>、<code>--no-tray</code>；退出码按进程分别列出。</td>
+    <td>拆成 <code>voimed</code> / <code>voime</code> / <code>voime ctl</code> 三张表；新增 <code>--sink auto|im|xim|clipboard</code>、<code>--hotkey</code>、<code>--hold-key</code>、<code>--toggle-key</code>、<code>--socket</code>、<code>--preedit</code>、<code>--no-tray</code>；退出码按进程分别列出。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u4-2">§4.2 对外 API</a></td>
@@ -1254,23 +1312,23 @@ impl Daemon {
   </tr>
   <tr>
     <td><a href="CORE.html#c2">§2 CONVENTIONS</a></td>
-    <td>重写“线程边界”：TUI 主线程、daemon 事件循环、Wayland 线程（IM + grab + VK）、pipeline 工作线程、IPC 读写线程、托盘线程；新增“状态所有权”“输入法唯一性”“键盘抓取与透明转发”“grab 与 VK 同连接”“sink 链”“IPC 背压”“Fcitx5 冲突启动失败”“托盘只发退出事件”“PTT 30 s 计时与倒计时广播”。</td>
+    <td>重写“线程边界”：TUI 主线程、daemon 事件循环、Wayland 线程（IM + grab + VK）、pipeline 工作线程、IPC 读写线程、托盘线程；新增“状态所有权”“输入法唯一性”“键盘抓取与透明转发”“grab 与 VK 同连接”“sink 链 im → xim → clipboard”“IPC 背压”“Fcitx5 冲突启动失败”“托盘只发退出事件”“PTT 30 s 计时与倒计时广播”。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c3">§3 SBOM</a></td>
-    <td>按 crate 拆分：core 保留 cpal / rubato / kaldi-native-fbank / ort / tokenizers；daemon 加 wayland-client / wayland-scanner / xkbcommon / ksni / arboard / x11rb（可选）；TUI 保留 ratatui / crossterm。</td>
+    <td>按 crate 拆分：core 保留 cpal / rubato / kaldi-native-fbank / ort / tokenizers；daemon 加 wayland-client / wayland-scanner / xkbcommon / ksni / arboard / x11rb / xim；TUI 保留 ratatui / crossterm。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c4">§4 Internal types</a></td>
-    <td>保留现有音频 / VAD / 标点签名，移动到 <code>voime-core</code>；ASR 改为 <code>asr/engine</code> + <code>firered_ctc</code>，AED 作为 legacy；新增 <code>remaining_ms</code> 与 <code>keyboard</code> 到 Snapshot / State / TUI 状态；新增 <code>voime-ipc</code>、<code>voimed::daemon</code>、<code>hotkey</code>、<code>sink</code>、<code>wayland::im</code>、<code>wayland::keyboard</code>、<code>wayland::virtual_keyboard</code>、<code>ipc_server</code>、<code>tray</code>、<code>focus</code>、<code>voime::client</code> 小节；删除 <code>app.rs</code> 中“TUI 拥有状态”的签名。</td>
+    <td>保留现有音频 / VAD / 标点签名，移动到 <code>voime-core</code>；ASR 改为 <code>asr/engine</code> + <code>firered_ctc</code>，AED 作为 legacy；新增 <code>remaining_ms</code>、<code>keyboard</code> 与 <code>xim</code> 到 Snapshot / State / TUI 状态；新增 <code>voime-ipc</code>、<code>voimed::daemon</code>、<code>hotkey</code>、<code>xim</code>、<code>sink</code>、<code>wayland::im</code>、<code>wayland::keyboard</code>、<code>wayland::virtual_keyboard</code>、<code>ipc_server</code>、<code>tray</code>、<code>focus</code>、<code>voime::client</code> 小节；删除 <code>app.rs</code> 中“TUI 拥有状态”的签名。</td>
   </tr>
   <tr>
     <td><a href="CORE.html#c5">§5 Call stack</a></td>
-    <td>重写 5.1 启动、5.2 键盘抓取 / PTT / 普通按键转发、5.3 continuous、5.4 临时识别（CTC 尾部重解码）、5.5 最终识别（FireRed-CTC + Punc）、5.6 上屏 / 清空 / 退出；新增 IM grab、keymap 同步、PTT 匹配、VK 转发、IM commit、XWayland 回退、TUI attach / detach、托盘注册与菜单退出、PTT 30 s 计时 / 自动切段 / 倒计时广播。</td>
+    <td>重写 5.1 启动、5.2 键盘抓取 / PTT / 普通按键转发、5.3 continuous、5.4 临时识别（CTC 尾部重解码）、5.5 最终识别（FireRed-CTC + Punc）、5.6 上屏 / 清空 / 退出；新增 IM grab、keymap 同步、PTT 匹配、VK 转发、IM commit、XIM server / XIM_COMMIT、剪贴板兜底、TUI attach / detach、托盘注册与菜单退出、PTT 30 s 计时 / 自动切段 / 倒计时广播。</td>
   </tr>
   <tr>
     <td><code>tests/</code></td>
-    <td>新增 <code>ipc.rs</code>（握手 / 编解码 / 慢客户端）、<code>keyboard.rs</code>（PTT 匹配 / 非 PTT 转发 / keymap 变化 / modifiers）、<code>sink.rs</code>（投递选择）、<code>tray.rs</code>（菜单退出 / 无宿主）、<code>asr_ctc.rs</code>（CMVN / token id / greedy CTC）、<code>countdown.rs</code>（30 s 计时 / 切段 / continuous 不显示）、<code>state.rs</code>（段所有权 / 清空）；保留 <code>segmenter.rs</code>；删除或迁移 <code>clipboard.rs</code> 的会话拼接测试。</td>
+    <td>新增 <code>ipc.rs</code>（握手 / 编解码 / 慢客户端）、<code>keyboard.rs</code>（PTT 匹配 / 非 PTT 转发 / keymap 变化 / modifiers）、<code>sink.rs</code>（im / xim / clipboard 投递选择）、<code>xim.rs</code>（focused IC / XIM_COMMIT）、<code>tray.rs</code>（菜单退出 / 无宿主）、<code>asr_ctc.rs</code>（CMVN / token id / greedy CTC）、<code>countdown.rs</code>（30 s 计时 / 切段 / continuous 不显示）、<code>state.rs</code>（段所有权 / 清空）；保留 <code>segmenter.rs</code>；删除或迁移 <code>clipboard.rs</code> 的会话拼接测试。</td>
   </tr>
 </table>
 
@@ -1279,11 +1337,11 @@ impl Daemon {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="PROVIDER.html#p1">§1 TERMS</a></td>
-    <td>新增：Wayland input method v2、<code>grab_keyboard</code>、text-input-v3、xkb keymap、virtual keyboard、Hyprland IPC、XWayland、XTEST、Win32 低级键盘钩子、StatusNotifierItem、DBusMenu、StatusNotifierWatcher / Host。</td>
+    <td>新增：Wayland input method v2、<code>grab_keyboard</code>、text-input-v3、xkb keymap、virtual keyboard、XIM、<code>XIM_SERVERS</code>、<code>XIM_COMMIT</code>、Hyprland IPC、XWayland、XTEST、Win32 低级键盘钩子、StatusNotifierItem、DBusMenu、StatusNotifierWatcher / Host。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p2">§2 CONVENTIONS</a></td>
-    <td>新增：一个 seat 一个输入法；Fcitx5 必须停用；抓取键盘并把非 PTT 按键透明转发；grab 与 virtual-keyboard 同连接；合成器键绑定优先于 grab；XWayland 不走 input-method-v2；剪贴板只作回退；托盘依赖 StatusNotifierWatcher，缺失不致命；不联网。</td>
+    <td>新增：一个 seat 一个输入法；Fcitx5 必须停用；抓取键盘并把非 PTT 按键透明转发；grab 与 virtual-keyboard 同连接；合成器键绑定优先于 grab；XWayland 走 XIM；剪贴板只作最后兜底；托盘依赖 StatusNotifierWatcher，缺失不致命；不联网。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4-2">§4.2 模型包</a></td>
@@ -1291,11 +1349,11 @@ impl Daemon {
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p3">§3 DIAGRAMS</a></td>
-    <td>保留 3.1 音频 / 3.2 推理；3.3 剪贴板改成“回退粘贴”；新增 3.4 input-method-v2 键盘抓取 / PTT / commit、3.5 virtual-keyboard 按键转发、3.6 XWayland 粘贴、3.7 StatusNotifierItem 托盘。</td>
+    <td>保留 3.1 音频 / 3.2 推理；3.3 剪贴板改成“回退粘贴”；新增 3.4 input-method-v2 键盘抓取 / PTT / commit、3.5 virtual-keyboard 按键转发、3.6 XIM / XWayland 提交、3.7 StatusNotifierItem 托盘。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p3-3">§3.3 剪贴板边界</a></td>
-    <td>从“每次 Final 覆盖会话文本”改成“仅 XWayland / 终端回退时写单条 Final；原生 Wayland 不碰剪贴板”。</td>
+    <td>从“每次 Final 覆盖会话文本”改成“仅 XIM 不可用时的 XWayland / 终端兜底写单条 Final；原生 Wayland 与 XIM 不碰剪贴板”。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4-4">§4.4 剪贴板</a></td>
@@ -1307,11 +1365,11 @@ impl Daemon {
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4-6">§4.6 消息与错误</a></td>
-    <td>新增 <code>ImUnavailable</code>、<code>GrabFailed</code>、<code>KeyForwardFailed</code>、<code>NoFocusedWindow</code>、<code>PasteFailed</code>、<code>ClipboardFailed</code>、<code>WaylandProtocol</code>、<code>TrayUnavailable</code>；说明启动期 / 运行期处理（托盘缺失只警告，不退出）。</td>
+    <td>新增 <code>ImUnavailable</code>、<code>GrabFailed</code>、<code>KeyForwardFailed</code>、<code>XimUnavailable</code>、<code>NoFocusedWindow</code>、<code>PasteFailed</code>、<code>ClipboardFailed</code>、<code>WaylandProtocol</code>、<code>TrayUnavailable</code>；说明启动期 / 运行期处理（托盘缺失只警告，不退出）。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4">§4 新增小节</a></td>
-    <td>追加 <code>§4.7 Wayland input-method-v2 / grab_keyboard</code>、<code>§4.8 virtual keyboard 按键转发</code>、<code>§4.9 Hyprland 焦点与粘贴</code>、<code>§4.10 preedit</code>、<code>§4.11 X11 / Windows 预留</code>、<code>§4.12 StatusNotifierItem / DBusMenu 托盘</code>；不重编号现有 4.1–4.6。</td>
+    <td>追加 <code>§4.7 Wayland input-method-v2 / grab_keyboard</code>、<code>§4.8 virtual keyboard 按键转发</code>、<code>§4.9 Hyprland 焦点与粘贴</code>、<code>§4.10 XIM</code>、<code>§4.11 preedit</code>、<code>§4.12 X11 / Windows 预留</code>、<code>§4.13 StatusNotifierItem / DBusMenu 托盘</code>；不重编号现有 4.1–4.6。</td>
   </tr>
 </table>
 
@@ -1320,11 +1378,11 @@ impl Daemon {
   <tr><th>位置</th><th>修改</th></tr>
   <tr>
     <td><a href="BUILD.html#b1">§1 环境</a></td>
-    <td>运行期改为 Hyprland / Wayland + D-Bus；daemon 不要求 TTY；TUI 才要求 TTY；必须停用 Fcitx5；托盘需要 StatusNotifierWatcher / 宿主，缺失时只警告；Linux 构建依赖加 <code>libwayland</code>、<code>libxkbcommon</code>（必需）；平台验收收窄为 Linux/Hyprland，Windows 标注为旧分支 / 后续。</td>
+    <td>运行期改为 Hyprland / Wayland + XWayland + D-Bus；设置 <code>XMODIFIERS=@im=voime</code>；daemon 不要求 TTY；TUI 才要求 TTY；必须停用 Fcitx5；托盘需要 StatusNotifierWatcher / 宿主，缺失时只警告；Linux 构建依赖加 <code>libwayland</code>、<code>libxkbcommon</code>（必需）；平台验收收窄为 Linux/Hyprland，Windows 标注为旧分支 / 后续。</td>
   </tr>
   <tr>
     <td><a href="BUILD.html#b2">§2 构建</a></td>
-    <td>workspace 构建；产物 <code>voimed</code> 与 <code>voime</code>；<code>protocols/*.xml</code> 经 <code>wayland-scanner</code> 生成绑定；说明 feature <code>x11</code>（XTest 兜底）；input-method-v2 / virtual-keyboard 依赖 <code>libwayland</code> 与 <code>libxkbcommon</code>；<code>ksni</code> 为纯 Rust D-Bus 依赖，不需要额外系统库。</td>
+    <td>workspace 构建；产物 <code>voimed</code> 与 <code>voime</code>；<code>protocols/*.xml</code> 经 <code>wayland-scanner</code> 生成绑定；说明 <code>x11rb</code> / <code>xim</code>（XIM + XTEST 兜底）；input-method-v2 / virtual-keyboard 依赖 <code>libwayland</code> 与 <code>libxkbcommon</code>；<code>ksni</code> 为纯 Rust D-Bus 依赖，不需要额外系统库。</td>
   </tr>
   <tr>
     <td><a href="BUILD.html#b3">§3 安装模型</a></td>
@@ -1332,15 +1390,15 @@ impl Daemon {
   </tr>
   <tr>
     <td><a href="BUILD.html#b4">§4 运行</a></td>
-    <td>改为 <code>voimed</code> 常驻、<code>voime</code> 可选、<code>voime ctl</code> 控制；停用 Fcitx5 的步骤；PTT 组合键默认值与 Hyprland 绑定冲突说明；说明托盘右键“退出”与 <code>--no-tray</code>；说明 PTT 30 s 硬上限与 <code>Remaining: xx s</code> 状态行；删除终端 Space / 剪贴板旧说明。</td>
+    <td>改为 <code>voimed</code> 常驻、<code>voime</code> 可选、<code>voime ctl</code> 控制；停用 Fcitx5 的步骤；PTT 组合键默认值与 Hyprland 绑定冲突说明；说明托盘右键“退出”与 <code>--no-tray</code>；说明 XIM 与 <code>XMODIFIERS=@im=voime</code>；说明 PTT 30 s 硬上限与 <code>Remaining: xx s</code> 状态行；删除终端 Space / 剪贴板旧说明。</td>
   </tr>
   <tr>
     <td><a href="BUILD.html#b5">§5 测试</a></td>
-    <td>新增 IPC、按键转发、PTT 匹配、投递选择、状态机、托盘菜单退出 / 无宿主、FireRed-CTC CMVN / tokenizer / greedy CTC、PTT 30 s 倒计时 / 自动切段测试；手工矩阵见本提案 §11.1 与 <a href="ASR.html#a6">ASR §6</a>。</td>
+    <td>新增 IPC、按键转发、PTT 匹配、XIM 注册 / focused IC、投递选择、状态机、托盘菜单退出 / 无宿主、FireRed-CTC CMVN / tokenizer / greedy CTC、PTT 30 s 倒计时 / 自动切段测试；手工矩阵见本提案 §11.1 与 <a href="ASR.html#a6">ASR §6</a>。</td>
   </tr>
   <tr>
     <td><a href="BUILD.html#b6">§6 发布检查</a></td>
-    <td>验收改为：IM 键盘抓取与普通按键透明转发、IM 内 PTT、原生 Wayland 上屏、XWayland 粘贴、Fcitx5 停用 / 冲突启动失败、TUI detach、托盘右键退出、无托盘宿主降级、PTT 30 s 倒计时 / 自动切段、剪贴板不被整段覆盖。</td>
+    <td>验收改为：IM 键盘抓取与普通按键透明转发、IM 内 PTT、原生 Wayland 上屏、XWayland XIM、XIM 失败剪贴板兜底、Fcitx5 停用 / 冲突启动失败、TUI detach、托盘右键退出、无托盘宿主降级、PTT 30 s 倒计时 / 自动切段、剪贴板不被整段覆盖。</td>
   </tr>
 </table>
 
@@ -1348,10 +1406,10 @@ impl Daemon {
 <table>
   <tr><th>源文件</th><th>用途</th><th>落地位置</th></tr>
   <tr><td><code>proposal-architecture.puml</code></td><td>目标组件架构</td><td>USER §3.1 / README</td></tr>
-  <tr><td><code>proposal-layers.puml</code></td><td>输入法层与 XWayland 回退</td><td>USER §3 / PROVIDER §3</td></tr>
+  <tr><td><code>proposal-layers.puml</code></td><td>输入法层与 XWayland XIM / 剪贴板</td><td>USER §3 / PROVIDER §3</td></tr>
   <tr><td><code>proposal-hotkey.puml</code></td><td>input-method-v2 键盘抓取、PTT 匹配、普通按键转发</td><td>USER §3 / PROVIDER §3</td></tr>
   <tr><td><code>proposal-delivery.puml</code></td><td>Final 投递决策</td><td>USER §3 / CORE §5</td></tr>
-  <tr><td><code>proposal-xwayland.puml</code></td><td>XWayland 粘贴回退</td><td>USER §3 / PROVIDER §3</td></tr>
+  <tr><td><code>proposal-xwayland.puml</code></td><td>XWayland XIM 提交与剪贴板兜底</td><td>USER §3 / PROVIDER §3</td></tr>
   <tr><td><code>proposal-tui-attach.puml</code></td><td>TUI attach / detach</td><td>USER §3 / CORE §5</td></tr>
   <tr><td><code>proposal-im-vs-voime.puml</code></td><td>Fcitx5 与 Voime 的输入法路径对比</td><td>README / USER 说明</td></tr>
   <tr><td><code>proposal-ipc.puml</code></td><td>TUI / ctl 与 daemon 的 IPC</td><td>USER §4.2</td></tr>
@@ -1365,8 +1423,8 @@ impl Daemon {
   <tr><th>阶段</th><th>交付</th><th>验收</th></tr>
   <tr>
     <td>P0 · 协议 spike</td>
-    <td>最小 Wayland 客户端：input-method-v2 <code>grab_keyboard</code> + <code>zwp_virtual_keyboard_v1</code> 同连接；普通按键转发；PTT 组合键匹配；<code>commit_string</code> 到 GTK / Qt；验证 Fcitx5 运行时 <code>unavailable</code>。</td>
-    <td>在 Hyprland 0.56.2 上，停用 Fcitx5 后普通打字经过转发仍然正确；终端 / XWayland 窗口能触发 PTT；中文文本能插入；按住 / 松开事件完整；记录 grab 在 inactive / 锁屏 / 布局切换下的行为。</td>
+    <td>最小 Wayland 客户端：input-method-v2 <code>grab_keyboard</code> + <code>zwp_virtual_keyboard_v1</code> 同连接；普通按键转发；PTT 组合键匹配；<code>commit_string</code> 到 GTK / Qt；XIM server 注册 + <code>XIM_COMMIT</code> 到 XWayland；验证 Fcitx5 运行时 <code>unavailable</code>。</td>
+    <td>在 Hyprland 0.56.2 上，停用 Fcitx5 后普通打字经过转发仍然正确；终端 / XWayland 窗口能触发 PTT；中文文本能插入；XWayland 设置 <code>XMODIFIERS=@im=voime</code> 后能通过 XIM 提交；按住 / 松开事件完整；记录 grab 在 inactive / 锁屏 / 布局切换下的行为。</td>
   </tr>
   <tr>
     <td>P1 · 拆分 core / IPC / TUI</td>
@@ -1375,13 +1433,13 @@ impl Daemon {
   </tr>
   <tr>
     <td>P2 · daemon + IM + 键盘</td>
-    <td><code>voimed</code> 状态机；input-method-v2 sink；<code>grab_keyboard</code>；PTT 匹配；virtual-keyboard 透明转发；Fcitx5 冲突启动失败；TUI Snapshot / 事件；最小托盘（图标 + 右键退出）；CTC 尾部 partial。</td>
-    <td>原生 Wayland 应用直接上屏；普通打字、快捷键、组合键经过转发仍然正确；hold / toggle 都工作；CTC 尾部 partial 正常刷新；final 用 FireRed-CTC；PTT 30 s 自动切段且倒计时重置；continuous 无倒计时；TUI 可 attach / detach；托盘右键“退出”能停止 daemon；无宿主时只警告；剪贴板不再被整段会话覆盖。</td>
+    <td><code>voimed</code> 状态机；input-method-v2 sink；<code>grab_keyboard</code>；PTT 匹配；virtual-keyboard 透明转发；XIM server；Fcitx5 冲突启动失败；TUI Snapshot / 事件；最小托盘（图标 + 右键退出）；CTC 尾部 partial。</td>
+    <td>原生 Wayland 应用直接上屏；XWayland 应用通过 XIM 上屏；普通打字、快捷键、组合键经过转发仍然正确；hold / toggle 都工作；CTC 尾部 partial 正常刷新；final 用 FireRed-CTC；PTT 30 s 自动切段且倒计时重置；continuous 无倒计时；TUI 可 attach / detach；托盘右键“退出”能停止 daemon；无宿主时只警告；剪贴板不再被整段会话覆盖。</td>
   </tr>
   <tr>
-    <td>P3 · XWayland 回退</td>
-    <td>Hyprland activewindow 查询；VK 发送粘贴键；XTest 兜底；终端 <code>Ctrl+Shift+V</code>；失败结果与日志。</td>
-    <td>Electron / GTK X11 / WPS 等 XWayland 应用能输入；终端能粘贴；无焦点时不崩溃。</td>
+    <td>P3 · XWayland XIM / 剪贴板兜底</td>
+    <td>XIM server 注册与 focused IC；<code>XIM_COMMIT</code>；Hyprland activewindow 查询；XIM 失败后 VK / XTest 粘贴；终端 <code>Ctrl+Shift+V</code>；失败日志。</td>
+    <td>Electron / GTK X11 / WPS 等 XWayland 应用通过 XIM 输入；XIM 不可用时能粘贴；无焦点时不崩溃。</td>
   </tr>
   <tr>
     <td>P4 · 可选能力</td>
@@ -1408,7 +1466,12 @@ impl Daemon {
   <tr>
     <td>XWayland 不支持 text-input-v3</td>
     <td>无法 commit / preedit。</td>
-    <td>剪贴板 + virtual-keyboard 粘贴（XTest 兜底）；终端 <code>Ctrl+Shift+V</code>；只承诺“能输入”。</td>
+    <td>注册 XIM server，用 <code>XIM_COMMIT</code> 提交最终文本；XIM 注册 / focused IC / commit 失败才用剪贴板 + VK 粘贴（XTest 兜底）。</td>
+  </tr>
+  <tr>
+    <td>XIM 客户端未启用 / 无 focused IC</td>
+    <td>XWayland 应用收不到 XIM_COMMIT，只能粘贴。</td>
+    <td>注册 <code>XIM_SERVERS</code> 与 <code>voime</code> selection；文档要求设置 <code>XMODIFIERS=@im=voime</code>；doctor 检查 focused IC；失败记录并回退剪贴板。</td>
   </tr>
   <tr>
     <td>普通按键转发错误</td>
@@ -1500,7 +1563,7 @@ impl Daemon {
   <tr><td>长按与重复</td><td>普通键长按按客户端 <code>repeat_info</code> 重复；PTT 键长按只触发一次 Start，不重复切换。</td></tr>
   <tr><td>GTK4 / Qt6 / Firefox（原生 Wayland）</td><td>中文、英文、标点、emoji 在光标处插入；剪贴板不变。</td></tr>
   <tr><td>终端（kitty / foot / ghostty）</td><td>PTT 由 IM grab 触发；普通打字正常；Final 走粘贴；<code>Ctrl+Shift+V</code> 生效；剪贴板为单条 Final。</td></tr>
-  <tr><td>XWayland（Electron / GTK X11 / WPS）</td><td>PTT 由 IM grab 触发；普通打字正常；Final 粘贴回退成功；无 preedit；无崩溃。</td></tr>
+  <tr><td>XWayland（Electron / GTK X11 / WPS）</td><td>PTT 由 IM grab 触发；普通打字正常；Final 通过 XIM_COMMIT 进入焦点输入框；禁用 XIM 后才走剪贴板；无 preedit、无崩溃。</td></tr>
   <tr><td>Fcitx5 运行中</td><td>Voime 收到 <code>unavailable</code>，stderr 提示停用 Fcitx5，退出码 1；不进入粘贴降级。</td></tr>
   <tr><td>停用 Fcitx5</td><td>Voime 成为唯一输入法；键盘抓取与普通按键转发生效；重启后重新抓取，无 portal 绑定。</td></tr>
   <tr><td>PTT 键与 Hyprland 绑定冲突</td><td>合成器先消费时 Voime 收不到；<code>voime doctor</code> 提示改用未绑定组合键。</td></tr>
@@ -1546,7 +1609,9 @@ impl Daemon {
   <tr><td>剪贴板恢复</td><td>不恢复；保留识别文本</td></tr>
   <tr><td>TUI 自动复制</td><td>关闭；仅终端原生选择</td></tr>
   <tr><td>虚拟键盘</td><td>必需；与 IM grab 同一 Wayland 连接；只用于按键转发和粘贴快捷键</td></tr>
-  <tr><td>XWayland 终端粘贴键</td><td><code>Ctrl+Shift+V</code>；普通应用 <code>Ctrl+V</code>；优先经 VK 发送，XTest 兜底</td></tr>
+  <tr><td>XWayland 上屏</td><td>XIM server（<code>XIM_SERVERS</code> / <code>voime</code> selection / focused IC）；失败才剪贴板</td></tr>
+  <tr><td>XMODIFIERS</td><td><code>@im=voime</code>；XWayland 客户端应在启动环境里设置</td></tr>
+  <tr><td>粘贴键</td><td>普通应用 <code>Ctrl+V</code>；终端 <code>Ctrl+Shift+V</code>；优先经 VK 发送，XTest 兜底</td></tr>
 </table>
 
 <ul class="note">
@@ -1561,6 +1626,8 @@ impl Daemon {
 <ul>
   <li><a href="https://wayland.app/protocols/input-method-unstable-v2">Wayland input-method-unstable-v2</a> — <code>zwp_input_method_v2</code> / <code>grab_keyboard</code> / <code>keymap</code> / <code>key</code> / <code>modifiers</code> / <code>commit_string</code>。</li>
   <li><a href="https://wayland.app/protocols/virtual-keyboard-unstable-v1">Wayland virtual-keyboard-unstable-v1</a> — <code>zwp_virtual_keyboard_v1</code> 的 keymap / key / modifiers。</li>
+  <li><a href="https://xorg.freedesktop.org/releases/X11R7.7/doc/libX11/XIM/xim.html">The Input Method Protocol</a> — XIM_SERVERS / TRANSPORT / XIM_COMMIT。</li>
+  <li><a href="https://github.com/Riey/xim-rs">xim-rs</a> — Rust XIM protocol parser / server feature。</li>
   <li><a href="https://fcitx-im.org/wiki/Using_Fcitx_5_on_Wayland">Fcitx5 on Wayland</a> — input-method-v2 与 XWayland/XIM 的边界。</li>
   <li><a href="https://wayland.app/protocols/input-method-unstable-v2#compositor-support">Compositor support</a> — Hyprland 0.52.1 起支持 input-method-v2。</li>
   <li><a href="https://github.com/hyprwm/Hyprland/blob/main/src/managers/input/InputManager.cpp">Hyprland InputManager.cpp</a> — 合成器键绑定优先于 IM grab、grab 按键路由、virtual-keyboard 同客户端回环抑制。</li>

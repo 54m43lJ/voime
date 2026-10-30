@@ -9,7 +9,7 @@ component "物理键盘" as Keyboard
 component "Hyprland\nWayland 合成器" as Hyprland
 component "Voime\n唯一输入法 / daemon" as Voime
 component "原生 Wayland 应用\ntext-input-v3" as WaylandApp
-component "XWayland 应用\nX11" as XApp
+component "XWayland 应用\nX11 / XIM" as XApp
 component "麦克风" as Mic
 component "本地模型包\nFireRedVAD / FireRedASR2-CTC / FireRedPunc" as Models
 component "系统剪贴板" as Clip
@@ -22,7 +22,8 @@ Voime --> Hyprland : virtual-keyboard\n转发非 PTT 按键 / 粘贴键
 Voime --> Hyprland : input-method-v2\ncommit_string
 Hyprland --> WaylandApp : text-input-v3\n插入文本 / 转发按键
 Hyprland --> XApp : 转发按键 / X11 事件
-Voime --> Clip : 回退时写入单条 Final
+Voime --> XApp : XIM_COMMIT\n（XWayland）
+Voime --> Clip : XIM 不可用时写单条 Final
 Voime --> XApp : XTest 粘贴兜底
 Mic --> Voime : 16 kHz 单声道 PCM
 Models --> Voime : 只读加载

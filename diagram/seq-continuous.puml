@@ -21,7 +21,7 @@ loop 持续监听
     end
     Voime -> Voime : 最终识别 + 标点
     Voime -> Tui : Final(text)
-    Voime -> App : 按 §3.5 投递\ncommit_string 或粘贴
+    Voime -> App : 按 §3.5 投递\ncommit_string / XIM / 粘贴
   else 静音
     Voime -> Tui : State(recording=false)
   end

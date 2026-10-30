@@ -26,7 +26,8 @@
   <tr><td>平台</td><td>AMD x86_64 Linux；桌面为 Hyprland / Wayland。X11 与 Windows 本版不实现。</td></tr>
   <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）。首次构建需要网络下载 crate、协议 XML 与 ONNX Runtime 预编译库。</td></tr>
   <tr><td>Linux 构建依赖</td><td>ALSA、Wayland、xkbcommon 与 D-Bus 开发头文件。Arch：<code>alsa-lib</code>、<code>wayland</code>、<code>libxkbcommon</code>、<code>dbus</code>；Debian / Ubuntu：<code>libasound2-dev</code>、<code>libwayland-dev</code>、<code>libxkbcommon-dev</code>、<code>libdbus-1-dev</code>。</td></tr>
-  <tr><td>运行期</td><td>Hyprland（≥ 0.52.1，支持 input-method-v2）、D-Bus session bus、可用录音设备；无需 Fcitx5 / IBus / xdg-desktop-portal / 网络 / GPU / Python。</td></tr>
+  <tr><td>运行期</td><td>Hyprland（≥ 0.52.1，支持 input-method-v2）、XWayland（XIM 上屏）、D-Bus session bus、可用录音设备；无需 Fcitx5 / IBus / xdg-desktop-portal / 网络 / GPU / Python。</td></tr>
+  <tr><td>XWayland 环境</td><td>建议在启动 Hyprland / 应用前设置 <code>XMODIFIERS=@im=voime</code>，或在 Hyprland 配置中写 <code>env = XMODIFIERS,@im=voime</code>；XIM server 由 <code>voimed</code> 在 <code>DISPLAY</code> 可用时注册。</td></tr>
   <tr><td>输入法冲突</td><td>运行前必须停用 Fcitx5 / IBus。seat 只能有一个 input-method-v2 对象；<code>voimed</code> 收到 <code>unavailable</code> 会以 1 退出。</td></tr>
   <tr><td>TUI</td><td><code>voime</code> 需要 TTY、UTF-8 与 ANSI 转义；<code>voimed</code> 不需要 TTY。</td></tr>
   <tr><td>托盘</td><td>可选；需要 StatusNotifierWatcher / 宿主（Waybar、Vicinae 等）。缺失时只告警。</td></tr>
@@ -49,7 +50,7 @@
   <li>构建过程通过 <code>ort</code> 的 <code>download-binaries</code> 获取 ONNX Runtime；构建完成后运行期不联网。</li>
   <li>发布时只需分发两个可执行文件、<code>protocols/</code>（仅源码构建需要）、<code>scripts/</code>、<code>tools/</code> 与安装说明；不要分发 <code>target/</code> 或安装虚拟环境。</li>
   <li>若 ONNX 使用 external data，模型目录中的 <code>*.data</code> 或分片文件必须与 <code>.onnx</code> 一起复制。</li>
-  <li><code>x11rb</code> 是可选 feature，只用于 XWayland 的 XTEST 粘贴兜底；默认构建不启用。</li>
+  <li><code>x11rb</code> 用于 XWayland / XIM server 与 XTEST 粘贴兜底；<code>xim</code> crate 提供 XIM server feature，两者都随默认构建启用。</li>
 </ul>
 
 <h2 id="b3">3. 安装模型</h2>
@@ -87,6 +88,10 @@ scripts/install_models.sh --source-dir /path/to/official/weights
 systemctl --user disable --now fcitx5
 # 或删除 Hyprland 配置中的 exec-once = fcitx5
 
+# 让 XWayland 应用选择 Voime 的 XIM server
+# 最好在 Hyprland 配置中写：env = XMODIFIERS,@im=voime
+export XMODIFIERS=@im=voime
+
 # 启动 daemon（推荐 Hyprland exec-once 或 systemd user service）
 voimed
 
@@ -120,7 +125,7 @@ voime doctor</code></pre>
   <tr><td>PTT 无反应</td><td>检查组合键是否被 Hyprland 绑定；用 <code>voime ctl toggle</code> 验证录音链路。</td></tr>
   <tr><td>模型清单错误 / 缺失 / 校验失败</td><td>重新运行安装脚本；确认 <code>--model-dir</code> 指向包含 <code>manifest.json</code> 的目录。</td></tr>
   <tr><td>没有可用输入设备</td><td>检查系统录音设备；设备名必须与操作系统暴露的名称完全一致。</td></tr>
-  <tr><td>XWayland 粘贴失败</td><td>确认剪贴板可用；启用 <code>x11</code> feature 使用 XTEST 兜底。</td></tr>
+  <tr><td>XWayland 不能输入</td><td>确认 <code>DISPLAY</code> 与 <code>XMODIFIERS=@im=voime</code>；用 <code>xprop -root | grep XIM_SERVERS</code> 检查注册；XIM 不可用时剪贴板兜底。</td></tr>
   <tr><td>TUI 连不上 daemon</td><td>先启动 <code>voimed</code>；确认两者 <code>--socket</code> 一致。</td></tr>
 </table>
 
@@ -133,8 +138,9 @@ cargo fmt --all --check
 ~/.cache/voime/venv/bin/python tools/verify_models.py --model-dir &lt;DIR&gt; --no-write</code></pre>
 
 <ul class="note">
-  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长；<code>tests/keyboard.rs</code> 覆盖 PTT 匹配、非 PTT 转发、keymap 变化与重复；<code>tests/ipc.rs</code> 覆盖握手、编解码与慢客户端；<code>tests/sink.rs</code> 覆盖 im / clipboard 选择。</li>
-  <li><code>tests/countdown.rs</code> 覆盖 30 s 计时、自动切段与 continuous 不显示；<code>tests/state.rs</code> 覆盖段所有权与清空。</li>
+  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长；<code>tests/keyboard.rs</code> 覆盖 PTT 匹配、非 PTT 转发、keymap 变化与重复；<code>tests/ipc.rs</code> 覆盖握手、编解码与慢客户端；<code>tests/sink.rs</code> 覆盖 im / xim / clipboard 选择。</li>
+
+  <li><code>tests/countdown.rs</code> 覆盖 30 s 计时、自动切段与 continuous 不显示；<code>tests/state.rs</code> 覆盖段所有权与清空；<code>tests/xim.rs</code> 覆盖 XIM_SERVERS 注册、focused IC 与 COMMIT。</li>
   <li>模型包校验包含 SHA-256、张量名称、类型、形状与真实 ONNX Runtime 推理；CTC 另测 CMVN metadata、token id 与 greedy CTC。</li>
 </ul>
 
@@ -148,9 +154,9 @@ scripts/install_models.sh</code></pre>
 
 <ul class="note">
   <li>发布包应包含两个可执行文件、<code>scripts/</code>、<code>tools/</code> 与安装说明；模型权重由安装脚本按需下载。</li>
-  <li>运行验收：停用 Fcitx5 后 daemon 启动、普通打字透明转发、hold / toggle PTT、原生 Wayland 提交、XWayland 粘贴、30 s 倒计时 / 自动切段、TUI detach、托盘退出。</li>
+  <li>运行验收：停用 Fcitx5 后 daemon 启动、普通打字透明转发、hold / toggle PTT、原生 Wayland 提交、XWayland XIM 提交、XIM 失败剪贴板兜底、30 s 倒计时 / 自动切段、TUI detach、托盘退出。</li>
   <li>冲突验收：Fcitx5 运行时 <code>voimed</code> 必须退出并提示 <code>ImUnavailable</code>；不得静默降级为纯粘贴。</li>
-  <li>剪贴板验收：原生提交不修改剪贴板；XWayland / 终端只写入单条 Final；清空不修改剪贴板。</li>
+  <li>剪贴板验收：原生提交与 XIM 提交不修改剪贴板；只有 XIM 不可用的 XWayland / 终端兜底才写入单条 Final；清空不修改剪贴板。</li>
   <li>键盘验收：布局切换、修饰键、死键、组合键、长按重复在转发后与未安装 Voime 时一致；无丢键、无重复。</li>
 </ul>
 
