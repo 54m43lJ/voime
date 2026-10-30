@@ -15,6 +15,7 @@
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="BUILD.html">BUILD</a>
+<a href="ASR.html">ASR</a>
 </p>
 
 <h2 id="p1">1. TERMS</h2>
@@ -23,68 +24,68 @@
 <table>
   <tr><th>术语</th><th>定义</th></tr>
   <tr>
-    <td>输入设备（Input device）</td>
-    <td>操作系统暴露的录音端点。Linux 上由 ALSA / PulseAudio / PipeWire 提供，Windows 上由 WASAPI 提供；cpal 把它们统一为 <code>Device</code>。</td>
+    <td>Fcitx5</td>
+    <td>Linux 输入法框架；本项目作为 addon 运行在 <code>fcitx5</code> 进程内，由它持有键盘与输入上下文。</td>
   </tr>
   <tr>
-    <td>宿主（Host）</td>
-    <td>cpal 对某个平台音频后端的抽象；<code>cpal::default_host()</code> 返回当前系统的默认宿主。</td>
+    <td>addon / <code>InputMethodEngineV2</code></td>
+    <td>Fcitx 的可加载输入法组件。Voime addon 负责热键、目标输入框、临时窗口与最终提交。</td>
   </tr>
   <tr>
-    <td><code>AudioChunk</code></td>
-    <td>音频回调交付的一块交织 PCM 样本，带原生采样率与声道数；样本已归一化为 <code>f32</code>。</td>
+    <td>输入上下文（<code>InputContext</code>）</td>
+    <td>Fcitx 中代表一个客户端输入目标的上下文；提供 <code>commitString</code>、<code>inputPanel</code>、<code>hasFocus</code>。</td>
   </tr>
   <tr>
-    <td>帧（Frame）</td>
-    <td>VAD 的一次推理单位。帧移由模型包 manifest 声明，推荐 10 ms；所有帧等长，末帧不补零。</td>
+    <td>frontend</td>
+    <td>Fcitx 与客户端之间的输入协议实现，例如 Wayland text-input 或 XIM。Voime 不直接实现 frontend。</td>
+  </tr>
+  <tr>
+    <td><code>InputContextKeyEvent</code></td>
+    <td>Fcitx 的按键事件；addon 在 <code>PreInputMethod</code> 阶段读取并决定是否消费。</td>
+  </tr>
+  <tr>
+    <td><code>PreInputMethod</code></td>
+    <td>Fcitx 事件管线的输入法前阶段；Voime 的 PTT / toggle 热键在这里匹配。</td>
+  </tr>
+  <tr>
+    <td><code>InputPanel</code> / preedit</td>
+    <td>Fcitx 输入面板。Voime 用 <code>setPreedit</code> 把 <code>Partial</code> 写入面板，由 Fcitx UI 渲染临时窗口。</td>
+  </tr>
+  <tr>
+    <td>commit string / commit filter</td>
+    <td><code>InputContext::commitString</code> 提交的文本；Fcitx 的 commit filter 可能在到达客户端前转换文本。</td>
+  </tr>
+  <tr>
+    <td><code>Mode</code> / <code>Hotkey</code></td>
+    <td>addon 配置；Mode 取 <code>ptt</code> / <code>toggle</code> / <code>continuous</code>，Hotkey 是唯一组合键。</td>
+  </tr>
+  <tr>
+    <td>XIM</td>
+    <td>X11 输入法协议；Fcitx XIM frontend 用于 XWayland / X11 客户端。Voime 不实现 XIM。</td>
+  </tr>
+  <tr>
+    <td>FireRedASR2-CTC</td>
+    <td>本项目的离线 CTC 语音识别模型；单 ONNX，输入 fbank，输出 <code>log_probs</code>。</td>
+  </tr>
+  <tr>
+    <td>CMVN</td>
+    <td>倒谱均值方差归一化；CTC 模型把它放在 ONNX metadata 的 <code>cmvn_mean</code> / <code>cmvn_inv_stddev</code> 中。</td>
+  </tr>
+  <tr>
+    <td>greedy CTC</td>
+    <td>逐帧取 argmax、合并连续重复、去掉 blank 0 的解码方式。</td>
+  </tr>
+  <tr>
+    <td><code>token id</code> 词表</td>
+    <td><code>tokens.txt</code> 每行是 token 与 id；id 0 为 blank，英文 <code>▁</code> 表示词边界。</td>
   </tr>
   <tr>
     <td>fbank</td>
-    <td>Kaldi 风格的梅尔滤波器组特征。FireRedVAD、FireRedASR2-AED 的输入特征；参数以模型包 manifest 为准。</td>
+    <td>Kaldi 风格梅尔滤波器组特征；参数由 manifest 声明，与 CTC 训练预处理一致。</td>
   </tr>
   <tr>
-    <td>语音概率（Speech probability）</td>
-    <td>FireRedVAD 对每一帧输出的 <code>[0, 1]</code> 概率；分段器按阈值与最短时长把它转成语音段边界。</td>
-  </tr>
-  <tr>
-    <td>流式状态（Streaming state）</td>
-    <td>FireRedVAD 在帧间保留的缓存张量；每次推理的输出状态在下一帧作为输入回灌，语音段结束时必须清零。</td>
-  </tr>
-  <tr>
-    <td>FireRedASR2-AED</td>
-    <td>FireRedASR2 的 Attention-based Encoder-Decoder 变体；本项目唯一的 ASR 模型。</td>
-  </tr>
-  <tr>
-    <td>编码器 / 解码器（Encoder / Decoder）</td>
-    <td>AED 的两个 ONNX 会话：编码器把 fbank 序列编码为声学表示；解码器在编码结果上自回归生成 token。</td>
-  </tr>
-  <tr>
-    <td>beam search</td>
-    <td>解码器逐步保留若干候选 token 序列的搜索策略；本项目的实现约束见 <a href="CORE.html#c4-14">CORE §4.14</a>。</td>
-  </tr>
-  <tr>
-    <td>FireRedPunc</td>
-    <td>基于 BERT 的 token 级标点分类模型；对每个输入 token 预测其后应插入的标点标签。</td>
-  </tr>
-  <tr>
-    <td>标点标签（Label）</td>
-    <td>FireRedPunc 输出向量中的一项；<code>labels.json</code> 把 id 映射为实际插入的字符串，id 0 为空字符串。</td>
-  </tr>
-  <tr>
-    <td>模型包（Model package）</td>
-    <td>由项目安装脚本从 FireRed 官方权重生成的 ONNX 文件、词表、标签表与校验和集合；由 <code>manifest.json</code> 描述，权重不提交到仓库。</td>
-  </tr>
-  <tr>
-    <td>ONNX Runtime</td>
-    <td>执行 ONNX 模型的推理库；本项目只使用 CPU Execution Provider，由 <code>ort</code> 绑定。</td>
-  </tr>
-  <tr>
-    <td>剪贴板所有者（Clipboard owner）</td>
-    <td>在 X11 中负责响应剪贴板内容请求的进程。写入文本的进程退出后，若无剪贴板管理器接管，内容可能丢失。</td>
-  </tr>
-  <tr>
-    <td>备用屏幕（Alternate screen）</td>
-    <td>终端模拟器提供的第二块屏幕缓冲区；应用退出后恢复原屏幕，不污染终端回滚区。</td>
+    <td>模型包</td>
+    <td>FireRedVAD、FireRedASR2-CTC、FireRedPunc 的 ONNX、词表、标签与 <code>manifest.json</code>。</td>
   </tr>
 </table>
 
@@ -95,61 +96,81 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
     <td>契约范围</td>
-    <td>本节只记录项目实际消费的接口子集；cpal、ONNX Runtime、arboard、crossterm 的完整定义以各自官方文档为准，不复制进本文档。</td>
+    <td>本节只记录项目实际消费的 Fcitx / cpal / ONNX Runtime / crossterm 子集；完整定义以官方文档为准。</td>
+  </tr>
+  <tr>
+    <td>Fcitx 版本</td>
+    <td>要求 Fcitx5 ≥ 5.1.23；<code>KeyEventMatchingMode::MatchAllNormalizedKeys</code> 与 <code>checkKeyList</code> 以该版本为准。</td>
+  </tr>
+  <tr>
+    <td>addon 加载</td>
+    <td><code>OnDemand=False</code>；Fcitx 启动时加载 addon，输入法条目引用 <code>Addon=voime</code>。</td>
+  </tr>
+  <tr>
+    <td>键盘所有权</td>
+    <td>Fcitx 持有键盘与 frontend；Voime 不抓键盘、不转发按键、不注入按键。</td>
+  </tr>
+  <tr>
+    <td>热键范围</td>
+    <td>只有 Fcitx 能收到按键的输入上下文才触发热键；没有文本焦点、未使用 Fcitx 的窗口不保证。</td>
+  </tr>
+  <tr>
+    <td>热键消费</td>
+    <td>命中后调用 <code>filterAndAccept</code>；普通按键继续由 Fcitx 路由。</td>
+  </tr>
+  <tr>
+    <td>临时窗口</td>
+    <td><code>InputPanel::setPreedit</code> + <code>updateUserInterface(InputPanel)</code>；Final / 停止 / 空段 / 错误 / 目标丢失 / 断线清空。</td>
+  </tr>
+  <tr>
+    <td>目标输入框</td>
+    <td>语音段开始时聚焦的 <code>InputContext</code>；提交前重新检查存在与 <code>hasFocus()</code>。</td>
+  </tr>
+  <tr>
+    <td>提交</td>
+    <td><code>commitString</code> 无返回值；不保证客户端接受。Fcitx commit filter 与长文本分块由 Fcitx 负责。</td>
+  </tr>
+  <tr>
+    <td>addon ABI</td>
+    <td><code>voime.so</code> 与 Fcitx5 头文件绑定；Fcitx 大版本升级后重新编译。</td>
+  </tr>
+  <tr>
+    <td>配置</td>
+    <td><code>Mode</code> / <code>Hotkey</code> 只来自 addon 配置；daemon 通过 IPC 接收；socket 使用默认路径。</td>
   </tr>
   <tr>
     <td>本地性</td>
-    <td>运行期所有边界调用都在本机完成；模型包、音频、剪贴板均不经过网络。安装脚本在首次安装时访问模型托管站点下载官方权重，该步骤不属于运行时边界。</td>
+    <td>运行期所有边界调用在本机完成；模型包、音频与 IPC 不经过网络。</td>
   </tr>
   <tr>
     <td>音频格式</td>
-    <td>进入项目内部的唯一格式是 16 kHz、单声道、<code>f32</code>。设备原生格式的转换属于项目侧，不要求 Provider 支持重采样。</td>
-  </tr>
-  <tr>
-    <td>采样格式</td>
-    <td>只接受 <code>I16</code>、<code>U16</code>、<code>F32</code> 三种输入样本格式；其他格式在启动时以 <code>UnsupportedSampleFormat</code> 失败，不做隐式转换。</td>
+    <td>进入项目内部的唯一格式是 16 kHz、单声道、<code>f32</code>；设备原生格式由项目侧重采样。</td>
   </tr>
   <tr>
     <td>模型不可变</td>
-    <td>模型包在运行期只读；启动时校验 SHA-256 与张量签名，校验失败不进入 TUI。运行期不重新读取权重。</td>
+    <td>模型包运行期只读；启动时校验 SHA-256 与张量签名，失败不进入运行态。</td>
   </tr>
   <tr>
     <td>量化</td>
-    <td>模型包默认提供 int8 量化 ONNX；导出工具必须在固定验证集上确认识别与标点质量后再发布。运行期只加载包内给出的精度，不在启动时做动态量化。</td>
+    <td>默认 int8 ONNX；发布前在固定验证集上确认识别质量；运行期不做动态量化。</td>
   </tr>
   <tr>
     <td>清单权威</td>
-    <td>ONNX 输入 / 输出名称、形状、fbank 参数、帧移、标签表都由 <code>manifest.json</code> 声明；代码不得硬编码张量名或形状。</td>
+    <td>ONNX 输入输出、fbank 参数、帧移、词表与标签由 <code>manifest.json</code> 声明；代码不硬编码形状。</td>
   </tr>
   <tr>
-    <td>模型上限</td>
-    <td>FireRedASR2-AED 单段音频硬上限 60 s；超过上限由 CORE 拒绝，Provider 不再截断或补零。</td>
-  </tr>
-  <tr>
-    <td>标点上限</td>
-    <td>FireRedPunc 的单次 token 上限由 manifest 声明，推荐 400；超长文本由 CORE 切块，Provider 不静默截断。</td>
+    <td>CTC 上限</td>
+    <td>默认 <code>max_segment_ms=30000</code>；超过上限由分段器切段，Provider 不截断或补零。</td>
   </tr>
   <tr>
     <td>CPU 推理</td>
-    <td>只启用 CPU Execution Provider；不注册 CUDA、DirectML、Vulkan 或其他执行提供者。线程数由命令行决定。</td>
-  </tr>
-  <tr>
-    <td>剪贴板文本</td>
-    <td>只写 UTF-8 纯文本，行分隔符固定为 <code>\n</code>；不写 HTML、图片或多格式剪贴板对象。</td>
-  </tr>
-  <tr>
-    <td>终端能力</td>
-    <td>要求 TTY、UTF-8 与 ANSI 转义支持；不要求真彩色、鼠标、括号粘贴或键盘增强协议。鼠标上报必须关闭。</td>
+    <td>只启用 CPU Execution Provider；线程数由命令行决定。</td>
   </tr>
   <tr>
     <td>错误映射</td>
-    <td>Provider 错误在边界处转换为项目错误类型并附上上下文；错误文本不进入 TUI 内容区，启动期写 stderr，运行期按 <a href="#p4-6">§4.6</a> 处理。</td>
+    <td>Provider 错误在边界处转换为项目错误类型并附上下文；启动期写 stderr / 日志，运行期按 <a href="#p4-7">§4.7</a> 处理。</td>
   </tr>
 </table>
-<ul class="note">
-  <li>权威定义：<a href="https://docs.rs/cpal">cpal</a>、<a href="https://ort.pyke.io/">ort / ONNX Runtime</a>、<a href="https://docs.rs/arboard">arboard</a>、<a href="https://docs.rs/crossterm">crossterm</a>。</li>
-  <li>模型来源与推理代码：<a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedASR2S</a>、<a href="https://github.com/FireRedTeam/FireRedVAD">FireRedVAD</a>、<a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedPunc</a>。</li>
-</ul>
 
 <h2 id="p3">3. DIAGRAMS</h2>
 <p><a href="#top">↑</a></p>
@@ -157,22 +178,36 @@
 <h3 id="p3-1">3.1 音频采集边界</h3>
 <div class="diagram"><img src="diagram/prov-audio.svg" alt="cpal 音频采集时序图"></div>
 <ul class="note">
-  <li>回调只负责把设备样本转换为 <code>AudioChunk</code> 并入队；重采样与 VAD 在项目内部完成，不属于 cpal 边界。</li>
-  <li>错误回调与数据回调可能来自不同线程；错误以零长度错误标记写入同一有界通道，由工作线程维护连续错误计数，不在回调中恢复设备。</li>
+  <li>回调只负责把设备样本转换为 <code>AudioChunk</code> 并入队；重采样与 VAD 在项目内部完成。</li>
+  <li>错误回调与数据回调可能来自不同线程；错误以零长度标记写入同一有界通道。</li>
 </ul>
 
-<h3 id="p3-2">3.2 模型推理边界</h3>
-<div class="diagram"><img src="diagram/prov-inference.svg" alt="ONNX Runtime 模型推理时序图"></div>
+<h3 id="p3-2">3.2 CTC 推理边界</h3>
+<div class="diagram"><img src="diagram/prov-inference.svg" alt="FireRedASR2-CTC ONNX 推理时序图"></div>
 <ul class="note">
-  <li>VAD、ASR 编码器、ASR 解码器与标点分别使用独立的 ONNX 会话；会话在启动时创建，运行期只调用 <code>run</code>。</li>
-  <li>模型文件由 <code>tools/export_models.py</code> 从 FireRed 官方权重导出；张量名与形状写入 manifest，不在图中固定。</li>
+  <li>单 ONNX 会话；CMVN 从 metadata 读取；greedy CTC 在项目侧完成。</li>
+  <li>VAD 与 FireRedPunc 仍各自使用独立 ONNX 会话；会话在启动时创建。</li>
 </ul>
 
-<h3 id="p3-3">3.3 剪贴板边界</h3>
-<div class="diagram"><img src="diagram/prov-clipboard.svg" alt="剪贴板写入时序图"></div>
+<h3 id="p3-3">3.3 Fcitx 按键与热键边界</h3>
+<div class="diagram"><img src="diagram/prov-fcitx-key.svg" alt="Fcitx 按键事件与 Voime 热键消费时序图"></div>
 <ul class="note">
-  <li>每次最终结果后整体覆盖写入会话文本；不追加、不保留旧剪贴板内容。</li>
-  <li>X11 下剪贴板内容由本进程持有；程序退出后能否保留取决于桌面剪贴板管理器，见 <a href="#p4-4">§4.4</a>。</li>
+  <li>Voime 在 <code>PreInputMethod</code> 读取事件；命中 <code>Hotkey</code> 后 <code>filterAndAccept</code>。</li>
+  <li>Mode 只影响 Voime 对热键的解释；普通按键继续由 Fcitx 交给当前输入法或应用。</li>
+</ul>
+
+<h3 id="p3-4">3.4 Fcitx 输入面板边界</h3>
+<div class="diagram"><img src="diagram/prov-input-panel.svg" alt="Fcitx InputPanel 临时文本窗口时序图"></div>
+<ul class="note">
+  <li><code>Partial</code> 写入 <code>InputPanel::setPreedit</code>，由 Fcitx UI 渲染；Voime 不创建窗口。</li>
+  <li>Final / 停止 / 断线时清空 preedit；最终提交前先关闭窗口。</li>
+</ul>
+
+<h3 id="p3-5">3.5 Fcitx 提交边界</h3>
+<div class="diagram"><img src="diagram/prov-fcitx-commit.svg" alt="Fcitx commitString 提交最终文本时序图"></div>
+<ul class="note">
+  <li>Voime 只调用 <code>InputContext::commitString</code>；Fcitx 选择 Wayland / XIM frontend 并处理长文本。</li>
+  <li>目标输入框失焦或销毁时不提交；文本保留在 daemon 历史。</li>
 </ul>
 
 <h2 id="p4">4. INTERFACES</h2>
@@ -181,250 +216,193 @@
 <h3 id="p4-1">4.1 音频采集：cpal</h3>
 <table>
   <tr><th>消费项</th><th>签名 / 类型</th><th>用途</th></tr>
-  <tr><td>默认宿主</td><td><code>cpal::default_host() -&gt; Host</code></td><td>获取当前平台的音频后端。</td></tr>
+  <tr><td>默认宿主</td><td><code>cpal::default_host() -&gt; Host</code></td><td>获取 Linux 音频后端。</td></tr>
   <tr><td>默认输入设备</td><td><code>HostTrait::default_input_device() -&gt; Option&lt;Device&gt;</code></td><td>未指定 <code>--input-device</code> 时使用。</td></tr>
-  <tr><td>设备枚举</td><td><code>HostTrait::input_devices() -&gt; Result&lt;InputDevices, DevicesError&gt;</code></td><td>按名称查找 <code>--input-device</code>。</td></tr>
-  <tr><td>设备名</td><td><code>DeviceTrait::name() -&gt; Result&lt;String, DeviceNameError&gt;</code></td><td>精确匹配命令行给出的设备名。</td></tr>
+  <tr><td>设备枚举</td><td><code>HostTrait::input_devices() -&gt; Result&lt;InputDevices, DevicesError&gt;</code></td><td>按名称查找设备。</td></tr>
+  <tr><td>设备名</td><td><code>DeviceTrait::name() -&gt; Result&lt;String, DeviceNameError&gt;</code></td><td>精确匹配命令行参数。</td></tr>
   <tr><td>默认配置</td><td><code>DeviceTrait::default_input_config() -&gt; Result&lt;SupportedStreamConfig, DefaultStreamConfigError&gt;</code></td><td>读取采样率、声道数与样本格式。</td></tr>
-  <tr><td>建立输入流</td><td><code>DeviceTrait::build_input_stream&lt;T, D, E&gt;(&amp;config, data_cb, err_cb, timeout) -&gt; Result&lt;Stream, BuildStreamError&gt;</code></td><td>注册数据回调与错误回调；<code>timeout</code> 使用默认 <code>None</code>。</td></tr>
+  <tr><td>建立输入流</td><td><code>DeviceTrait::build_input_stream&lt;T, D, E&gt;(...)</code></td><td>注册数据 / 错误回调。</td></tr>
   <tr><td>播放 / 暂停</td><td><code>StreamTrait::play()</code> / <code>pause()</code></td><td>启动后保持播放；退出时丢弃流。</td></tr>
 </table>
 
 <pre><code>pub struct AudioChunk {
     pub sample_rate: u32,
     pub channels: u16,
-    pub samples: Vec&lt;f32&gt;,          // 交织；已从 I16 / U16 / F32 归一化
-}
-
-pub enum AudioError {
-    NoInputDevice,
-    DeviceNotFound { name: String },
-    DefaultConfig(cpal::DefaultStreamConfigError),
-    UnsupportedSampleFormat(cpal::SampleFormat),
-    BuildStream(cpal::BuildStreamError),
-    PlayStream(cpal::PlayStreamError),
-    StreamLost(cpal::StreamError),
+    pub samples: Vec&lt;f32&gt;,
 }</code></pre>
 
-<table>
-  <tr><th>输入样本格式</th><th>转换</th></tr>
-  <tr><td><code>I16</code></td><td><code>sample as f32 / 32768.0</code></td></tr>
-  <tr><td><code>U16</code></td><td><code>(sample as f32 - 32768.0) / 32768.0</code></td></tr>
-  <tr><td><code>F32</code></td><td>原样使用；不额外裁剪。</td></tr>
-  <tr><td>其他</td><td>启动失败，错误码 <code>UnsupportedSampleFormat</code>。</td></tr>
-</table>
-<ul class="note">
-  <li>数据回调中不做重采样、不分配大缓冲、不等待锁；只把归一化样本移动到 <code>AudioChunk</code> 并 <code>try_send</code>。</li>
-  <li>设备采样率与声道数可能随设备变化；本项目在启动时固定一次配置，运行期不热切换设备。</li>
-</ul>
-
-<h3 id="p4-2">4.2 模型包：FireRedVAD / FireRedASR2-AED / FireRedPunc</h3>
-<pre><code>models/
-├── manifest.json
-├── vad/
-│   └── stream-vad.onnx
-├── asr/
-│   ├── encoder.onnx
-│   ├── decoder.onnx
-│   └── tokens.txt
-└── punc/
-    ├── model.onnx
-    ├── vocab.txt
-    └── labels.json</code></pre>
-
+<h3 id="p4-2">4.2 模型包：FireRedVAD / FireRedASR2-CTC / FireRedPunc</h3>
 <pre><code>{
-  "schema": 1,
+  "schema": 2,
   "sample_rate": 16000,
   "fbank": { "num_bins": 80, "frame_ms": 25, "shift_ms": 10 },
-  "max_segment_ms": 10000,
+  "max_segment_ms": 30000,
   "vad": {
     "model": "vad/stream-vad.onnx",
     "sha256": "...",
-    "inputs": [
-      { "name": "features", "dtype": "float32", "shape": [1, -1, 80] }
-    ],
-    "outputs": [
-      { "name": "probs", "dtype": "float32", "shape": [1, -1, 1] }
-    ]
+    "inputs": [ ... ],
+    "outputs": [ ... ]
   },
   "asr": {
-    "encoder": {
-      "model": "asr/encoder.onnx",
+    "kind": "fire-red-ctc",
+    "model": {
+      "model": "asr/model.int8.onnx",
       "sha256": "...",
-      "inputs": [
-        { "name": "features", "dtype": "float32", "shape": [1, -1, 80] }
-      ],
-      "outputs": [
-        { "name": "encoder_out", "dtype": "float32", "shape": [1, -1, -1] }
-      ]
-    },
-    "decoder": {
-      "model": "asr/decoder.onnx",
-      "sha256": "...",
-      "inputs": [
-        { "name": "tokens", "dtype": "int64", "shape": [1, -1] },
-        { "name": "encoder_out", "dtype": "float32", "shape": [1, -1, -1] }
-      ],
-      "outputs": [
-        { "name": "logits", "dtype": "float32", "shape": [1, -1, -1] }
-      ]
+      "inputs": [ ... ],
+      "outputs": [ ... ]
     },
     "tokens": "asr/tokens.txt"
   },
   "punc": {
-    "model": {
-      "model": "punc/model.onnx",
-      "sha256": "...",
-      "inputs": [
-        { "name": "input_ids", "dtype": "int64", "shape": [1, -1] },
-        { "name": "attention_mask", "dtype": "int64", "shape": [1, -1] },
-        { "name": "token_type_ids", "dtype": "int64", "shape": [1, -1] }
-      ],
-      "outputs": [
-        { "name": "logits", "dtype": "float32", "shape": [1, -1, -1] }
-      ]
-    },
+    "model": "punc/model.onnx",
     "vocab": "punc/vocab.txt",
-    "labels": "punc/labels.json",
-    "max_tokens": 400
+    "labels": "punc/labels.json"
   }
 }</code></pre>
+
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>ASR 文件</td><td><code>asr/model.int8.onnx</code>（约 740 MiB）+ <code>asr/tokens.txt</code>。</td></tr>
+  <tr><td>输入</td><td><code>x</code>: <code>float32[1,T,80]</code> fbank；<code>x_lens</code>: <code>int64[1]</code>。</td></tr>
+  <tr><td>输出</td><td><code>log_probs</code>: <code>float32[1,T',8667]</code>；<code>log_probs_len</code>: <code>int64[1]</code>。</td></tr>
+  <tr><td>CMVN</td><td>ONNX metadata <code>cmvn_mean</code> / <code>cmvn_inv_stddev</code>；运行期做 <code>(x - mean) * inv_stddev</code>。</td></tr>
+  <tr><td>词表</td><td><code>tokens.txt</code> 为 token / id；id 0 为 blank；英文 <code>▁</code> 转为空格。</td></tr>
+  <tr><td>安装</td><td>安装脚本下载官方 <code>.tar.bz2</code>，解出 ONNX / tokens 并写 manifest；详细事实见 <a href="ASR.html">ASR 研究</a>。</td></tr>
+</table>
 <ul class="note">
-  <li>示例中的张量名是通用占位；实际名称由 <code>tools/export_models.py</code> 写入 manifest，运行期只以 manifest 为准。</li>
-  <li><code>fbank</code>、<code>max_segment_ms</code> 与 <code>punc.max_tokens</code> 均为可选字段；旧包缺省时分别使用 80 / 25 / 10 ms、10000、400。运行期以 manifest 为准，<code>max_segment_ms</code> 允许范围 1..=60000。</li>
-  <li><code>shape</code> 中的 <code>-1</code> 表示动态维度；会话建立后由 <code>infer::session::SessionFactory::build</code> 校验实际元数据。</li>
-  <li><code>tokens.txt</code> 一行一个 token，行号即 id，并包含 <code>&lt;sos&gt;</code> / <code>&lt;eos&gt;</code> / <code>&lt;pad&gt;</code>；运行期按 token 查找特殊 id（官方词表为 3 / 4 / 2），不写死。 <code>vocab.txt</code> 为 BERT WordPiece 词表；<code>labels.json</code> 为字符串数组，索引即标签 id。</li>
-  <li>FireRedPunc 官方 <code>out_dict</code> 的 id 0 是 <code>&lt;space&gt;</code>，导出时映射为 <code>""</code>；运行期只需 <code>vocab.txt</code> 构建 WordPiece，不需要 <code>tokenizer.json</code>。导出包装器在输入前补 <code>[CLS]</code>、输出后去掉，输出长度与输入 token 数一致。</li>
-  <li>若 ONNX 导出使用 external data，模型旁的 <code>*.data</code> 或其它分片文件与主文件一起保留；<code>manifest.json</code> 只声明主文件与主文件 SHA-256。</li>
-  <li>FireRedVAD 与 FireRedASR2-AED 的 CMVN 统计在导出时融合进模型图；运行期只输入 fbank，不额外读取 <code>cmvn.ark</code>。</li>
-  <li>模型来自 FireRed 官方权重，许可证为 Apache-2.0；权重文件不提交到仓库。安装脚本负责下载、导出、量化、写 manifest 与 SHA-256，并原子替换模型目录；完整命令与参数在开发完成后写入 BUILD。</li>
+  <li>VAD / Punc 的 manifest 字段与张量契约沿用项目现有结构；ASR 只描述 CTC 单模型。</li>
+  <li>模型包在运行期只读；启动校验失败不进入 TUI / daemon 运行态。</li>
+  <li>CTC 模型包约 740 MiB；只包含单个 <code>model.int8.onnx</code> 与 <code>tokens.txt</code>。</li>
 </ul>
 
-<table>
-  <tr><th>模型</th><th>输入</th><th>输出</th><th>项目侧转换</th></tr>
-  <tr>
-    <td>FireRedVAD Stream-VAD</td>
-    <td>fbank 帧序列；流式状态张量（由 manifest 声明）</td>
-    <td>逐帧语音概率；更新后的状态张量</td>
-    <td><code>VadFrame</code> → <code>Segmenter</code>；<code>SpeechStart</code> / <code>SpeechEnd</code></td>
-  </tr>
-  <tr>
-    <td>FireRedASR2-AED 编码器</td>
-    <td>16 kHz 单声道 fbank <code>[1, T, 80]</code></td>
-    <td>声学表示 <code>[1, T', D]</code></td>
-    <td><code>Segment</code> → <code>Fbank</code></td>
-  </tr>
-  <tr>
-    <td>FireRedASR2-AED 解码器</td>
-    <td>已生成 token <code>[1, U]</code> + 编码器输出</td>
-    <td>词表 logits <code>[1, U, V]</code></td>
-    <td><code>beam_search</code> → token ids → <code>Tokenizer</code> → 文本</td>
-  </tr>
-  <tr>
-    <td>FireRedPunc</td>
-    <td><code>input_ids</code> / <code>attention_mask</code> / <code>token_type_ids</code></td>
-    <td>每个 token 的标签 logits</td>
-    <td><code>labels.json</code> → 在 token 后插入标点</td>
-  </tr>
-</table>
-
-<table>
-  <tr><th>转换</th><th>从</th><th>到</th></tr>
-  <tr><td>采集格式</td><td><code>AudioChunk</code>（原生采样率 / 声道）</td><td>16 kHz 单声道 <code>f32</code></td></tr>
-  <tr><td>特征</td><td>16 kHz 单声道样本</td><td><code>Vec&lt;Vec&lt;f32&gt;&gt;</code> fbank</td></tr>
-  <tr><td>分段</td><td>逐帧 <code>VadFrame</code> + 样本</td><td><code>Segment</code></td></tr>
-  <tr><td>识别</td><td><code>Segment</code></td><td><code>AsrOutput { text, confidence }</code></td></tr>
-  <tr><td>标点</td><td>ASR 文本</td><td>带标点的最终文本</td></tr>
-  <tr><td>剪贴板</td><td><code>Vec&lt;String&gt;</code> 会话结果</td><td><code>\n</code> 连接的 UTF-8 文本</td></tr>
-</table>
-
-<h3 id="p4-3">4.3 推理运行时：ONNX Runtime / ort</h3>
+<h3 id="p4-3">4.3 推理运行时：ONNX Runtime / <code>ort</code></h3>
 <table>
   <tr><th>消费项</th><th>签名 / 类型</th><th>用途</th></tr>
-  <tr><td>环境</td><td><code>ort::environment::Environment</code></td><td>进程级 ONNX Runtime 环境；启动时创建一次。</td></tr>
-  <tr><td>会话构建</td><td><code>Session::builder()</code> + <code>with_intra_threads(n)</code> + <code>commit_from_file(path)</code></td><td>为 VAD、编码器、解码器、标点分别建立会话。</td></tr>
-  <tr><td>图优化</td><td><code>GraphOptimizationLevel::Level3</code></td><td>启用全部 CPU 图优化。</td></tr>
-  <tr><td>张量</td><td><code>ort::value::Tensor&lt;f32&gt;</code> / <code>Tensor&lt;i64&gt;</code></td><td>输入 fbank、token ids、mask；输出概率与 logits。</td></tr>
-  <tr><td>执行</td><td><code>Session::run(inputs)</code></td><td>单次同步推理；不并发调用同一会话。</td></tr>
+  <tr><td>环境</td><td><code>ort::Environment</code></td><td>CPU Execution Provider 与线程配置。</td></tr>
+  <tr><td>会话</td><td><code>SessionBuilder::commit_from_file(path) -&gt; Session</code></td><td>加载 VAD / CTC / Punc ONNX。</td></tr>
+  <tr><td>元数据</td><td><code>Session::metadata()</code></td><td>读取 CTC 的 <code>cmvn_mean</code> / <code>cmvn_inv_stddev</code>。</td></tr>
+  <tr><td>输入</td><td><code>Tensor::from_array((shape, data))</code></td><td><code>x</code> / <code>x_lens</code> 等张量。</td></tr>
+  <tr><td>推理</td><td><code>Session::run(inputs![...])</code></td><td>执行 CPU 推理。</td></tr>
+  <tr><td>输出</td><td><code>try_extract_array::&lt;T&gt;()</code></td><td>读取 logits / log_probs / 概率。</td></tr>
 </table>
-
-<pre><code>pub enum ModelError {
-    MissingFile { path: PathBuf },
-    DigestMismatch { path: PathBuf },
-    TensorMismatch { name: String, expected: String, actual: String },
-    Session(ort::Error),
-    AudioTooLong { max_ms: u64 },
-}</code></pre>
 <ul class="note">
-  <li>只使用 CPU Execution Provider；不调用 <code>with_execution_providers</code> 注册 GPU 后端。</li>
-  <li>会话由 pipeline 工作线程独占，<code>run</code> 不在多个线程间共享；ONNX Runtime 的线程池只用于单个会话内部。</li>
-  <li>推理错误在边界处转换为 <code>ModelError</code>，由 CORE 决定丢弃当前段还是终止启动。</li>
+  <li>CTC 单会话；final 与尾部 partial 复用同一个 <code>FireRedCtc</code>，不跨段保留状态。</li>
+  <li>greedy CTC 在项目侧完成：argmax → 合并连续重复 → 去掉 blank 0 → tokenizer。</li>
+  <li>只启用 CPU Execution Provider；不注册 GPU / NPU 后端。</li>
 </ul>
 
-<h3 id="p4-4">4.4 剪贴板：arboard</h3>
+<h3 id="p4-4">4.4 Fcitx addon API：热键、目标与临时窗口</h3>
 <table>
   <tr><th>消费项</th><th>签名 / 类型</th><th>用途</th></tr>
-  <tr><td>建立句柄</td><td><code>arboard::Clipboard::new() -&gt; Result&lt;Clipboard, arboard::Error&gt;</code></td><td>启动时建立一次；失败则启动失败。</td></tr>
-  <tr><td>写入文本</td><td><code>Clipboard::set_text&lt;T: Into&lt;String&gt;&gt;(&amp;mut self, text: T) -&gt; Result&lt;(), arboard::Error&gt;</code></td><td>每次最终结果后整体覆盖会话文本。</td></tr>
+  <tr><td>引擎</td><td><code>fcitx::InputMethodEngineV2</code></td><td>addon 的输入法引擎接口。</td></tr>
+  <tr><td>按键监听</td><td><code>Instance::watchEvent&lt;EventType::InputContextKeyEvent&gt;(EventWatcherPhase::PreInputMethod, handler)</code></td><td>读取热键。</td></tr>
+  <tr><td>匹配</td><td><code>KeyEvent::checkKeyList(keys, KeyEventMatchingMode::MatchAllNormalizedKeys)</code></td><td>按 Mode 解释 <code>Hotkey</code>。</td></tr>
+  <tr><td>消费</td><td><code>KeyEvent::filterAndAccept()</code></td><td>阻止热键进入应用与当前输入法。</td></tr>
+  <tr><td>目标</td><td><code>TrackableObjectReference&lt;InputContext&gt;</code></td><td>语音段目标输入框的弱引用。</td></tr>
+  <tr><td>临时窗口</td><td><code>InputPanel::setPreedit(Text)</code></td><td>写入当前 <code>Partial</code>。</td></tr>
+  <tr><td>刷新 UI</td><td><code>InputContext::updateUserInterface(UserInterfaceComponent::InputPanel)</code></td><td>让 Fcitx UI 重绘输入面板。</td></tr>
+  <tr><td>焦点检查</td><td><code>InputContext::hasFocus()</code></td><td>提交前确认目标仍聚焦。</td></tr>
+  <tr><td>配置</td><td><code>Option&lt;Mode&gt;</code> / <code>KeyListOption</code> / <code>AddonInstance::getConfig</code></td><td><code>Mode</code> / <code>Hotkey</code>。</td></tr>
 </table>
-
-<pre><code>pub enum ClipboardError {
-    Unsupported,
-    Occupied,
-    WriteFailed { detail: String },
-}</code></pre>
 <ul class="note">
-  <li>写入内容为 UTF-8 纯文本，行分隔符 <code>\n</code>，无末尾换行；空会话不写入。</li>
-  <li>Linux：X11 下本进程是剪贴板所有者，退出后若没有剪贴板管理器接管，内容可能丢失；Wayland 由合成器管理，行为随桌面环境而定。Wayland 构建需启用 arboard 的 <code>wayland-data-control</code> 特性。程序不启动后台常驻进程来维持剪贴板。</li>
-  <li>Windows：剪贴板内容在进程退出后由系统保留；写入失败按 <a href="#p4-6">§4.6</a> 处理。</li>
+  <li>临时窗口只使用 Fcitx preedit，不调用 <code>setClientPreedit</code> / <code>updatePreedit</code>。</li>
+  <li>Fcitx UI 是否渲染 preedit 由当前 UI addon 决定；没有 UI 时不影响最终提交。</li>
+  <li>当前输入法可能更新同一 <code>InputPanel</code>；Voime 在每次 Partial 重设，停止 / Final 时清空。</li>
 </ul>
 
-<h3 id="p4-5">4.5 终端：crossterm</h3>
+<h3 id="p4-5">4.5 Fcitx 提交与 frontend</h3>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>提交 API</td><td><code>InputContext::commitString(const std::string &amp;text)</code>。</td></tr>
+  <tr><td>目标</td><td>语音段开始时聚焦的 <code>InputContext</code>；失焦 / 销毁不提交。</td></tr>
+  <tr><td>Wayland</td><td>Fcitx text-input-v3 frontend 调用 <code>commit_string</code>；长文本由 Fcitx 按 UTF-8 边界拆分。</td></tr>
+  <tr><td>XWayland / X11</td><td>Fcitx XIM frontend 使用 <code>XIM_COMMIT</code>；只有使用 XIM 的客户端覆盖。</td></tr>
+  <tr><td>commit filter</td><td>Fcitx 提交过滤器生效；Voime 不绕过。</td></tr>
+  <tr><td>无确认</td><td><code>commitString</code> 无返回值；不承诺客户端一定接受。</td></tr>
+</table>
+
+<h3 id="p4-6">4.6 TUI 终端：crossterm</h3>
 <table>
   <tr><th>消费项</th><th>签名 / 类型</th><th>用途</th></tr>
-  <tr><td>TTY 检查</td><td><code>std::io::IsTerminal::is_terminal()</code></td><td>启动前确认 stdin / stdout 是终端。</td></tr>
-  <tr><td>raw mode</td><td><code>crossterm::terminal::enable_raw_mode()</code> / <code>disable_raw_mode()</code></td><td>逐键读取 <code>Space</code>、<code>q</code>、<code>Ctrl+C</code> 与滚动键。</td></tr>
-  <tr><td>备用屏幕</td><td><code>EnterAlternateScreen</code> / <code>LeaveAlternateScreen</code></td><td>退出后恢复原终端内容。</td></tr>
+  <tr><td>TTY 检查</td><td><code>std::io::IsTerminal::is_terminal()</code></td><td>仅在 TUI 启动时检查。</td></tr>
+  <tr><td>raw mode</td><td><code>terminal::enable_raw_mode()</code> / <code>disable_raw_mode()</code></td><td>TUI 按键读取与恢复。</td></tr>
+  <tr><td>备用屏幕</td><td><code>EnterAlternateScreen</code> / <code>LeaveAlternateScreen</code></td><td>退出后恢复终端内容。</td></tr>
   <tr><td>光标 / 鼠标</td><td><code>Hide</code> / <code>Show</code>，<code>DisableMouseCapture</code></td><td>隐藏光标，保留终端原生选择。</td></tr>
-  <tr><td>尺寸</td><td><code>terminal::size() -&gt; Result&lt;(u16, u16), io::Error&gt;</code></td><td>布局与换行宽度。</td></tr>
-  <tr><td>事件</td><td><code>event::poll(Duration)</code> / <code>event::read()</code></td><td>键盘事件与终端 resize。</td></tr>
+  <tr><td>尺寸 / 事件</td><td><code>terminal::size()</code> / <code>event::read()</code></td><td>布局、按键与 resize。</td></tr>
 </table>
-
-<pre><code>pub enum TerminalError {
-    NotATty,
-    Io(std::io::Error),
-}</code></pre>
 <ul class="note">
-  <li>不启用鼠标上报，不启用括号粘贴，不要求 kitty keyboard protocol；PTT 使用两次独立按键，不依赖 key release。</li>
-  <li>终端必须支持 UTF-8 与 ANSI 转义；真彩色缺失时 recording 使用 ANSI bright red。</li>
+  <li><code>voimed</code> 不要求 TTY、不启用 raw mode；只有 <code>voime</code> TUI 使用 crossterm。</li>
+  <li>终端临时文本窗口由 Fcitx UI 负责，与 crossterm 无关。</li>
 </ul>
 
-<h3 id="p4-6">4.6 消息与错误</h3>
+<h3 id="p4-7">4.7 消息与错误</h3>
 <pre><code>pub enum ProviderError {
     Audio(AudioError),
     Model(ModelError),
-    Clipboard(ClipboardError),
+    Fcitx(FcitxError),
+    Inference(InferenceError),
     Terminal(TerminalError),
 }</code></pre>
 
 <table>
   <tr><th>错误</th><th>触发条件</th><th>处理</th></tr>
-  <tr><td><code>NoInputDevice</code></td><td>系统没有默认输入设备。</td><td>启动失败，stderr + 退出码 1。</td></tr>
-  <tr><td><code>DeviceNotFound</code></td><td><code>--input-device</code> 名称不存在。</td><td>启动失败，stderr + 退出码 1。</td></tr>
-  <tr><td><code>DefaultConfig</code> / <code>BuildStream</code> / <code>PlayStream</code></td><td>设备配置或流建立失败。</td><td>启动失败，stderr + 退出码 1。</td></tr>
-  <tr><td><code>UnsupportedSampleFormat</code></td><td>设备只提供 I16 / U16 / F32 之外的格式。</td><td>启动失败，stderr + 退出码 1。</td></tr>
-  <tr><td><code>StreamLost</code></td><td>运行期音频流错误。</td><td>丢弃当前语音段；连续失败 3 次后恢复终端并以 1 退出。</td></tr>
-  <tr><td><code>MissingFile</code> / <code>DigestMismatch</code></td><td>模型文件缺失或被修改。</td><td>启动失败，stderr + 退出码 1。</td></tr>
-  <tr><td><code>TensorMismatch</code> / <code>Session</code></td><td>ONNX 元数据与 manifest 不符，或会话创建失败。</td><td>启动失败，stderr + 退出码 1。</td></tr>
-  <tr><td><code>AudioTooLong</code></td><td>语音段超过 60 s 硬上限。</td><td>丢弃当前段；CORE 应在分段阶段避免触发。</td></tr>
-  <tr><td><code>ClipboardUnsupported</code> / <code>Occupied</code></td><td>剪贴板不可用或被占用。</td><td>启动期失败；运行期不回滚结果行，下一次最终结果重试。</td></tr>
-  <tr><td><code>Clipboard WriteFailed</code></td><td>写入系统剪贴板失败。</td><td>不影响结果行；下一次最终结果整体重写。</td></tr>
-  <tr><td><code>NotATty</code> / <code>Terminal Io</code></td><td>stdin / stdout 不是终端，或终端控制失败。</td><td>启动失败，stderr + 退出码 1；运行期恢复终端后退出。</td></tr>
+  <tr><td><code>NoInputDevice</code></td><td>系统没有默认输入设备。</td><td>daemon 启动失败，stderr + 退出码 1。</td></tr>
+  <tr><td><code>DeviceNotFound</code></td><td><code>--input-device</code> 名称不存在。</td><td>daemon 启动失败。</td></tr>
+  <tr><td><code>UnsupportedSampleFormat</code></td><td>设备只提供 I16 / U16 / F32 之外的格式。</td><td>daemon 启动失败。</td></tr>
+  <tr><td><code>StreamLost</code></td><td>运行期音频流错误。</td><td>丢弃当前段；连续失败后 daemon 退出。</td></tr>
+  <tr><td><code>MissingFile</code> / <code>DigestMismatch</code></td><td>模型文件缺失或被修改。</td><td>daemon 启动失败。</td></tr>
+  <tr><td><code>TensorMismatch</code> / <code>Session</code></td><td>ONNX 元数据与 manifest 不符或会话创建失败。</td><td>daemon 启动失败。</td></tr>
+  <tr><td><code>CtcModelMismatch</code></td><td>CTC 输入输出或词表不符合 manifest。</td><td>daemon 启动失败。</td></tr>
+  <tr><td><code>CmvnMetadataMissing</code></td><td>CTC ONNX 缺少 CMVN metadata。</td><td>daemon 启动失败。</td></tr>
+  <tr><td><code>TokenizerFormat</code></td><td><code>tokens.txt</code> 行格式错误。</td><td>daemon 启动失败。</td></tr>
+  <tr><td><code>FcitxUnavailable</code></td><td>Fcitx 未运行或 addon 未加载。</td><td>无热键 / 临时窗口；TUI 可手动控制；日志说明。</td></tr>
+  <tr><td><code>AddonNotLoaded</code></td><td>未加入输入法组或 addon 加载失败。</td><td>日志 / <code>voime doctor</code>；不消费热键。</td></tr>
+  <tr><td><code>NoInputContext</code></td><td>没有聚焦文本输入框。</td><td>不开始语音段；不提交。</td></tr>
+  <tr><td><code>CommitTargetLost</code></td><td>目标输入框失焦或销毁。</td><td>清空临时窗口；Final 保留历史。</td></tr>
+  <tr><td><code>DaemonUnavailable</code></td><td>addon 无法连接 socket。</td><td>放行热键；重连；不影响普通输入。</td></tr>
+  <tr><td><code>IpcDisconnected</code> / <code>IpcVersionMismatch</code></td><td>IPC 断线或版本不匹配。</td><td>清理状态；版本不匹配拒绝连接。</td></tr>
+  <tr><td><code>AddonAbiMismatch</code></td><td>Fcitx 升级后 addon ABI 不匹配。</td><td>重新编译 addon；Fcitx 日志记录。</td></tr>
+  <tr><td><code>NotATty</code> / <code>Terminal Io</code></td><td>TUI 没有终端或控制失败。</td><td>TUI 启动失败；daemon 不受影响。</td></tr>
 </table>
+
+<h3 id="p4-8">4.8 addon 描述文件与配置</h3>
+<pre><code># share/fcitx5/addon/voime.conf
+[Addon]
+Name=Voime
+Category=InputMethod
+Version=@PROJECT_VERSION@
+Library=voime
+Type=SharedLibrary
+OnDemand=False
+Configurable=True
+
+# share/fcitx5/inputmethod/voime.conf
+[InputMethod]
+Name=Voime
+Icon=voime
+Label=语
+LangCode=zh_CN
+Addon=voime
+Configurable=True
+
+# ~/.config/fcitx5/conf/voime.conf
+Mode=ptt
+Hotkey=Super+F2</code></pre>
 <ul class="note">
-  <li>启动期错误一律在进入备用屏幕之前报告；运行期错误不写入 TUI 内容区，以保持界面只有两个元素。</li>
-  <li>错误文本包含失败的文件、设备或张量名，便于定位；不输出模型权重或用户音频内容。</li>
+  <li><code>OnDemand=False</code> 让 addon 在 Fcitx 启动时加载，从而在其他输入法活动时也能收到按键。</li>
+  <li><code>Library=voime</code> 对应 <code>$PREFIX/lib/fcitx5/voime.so</code>；输入法条目通过 <code>Addon=voime</code> 关联。</li>
+  <li>socket 使用 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code> 默认路径，不暴露为用户配置。</li>
 </ul>
+
+<h3 id="p4-9">4.9 Fcitx frontend 覆盖</h3>
+<table>
+  <tr><th>客户端</th><th>按键 / 热键</th><th>最终文本</th><th>说明</th></tr>
+  <tr><td>原生 Wayland text-input-v3</td><td>Fcitx frontend</td><td><code>commit_string</code></td><td>标准 Wayland 路径。</td></tr>
+  <tr><td>XWayland / X11 XIM</td><td>Fcitx XIM</td><td><code>XIM_COMMIT</code></td><td>只有使用 XIM 的客户端覆盖。</td></tr>
+  <tr><td>终端模拟器</td><td>取决于 text-input / XIM 支持</td><td>支持时同上</td><td>不支持输入法协议的终端不保证热键与提交。</td></tr>
+  <tr><td>无 text-input 的窗口</td><td>不可用</td><td>无目标</td><td>Voime 不自行抓键盘。</td></tr>
+  <tr><td>无 Fcitx UI</td><td>热键仍可用</td><td>仍可提交</td><td>临时窗口不显示；不影响文本提交。</td></tr>
+</table>
 
 </body>
 </html>

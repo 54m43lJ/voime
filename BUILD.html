@@ -15,6 +15,7 @@
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
+<a href="ASR.html">ASR</a>
 </p>
 
 <h2 id="b1">1. 环境</h2>
@@ -22,28 +23,37 @@
 
 <table>
   <tr><th>项目</th><th>要求</th></tr>
-  <tr><td>平台</td><td>AMD x86_64 Linux 或 Windows；验收平台为 AMD x86_64 CPU。</td></tr>
-  <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）。首次构建需要网络下载 crate 与 ONNX Runtime 预编译库。</td></tr>
+  <tr><td>平台</td><td>Linux + Fcitx5；验收平台为 AMD x86_64 CPU。</td></tr>
+  <tr><td>Fcitx5</td><td>≥ 5.1.23，运行中；<code>fcitx5-configtool</code> 用于配置 <code>Mode</code> / <code>Hotkey</code>。</td></tr>
+  <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）；首次构建需要网络下载 crate 与 ONNX Runtime。</td></tr>
   <tr><td>Linux 构建依赖</td><td>ALSA 开发头文件；Arch：<code>alsa-lib</code>；Debian / Ubuntu：<code>libasound2-dev</code>。</td></tr>
-  <tr><td>Linux 安装依赖</td><td>Python 虚拟环境支持；Debian / Ubuntu 需要 <code>python3-venv</code>。</td></tr>
-  <tr><td>模型安装期</td><td>Python 3.10+、网络与磁盘空间；只用于 <code>scripts/install_models.*</code> 与 <code>tools/</code>，不进入运行时。</td></tr>
-  <tr><td>运行期</td><td>无需网络、GPU、Python 或系统输入法框架；需要 TTY、UTF-8、ANSI 转义与可用录音设备。</td></tr>
+  <tr><td>addon 构建依赖</td><td>C++17、CMake、<code>Fcitx5Core</code> 开发头文件；Arch：<code>fcitx5</code>；Debian / Ubuntu：<code>libfcitx5core-dev</code> 等，按发行版为准。</td></tr>
+  <tr><td>模型安装期</td><td>Python 3.10+、网络与约 740 MiB 磁盘空间；只用于 <code>scripts/install_models.*</code> 与 <code>tools/</code>。</td></tr>
+  <tr><td>运行期</td><td>Fcitx5 运行中、<code>voimed</code> 运行中、可用录音设备；<code>voime</code> TUI 需要 TTY；daemon 不需要 TTY。</td></tr>
+  <tr><td>运行期不需要</td><td>网络、GPU、Python、自绘 GUI 或独立输入法前端。</td></tr>
 </table>
 
 <h2 id="b2">2. 构建</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code>cargo build --release</code></pre>
+<pre><code>cargo build --release
+
+cmake -S fcitx-addon -B build/fcitx
+cmake --build build/fcitx
+sudo cmake --install build/fcitx</code></pre>
 
 <table>
   <tr><th>产物</th><th>说明</th></tr>
-  <tr><td><code>target/release/voime</code>（Windows <code>voime.exe</code>）</td><td>完整应用；ONNX Runtime 随 <code>ort</code> 构建时链接进可执行文件。</td></tr>
-  <tr><td>模型包</td><td>由安装脚本生成在用户数据目录，不进入版本库；应用只读。</td></tr>
+  <tr><td><code>target/release/voimed</code></td><td>ASR 守护进程；ONNX Runtime 随 <code>ort</code> 构建时链接。</td></tr>
+  <tr><td><code>target/release/voime</code></td><td>可选 TUI / <code>ctl</code> / <code>doctor</code>。</td></tr>
+  <tr><td><code>build/fcitx/voime.so</code></td><td>Fcitx5 addon；安装到 <code>$PREFIX/lib/fcitx5/</code>。</td></tr>
+  <tr><td>addon 描述文件</td><td><code>share/fcitx5/addon/voime.conf</code>、<code>share/fcitx5/inputmethod/voime.conf</code>、图标。</td></tr>
+  <tr><td>模型包</td><td>由安装脚本生成在用户数据目录，不进入版本库；<code>voimed</code> 只读。</td></tr>
 </table>
 <ul class="note">
   <li>构建过程通过 <code>ort</code> 的 <code>download-binaries</code> 获取 ONNX Runtime；构建完成后运行期不联网。</li>
-  <li>发布时只需分发可执行文件与模型包；不要分发 <code>target/</code> 或安装虚拟环境。</li>
-  <li>若 ONNX 使用 external data，模型目录中的 <code>*.data</code> 或分片文件必须与 <code>.onnx</code> 一起复制，否则会话加载失败。</li>
+  <li>发布时分别分发 Rust 二进制、addon、描述文件、systemd unit 与模型安装脚本。</li>
+  <li>如果 ONNX 使用 external data，模型目录中的 <code>*.data</code> 或分片必须与 <code>.onnx</code> 一起复制。</li>
 </ul>
 
 <h2 id="b3">3. 安装模型</h2>
@@ -52,50 +62,57 @@
 <pre><code># Linux
 scripts/install_models.sh
 
-# Windows (PowerShell)
-powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1</code></pre>
+# 指定模型目录 / 本地官方包
+scripts/install_models.sh --model-dir /path/to/models
+scripts/install_models.sh --source-dir /path/to/official/weights</code></pre>
 
 <table>
   <tr><th>行为</th><th>契约</th></tr>
-  <tr><td>默认目录</td><td>Linux <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）；Windows <code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
-  <tr><td>虚拟环境</td><td>Linux <code>~/.cache/voime/venv</code>；Windows <code>%LOCALAPPDATA%\voime\cache\venv</code>。依赖见 <code>tools/requirements-export.txt</code>。</td></tr>
-  <tr><td>网络</td><td>下载 FireRed 官方权重与 FireRedASR2S 源码；完成后应用离线运行。</td></tr>
-  <tr><td>磁盘</td><td>下载缓存约 5 GB；默认 int8 模型包约 1.3 GB。FP32 导出包更大。</td></tr>
-  <tr><td>安装方式</td><td>在目标目录同盘创建临时目录，导出、校验、写 <code>manifest.json</code> 后原子替换。</td></tr>
-  <tr><td>量化</td><td>默认导出并动态量化为 int8；量化后优先把 external data 内联成单个 <code>.onnx</code>，无法内联时保留分片并随主文件一起复制，同时清理不再被引用的旧分片。<code>--no-quantize</code> 可保留 FP32。</td></tr>
+  <tr><td>默认目录</td><td><code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）。</td></tr>
+  <tr><td>ASR</td><td>FireRedASR2-CTC int8：官方 <code>.tar.bz2</code>，解出 <code>asr/model.int8.onnx</code> 与 <code>asr/tokens.txt</code>。</td></tr>
+  <tr><td>VAD / Punc</td><td>FireRedVAD 与 FireRedPunc 的 ONNX、词表、标签；由安装脚本下载 / 导出并校验。</td></tr>
+  <tr><td>Manifest</td><td>schema 2；ASR <code>kind = "fire-red-ctc"</code>；<code>max_segment_ms = 30000</code>；SHA-256 写入清单。</td></tr>
+  <tr><td>磁盘</td><td>下载缓存与模型包合计约 740 MiB 起；空间不足时安装失败。</td></tr>
+  <tr><td>原子安装</td><td>在同盘临时目录下载、校验、写 manifest 后替换目标目录。</td></tr>
 </table>
-
-<pre><code># 常用参数
-scripts/install_models.sh --model-dir /path/to/models
-scripts/install_models.sh --source-dir /path/to/official/weights
-scripts/install_models.sh --no-quantize
-
-# 单独校验已有模型包（会重写 manifest.json）
-~/.cache/voime/venv/bin/python tools/verify_models.py --model-dir /path/to/models
-# Windows
-%LOCALAPPDATA%\voime\cache\venv\Scripts\python.exe tools\verify_models.py --model-dir C:\path\to\models</code></pre>
-
 <ul class="note">
-  <li><code>--source-dir</code> 目录需包含 <code>FireRedASR2-AED/</code> 与 <code>FireRedPunc/</code>；若同时提供 <code>FireRedVAD/pretrained_models/onnx_models/</code> 则跳过 VAD 下载。</li>
-  <li>需要从 HuggingFace 下载且未检测到 <code>HF_TOKEN</code> 时，安装脚本会警告并提示输入；直接回车或非交互环境会继续未认证下载。输入的 token 只用于当前进程，不写入磁盘。</li>
-  <li>模型包内容与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>；安装脚本不写入用户音频或识别历史。</li>
+  <li>模型权重不提交到仓库；安装脚本只写入用户数据目录。</li>
+  <li>模型包内容与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>；模型事实与 RTF 见 <a href="ASR.html">ASR 研究</a>。</li>
+  <li>运行期不下载、不重新导出、不做动态量化。</li>
 </ul>
 
 <h2 id="b4">4. 运行</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code>target/release/voime                       # PTT 模式
-target/release/voime --mode continuous     # 持续监听
-target/release/voime --input-device "USB Microphone"
-target/release/voime --threads 4</code></pre>
+<pre><code># 1. 启动 daemon（推荐 systemd user service）
+systemctl --user daemon-reload
+systemctl --user enable --now voime.service
+
+# 2. 安装 / 更新 addon 后重启 Fcitx
+fcitx5 -r
+
+# 3. 在 fcitx5-configtool 中把 Voime 加入输入法组
+fcitx5-configtool
+
+# 4. 可选 TUI / 控制
+voime
+voime ctl status
+voime doctor</code></pre>
 
 <table>
   <tr><th>现象</th><th>处理</th></tr>
-  <tr><td><code>模型清单格式错误</code> / <code>模型文件缺失</code> / <code>校验失败</code></td><td>重新运行安装脚本；确认 <code>--model-dir</code> 指向包含 <code>manifest.json</code> 的目录。</td></tr>
-  <tr><td><code>终端不可用</code></td><td>必须从真实终端启动；重定向 stdin / stdout 时不会进入 TUI。</td></tr>
-  <tr><td><code>没有可用输入设备</code> / <code>未找到输入设备</code></td><td>检查系统录音设备；设备名必须与操作系统暴露的名称完全一致。</td></tr>
-  <tr><td>剪贴板初始化失败</td><td>Linux 需要 X11 或支持 <code>wayland-data-control</code> 的 Wayland 合成器；无剪贴板环境时应用拒绝启动。</td></tr>
+  <tr><td>Fcitx 输入法列表没有 <code>Voime</code></td><td>确认 addon 描述文件安装到 Fcitx 前缀；重启 Fcitx；检查 <code>voime.so</code> 的 ABI / 依赖。</td></tr>
+  <tr><td>热键没有反应</td><td>确认 <code>Mode</code> / <code>Hotkey</code> 已加载；热键未被 Fcitx trigger 或合成器绑定；当前窗口有文本焦点。</td></tr>
+  <tr><td>没有临时文本窗口</td><td>确认 Fcitx UI addon 正在运行；当前 UI 可能不渲染 preedit；不影响最终提交。</td></tr>
+  <tr><td>最终文本没有上屏</td><td>确认目标输入框在录音期间没有失焦；查看 <code>voime doctor</code> 与 Fcitx 日志。</td></tr>
+  <tr><td>daemon 未启动</td><td><code>systemctl --user status voime.service</code>；检查模型、音频与 socket 错误。</td></tr>
+  <tr><td>模型错误</td><td>重新运行安装脚本；确认 <code>--model-dir</code> 指向包含 <code>manifest.json</code> 的目录。</td></tr>
+  <tr><td>没有录音设备</td><td>检查系统录音设备；<code>--input-device</code> 必须精确匹配设备名。</td></tr>
 </table>
+<ul class="note">
+  <li><code>voimed</code> 不需要 <code>WAYLAND_DISPLAY</code> 或 <code>DISPLAY</code>；addon 负责与 Fcitx 交互。</li>
+  <li>TUI 的 <code>q</code> / <code>Ctrl+C</code> 只 detach；停止 daemon 使用 <code>voime ctl quit</code> 或 systemd。</li>
+</ul>
 
 <h2 id="b5">5. 测试</h2>
 <p><a href="#top">↑</a></p>
@@ -103,26 +120,45 @@ target/release/voime --threads 4</code></pre>
 <pre><code>cargo test
 cargo clippy --all-targets
 cargo fmt --all --check
-~/.cache/voime/venv/bin/python tools/verify_models.py --model-dir &lt;DIR&gt; --no-write</code></pre>
+
+cmake --build build/fcitx
+ctest --test-dir build/fcitx --output-on-failure</code></pre>
 
 <ul class="note">
-  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长（<code>MaxDuration</code>）；<code>tests/clipboard.rs</code> 覆盖会话文本拼接。</li>
+  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束与最大段长；<code>tests/ipc.rs</code> 覆盖握手 / 角色 / Mode；<code>tests/state.rs</code> 覆盖段 ID / 目标 / 清空；<code>tests/daemon.rs</code> 覆盖 PTT / toggle / continuous / 断线；<code>tests/asr_ctc.rs</code> 覆盖 CMVN / token id / greedy / 10–60 s 解码。</li>
+  <li><code>fcitx-addon/tests</code> 覆盖 keymatch / mode / preview / target。</li>
   <li>模型包校验包含 SHA-256、张量名称、类型、形状与真实 ONNX Runtime 推理；不含音频内容。</li>
+  <li>手工验收需同时在原生 Wayland、XWayland / XIM 与支持 text-input 的终端中测试热键、临时窗口与提交。</li>
 </ul>
 
 <h2 id="b6">6. 发布检查</h2>
 <p><a href="#top">↑</a></p>
 
 <pre><code>cargo build --release
+cmake -S fcitx-addon -B build/fcitx
+cmake --build build/fcitx
+
+target/release/voimed --help
 target/release/voime --help
-target/release/voime --version
+target/release/voime doctor
 scripts/install_models.sh</code></pre>
 
 <ul class="note">
-  <li>发布包应包含可执行文件、<code>scripts/</code>、<code>tools/</code> 与安装说明；模型权重由安装脚本按需下载。</li>
-  <li>运行验收：PTT 下一段识别、空语音段、静音自动结束、continuous 切分、剪贴板覆盖、滚动与退出终端恢复。</li>
-  <li>长语音（&gt;10 s）应正常分成多段；PTT 按住期间不丢后续语音。</li>
+  <li>发布包包含 <code>voimed</code>、<code>voime</code>、<code>voime.so</code>、addon / inputmethod 描述文件、systemd unit、模型安装脚本与说明。</li>
+  <li>验收：addon 被 Fcitx 加载；Mode 三态与 Hotkey；临时窗口显示 / 关闭；普通打字不受影响；原生 Wayland 提交；XWayland XIM 提交；目标失焦不误提交；TUI detach；daemon 重启重连；CTC final / partial 文本正常、RTF 达标。</li>
+  <li>模型权重由安装脚本按需下载；发布包不包含模型权重。</li>
 </ul>
+
+<h2 id="b7">7. 升级 / 卸载</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>操作</th><th>步骤</th></tr>
+  <tr><td>升级 Fcitx</td><td>重新编译并安装 <code>voime.so</code>；重启 Fcitx；确认 addon ABI 与输入法条目。</td></tr>
+  <tr><td>升级 Voime</td><td>停止 daemon；替换 Rust 二进制与 addon；更新描述文件；重启 daemon 与 Fcitx。</td></tr>
+  <tr><td>卸载</td><td><code>systemctl --user disable --now voime.service</code>；删除 addon / inputmethod 描述文件、<code>voime.so</code>、Rust 二进制与 systemd unit；模型目录按需保留或删除。</td></tr>
+  <tr><td>停止顺序</td><td>先停止 daemon，再重启 / 关闭 Fcitx；卸载后 Fcitx 不保留 <code>Voime</code> 条目。</td></tr>
+</table>
 
 </body>
 </html>

@@ -4,22 +4,32 @@ skinparam shadowing false
 hide footbox
 
 actor "用户" as User
-participant "Voime" as App
-participant "麦克风" as Mic
-participant "终端" as Term
-participant "剪贴板" as Clip
+participant "Fcitx5" as Fcitx
+participant "Voime" as Voime
+participant "目标应用" as App
 
-User -> App : 按 Space
-App -> Term : 显示红色标记与新行
-App -> Mic : 开始本段采集
-loop 采集期间
-  Mic -> App : PCM 帧
-  App -> Term : 更新临时文本
+User -> Fcitx : 按下 Hotkey（Mode=ptt / toggle）
+Fcitx -> Voime : InputContextKeyEvent
+Voime -> Voime : 按 Mode 匹配并记录目标输入框
+Voime -> Fcitx : filterAndAccept()\n消费 Hotkey
+
+alt Mode=ptt
+  User -> Fcitx : 松开 Hotkey
+  Fcitx -> Voime : key release
+  Voime -> Fcitx : 消费 release
+else Mode=toggle
+  User -> Fcitx : 再按 Hotkey
+  Fcitx -> Voime : key press
+  Voime -> Fcitx : 消费 press
 end
-User -> App : 再按 Space / 静音自动结束
-App -> Mic : 结束本段采集
-App -> Term : 隐藏标记
-App -> App : 内部处理\n最终识别与标点
-App -> Term : 固化结果行
-App -> Clip : 写入会话文本
+
+Voime -> Voime : 采集 + VAD + CTC
+loop 录音期间
+  Voime -> Fcitx : InputPanel::setPreedit(Partial)
+  Fcitx -> User : 临时文本窗口
+end
+
+Voime -> Fcitx : 清空 preedit
+Voime -> Fcitx : commitString(Final)
+Fcitx -> App : 插入最终文本
 @enduml

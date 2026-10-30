@@ -5,16 +5,17 @@ skinparam componentStyle rectangle
 left to right direction
 
 actor "用户" as User
-component "Voime" as App
+component "Fcitx5\n键盘 / 输入上下文 / 输入面板" as Fcitx
+component "Voime\naddon + ASR daemon" as Voime
+component "目标应用" as App
 component "麦克风" as Mic
-component "终端" as Term
-component "剪贴板" as Clip
-component "本地模型包\nFireRedVAD / FireRedASR2-AED / FireRedPunc" as Models
+component "本地模型包\nFireRedVAD / FireRedASR2-CTC / FireRedPunc" as Models
 
-User --> App : 按键、说话
-App --> Term : 渲染标记与结果
-Term --> User : 显示
-Mic --> App : 16 kHz 单声道 PCM
-App --> Clip : 会话文本
-App --> Models : 加载模型权重
+User --> Fcitx : 键盘 / 热键
+Fcitx --> Voime : InputContextKeyEvent
+Voime --> Fcitx : setPreedit(Partial)\ncommitString(Final)
+Fcitx --> App : 普通按键 / 最终文本
+Fcitx --> User : 临时窗口 / 状态
+Voime --> Mic : 16 kHz PCM
+Voime --> Models : 只读加载
 @enduml

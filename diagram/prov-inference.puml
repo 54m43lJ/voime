@@ -11,14 +11,10 @@ App -> Model : 读取 + SHA-256
 App -> Ort : Session::builder().commit_from_file()
 Ort -> App : Session
 loop 每个语音段
-  App -> Ort : run(vad features)
-  Ort -> App : probs
-  App -> Ort : run(encoder features)
-  Ort -> App : encoder_out
-  loop 自回归解码
-    App -> Ort : run(decoder tokens, encoder_out)
-    Ort -> App : logits
-  end
+  App -> App : fbank + CMVN
+  App -> Ort : run(x, x_lens)
+  Ort -> App : log_probs
+  App -> App : greedy CTC
   App -> Ort : run(punc input_ids, mask)
   Ort -> App : logits
 end

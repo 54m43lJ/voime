@@ -4,28 +4,23 @@ skinparam shadowing false
 hide footbox
 
 actor "用户" as User
-participant "Voime" as App
-participant "麦克风" as Mic
-participant "终端" as Term
-participant "剪贴板" as Clip
+participant "Fcitx5" as Fcitx
+participant "Voime" as Voime
+participant "目标应用" as App
 
-User -> App : 启动 --mode continuous
-loop 持续监听
-  Mic -> App : PCM 帧
-  App -> App : 内部处理\nVAD 切分
-  alt 检测到语音段
-    App -> Term : 显示红色标记与新行
-    loop 语音期间
-      Mic -> App : PCM 帧
-      App -> Term : 更新临时文本
-    end
-    App -> Term : 隐藏标记
-    App -> App : 内部处理\n最终识别与标点
-    App -> Term : 追加结果行
-    App -> Clip : 写入会话文本
-  else 静音
-    App -> Term : 隐藏标记
+note over User, Voime
+  Mode=continuous：不读取、不消费 Hotkey。
+end note
+
+loop VAD 持续监听
+  Voime -> Voime : 检测到语音起点\n绑定目标输入框
+  loop 语音期间
+    Voime -> Fcitx : InputPanel::setPreedit(Partial)
+    Fcitx -> User : 临时文本窗口
   end
+  Voime -> Voime : 检测到语音终点\nCTC + 标点
+  Voime -> Fcitx : 清空 preedit
+  Voime -> Fcitx : commitString(Final)
+  Fcitx -> App : 插入最终文本
 end
-User -> App : q / Ctrl+C
 @enduml

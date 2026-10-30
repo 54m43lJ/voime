@@ -101,7 +101,7 @@ frontend 只在有 text-input 焦点时持有键盘抓取，因此 PTT 只在 Fc
   <li>CTC 的目标是降低 CPU 推理耗时与模型内存：本机 2 threads 实测 RTF 约 0.066–0.094，模型约 740 MiB；详细事实、预处理和 ONNX 输入输出见 <a href="ASR.html">ASR 研究</a>。</li>
   <li>PTT 只在 Fcitx 能收到按键的输入上下文中生效：原生 Wayland 的 text-input 输入框、通过 Fcitx XIM 连接的 XWayland/X11 应用。桌面空白处、未使用 Fcitx 的应用、没有文本焦点的窗口不保证 PTT。</li>
   <li>最终文本通过 <code>commitString</code> 提交到目标输入框；没有目标时文本保留在 daemon/TUI。</li>
-  <li>本文件只是提案，不修改现有 README / USER / CORE / PROVIDER / BUILD。批准后按 <a href="#pr9">§9</a> 的顺序落笔；正式文档稳定后，本文件从正式文档集中移除。</li>
+  <li>正式文档已按本提案落笔；本文件保留为设计记录，不进入正式文档导航，也不再作为实现契约。</li>
 </ul>
 
 <h2 id="pr2">2. 目标与非目标</h2>
@@ -1229,8 +1229,8 @@ impl FireRedCtc {
 <p><a href="#top">↑</a></p>
 
 <p>
-以下按现有文档章节列出落笔内容。批准后先改 README / USER / ASR / CORE / PROVIDER / BUILD，再把
-<code>proposal-fcitx-*</code> 图重命名为正式图名。提案本身不进入正式文档导航。
+以下按现有文档章节列出已落笔内容。正式图已使用 <code>general-architecture</code> / <code>seq-*</code> /
+<code>prov-*</code> 命名；提案本身不进入正式文档导航。
 </p>
 
 <h3 id="pr9-1">9.1 README.html</h3>
@@ -1271,19 +1271,23 @@ impl FireRedCtc {
   </tr>
   <tr>
     <td><a href="USER.html#u3">§3 DIAGRAMS</a></td>
-    <td>3.1 总体架构使用 <code>proposal-fcitx-architecture</code>；3.2 PTT 流程使用 <code>proposal-fcitx-hotkey</code>；3.3 continuous 使用 VAD → addon → Fcitx commit；3.4 使用 <code>proposal-fcitx-delivery</code> 展示目标输入框检查；3.5 使用 <code>proposal-fcitx-preview</code> 展示 Partial 临时窗口与清空。</td>
+    <td>3.1 总体架构使用 <code>general-architecture</code>；3.2 PTT / toggle 流程使用 <code>seq-ptt</code>；3.3 continuous 使用 <code>seq-continuous</code>；3.4 使用 <code>seq-preview</code> 展示 Partial 临时窗口与清空。</td>
   </tr>
   <tr>
-    <td><a href="USER.html#u4-1">§4.1 命令行</a></td>
-    <td>拆成 <code>voimed</code> / <code>voime</code> / <code>voime ctl</code> 三张表；<code>voimed</code> 不提供 <code>--mode</code> / 热键参数；写入 <code>--socket</code>、<code>voime doctor</code>；说明 Mode / Hotkey 在 Fcitx addon 配置；退出码按进程分别列出。</td>
+    <td><a href="USER.html#u4-1">§4.1 Fcitx addon 配置</a></td>
+    <td>写成 <code>Mode</code> / <code>Hotkey</code> 两个用户配置项与默认值；socket 使用默认路径。</td>
   </tr>
   <tr>
-    <td><a href="USER.html#u4-2">§4.2 输出契约</a></td>
-    <td>写成“Fcitx 文本提交”：目标输入框、<code>commitString</code>、UTF-8、Fcitx frontend、长文本、commit filter、失焦 / 无目标、无提交确认；保留最终结果的格式与空段规则。临时文本窗口使用 <code>InputPanel::setPreedit</code>，在 Final / 停止时清空。</td>
+    <td><a href="USER.html#u4-2">§4.2 命令行</a></td>
+    <td>拆成 <code>voimed</code> / <code>voime</code> / <code>voime ctl</code> 三张表；<code>voimed</code> 不提供 <code>--mode</code> / 热键参数；写入 <code>--socket</code>、<code>voime doctor</code>；退出码按进程分别列出。</td>
   </tr>
   <tr>
-    <td><a href="USER.html#u4-3">§4.3 对外 API</a></td>
-    <td>写成 Unix socket IPC：路径、权限、Hello 角色 / 配置、Configure、ClientMessage / ServerMessage、<code>segment_id</code>、版本、错误、背压。新增 §4.4 “Fcitx addon 配置”：<code>Mode</code> / <code>Hotkey</code> 与默认值；socket 使用默认路径。</td>
+    <td><a href="USER.html#u4-3">§4.3 IPC</a></td>
+    <td>写成 Unix socket IPC：路径、权限、Hello 角色 / 配置、Configure、ClientMessage / ServerMessage、<code>segment_id</code>、版本、错误、背压。</td>
+  </tr>
+  <tr>
+    <td><a href="USER.html#u4-4">§4.4 输出契约</a></td>
+    <td>写成“Fcitx 文本提交”：目标输入框、<code>commitString</code>、UTF-8、Fcitx frontend、长文本、commit filter、失焦 / 无目标、无提交确认；临时文本窗口在 Final / 停止时清空。</td>
   </tr>
   <tr>
     <td><a href="USER.html#u5">§5 UI</a></td>
@@ -1333,7 +1337,7 @@ impl FireRedCtc {
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p3">§3 DIAGRAMS</a></td>
-    <td>3.1 音频；3.2 推理改为 CTC 单 ONNX / CMVN / greedy；3.3 Fcitx 按键 / PTT 边界（<code>proposal-fcitx-hotkey</code>）；3.4 Fcitx commit 边界（<code>proposal-fcitx-delivery</code>）；3.5 InputPanel 临时窗口（<code>proposal-fcitx-preview</code>）；需要时 3.6 addon 生命周期 / 重连。</td>
+    <td>3.1 音频；3.2 推理改为 CTC 单 ONNX / CMVN / greedy；3.3 Fcitx 按键 / Hotkey 边界；3.4 InputPanel 临时窗口；3.5 Fcitx commit 边界。</td>
   </tr>
   <tr>
     <td><a href="PROVIDER.html#p4-2">§4.2 模型包</a></td>
@@ -1348,16 +1352,24 @@ impl FireRedCtc {
     <td>写成 <code>InputMethodEngineV2</code>、<code>Instance::watchEvent</code>、<code>KeyEvent::checkKeyList</code> / <code>filterAndAccept</code>、<code>InputContext::commitString</code>、<code>TrackableObjectReference</code>、<code>InputPanel::setPreedit</code> / <code>InputContext::updateUserInterface</code>。</td>
   </tr>
   <tr>
-    <td><a href="PROVIDER.html#p4-5">§4.5 终端：crossterm</a></td>
+    <td><a href="PROVIDER.html#p4-5">§4.5 Fcitx 提交与 frontend</a></td>
+    <td>写入 <code>commitString</code>、Wayland text-input-v3 / XIM 覆盖、commit filter、无提交确认。</td>
+  </tr>
+  <tr>
+    <td><a href="PROVIDER.html#p4-6">§4.6 TUI 终端：crossterm</a></td>
     <td>写成“TUI 专用”：<code>voimed</code> 不要求 TTY，不启用 raw mode；<code>voime</code> 才使用 crossterm。</td>
   </tr>
   <tr>
-    <td><a href="PROVIDER.html#p4-6">§4.6 消息与错误</a></td>
+    <td><a href="PROVIDER.html#p4-7">§4.7 消息与错误</a></td>
     <td>写入 <code>FcitxUnavailable</code>、<code>AddonNotLoaded</code>、<code>NoInputContext</code>、<code>CommitTargetLost</code>、<code>DaemonUnavailable</code>、<code>IpcDisconnected</code>、<code>IpcVersionMismatch</code>、<code>AddonAbiMismatch</code>、<code>CtcModelMismatch</code>、<code>CmvnMetadataMissing</code>、<code>TokenizerFormat</code>；说明启动期 / 运行期处理。</td>
   </tr>
   <tr>
-    <td><code>§4 新增小节</code></td>
-    <td>追加 §4.7 “Fcitx addon 描述文件与配置”（<code>Mode</code> / <code>Hotkey</code> / 安装路径）、§4.8 “Fcitx frontend 与临时窗口”（Wayland text-input、XIM、<code>InputPanel</code> preedit、无 text-input / 无 UI）、§4.9 “Fcitx 生命周期与状态”（加载 / 重载 / 重启 / 状态图标）。</td>
+    <td><a href="PROVIDER.html#p4-8">§4.8 addon 描述文件与配置</a></td>
+    <td>写入 addon / inputmethod 描述文件、<code>Mode</code> / <code>Hotkey</code> 配置与安装路径。</td>
+  </tr>
+  <tr>
+    <td><a href="PROVIDER.html#p4-9">§4.9 Fcitx frontend 覆盖</a></td>
+    <td>写入 Wayland text-input、XIM、终端、无 text-input、无 Fcitx UI 的覆盖与限制。</td>
   </tr>
 </table>
 
@@ -1397,16 +1409,18 @@ impl FireRedCtc {
 <h3 id="pr9-6">9.6 图表</h3>
 <table>
   <tr><th>源文件</th><th>用途</th><th>落地位置</th></tr>
-  <tr><td><code>proposal-fcitx-architecture.puml</code></td><td>Fcitx5 + addon + daemon + TUI 的目标组件架构；含 InputPanel 临时窗口与 CTC 模型包</td><td>USER §3.1 / README</td></tr>
+  <tr><td><code>proposal-fcitx-architecture.puml</code></td><td>Fcitx5 + addon + daemon + TUI 的目标组件架构；含 InputPanel 临时窗口与 CTC 模型包</td><td>USER §3.1</td></tr>
   <tr><td><code>proposal-fcitx-hotkey.puml</code></td><td>Fcitx 捕获 Hotkey（按 Mode）、消费按键、daemon 识别与最终提交</td><td>USER §3.2 / PROVIDER §3.3</td></tr>
-  <tr><td><code>proposal-fcitx-delivery.puml</code></td><td>Final → 目标 InputContext → Fcitx frontend 的提交路径</td><td>USER §3.4 / PROVIDER §3.4</td></tr>
-  <tr><td><code>proposal-fcitx-preview.puml</code></td><td>Partial → Fcitx InputPanel preedit 临时窗口 → Final / 停止清空</td><td>USER §3.5 / PROVIDER §3.5</td></tr>
+  <tr><td><code>proposal-fcitx-delivery.puml</code></td><td>Final → 目标 InputContext → Fcitx frontend 的提交路径</td><td>PROVIDER §3.5</td></tr>
+  <tr><td><code>proposal-fcitx-preview.puml</code></td><td>Partial → Fcitx InputPanel preedit 临时窗口 → Final / 停止清空</td><td>USER §3.4 / PROVIDER §3.4</td></tr>
   <tr><td><code>diagram/general-architecture.puml</code></td><td>使用 Fcitx 架构图，模型包标注 CTC</td><td>USER §3.1</td></tr>
   <tr><td><code>diagram/seq-ptt.puml</code></td><td>使用 Fcitx PTT / commit 时序</td><td>USER §3.2</td></tr>
   <tr><td><code>diagram/seq-continuous.puml</code></td><td>VAD 流程，Final 经 addon → Fcitx commit</td><td>USER §3.3</td></tr>
+  <tr><td><code>diagram/seq-preview.puml</code></td><td>Partial 写入 InputPanel 并在 Final 关闭</td><td>USER §3.4</td></tr>
   <tr><td><code>diagram/prov-inference.puml</code></td><td>CTC：单 ONNX、CMVN、greedy</td><td>PROVIDER §3.2</td></tr>
-  <tr><td><code>diagram/prov-fcitx-key.puml</code></td><td>Fcitx 按键事件 / PreInputMethod / PTT 消费边界</td><td>PROVIDER §3.3</td></tr>
-  <tr><td><code>diagram/prov-fcitx-commit.puml</code></td><td>Fcitx commit / frontend 覆盖边界</td><td>PROVIDER §3.4</td></tr>
+  <tr><td><code>diagram/prov-fcitx-key.puml</code></td><td>Fcitx 按键事件 / PreInputMethod / Hotkey 消费边界</td><td>PROVIDER §3.3</td></tr>
+  <tr><td><code>diagram/prov-input-panel.puml</code></td><td>InputPanel preedit 临时窗口边界</td><td>PROVIDER §3.4</td></tr>
+  <tr><td><code>diagram/prov-fcitx-commit.puml</code></td><td>Fcitx commit / frontend 覆盖边界</td><td>PROVIDER §3.5</td></tr>
 </table>
 <ul class="note">
   <li>所有图先以 <code>proposal-fcitx-*</code> 命名并在提案阶段评审；批准后把正式图重命名为无 <code>proposal-</code> 前缀的名称，并同步更新 <code>.puml</code> 与 <code>.svg</code>。</li>

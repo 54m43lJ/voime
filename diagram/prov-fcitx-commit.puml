@@ -1,0 +1,22 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Voime" as Voime
+participant "Fcitx5\nInputContext" as Fcitx
+participant "目标应用" as App
+
+Voime -> Voime : 检查目标存在且 hasFocus()
+alt 目标有效
+  Voime -> Fcitx : commitString(Final)
+  Fcitx -> App : Wayland commit_string\n或 XIM_COMMIT
+else 目标失效
+  Voime -> Voime : 不提交\n保留 daemon 历史
+end
+
+note over Fcitx
+  commit filter 与长文本拆分由 Fcitx 处理；
+  commitString 无返回值。
+end note
+@enduml
