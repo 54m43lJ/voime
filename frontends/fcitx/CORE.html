@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — fcitx-addon</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — fcitx-addon</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>frontends/fcitx/
+├── CMakeLists.txt
+├── voime-addon.conf.in
+├── icons/
+│   └── voime.svg
+├── third_party/
+│   └── nlohmann/
+│       ├── json.hpp
+│       └── LICENSE.MIT
+├── tests/
+│   └── addon_test.cpp
+└── src/
+    ├── <a href="#c4-1">voime.h</a>
+    ├── <a href="#c4-1">voime.cpp</a>
+    ├── <a href="#c4-2">config.h</a>
+    ├── <a href="#c4-2">config.cpp</a>
+    ├── <a href="#c4-3">preview.h</a>
+    ├── <a href="#c4-3">preview.cpp</a>
+    ├── <a href="#c4-4">ipc.h</a>
+    ├── <a href="#c4-4">ipc.cpp</a>
+    └── <a href="#c4-5">target.h</a></code></pre>
+<ul class="note">
+  <li><code>voime-addon.conf.in</code> 由 CMake 生成 addon 描述文件；不安装 inputmethod 条目。</li>
+  <li>文件树位于 <code>frontends/fcitx/</code>；不安装 inputmethod 条目。</li>
+</ul>
+
+<ul class="note">
+  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>线程</td><td>所有 Fcitx API 调用、socket 事件与定时器都在 Fcitx 事件循环线程内；IpcClient 不做后台线程。</td></tr>
+  <tr><td>事件监听</td><td>按键使用 <code>watchEvent&lt;InputContextKeyEvent&gt;(PreInputMethod)</code>；焦点失焦使用 <code>watchEvent&lt;InputContextFocusOut&gt;(PreInputMethod)</code>。</td></tr>
+  <tr><td>热键消费</td><td>命中热键后调用 <code>filterAndAccept()</code>；未命中立即返回，不影响 Fcitx 普通路由。</td></tr>
+  <tr><td>PTT 状态</td><td><code>holdActive_</code> 表示按住；松开按记录的 keycode 匹配；auto-repeat 消费后忽略。</td></tr>
+  <tr><td>Toggle 状态</td><td><code>toggleActive_</code> 表示会话有效；<code>toggleCode_</code> 防止同一次按键的 press / release 重复切换。</td></tr>
+  <tr><td>目标</td><td><code>TargetRef</code> 保存 <code>TrackableObjectReference&lt;InputContext&gt;</code> 与 <code>segment_id</code>；提交前检查 <code>focused()</code>。</td></tr>
+  <tr><td>重连</td><td>2 s 定时器每次重新 <code>setNextInterval</code> 与 <code>setOneShot</code>；只重连不阻塞事件循环。</td></tr>
+  <tr><td>socket</td><td>非阻塞 Unix socket；读写缓冲在 IpcClient 内，断线时先关闭 fd 再禁用事件源。</td></tr>
+  <tr><td>配置</td><td><code>readAsIni</code> / <code>safeSaveAsIni</code> 不会自动补 <code>.conf</code>；路径必须写全。</td></tr>
+</table>
+<ul class="note">
+  <li>仓库级线程 / 进程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>
+</ul>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td><code>Fcitx5Core</code></td><td>addon 工厂、<code>InputMethodEngineV2</code>、事件循环、<code>InputContext</code> / <code>InputPanel</code>。</td></tr>
+  <tr><td><code>nlohmann/json</code></td><td>IPC JSON 行解析；仓库内 <code>third_party/nlohmann/json.hpp</code>（MIT）。</td></tr>
+  <tr><td>CMake / C++20</td><td>编译 <code>voime.so</code> 与安装描述文件。</td></tr>
+</table>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 src/voime.h, src/voime.cpp <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>class VoimeAddon final : public fcitx::InputMethodEngineV2 {
+public:
+    explicit VoimeAddon(fcitx::Instance *instance);
+    void keyEvent(const fcitx::InputMethodEntry &amp;entry,
+                  fcitx::KeyEvent &amp;keyEvent) override;
+    void activate(const fcitx::InputMethodEntry &amp;entry,
+                  fcitx::InputContextEvent &amp;event) override;
+    void deactivate(const fcitx::InputMethodEntry &amp;entry,
+                    fcitx::InputContextEvent &amp;event) override;
+    const fcitx::Configuration *getConfig() const override;
+    void setConfig(const fcitx::RawConfig &amp;config) override;
+    void reloadConfig() override;
+
+private:
+    void handleKey(fcitx::KeyEvent &amp;event);
+    void handlePtt(fcitx::KeyEvent &amp;event, bool matches);
+    void handleToggle(fcitx::KeyEvent &amp;event, bool matches);
+    void onIpcMessage(const ServerMessage &amp;message);
+    void onDaemonDisconnected();
+    void connectDaemon();
+    void bindTarget(fcitx::InputContext *inputContext);
+    void stopToggle();
+    void clearPreview();
+    void refreshTogglePreview();
+    IpcConfig currentConfig() const;
+
+    fcitx::Instance *instance_;
+    VoimeConfig config_;
+    IpcClient client_;
+    Preview preview_;
+    TargetRef target_;
+    std::unique_ptr&lt;fcitx::HandlerTableEntry&lt;fcitx::EventHandler&gt;&gt; keyWatcher_;
+    std::unique_ptr&lt;fcitx::HandlerTableEntry&lt;fcitx::EventHandler&gt;&gt; focusWatcher_;
+    std::unique_ptr&lt;fcitx::EventSourceTime&gt; reconnectTimer_;
+    std::optional&lt;uint64_t&gt; segmentId_;
+    bool holdActive_ = false;
+    bool starting_ = false;
+    bool recording_ = false;
+    bool finalizing_ = false;
+    bool toggleActive_ = false;
+    uint32_t holdCode_ = 0;
+    uint32_t toggleCode_ = 0;
+    uint64_t nextLocalId_ = 1;
+    std::string socketPath_;
+};
+
+class VoimeAddonFactory final : public fcitx::AddonFactory {
+    fcitx::AddonInstance *create(fcitx::AddonManager *manager) override;
+};</code></pre>
+<ul class="note">
+  <li>继承 <code>InputMethodEngineV2</code> 仅为获得 <code>AddonInstance</code> 生命周期；<code>keyEvent</code> 不参与普通输入。</li>
+  <li><code>starting_</code> 表示已发送 Start 但尚未收到 daemon <code>State.recording=true</code>。</li>
+</ul>
+
+<h3 id="c4-2">4.2 src/config.h, src/config.cpp <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>enum class Mode { Ptt, Toggle, Continuous };
+FCITX_CONFIG_ENUM_NAME(Mode, "ptt", "toggle", "continuous")
+
+FCITX_CONFIGURATION(
+    VoimeConfig,
+    fcitx::Option&lt;Mode&gt; mode{this, "Mode", _("Mode"), Mode::Ptt};
+    fcitx::KeyListOption hotkey{this, "Hotkey", _("Hotkey"),
+                                {fcitx::Key("Super+F2")},
+                                fcitx::KeyListConstrain()};
+);
+
+const char *modeName(Mode mode);
+std::string hotkeyString(const fcitx::KeyList &amp;keys);</code></pre>
+
+<h3 id="c4-3">4.3 src/preview.h, src/preview.cpp <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>class Preview {
+public:
+    void show(fcitx::InputContext *ic, const std::string &amp;partial);
+    void showEmpty(fcitx::InputContext *ic);
+    void clear(fcitx::InputContext *ic);
+};</code></pre>
+<ul class="note">
+  <li><code>show</code> 调用 <code>InputPanel::setPreedit</code> 与 <code>InputContext::updateUserInterface</code>。</li>
+  <li><code>showEmpty</code> 写入单个空格以保留面板；<code>clear</code> 写空 <code>Text</code> 并刷新。</li>
+  <li>只写 Fcitx UI preedit，不调用 <code>setClientPreedit</code>。</li>
+</ul>
+
+<h3 id="c4-4">4.4 src/ipc.h, src/ipc.cpp <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>enum class TriggerSource { Hold, Toggle, Tui, Cli, Continuous };
+
+struct IpcConfig {
+    Mode mode = Mode::Ptt;
+    std::string hotkey;
+};
+
+enum class ServerMessageType {
+    Snapshot, SegmentStarted, State, Partial, Final,
+    HistoryCleared, Status, Error, Bye, Unknown,
+};
+
+struct ServerMessage {
+    ServerMessageType type = ServerMessageType::Unknown;
+    std::optional&lt;uint64_t&gt; segmentId;
+    std::string text;
+    bool recording = false;
+    bool finalizing = false;
+    TriggerSource source = TriggerSource::Hold;
+    std::optional&lt;Mode&gt; mode;
+    std::optional&lt;std::string&gt; hotkey;
+    std::string errorCode;
+    std::string errorMessage;
+};
+
+std::string defaultSocketPath();
+const char *triggerSourceName(TriggerSource source);
+std::optional&lt;TriggerSource&gt; parseTriggerSource(const std::string &amp;name);
+
+class IpcClient {
+public:
+    explicit IpcClient(fcitx::Instance *instance);
+    ~IpcClient();
+
+    void setConfig(const IpcConfig &amp;config);
+    bool connect(const std::string &amp;socket);
+    void disconnect();
+    void configure(Mode mode, const std::string &amp;hotkey);
+    void start(uint64_t segmentId, TriggerSource source);
+    void stop(uint64_t segmentId, TriggerSource source);
+    void toggle(uint64_t segmentId, TriggerSource source);
+    bool connected() const;
+    void onReadable();
+
+    std::function&lt;void(const ServerMessage &amp;)&gt; onMessage;
+    std::function&lt;void()&gt; onDisconnected;
+
+private:
+    void sendJson(const std::string &amp;json);
+    void flush();
+    void readAvailable();
+    void handleLine(const std::string &amp;line);
+    void updateEvents();
+    void fail();
+
+    fcitx::Instance *instance_;
+    int fd_ = -1;
+    std::unique_ptr&lt;fcitx::EventSourceIO&gt; ioEvent_;
+    std::string socketPath_;
+    std::string inBuffer_;
+    std::string outBuffer_;
+    IpcConfig config_;
+    bool connectedOnce_ = false;
+};</code></pre>
+<ul class="note">
+  <li>socket 断线在 Fcitx 事件循环线程处理：先关闭 fd，再对 <code>ioEvent_</code> 调用 <code>setEnabled(false)</code>，不在回调内销毁事件源。</li>
+</ul>
+
+<h3 id="c4-5">4.5 src/target.h <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>struct TargetRef {
+    fcitx::TrackableObjectReference&lt;fcitx::InputContext&gt; ref;
+    uint64_t segment_id = 0;
+
+    bool focused() const;
+    fcitx::InputContext *get() const;
+};</code></pre>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 addon 启动</h3>
+<pre><code>fcitx5
+├── 加载 share/fcitx5/addon/voime.conf（OnDemand=False）
+└── VoimeAddon::VoimeAddon(instance)
+    ├── VoimeAddon::reloadConfig()
+    │   ├── migrateLegacyConfig()
+    │   ├── fcitx::readAsIni(config_, "conf/voime.conf")
+    │   └── IpcClient::setConfig(currentConfig())
+    ├── IpcClient::connect(defaultSocketPath())
+    │   └── sendJson(Hello { role: fcitx, version, config })
+    ├── Instance::watchEvent&lt;InputContextKeyEvent&gt;(PreInputMethod, handleKey)
+    ├── Instance::watchEvent&lt;InputContextFocusOut&gt;(PreInputMethod, focus lambda)
+    └── EventLoop::addTimeEvent(2 s, reconnect timer)
+        └── connectDaemon()</code></pre>
+
+<h3 id="c5-2">5.2 PTT 热键</h3>
+<pre><code>fcitx5::InputContextKeyEvent
+└── VoimeAddon::handleKey(event)
+    ├── 判断 mode == Continuous → 返回
+    ├── 判断 !client_.connected() → 返回
+    ├── KeyEvent::checkKeyList(hotkey, MatchAllNormalizedKeys)
+    └── VoimeAddon::handlePtt(event, matches)
+        ├── 判断 event.isRelease() &amp;&amp; holdActive_ &amp;&amp; code == holdCode_
+        │   ├── holdActive_ = false
+        │   ├── finalizing_ = recording_
+        │   ├── IpcClient::stop(segmentId, Hold)
+        │   └── KeyEvent::filterAndAccept()
+        ├── 判断 !matches → 返回
+        ├── KeyEvent::filterAndAccept()
+        ├── 判断 holdActive_ || starting_ || recording_ || finalizing_ → 返回
+        ├── VoimeAddon::bindTarget(event.inputContext())
+        ├── holdActive_ = true; starting_ = true
+        └── IpcClient::start(segmentId, Hold)</code></pre>
+
+<h3 id="c5-3">5.3 Toggle 热键</h3>
+<pre><code>VoimeAddon::handleToggle(event, matches)
+├── 判断 release &amp;&amp; toggleCode_ 匹配
+│   ├── toggleCode_ = 0
+│   └── KeyEvent::filterAndAccept()
+├── 判断 !matches → 返回
+├── KeyEvent::filterAndAccept()
+├── 判断 !toggleActive_ &amp;&amp; !starting_ &amp;&amp; !recording_ &amp;&amp; !finalizing_
+│   ├── VoimeAddon::bindTarget(event.inputContext())
+│   ├── toggleActive_ = true; starting_ = true
+│   ├── VoimeAddon::refreshTogglePreview()
+│   └── IpcClient::start(segmentId, Toggle)
+└── 判断 toggleActive_
+    └── VoimeAddon::stopToggle()
+        ├── toggleActive_ = false
+        ├── clearPreview()
+        ├── IpcClient::stop(0, Toggle)
+        └── 判断 !finalizing_ → target_.ref.unwatch() + segmentId_.reset()</code></pre>
+
+<h3 id="c5-4">5.4 IPC 消息</h3>
+<pre><code>IpcClient::onReadable()
+└── IpcClient::handleLine(line)
+    └── VoimeAddon::onIpcMessage(message)
+        ├── SegmentStarted
+        │   ├── segmentId_ = message.segmentId
+        │   ├── target_.segment_id = *message.segmentId
+        │   ├── 判断 source 非 Hold / Toggle → 绑定 mostRecentInputContext()
+        │   ├── 判断 toggleActive_ &amp;&amp; Toggle &amp;&amp; !target_.focused() → 跟随当前焦点
+        │   └── 判断 toggleActive_ → refreshTogglePreview()
+        ├── State
+        │   ├── recording_ = message.recording
+        │   ├── finalizing_ = message.finalizing
+        │   ├── 判断 recording_ → starting_ = false
+        │   ├── 判断 !recording_ → 清空 / 空白 / 清理
+        │   └── 判断 Idle &amp;&amp; !toggleActive_ → unwatch + reset
+        ├── Partial
+        │   ├── 判断 segmentId 不匹配 → 忽略
+        │   ├── 判断 target_.focused() → Preview::show
+        │   └── 否则 clearPreview()
+        └── Final
+            ├── 判断 segmentId 不匹配 → 忽略
+            ├── Preview::clear(target)
+            ├── 判断 focused &amp;&amp; text 非空 → InputContext::commitString(text)
+            └── 判断 toggleActive_ → refreshTogglePreview() / 清理</code></pre>
+
+<h3 id="c5-5">5.5 失焦、断线与错误</h3>
+<pre><code>fcitx5::InputContextFocusOut
+└── focusWatcher_ lambda
+    ├── 判断 target_.get() != event.inputContext() → 返回
+    ├── 判断 toggleActive_ → VoimeAddon::stopToggle()
+    └── 否则 Preview::clear(target_.get())
+
+IpcClient::fail() / EOF
+└── VoimeAddon::onDaemonDisconnected()
+    ├── clearPreview()
+    ├── target_.ref.unwatch()
+    ├── segmentId_.reset()
+    ├── holdActive_ / starting_ / toggleActive_ = false
+    └── 热键恢复为普通按键
+
+VoimeAddon::onIpcMessage(Error)
+├── 判断 role_conflict / version_mismatch / invalid_message
+│   └── IpcClient::disconnect() → 2 s 后重连
+├── 判断 inference &amp;&amp; toggleActive_
+│   └── 重置状态 + refreshTogglePreview()
+└── 判断 !recording_
+    └── 清理 Toggle / PTT / target / preview</code></pre>
+
+</body>
+</html>

@@ -1,0 +1,24 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voime-core" as Core
+participant "ONNX Runtime" as Ort
+participant "模型文件" as Model
+
+Core -> Model : 读取 + SHA-256
+Core -> Ort : SessionBuilder::commit_from_file()
+Ort -> Core : Session
+Core -> Ort : metadata()
+Ort -> Core : cmvn_mean / cmvn_inv_stddev
+
+loop 每个语音段
+  Core -> Core : fbank + CMVN
+  Core -> Ort : run(x, x_lens)
+  Ort -> Core : log_probs
+  Core -> Core : greedy CTC
+  Core -> Ort : run(punc input_ids, mask, token_type_ids)
+  Ort -> Core : logits
+end
+@enduml

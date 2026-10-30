@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>README — voime-ipc</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>README — voime-ipc</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+文档树：父文档为根 <a href="../../README.html">README</a> / <a href="../../USER.html">USER</a> /
+<a href="../../CORE.html">CORE</a> / <a href="../../PROVIDER.html">PROVIDER</a> /
+<a href="../../BUILD.html">BUILD</a>；本组件 README 是子树的根，其下为
+<a href="USER.html">USER</a> / <a href="CORE.html">CORE</a> / <a href="BUILD.html">BUILD</a>。
+本组件没有直接外部 provider，故不设 <code>PROVIDER</code>。
+</p>
+
+<h2 id="r1">1. WHAT &amp; WHY</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="r1-1">1.1 IDEAL：要解决的问题</h3>
+<p>
+daemon、TUI、Linux addon 与 Windows 前端使用不同语言与不同传输实现。如果每对客户端各自定义
+消息结构，协议会随平台分叉，Partial / Final / <code>segment_id</code> 语义也会漂移。
+<code>voime-ipc</code> 把线协议收敛为一个平台无关的库：消息类型、JSON 编码、换行 framing、
+协议版本与错误码只在这里定义；它不包含 socket、pipe、线程或业务状态机。
+</p>
+
+<h3 id="r1-2">1.2 GOAL：什么算成功</h3>
+<ul>
+  <li>Rust 客户端与 C++ 前端使用同一组消息名、字段名与枚举值。</li>
+  <li>一行一个 JSON；消息边界、最大长度、UTF-8 与版本规则明确。</li>
+  <li>daemon、TUI、Linux addon、Windows 前端对 Partial / Final / State 的解释一致。</li>
+  <li>新增平台或前端不需要修改消息定义，只需要实现同一协议。</li>
+  <li>协议变更必须提升 <code>PROTOCOL_VERSION</code>，旧客户端有明确错误或兼容路径。</li>
+</ul>
+
+<h3 id="r1-3">1.3 非目标</h3>
+<ul>
+  <li>不实现 Unix socket、named pipe 或其他传输；传输契约属于 <a href="../voime-transport/USER.html">voime-transport</a>。</li>
+  <li>不实现 daemon 会话、角色冲突处理、广播或背压；这些属于 <a href="../voimed/USER.html">voimed</a>。</li>
+  <li>不处理热键、目标绑定、临时窗口或文本提交；这些属于平台前端。</li>
+  <li>不保存历史、不加载模型、不访问文件系统。</li>
+</ul>
+
+<h2 id="r2">2. 用户交互</h2>
+<p><a href="#top">↑</a></p>
+
+<p>
+本库没有终端用户；它的“用户”是所有实现协议的客户端与 daemon。调用方通过
+<a href="USER.html">USER</a> 中的类型与编解码函数发送 / 接收消息。
+</p>
+
+<table>
+  <tr><th>调用方</th><th>交互</th><th>契约</th></tr>
+  <tr><td><code>voimed</code></td><td>解码 ClientMessage、编码 ServerMessage、按角色分发。</td><td><a href="USER.html#u4">USER §4</a> · <a href="../voimed/USER.html">voimed USER</a></td></tr>
+  <tr><td><code>voime</code></td><td>TUI / ctl / doctor 发送命令并读取快照与事件。</td><td><a href="../voime/USER.html#u4">voime USER §4</a></td></tr>
+  <tr><td><code>fcitx-addon</code></td><td>C++ 侧用 nlohmann/json 实现同一消息集。</td><td><a href="../../frontends/fcitx/USER.html#u4-3">fcitx-addon USER §4.3</a></td></tr>
+  <tr><td><code>frontends/windows</code></td><td>Rust 前端直接依赖本 crate 的消息类型。</td><td><a href="../../frontends/windows/USER.html#u4-3">windows USER §4.3</a></td></tr>
+</table>
+
+<h2 id="r3">3. 边界</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>拥有</th><th>不拥有</th></tr>
+  <tr><td>消息类型、字段、枚举值</td><td>传输端点、连接、accept、权限</td></tr>
+  <tr><td>JSON 编码 / 解码、换行 framing、最大消息长度</td><td>daemon 会话状态、角色冲突处理、广播策略</td></tr>
+  <tr><td>协议版本与错误码枚举</td><td>错误文案、日志、用户提示</td></tr>
+  <tr><td>消息语义的通用定义</td><td>平台前端的显示与提交行为</td></tr>
+</table>
+<ul class="note">
+  <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；协议字段与编码见 <a href="USER.html">USER</a>。</li>
+  <li>本 crate 没有直接外部 provider，因此没有 <code>PROVIDER</code> 文档；依赖库见 <a href="CORE.html#c3">CORE §3</a>。</li>
+</ul>
+
+<h2 id="r4">4. Credits</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>在本组件中的角色</th><th>技术栈 / 许可</th></tr>
+  <tr><td><a href="https://serde.rs/">serde</a></td><td>消息结构序列化 / 反序列化</td><td>Rust · MIT / Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/serde-rs/json">serde_json</a></td><td>JSON 编码</td><td>Rust · MIT / Apache-2.0</td></tr>
+  <tr><td><code>anyhow</code></td><td>编解码错误上下文</td><td>Rust · MIT / Apache-2.0</td></tr>
+</table>
+
+</body>
+</html>

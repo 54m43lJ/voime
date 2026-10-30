@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — voime-ipc</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — voime-ipc</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>crates/voime-ipc/
+├── Cargo.toml
+└── src/
+    └── <a href="#c4-1">lib.rs</a></code></pre>
+
+<ul class="note">
+  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>无 OS 依赖</td><td>只依赖 serde / serde_json / anyhow；不引用 socket、pipe、文件系统、线程或时钟。</td></tr>
+  <tr><td>单一来源</td><td>消息类型、枚举、常量只在此 crate 定义；其他语言客户端按 <a href="USER.html">USER</a> 实现，不复制 Rust 代码。</td></tr>
+  <tr><td>序列化策略</td><td>默认外部标签；枚举使用 <code>rename_all</code>；不使用 <code>deny_unknown_fields</code>，便于旧客户端忽略新增字段。</td></tr>
+  <tr><td>错误上下文</td><td>编码 / 解码错误统一用 <code>anyhow::Context</code> 描述“序列化 / 写入 / 读取 / 解析”阶段。</td></tr>
+  <tr><td>长度检查</td><td><code>encode_message</code> 在追加换行前检查；<code>read_message</code> 读取整行后检查。</td></tr>
+</table>
+<ul class="note">
+  <li>仓库级依赖方向见 <a href="../../CORE.html#c2">根 CORE §2</a>；协议行为见 <a href="USER.html#u2">USER §2</a>。</li>
+</ul>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td><code>serde</code></td><td>消息结构派生 Serialize / Deserialize；枚举重命名。</td></tr>
+  <tr><td><code>serde_json</code></td><td>JSON 序列化 / 反序列化。</td></tr>
+  <tr><td><code>anyhow</code></td><td>编解码错误上下文。</td></tr>
+  <tr><td><code>tempfile</code></td><td>仅 dev-dependency；当前单测使用内存 Cursor，不依赖临时文件。</td></tr>
+</table>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const PROTOCOL_VERSION: u32;                 // 见 USER §4.1
+pub const MAX_MESSAGE_BYTES: usize;              // 见 USER §4.1
+
+pub enum Mode { /* 见 USER §4.4 */ }
+impl Mode {
+    pub fn as_str(self) -&gt; &amp;'static str;
+}
+
+pub enum Role { /* 见 USER §4.4 */ }
+pub enum TriggerSource { /* 见 USER §4.4 */ }
+pub enum Phase { /* 见 USER §4.4 */ }
+pub enum AddonState { /* 见 USER §4.4 */ }
+pub enum ErrorCode { /* 见 USER §4.4 */ }
+pub struct FcitxConfig { /* 见 USER §4.4 */ }
+pub struct Status { /* 见 USER §4.4 */ }
+pub enum ClientMessage { /* 见 USER §4.2 */ }
+pub enum ServerMessage { /* 见 USER §4.3 */ }
+
+pub fn encode_message&lt;T: Serialize&gt;(message: &amp;T) -&gt; anyhow::Result&lt;Vec&lt;u8&gt;&gt;;
+pub fn write_message&lt;W: Write, T: Serialize&gt;(writer: &amp;mut W, message: &amp;T) -&gt; anyhow::Result&lt;()&gt;;
+pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
+    -&gt; anyhow::Result&lt;Option&lt;T&gt;&gt;;</code></pre>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 编码与写入</h3>
+<pre><code>client::send(message)
+└── voime_ipc::write_message(writer, message)
+    ├── voime_ipc::encode_message(message)
+    │   ├── serde_json::to_vec(message)
+    │   ├── 判断 bytes.len() &gt; MAX_MESSAGE_BYTES → anyhow::bail!
+    │   └── bytes.push(b'\n')
+    ├── writer.write_all(&amp;bytes)
+    └── writer.flush()</code></pre>
+
+<h3 id="c5-2">5.2 读取与解码</h3>
+<pre><code>client::reader thread
+└── voime_ipc::read_message(reader)
+    ├── BufRead::read_until(b'\n', &amp;mut line)
+    ├── 判断 read == 0 → Ok(None)
+    ├── 判断 line.len() &gt; MAX_MESSAGE_BYTES → anyhow::bail!
+    ├── 判断 line.last() != Some(&amp;b'\n') → anyhow::bail!
+    ├── line.pop()
+    └── serde_json::from_slice::&lt;T&gt;(&amp;line)</code></pre>
+<ul class="note">
+  <li>daemon 的 reader 线程不使用本函数，而是在 <code>ipc_server</code> 内复制同样的 framing 检查，以便生成 <code>BadMessage</code> 事件；协议规则仍由本文拥有。</li>
+  <li>未知 JSON 字段由 serde 默认忽略；未知消息标签在客户端应映射为“忽略”。</li>
+</ul>
+
+</body>
+</html>

@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — voime</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — voime</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>crates/voime/
+├── Cargo.toml
+└── src/
+    ├── <a href="#c4-1">main.rs</a>
+    ├── <a href="#c4-2">cli.rs</a>
+    ├── <a href="#c4-3">client.rs</a>
+    ├── <a href="#c4-4">app.rs</a>
+    ├── <a href="#c4-5">ui.rs</a>
+    ├── <a href="#c4-6">ui/theme.rs</a>
+    └── <a href="#c4-7">doctor.rs</a></code></pre>
+
+<ul class="note">
+  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>线程模型</td><td>TUI 主线程读取终端事件并绘制；<code>Client</code> 启动一个 reader 线程把 ServerMessage 写入有界通道。</td></tr>
+  <tr><td>事件循环</td><td>TUI 每 50 ms 轮询终端事件；先消费所有待处理 IPC 事件，再绘制。</td></tr>
+  <tr><td>终端恢复</td><td><code>Tui::init</code> 启用 raw mode / 备用屏幕 / 隐藏光标；<code>Drop</code> 与 panic hook 都恢复终端。</td></tr>
+  <tr><td>文本清洗</td><td>Final / Partial 去掉 <code>\r</code> / <code>\n</code> 并 trim；空文本不进入历史 / 不覆盖 partial。</td></tr>
+  <tr><td>滚动</td><td><code>ScrollState</code> 保存 offset 与 follow；上翻停止跟随，End 恢复；绘制时按内容高度夹取 offset。</td></tr>
+  <tr><td>角色</td><td>TUI 以 <code>tui</code> 连接；<code>ctl</code> / <code>doctor</code> 以 <code>control</code> 连接。</td></tr>
+  <tr><td>doctor 只读</td><td>不发送 Start / Stop / Quit，不修改配置；只连接读 Snapshot 与调用 core 只读 API。</td></tr>
+  <tr><td>ctl 超时</td><td>每次 ctl 动作等待响应的超时由 <code>main.rs</code> 拥有；具体值见 <a href="#c4-1">§4.1</a>。</td></tr>
+  <tr><td>过渡端点</td><td>当前 <code>Client</code> 直接使用 <code>UnixStream</code>；P0 后改为 <a href="../voime-transport/CORE.html">voime-transport</a>。</td></tr>
+  <tr><td>无模型</td><td>不加载 ONNX；doctor 只读模型清单与设备列表。</td></tr>
+</table>
+<ul class="note">
+  <li>仓库级线程 / 进程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>
+</ul>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td><code>ratatui</code></td><td>TUI 布局、文本渲染与滚动。</td></tr>
+  <tr><td><code>crossterm</code></td><td>raw mode、备用屏幕、终端事件与尺寸。</td></tr>
+  <tr><td><code>unicode-width</code></td><td>按终端显示宽度换行。</td></tr>
+  <tr><td><code>clap</code></td><td>命令行参数与子命令。</td></tr>
+  <tr><td><code>crossbeam-channel</code></td><td>IPC reader 线程到 TUI 的事件通道。</td></tr>
+  <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
+  <tr><td><code>voime-core</code></td><td>doctor 的默认模型目录、模型清单与音频设备列表。</td></tr>
+  <tr><td><code>voime-transport</code></td><td>本机端点（目标 P0；当前未依赖）。</td></tr>
+  <tr><td><code>anyhow</code></td><td>命令 / 终端 / 连接错误。</td></tr>
+</table>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 main.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>fn main() -&gt; std::process::ExitCode;
+fn parse_cli() -&gt; Cli;
+fn run_tui(socket: &amp;Path) -&gt; ExitCode;
+fn run_ctl(socket: &amp;Path, action: CtlAction) -&gt; ExitCode;
+fn run_ctl_inner(socket: &amp;Path, action: CtlAction) -&gt; anyhow::Result&lt;()&gt;;
+// ctl 动作等待响应的超时由 main.rs 拥有；推荐值 3 s
+fn print_state(message: ServerMessage);</code></pre>
+
+<h3 id="c4-2">4.2 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Cli {
+    pub socket: Option&lt;PathBuf&gt;,
+    pub command: Option&lt;Command&gt;,
+}
+
+pub enum Command { Ctl(CtlArgs), Doctor }
+pub struct CtlArgs { pub action: CtlAction }
+pub enum CtlAction { Start, Stop, Toggle, Status, Clear, Quit }
+
+pub fn parse() -&gt; Cli;</code></pre>
+
+<h3 id="c4-3">4.3 client.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Client {
+    writer: UnixStream,
+    events: Receiver&lt;ServerMessage&gt;,
+    closed: bool,
+}
+
+impl Client {
+    pub fn connect(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn connect_as(path: &amp;Path, role: Role) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn snapshot(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
+    pub fn send(&amp;mut self, message: &amp;ClientMessage) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn next_event(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
+    pub fn next_event_timeout(&amp;mut self, timeout: Duration)
+        -&gt; anyhow::Result&lt;ServerMessage&gt;;
+    pub fn try_event(&amp;mut self) -&gt; Option&lt;ServerMessage&gt;;
+    pub fn closed(&amp;self) -&gt; bool;
+    pub fn wait_for_state(&amp;mut self, timeout: Duration)
+        -&gt; anyhow::Result&lt;ServerMessage&gt;;
+}
+impl Drop for Client { /* shutdown Both */ }</code></pre>
+
+<h3 id="c4-4">4.4 app.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum Control { Continue, Detach }
+
+pub struct App {
+    pub mode: Option&lt;Mode&gt;,
+    pub hotkey: Option&lt;String&gt;,
+    pub transcript: Vec&lt;String&gt;,
+    pub partial: String,
+    pub recording: bool,
+    pub finalizing: bool,
+    pub addon: AddonState,
+    pub scroll: ScrollState,
+    pub viewport_height: u16,
+    client: Option&lt;Client&gt;,
+    detached: bool,
+}
+
+impl App {
+    pub fn new() -&gt; Self;
+    pub fn run(mut self, client: Client) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn on_key(&amp;mut self, key: KeyEvent) -&gt; Control;
+    pub fn on_event(&amp;mut self, event: ServerMessage);
+    pub fn push_final(&amp;mut self, line: String);
+    pub fn set_partial(&amp;mut self, text: String);
+    fn set_phase(&amp;mut self, phase: Phase);
+    fn apply_status(&amp;mut self, status: Status);
+    fn send(&amp;mut self, message: &amp;ClientMessage);
+}
+
+pub struct ScrollState { pub offset: usize, pub follow: bool }
+impl ScrollState {
+    pub fn page_up(&amp;mut self, height: u16);
+    pub fn page_down(&amp;mut self, height: u16);
+    pub fn home(&amp;mut self);
+    pub fn end(&amp;mut self);
+}
+
+fn sanitize(text: &amp;str) -&gt; String;
+fn page_step(height: u16) -&gt; usize;</code></pre>
+
+<h3 id="c4-5">4.5 ui.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const GUTTER_WIDTH: u16;
+pub const MARKER: &amp;str;
+pub const FOOTER_HEIGHT: u16;
+
+pub struct Tui { /* terminal + restored flag */ }
+
+impl Tui {
+    pub fn init() -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn draw(&amp;mut self, app: &amp;mut App) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn restore(mut self);
+    fn restore_inner(&amp;mut self);
+}
+impl Drop for Tui { /* restore */ }
+
+fn build_lines&lt;'a&gt;(app: &amp;App, area_width: u16) -&gt; Vec&lt;Line&lt;'a&gt;&gt;;
+fn footer_text(app: &amp;App) -&gt; String;
+fn push_wrapped&lt;'a&gt;(lines: &amp;mut Vec&lt;Line&lt;'a&gt;&gt;, text: &amp;str,
+                   content_width: usize, marker: bool);
+pub fn wrap_text(text: &amp;str, width: usize) -&gt; Vec&lt;String&gt;;
+fn install_panic_hook();</code></pre>
+
+<h3 id="c4-6">4.6 ui/theme.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const RECORDING: Color;
+pub const TEXT: Color;</code></pre>
+
+<h3 id="c4-7">4.7 doctor.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub fn run(socket: &amp;Path) -&gt; bool;
+
+fn fcitx_running() -&gt; bool;
+fn addon_path(relative: &amp;str) -&gt; Option&lt;PathBuf&gt;;
+fn library_path() -&gt; Option&lt;PathBuf&gt;;
+fn user_config_path() -&gt; Option&lt;PathBuf&gt;;</code></pre>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 TUI 启动与事件循环</h3>
+<pre><code>voime::main()
+├── voime::cli::parse()
+├── 判断无子命令 → voime::run_tui(socket)
+│   ├── Client::connect(socket)
+│   ├── Client::snapshot()
+│   ├── App::new()
+│   ├── App::on_event(Snapshot)
+│   └── App::run(client)
+│       ├── Tui::init()
+│       ├── loop
+│       │   ├── Client::try_event() → App::on_event(...)
+│       │   ├── Tui::draw(&amp;mut app)
+│       │   ├── crossterm::event::poll(50 ms)
+│       │   └── crossterm::event::read() → App::on_key(key)
+│       └── Tui::restore()
+└── 判断 Err → eprintln! + ExitCode::from(1)</code></pre>
+
+<h3 id="c5-2">5.2 TUI 按键</h3>
+<pre><code>App::on_key(key)
+├── 判断 key.kind != Press → Continue
+├── 判断 Ctrl+C → Detach
+├── 判断 Ctrl+X → Client::send(ClearHistory)
+├── 判断 q（无修饰）→ Detach
+├── 判断 Space
+│   ├── 判断 recording → Client::send(Stop { source: Tui })
+│   └── 判断 !finalizing → Client::send(Start { source: Tui })
+├── 判断 PageUp → ScrollState::page_up(viewport_height - 1)
+├── 判断 PageDown → ScrollState::page_down(viewport_height - 1)
+├── 判断 Home → ScrollState::home()
+└── 判断 End → ScrollState::end()</code></pre>
+
+<h3 id="c5-3">5.3 TUI 事件与绘制</h3>
+<pre><code>App::on_event(event)
+├── Snapshot → 覆盖 mode / hotkey / transcript / partial / addon / phase
+├── SegmentStarted → recording=true + partial.clear() + scroll.end()
+├── State → 更新 recording / finalizing；Idle 时清空 partial
+├── Partial → App::set_partial(text)
+├── Final → App::push_final(text) + partial.clear() + recording=false
+├── HistoryCleared → transcript.clear()
+├── Status → App::apply_status(status)
+├── Error → eprintln!
+└── Bye → detached=true
+
+Tui::draw(&amp;mut app)
+├── 计算 content_area = area - FOOTER_HEIGHT
+├── app.viewport_height = content_area.height
+├── build_lines(app, content_area.width)
+│   ├── 历史 transcript → push_wrapped(..., marker=false)
+│   └── recording / finalizing / partial → 当前行（recording 时带 ●）
+├── 夹取 app.scroll.offset
+├── Paragraph::new(lines).scroll((offset, 0))
+└── footer_text(app) → Paragraph（DIM）</code></pre>
+
+<h3 id="c5-4">5.4 ctl 命令</h3>
+<pre><code>voime::run_ctl(socket, action)
+└── voime::run_ctl_inner(socket, action)
+    ├── Client::connect_as(socket, Role::Control)
+    ├── Client::snapshot()
+    ├── 判断 Start / Stop / Toggle → Client::send(...) + Client::wait_for_state(3 s)
+    ├── 判断 Status → Client::send(Status) + Client::next_event_timeout(3 s)
+    ├── 判断 Clear → Client::send(ClearHistory) + 等待 HistoryCleared
+    └── 判断 Quit → Client::send(Quit) + 等待 Bye</code></pre>
+
+<h3 id="c5-5">5.5 doctor</h3>
+<pre><code>voime::main()
+└── voime::doctor::run(socket)
+    ├── std::fs::metadata(socket) → 检查 Unix 0600
+    ├── Client::connect_as(socket, Role::Control)
+    │   └── Client::snapshot() → daemon 在线
+    ├── voime_core::config::default_model_dir()
+    │   └── ModelManifest::load / verify
+    ├── voime_core::audio::capture::list_input_devices()
+    ├── voime_core::audio::capture::default_input_device_name()
+    ├── doctor::fcitx_running() → 遍历 /proc
+    ├── doctor::addon_path("addon/voime.conf")
+    ├── doctor::library_path() → /usr / /usr/local
+    ├── doctor::addon_path("inputmethod/voime.conf") → 旧条目检查
+    └── doctor::user_config_path() → XDG_CONFIG_HOME / HOME</code></pre>
+
+<h3 id="c5-6">5.6 断线与退出</h3>
+<pre><code>Client reader thread
+└── read_message() 返回 EOF
+    └── events channel 关闭
+
+App::run()
+├── 判断 Client::closed() → exit_error = "daemon 连接已断开"
+├── 判断 detached → break
+└── Tui::restore()
+    ├── Show / DisableMouseCapture / LeaveAlternateScreen
+    └── disable_raw_mode()</code></pre>
+
+</body>
+</html>

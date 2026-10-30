@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PROVIDER — frontends/windows</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>PROVIDER — frontends/windows</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="BUILD.html">BUILD</a>
+｜ 评估：<a href="../../WINDOWS.html">WINDOWS</a>
+</p>
+
+<p>
+<strong>状态：</strong>目标 P3 / P4。本文只记录前端计划消费的 Win32 / UIA / TSF 子集；
+完整定义以 Microsoft 官方文档为准。命名管道契约见 <a href="../../crates/voime-transport/PROVIDER.html">voime-transport PROVIDER</a>。
+</p>
+
+<h2 id="p1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>HWND</td><td>Win32 窗口句柄；前台窗口由 <code>GetForegroundWindow</code> 取得。</td></tr>
+  <tr><td>UIA</td><td>UI Automation；用于读取焦点元素与 RuntimeId。</td></tr>
+  <tr><td>RuntimeId</td><td>UIA 焦点元素的稳定标识；同一窗口内切换控件时变化。</td></tr>
+  <tr><td><code>SendInput</code></td><td>Win32 合成输入 API；使用 <code>KEYEVENTF_UNICODE</code> 注入 UTF-16 单元。</td></tr>
+  <tr><td><code>RegisterHotKey</code></td><td>注册系统范围热键；只提供按下，不提供 PTT 所需的 key-up。</td></tr>
+  <tr><td><code>WH_KEYBOARD_LL</code></td><td>低级键盘钩子；PTT 需要 key-up 时使用。</td></tr>
+  <tr><td><code>GetAsyncKeyState</code></td><td>轮询按键状态；可作为 PTT key-up 的备选。</td></tr>
+  <tr><td>UIPI</td><td>用户界面特权隔离；阻止普通完整性进程向高完整性窗口注入。</td></tr>
+  <tr><td>DACL</td><td>命名管道的访问控制列表；只授予当前用户。</td></tr>
+  <tr><td>TSF</td><td>Text Services Framework；Windows 输入法框架。</td></tr>
+  <tr><td><code>ITfContext</code></td><td>TSF 的目标文档上下文；提交必须通过编辑会话。</td></tr>
+  <tr><td><code>ITfRange</code></td><td>TSF 文档范围；<code>SetText</code> 写入选区或组合范围。</td></tr>
+  <tr><td>edit session</td><td><code>ITfContext::RequestEditSession</code> 调度的读写会话。</td></tr>
+  <tr><td>keyboard TIP / speech TIP</td><td>TSF 文本服务类别；keyboard TIP 需成为当前输入法，speech TIP 的并行能力待验证。</td></tr>
+  <tr><td>CLSID / InprocServer32</td><td>COM 类标识与进程内 DLL 注册表项。</td></tr>
+</table>
+
+<h2 id="p2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>进程模型</td><td>每用户桌面进程；不使用 Session 0 Windows 服务采集音频或注入文本。</td></tr>
+  <tr><td>热键</td><td>Toggle 可用 <code>RegisterHotKey</code>；PTT 使用低级钩子或轮询获取 key-up；只处理配置热键，不记录其他按键。</td></tr>
+  <tr><td>目标</td><td>前台窗口 + UIA 焦点元素；提交前复核 HWND 与 RuntimeId。</td></tr>
+  <tr><td>编码</td><td>UTF-8 内部字符串转 UTF-16；emoji 代理对不拆分；长文本分批。</td></tr>
+  <tr><td>UIPI</td><td>不尝试绕过；提权窗口默认不支持。</td></tr>
+  <tr><td>安全</td><td>命名管道当前用户 DACL、拒绝远程客户端；不记录按键、音频或文本。</td></tr>
+  <tr><td>TSF</td><td>DLL 是进程内 COM 组件；提交必须走 edit session；失败不注入其他窗口。</td></tr>
+  <tr><td>升级</td><td>TSF DLL 版本化；运行中应用可能继续使用旧 DLL，需要重启应用或注销。</td></tr>
+  <tr><td>本地性</td><td>所有 provider 调用在本机完成；运行期不联网。</td></tr>
+</table>
+
+<h2 id="p3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="p3-1">3.1 命名管道与 daemon</h3>
+<div class="diagram"><img src="diagram/named-pipe.svg" alt="Windows 前端通过命名管道连接 voimed 的时序图"></div>
+<ul class="note">
+  <li>端点、DACL 与拒绝远程客户端由 <a href="../../crates/voime-transport/PROVIDER.html">voime-transport PROVIDER</a> 定义。</li>
+  <li>前端只处理字节流上的 JSON lines；消息语义见 <a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>。</li>
+</ul>
+
+<h3 id="p3-2">3.2 目标绑定与 SendInput</h3>
+<div class="diagram"><img src="diagram/sendinput.svg" alt="Windows 前端复核 UIA 焦点并 SendInput 的时序图"></div>
+<ul class="note">
+  <li>目标绑定使用前台 HWND + UIA RuntimeId；提交前复核。</li>
+  <li><code>SendInput</code> 只注入目标；失败不重试其他窗口。</li>
+</ul>
+
+<h3 id="p3-3">3.3 TSF 编辑会话</h3>
+<div class="diagram"><img src="diagram/tsf-edit.svg" alt="TSF DLL 通过 ITfContext 编辑会话提交文本的时序图"></div>
+<ul class="note">
+  <li>TSF 提交发生在目标应用进程内，使用该应用的 <code>ITfContext</code>。</li>
+  <li>编辑会话可能失败；失败时保留 daemon 历史，不跨窗口注入。</li>
+</ul>
+
+<h2 id="p4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="p4-1">4.1 Win32 / UIA 调用</h3>
+<table>
+  <tr><th>调用 / 类型</th><th>用途</th></tr>
+  <tr><td><code>RegisterHotKey</code> / <code>UnregisterHotKey</code></td><td>Toggle 或非 PTT 热键注册。</td></tr>
+  <tr><td><code>SetWindowsHookEx(WH_KEYBOARD_LL, ...)</code></td><td>PTT key-up；只处理配置热键。</td></tr>
+  <tr><td><code>GetAsyncKeyState</code></td><td>PTT key-up 轮询备选。</td></tr>
+  <tr><td><code>GetForegroundWindow</code> / <code>GetGUIThreadInfo</code></td><td>取得前台窗口与焦点 HWND。</td></tr>
+  <tr><td>UIA <code>GetFocusedElement</code> / RuntimeId</td><td>取得焦点控件并复核目标。</td></tr>
+  <tr><td><code>SendInput</code> + <code>KEYEVENTF_UNICODE</code></td><td>注入 UTF-16 文本。</td></tr>
+  <tr><td><code>CreateWindowExW</code> + <code>WS_EX_NOACTIVATE</code> / <code>WS_EX_TOOLWINDOW</code> / <code>WS_EX_TRANSPARENT</code></td><td>创建无激活、置顶、点击穿透的浮层。</td></tr>
+  <tr><td>DPI / monitor API</td><td>浮层定位与缩放。</td></tr>
+  <tr><td>Shell 通知区域 API</td><td>托盘图标与菜单。</td></tr>
+</table>
+
+<h3 id="p4-2">4.2 TSF 接口（可选 P4）</h3>
+<table>
+  <tr><th>接口 / 机制</th><th>作用</th></tr>
+  <tr><td><code>ITfTextInputProcessor</code> / <code>ITfTextInputProcessorEx</code></td><td>文本服务生命周期；取得 <code>ITfThreadMgr</code>。</td></tr>
+  <tr><td><code>ITfThreadMgrEventSink</code></td><td>跟踪焦点上下文与文档变化。</td></tr>
+  <tr><td><code>ITfKeyEventSink</code></td><td>在 Voime 是当前输入法时接收按键；处理热键并放行普通按键。</td></tr>
+  <tr><td><code>ITfContext::RequestEditSession</code> / <code>ITfEditSession</code></td><td>在目标上下文执行读写；提交文本必须走 edit session。</td></tr>
+  <tr><td><code>ITfRange::SetText</code> / <code>Collapse</code></td><td>把最终文本写入选区或组合范围。</td></tr>
+  <tr><td><code>ITfContextComposition</code> / <code>ITfComposition</code></td><td>可选组合 / preedit；与“只显示浮层”的设计不同，需单独决定。</td></tr>
+  <tr><td><code>ITfUIElementSink</code> / candidate UI</td><td>可选候选 / 预览窗口；实现成本高。</td></tr>
+  <tr><td><code>ITfInputProcessorProfileMgr</code></td><td>注册 / 激活语言 profile。</td></tr>
+  <tr><td>COM 注册 + <code>InprocServer32</code></td><td>CLSID、线程模型、DLL 路径；通常需要管理员权限，且需 x86 / x64 两份。</td></tr>
+</table>
+
+<h3 id="p4-3">4.3 命名管道</h3>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>端点</td><td><code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td></tr>
+  <tr><td>权限</td><td>当前用户 DACL；拒绝远程客户端；不使用 <code>Global\</code> 跨会话。</td></tr>
+  <tr><td>读写</td><td>字节流；一行一个 JSON；最大 1 MiB。</td></tr>
+  <tr><td>关闭</td><td>关闭句柄并唤醒阻塞读；按重连策略重连。</td></tr>
+  <tr><td>详细契约</td><td><a href="../../crates/voime-transport/PROVIDER.html#p4-2">voime-transport PROVIDER §4.2</a></td></tr>
+</table>
+
+<h3 id="p4-4">4.4 错误与边界</h3>
+<table>
+  <tr><th>情况</th><th>触发条件</th><th>处理</th></tr>
+  <tr><td>热键注册失败</td><td>组合被系统或其他应用占用。</td><td>托盘提示；要求用户修改 Hotkey；不静默吞键。</td></tr>
+  <tr><td>UIA 焦点不可用</td><td>应用不暴露 UIA 或焦点元素为空。</td><td>只绑定前台 HWND；提交前尽力复核。</td></tr>
+  <tr><td>UIPI 拒绝</td><td>目标窗口完整性级别更高。</td><td>不注入；保留历史；提示用户。</td></tr>
+  <tr><td><code>SendInput</code> 部分失败</td><td>目标拒绝或以 Unicode 处理异常。</td><td>停止后续输入；不重复注入；记录错误码。</td></tr>
+  <tr><td>TSF 编辑会话失败</td><td>只读、选区变化、上下文销毁。</td><td>不提交；保留历史；不跨窗口重试。</td></tr>
+  <tr><td>管道断开</td><td>daemon 退出或权限变化。</td><td>隐藏浮层；放行热键；定时重连。</td></tr>
+</table>
+
+</body>
+</html>

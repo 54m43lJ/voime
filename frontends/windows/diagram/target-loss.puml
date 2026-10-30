@@ -1,0 +1,21 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Windows 前端" as Frontend
+participant "目标窗口" as App
+participant "voimed" as Daemon
+
+Frontend -> App : GetForegroundWindow + UIA 焦点
+App -> Frontend : HWND + RuntimeId
+
+App -> Frontend : 焦点变化 / 窗口销毁
+Frontend -> Frontend : 目标失效
+Frontend -> Frontend : 隐藏浮层
+alt Mode = Toggle
+  Frontend -> Daemon : Stop { 0, Toggle }
+end
+Daemon -> Frontend : Final
+Frontend -> Frontend : 跳过提交\n保留历史
+@enduml

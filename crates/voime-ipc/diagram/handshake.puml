@@ -1,0 +1,26 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "客户端" as Client
+participant "voimed" as Daemon
+
+Client -> Daemon : connect
+Client -> Daemon : Hello { role, version, config? }
+
+alt 版本不匹配
+  Daemon -> Client : Error { code: version_mismatch }
+  Daemon -> Client : disconnect
+else 已有 fcitx 连接
+  Daemon -> Client : Error { code: role_conflict }
+  Daemon -> Client : disconnect
+else 握手成功
+  alt role = fcitx
+    Daemon -> Client : Snapshot
+    Daemon -> Daemon : 更新前端状态 / Mode
+  else role = tui / control
+    Daemon -> Client : Snapshot
+  end
+end
+@enduml

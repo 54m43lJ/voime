@@ -1,0 +1,26 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "Voime addon" as Addon
+participant "Fcitx InputPanel" as Panel
+participant "Fcitx UI" as UI
+
+Daemon -> Addon : Partial { segment_id, text }
+Addon -> Addon : 目标存在且聚焦？
+Addon -> Panel : setPreedit(Text(partial))
+Addon -> UI : updateUserInterface(InputPanel)
+UI -> UI : 显示临时文本
+
+Daemon -> Addon : Final { segment_id, text }
+Addon -> Panel : setPreedit(Text())
+Addon -> UI : updateUserInterface(InputPanel)
+UI -> UI : 关闭 / 空白窗口
+
+note over Addon, Panel
+  Toggle 会话在 Final 后写入单个空格，
+  保留空白面板直到 toggle off 或目标失焦。
+end note
+@enduml

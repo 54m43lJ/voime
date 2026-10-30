@@ -1,0 +1,31 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+actor "用户" as User
+participant "Fcitx5" as Fcitx
+participant "Voime addon" as Addon
+participant "voimed" as Daemon
+participant "目标应用" as App
+
+User -> Fcitx : 按下 Hotkey
+Fcitx -> Addon : InputContextKeyEvent
+Addon -> Addon : 绑定目标
+Addon -> Fcitx : filterAndAccept()
+Addon -> Daemon : Start / Toggle
+
+loop 录音期间
+  Daemon -> Addon : Partial
+  Addon -> Fcitx : setPreedit(Partial)
+  Fcitx -> User : 临时窗口
+end
+
+User -> Fcitx : 松开 / 再按
+Fcitx -> Addon : 结束事件
+Addon -> Daemon : Stop
+Daemon -> Addon : Final
+Addon -> Fcitx : 清空 preedit
+Addon -> Fcitx : commitString(Final)
+Fcitx -> App : 插入文本
+@enduml

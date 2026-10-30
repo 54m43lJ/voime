@@ -1,0 +1,26 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "客户端" as Client
+participant "voimed" as Daemon
+
+Client -> Daemon : Start / Toggle { segment_id: hint, source }
+Daemon -> Client : SegmentStarted { segment_id: final, source }
+Daemon -> Client : State { recording: true }
+
+loop 录音期间
+  Daemon -> Client : Partial { segment_id, text }
+end
+
+Client -> Daemon : Stop { segment_id, source }
+Daemon -> Client : State { recording: false, finalizing: true }
+Daemon -> Client : Final { segment_id, text }
+Daemon -> Client : State { recording: false, finalizing: false }
+
+note over Client, Daemon
+  Continuous 由 daemon 直接广播 SegmentStarted，
+  不需要客户端发送 Start。
+end note
+@enduml

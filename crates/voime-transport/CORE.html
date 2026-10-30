@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — voime-transport</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — voime-transport</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+<strong>状态：</strong>目标 P0。以下文件名与签名是起草值，待实现，可以根据实际平台 API 调整；
+契约语义以 <a href="USER.html">USER</a> 为准。
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>crates/voime-transport/
+├── Cargo.toml
+└── src/
+    ├── <a href="#c4-1">lib.rs</a>        Endpoint、trait、bind / connect 分发
+    ├── <a href="#c4-2">unix.rs</a>       Unix domain socket adapter
+    ├── <a href="#c4-3">windows.rs</a>    named pipe adapter
+    └── <a href="#c4-4">memory.rs</a>     cfg(test) 内存 transport</code></pre>
+<ul class="note">
+  <li>文件划分是起草结构；实现时可按平台模块拆分，但不得把协议 / 业务逻辑放进本 crate。</li>
+  <li>文档与测试金样不属于源码结构。</li>
+</ul>
+
+<ul class="note">
+  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>薄 adapter</td><td>只做端点、句柄、权限、accept / connect / clone / shutdown；不解析消息、不维护会话。</td></tr>
+  <tr><td>平台隔离</td><td><code>lib.rs</code> 只做 <code>cfg</code> 分发；Unix / Windows 模块互不引用。</td></tr>
+  <tr><td>句柄所有权</td><td>listener 拥有绑定端点；stream 拥有连接；drop 时释放资源。Unix bind 负责删除自己的 socket 文件，但不能删除其他 daemon 的端点。</td></tr>
+  <tr><td>关闭唤醒</td><td>listener 的内部句柄 / 原子标志必须支持跨线程取消，所以 <code>shutdown(&amp;self)</code>。</td></tr>
+  <tr><td>错误上下文</td><td>所有 <code>io::Error</code> 在边界处附端点路径 / 管道名；上层不解析 Win32 错误码。</td></tr>
+  <tr><td>安全默认</td><td>权限收紧而不是放宽；不提供“允许其他用户连接”的开关。</td></tr>
+  <tr><td>测试</td><td>内存 transport 仅用于跨平台契约测试；不进入生产构建。</td></tr>
+</table>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td>Rust <code>std</code></td><td>Unix socket、fd、文件权限、线程与 <code>io::Error</code>。</td></tr>
+  <tr><td><code>windows-sys</code>（计划）</td><td>named pipe、DACL、<code>DuplicateHandle</code> 等 Win32 绑定。</td></tr>
+  <tr><td><code>libc</code>（仅在需要时）</td><td>Unix 权限 / 句柄细节；优先使用 std。</td></tr>
+  <tr><td><code>tempfile</code>（dev）</td><td>临时 socket 路径测试。</td></tr>
+</table>
+<ul class="note">
+  <li>不依赖 <code>voime-core</code> / <code>voime-ipc</code> / <code>voimed</code>；版本以实现时的 manifest 为准。</li>
+</ul>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum Endpoint { /* 见 USER §4.1 */ }
+pub trait Stream: Read + Write + Send { /* 见 USER §4.2 */ }
+pub trait Listener: Send + Sync { /* 见 USER §4.2 */ }
+
+pub fn bind(endpoint: &amp;Endpoint) -&gt; io::Result&lt;Box&lt;dyn Listener&gt;&gt;;
+pub fn connect(endpoint: &amp;Endpoint) -&gt; io::Result&lt;Box&lt;dyn Stream&gt;&gt;;
+
+#[cfg(unix)]
+mod unix;
+#[cfg(windows)]
+mod windows;
+#[cfg(test)]
+mod memory;</code></pre>
+
+<h3 id="c4-2">4.2 unix.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct UnixListener { /* std::os::unix::net::UnixListener */ }
+pub struct UnixStream { /* std::os::unix::net::UnixStream */ }
+
+impl Listener for UnixListener {
+    fn accept(&amp;self) -&gt; io::Result&lt;Box&lt;dyn Stream&gt;&gt;;
+    fn shutdown(&amp;self) -&gt; io::Result&lt;()&gt;;
+}
+impl Stream for UnixStream {
+    fn try_clone(&amp;self) -&gt; io::Result&lt;Box&lt;dyn Stream&gt;&gt;;
+    fn shutdown(&amp;mut self) -&gt; io::Result&lt;()&gt;;
+}
+
+fn prepare_parent(path: &amp;Path) -&gt; io::Result&lt;()&gt;;
+fn stale_endpoint(path: &amp;Path) -&gt; bool;
+pub fn bind(path: &amp;Path) -&gt; io::Result&lt;UnixListener&gt;;
+pub fn connect(path: &amp;Path) -&gt; io::Result&lt;UnixStream&gt;;</code></pre>
+
+<h3 id="c4-3">4.3 windows.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct NamedPipeListener { /* pipe handle + security descriptor */ }
+pub struct NamedPipeStream { /* read / write handles */ }
+
+impl Listener for NamedPipeListener {
+    fn accept(&amp;self) -&gt; io::Result&lt;Box&lt;dyn Stream&gt;&gt;;
+    fn shutdown(&amp;self) -&gt; io::Result&lt;()&gt;;
+}
+impl Stream for NamedPipeStream {
+    fn try_clone(&amp;self) -&gt; io::Result&lt;Box&lt;dyn Stream&gt;&gt;;
+    fn shutdown(&amp;mut self) -&gt; io::Result&lt;()&gt;;
+}
+
+fn endpoint_name(session_id: u32, user: &amp;str) -&gt; String;
+fn current_user_sddl() -&gt; io::Result&lt;String&gt;;
+pub fn bind(name: &amp;str) -&gt; io::Result&lt;NamedPipeListener&gt;;
+pub fn connect(name: &amp;str) -&gt; io::Result&lt;NamedPipeStream&gt;;</code></pre>
+<ul class="note">
+  <li>Windows 实现优先使用原生 named pipe；<code>uds_windows</code> 只作为 MVP 备选，不进入核心契约。</li>
+  <li>管道名必须包含会话与用户标识，不能使用 <code>Global\</code> 跨会话暴露。</li>
+</ul>
+
+<h3 id="c4-4">4.4 memory.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>#[cfg(test)]
+pub struct MemoryListener { /* in-process queue */ }
+#[cfg(test)]
+pub struct MemoryStream { /* duplex buffer */ }
+
+impl Listener for MemoryListener { /* accept / shutdown */ }
+impl Stream for MemoryStream { /* try_clone / shutdown */ }</code></pre>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 bind</h3>
+<pre><code>voime_transport::bind(endpoint)
+├── 判断 cfg(unix)
+│   └── unix::bind(path)
+│       ├── unix::prepare_parent(path)
+│       ├── 判断 path.exists()
+│       │   ├── UnixStream::connect(path) 成功 → io::Error（daemon 已在运行）
+│       │   └── std::fs::remove_file(path)
+│       ├── UnixListener::bind(path)
+│       ├── std::fs::set_permissions(path, 0o600)
+│       └── UnixListener::set_nonblocking(true)
+└── 判断 cfg(windows)
+    └── windows::bind(name)
+        ├── windows::current_user_sddl()
+        └── CreateNamedPipeW(..., PIPE_REJECT_REMOTE_CLIENTS)</code></pre>
+
+<h3 id="c5-2">5.2 accept 与关闭</h3>
+<pre><code>voimed accept thread
+└── Listener::accept()
+    ├── UnixListener::accept()
+    └── NamedPipeListener::accept()
+        └── ConnectNamedPipe()
+
+voimed shutdown
+└── Listener::shutdown(&amp;self)
+    ├── 设置取消标志
+    ├── UnixListener::shutdown()
+    └── NamedPipeListener::shutdown()
+        └── CancelIoEx / CloseHandle</code></pre>
+
+<h3 id="c5-3">5.3 connect 与读写分离</h3>
+<pre><code>voime::client::Client::connect(endpoint)
+└── voime_transport::connect(endpoint)
+    ├── UnixStream::connect(path)
+    └── NamedPipeStream::connect(name)
+
+client::reader thread
+└── Stream::try_clone()
+    ├── UnixStream::try_clone()（dup fd）
+    └── NamedPipeStream::try_clone()（DuplicateHandle）
+        └── BufReader::read</code></pre>
+
+<h3 id="c5-4">5.4 字节流关闭</h3>
+<pre><code>Client::drop()
+├── Stream::shutdown(&amp;mut stream)
+│   ├── UnixStream::shutdown(Both)
+│   └── NamedPipeStream::DisconnectNamedPipe / CloseHandle
+└── Drop for Stream（释放句柄）</code></pre>
+
+</body>
+</html>

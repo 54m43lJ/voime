@@ -3,24 +3,23 @@ skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
 hide footbox
 
-actor "用户" as User
-participant "Fcitx5" as Fcitx
+participant "平台宿主" as Host
 participant "Voime" as Voime
 participant "目标应用" as App
 
-note over User, Voime
+note over Host, Voime
   Mode=continuous：不读取、不消费 Hotkey。
 end note
 
 loop VAD 持续监听
-  Voime -> Voime : 检测到语音起点\n绑定目标输入框
-  loop 语音期间
-    Voime -> Fcitx : InputPanel::setPreedit(Partial)
-    Fcitx -> User : 临时文本窗口
+  Voime -> Host : Partial
+  Host -> Host : 临时文本
+  Voime -> Voime : 内部处理
+  alt 目标仍有效
+    Voime -> Host : Final
+    Host -> App : 提交文本
+  else 目标失焦 / 销毁
+    Voime -> Host : 清空临时文本
   end
-  Voime -> Voime : 检测到语音终点\nCTC + 标点
-  Voime -> Fcitx : 清空 preedit
-  Voime -> Fcitx : commitString(Final)
-  Fcitx -> App : 插入最终文本
 end
 @enduml

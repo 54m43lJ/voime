@@ -1,0 +1,26 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Voime addon" as Addon
+participant "Fcitx5 InputPanel" as Panel
+actor "用户" as User
+
+loop 每个 Partial
+  Addon -> Panel : setPreedit(Text(Partial))
+  Addon -> Panel : updateUserInterface(InputPanel)
+  Panel -> User : 临时文本窗口
+end
+
+alt Final / 停止 / 空段 / 错误 / 目标丢失 / 断线
+  Addon -> Panel : setPreedit(Text())
+  Addon -> Panel : updateUserInterface(InputPanel)
+  Panel -> User : 关闭窗口
+end
+
+note over Addon, Panel
+  Toggle 会话在 Final 后写单个空格，
+  保留空白面板直到 toggle off 或目标失焦。
+end note
+@enduml

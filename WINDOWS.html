@@ -17,11 +17,15 @@
 <a href="PROVIDER.html">PROVIDER</a>
 <a href="BUILD.html">BUILD</a>
 <a href="PLATFORM.html">PLATFORM</a>
+<a href="frontends/windows/README.html">windows</a>
 </p>
 
 <p>
 <strong>评估基线：</strong><code>dev/fcitx@07d9cfa</code> · 2026-10-30。
 本文是对当前设计的静态审查与可行性判断，不是 Windows 实测报告；所有 Windows API 行为仍需用最小原型验证。
+实现契约以 <a href="frontends/windows/README.html">windows README</a> 与其
+<a href="frontends/windows/USER.html">USER</a> / <a href="frontends/windows/PROVIDER.html">PROVIDER</a> 为准；
+本文只保留平台评估与风险。
 </p>
 
 <h2 id="w1">1. 结论</h2>
@@ -159,7 +163,7 @@
   </tr>
   <tr>
     <td>Fcitx 前端</td>
-    <td><code>fcitx-addon/</code></td>
+    <td><code>frontends/fcitx/</code></td>
     <td>Fcitx5 C++ API、<code>InputContext</code>、<code>InputPanel</code>、事件循环、CMake</td>
     <td>完全耦合</td>
     <td><strong>不可复用</strong>，必须重写</td>
@@ -208,7 +212,7 @@
     <td>本机传输</td>
     <td><code>voimed</code> 用 <code>UnixListener</code> / <code>PermissionsExt</code>；<code>voime</code> 用 <code>UnixStream</code>；<code>fcitx-addon</code> 直接使用 <code>AF_UNIX</code> / <code>sockaddr_un</code>。</td>
     <td>Rust 侧无法编译；Windows 需要命名管道或 <code>uds_windows</code> 包装的 AF_UNIX。</td>
-    <td>在 <code>voime-ipc</code> 增加 <code>Endpoint</code> 与传输实现；Unix socket / Windows named pipe 双后端。</td>
+    <td>新增 <a href="crates/voime-transport/USER.html"><code>voime-transport</code></a> 的 <code>Endpoint</code> 与传输实现；Unix socket / Windows named pipe 双后端。</td>
   </tr>
   <tr>
     <td>角色命名</td>
@@ -305,7 +309,7 @@
   <tr><th>判断</th><th>代码位置</th></tr>
   <tr>
     <td>Unix socket 直接进入 daemon/client</td>
-    <td><code>crates/voimed/src/ipc_server.rs</code>（<code>UnixListener</code> / <code>PermissionsExt</code>）、<code>crates/voime/src/client.rs</code>（<code>UnixStream</code>）、<code>fcitx-addon/src/ipc.cpp</code>（<code>AF_UNIX</code> / <code>sockaddr_un</code>）。</td>
+    <td><code>crates/voimed/src/ipc_server.rs</code>（<code>UnixListener</code> / <code>PermissionsExt</code>）、<code>crates/voime/src/client.rs</code>（<code>UnixStream</code>）、<code>frontends/fcitx/src/ipc.cpp</code>（<code>AF_UNIX</code> / <code>sockaddr_un</code>）。</td>
   </tr>
   <tr>
     <td>音频格式覆盖不足</td>
@@ -329,7 +333,7 @@
   </tr>
   <tr>
     <td>Fcitx 前端完全绑定宿主</td>
-    <td><code>fcitx-addon/src/voime.cpp</code> 使用 <code>InputContextKeyEvent</code>、<code>InputContext::commitString</code>、<code>InputPanel::setPreedit</code>、<code>TrackableObjectReference</code>；<code>CMakeLists.txt</code> 依赖 Fcitx5Core。</td>
+    <td><code>frontends/fcitx/src/voime.cpp</code> 使用 <code>InputContextKeyEvent</code>、<code>InputContext::commitString</code>、<code>InputPanel::setPreedit</code>、<code>TrackableObjectReference</code>；<code>CMakeLists.txt</code> 依赖 Fcitx5Core。</td>
   </tr>
   <tr>
     <td>核心不依赖 Fcitx</td>
@@ -574,7 +578,7 @@
   <tr>
     <td>1</td>
     <td><strong>传输抽象</strong>：把 Unix socket 从 daemon/client 中抽出，定义 <code>Endpoint</code> 与读写接口；Windows 后端用命名管道。</td>
-    <td><code>voime-ipc</code> 新增 transport 模块；<code>voimed::ipc_server</code>、<code>voime::client</code> 改为泛型/枚举端点。</td>
+    <td><a href="crates/voime-transport/USER.html"><code>voime-transport</code></a> 新增 <code>Endpoint</code> / <code>Listener</code> / <code>Stream</code>；<code>voimed::ipc_server</code>、<code>voime::client</code> 改为依赖 transport 契约。</td>
     <td>Linux 行为不变；Windows 上 daemon 与客户端可握手、收发 JSON lines；命名管道只允许当前用户。</td>
   </tr>
   <tr>

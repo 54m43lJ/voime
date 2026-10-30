@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — voime-core</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — voime-core</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>crates/voime-core/
+├── Cargo.toml
+└── src/
+    ├── <a href="#c4-1">lib.rs</a>
+    ├── <a href="#c4-2">config.rs</a>
+    ├── <a href="#c4-3">model.rs</a>
+    ├── <a href="#c4-4">audio.rs</a>
+    ├── <a href="#c4-5">audio/capture.rs</a>
+    ├── <a href="#c4-6">audio/resample.rs</a>
+    ├── <a href="#c4-7">vad.rs</a>
+    ├── <a href="#c4-8">vad/firered.rs</a>
+    ├── <a href="#c4-9">vad/segmenter.rs</a>
+    ├── <a href="#c4-10">asr.rs</a>
+    ├── <a href="#c4-11">asr/features.rs</a>
+    ├── <a href="#c4-12">asr/firered_ctc.rs</a>
+    ├── <a href="#c4-13">asr/tokenizer.rs</a>
+    ├── <a href="#c4-14">punc.rs</a>
+    ├── <a href="#c4-15">punc/firered.rs</a>
+    ├── <a href="#c4-16">infer.rs</a>
+    ├── <a href="#c4-17">infer/session.rs</a>
+    └── <a href="#c4-18">pipeline.rs</a></code></pre>
+<ul class="note">
+  <li>模块入口文件只做 <code>pub mod</code> 导出；具体实现与签名在对应子文件。</li>
+  <li>文档与图表不属于源码结构；模型包路径在运行时由 <code>config::resolve</code> 注入。</li>
+</ul>
+
+<ul class="note">
+  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>线程模型</td><td>pipeline 只有一个工作线程；音频回调线程只做格式转换与入队；不引入异步运行时。</td></tr>
+  <tr><td>音频通道</td><td>容量由 <code>audio::capture::AUDIO_CHANNEL_CAPACITY</code> 拥有；回调使用 <code>try_send</code>，满时丢弃当前块，不阻塞设备线程。</td></tr>
+  <tr><td>命令通道</td><td>有界；worker 使用 <code>select_biased!</code>，命令优先于音频，保证 Stop 不被积压音频阻塞。</td></tr>
+  <tr><td>Fbank 生命周期</td><td><code>StreamingFbank</code> 只服务 VAD，保留滑动窗口与未消费样本；<code>Fbank::compute</code> 每次从完整段独立计算，服务 CTC。两者不共享实例。</td></tr>
+  <tr><td>CTC 状态</td><td>每帧更新 <code>prev</code>（包括 blank）；仅当 <code>id != 0 &amp;&amp; id != prev</code> 时输出；final 与尾部 partial 复用同一会话，不跨段保留状态。</td></tr>
+  <tr><td>Partial 门槛</td><td>最小间隔、最小新增音频与尾部长度由 pipeline 模块常量拥有；一次慢推理会推迟下一次 Partial，避免立即重跑。</td></tr>
+  <tr><td>分段</td><td><code>MIN_SPEECH_MS</code> / <code>MIN_SILENCE_MS</code> / <code>PTT_AUTO_END_MS</code> 由 segmenter 模块拥有；达到 <code>max_segment_ms</code> 时强制结束。</td></tr>
+  <tr><td>模型校验</td><td>加载清单时校验 schema、采样率、张量声明与参数范围；<code>verify</code> 校验文件存在、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。</td></tr>
+  <tr><td>错误边界</td><td>库内部使用 <code>anyhow::Result</code> + 上下文；音频错误类型保留 <code>AudioError</code>；pipeline 把可恢复错误转为 <code>SegmentDropped</code>。</td></tr>
+  <tr><td>无 OS 依赖</td><td>不直接使用 Unix socket、named pipe、Fcitx、Win32 或 TUI API；<code>config</code> 中的 XDG / HOME / <code>/proc</code> 是 P0 前过渡实现。</td></tr>
+</table>
+<ul class="note">
+  <li>仓库级依赖方向与进程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>。</li>
+  <li>工程常量不在此表赋值；具体值以源码为准，推荐值可写在签名注释中。</li>
+  <li>当前 <code>Mode</code> 来自 <code>voime-ipc</code>；目标 P0 要求 core 不依赖其它 <code>voime-*</code> crate，需在实现时移出该依赖，见 <a href="../../PLATFORM.html#p3-4">PLATFORM §3.4</a>。</li>
+</ul>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td><code>cpal</code></td><td>输入设备枚举、默认配置与 PCM 回调。</td></tr>
+  <tr><td><code>rubato</code></td><td>设备采样率到 16 kHz 的流式重采样。</td></tr>
+  <tr><td><code>kaldi-native-fbank</code></td><td>与 CTC / VAD 对齐的 fbank 特征。</td></tr>
+  <tr><td><code>ort</code></td><td>ONNX Runtime 会话、张量输入输出与 metadata。</td></tr>
+  <tr><td><code>tokenizers</code></td><td>FireRedPunc 的 WordPiece 分词。</td></tr>
+  <tr><td><code>crossbeam-channel</code></td><td>音频、命令与事件通道。</td></tr>
+  <tr><td><code>serde</code> / <code>serde_json</code></td><td>模型清单、CMVN JSON 与标点标签解析。</td></tr>
+  <tr><td><code>sha2</code></td><td>模型文件 SHA-256 校验。</td></tr>
+  <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>错误传播与 <code>AudioError</code>。</td></tr>
+  <tr><td><code>voime-ipc</code></td><td><code>Mode</code> 类型；核心只用它表达 PTT / Toggle / Continuous。</td></tr>
+</table>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod asr;
+pub mod audio;
+pub mod config;
+pub mod infer;
+pub mod model;
+pub mod pipeline;
+pub mod punc;
+pub mod vad;</code></pre>
+
+<h3 id="c4-2">4.2 config.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const DEFAULT_THREADS: usize;
+
+pub struct Config { /* 见 USER §4.1 */ }
+pub struct Args { /* 见 USER §4.1 */ }
+pub fn resolve(args: Args) -&gt; anyhow::Result&lt;Config&gt;;      // 见 USER §4.1
+pub fn default_model_dir() -&gt; PathBuf;                     // 见 USER §4.1
+pub fn default_socket() -&gt; PathBuf;                        // 见 USER §4.1（过渡）
+fn current_uid() -&gt; u32;                                   // 非 XDG 回退路径的权限标识</code></pre>
+
+<h3 id="c4-3">4.3 model.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const MANIFEST_FILE: &amp;str;
+pub const SCHEMA_VERSION: u32;
+pub const SAMPLES_PER_SECOND: u32;
+
+pub struct TensorSpec { /* 见 USER §4.3 */ }
+pub struct Artifact { /* 见 USER §4.3 */ }
+pub type VadArtifact = Artifact;
+pub struct CtcArtifact { /* 见 USER §4.3 */ }
+pub struct PuncArtifact { /* 见 USER §4.3 */ }
+pub struct ModelManifest { /* 见 USER §4.3 */ }
+pub struct FbankManifest { /* 见 USER §4.3 */ }
+
+impl ModelManifest {
+    pub fn load(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;     // 见 USER §4.3
+    pub fn verify(&amp;self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;; // 见 USER §4.3
+    pub fn rebase(&amp;mut self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;; // 见 USER §4.3
+    fn artifacts(&amp;self) -&gt; [&amp;Artifact; 3];
+    fn validate_specs(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
+}
+
+fn ensure_file(path: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
+fn verify_file(path: &amp;Path, expected: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
+pub fn resolve_inside(dir: &amp;Path, relative: &amp;Path) -&gt; anyhow::Result&lt;PathBuf&gt;; // 见 USER §4.3</code></pre>
+
+<h3 id="c4-4">4.4 audio.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod capture;
+pub mod resample;</code></pre>
+
+<h3 id="c4-5">4.5 audio/capture.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const AUDIO_CHANNEL_CAPACITY: usize;
+
+pub struct AudioChunk { /* 见 USER §4.2 */ }
+impl AudioChunk {
+    pub fn is_stream_error(&amp;self) -&gt; bool;                 // 见 USER §4.2
+}
+
+pub enum AudioError { /* 见 USER §4.5 */ }
+
+pub struct CaptureHandle { /* stream: Option&lt;cpal::Stream&gt; */ }
+pub fn start(device_name: Option&lt;&amp;str&gt;, tx: Sender&lt;AudioChunk&gt;)
+    -&gt; anyhow::Result&lt;CaptureHandle&gt;;                       // 见 USER §4.2
+pub fn list_input_devices() -&gt; anyhow::Result&lt;Vec&lt;String&gt;&gt;; // 见 USER §4.2
+pub fn default_input_device_name() -&gt; anyhow::Result&lt;Option&lt;String&gt;&gt;; // 见 USER §4.2
+
+fn send(tx: &amp;Sender&lt;AudioChunk&gt;, sample_rate: u32,
+        channels: u16, samples: Vec&lt;f32&gt;);                  // try_send，满则丢弃
+impl CaptureHandle {
+    pub fn stop(self);                                      // 见 USER §4.2
+}
+impl Drop for CaptureHandle { /* pause stream */ }</code></pre>
+
+<h3 id="c4-6">4.6 audio/resample.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const TARGET_SAMPLE_RATE: u32;
+
+pub struct StreamResampler {
+    input_rate: u32,
+    channels: u16,
+    resampler: Option&lt;FastFixedIn&lt;f32&gt;&gt;,
+    pending: Vec&lt;f32&gt;,
+}
+
+impl StreamResampler {
+    pub fn new(input_rate: u32, channels: u16) -&gt; Self;      // 0 视为 16 kHz；声道至少 1
+    pub fn input_rate(&amp;self) -&gt; u32;
+    pub fn channels(&amp;self) -&gt; u16;
+    pub fn push(&amp;mut self, chunk: &amp;AudioChunk) -&gt; Vec&lt;f32&gt;; // 下混 + 重采样；格式不符返回空
+}</code></pre>
+<ul class="note">
+  <li>输入格式与创建时不一致时返回空向量；pipeline 另行检查并报错，避免静默改变采样率。</li>
+  <li>重采样器以固定块处理，未满一块的样本留在 <code>pending</code>。</li>
+</ul>
+
+<h3 id="c4-7">4.7 vad.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod firered;
+pub mod segmenter;</code></pre>
+
+<h3 id="c4-8">4.8 vad/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const FRAME_SHIFT_MS: u32;
+
+pub struct VadConfig {
+    pub speech_threshold: f32,
+    pub min_speech_ms: u32,
+    pub min_silence_ms: u32,
+    pub fbank: FbankConfig,
+}
+impl Default for VadConfig { /* 0.5 / 80 ms / 200 ms / 默认 fbank */ }
+
+pub struct VadFrame {
+    pub speech_prob: f32,
+    pub is_speech: bool,
+}
+
+pub struct FireRedVad { /* session + streaming state */ }
+
+impl FireRedVad {
+    pub fn new(artifact: &amp;Artifact, factory: &amp;SessionFactory,
+               config: VadConfig) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn push(&amp;mut self, samples_16k: &amp;[f32])
+        -&gt; anyhow::Result&lt;Vec&lt;VadFrame&gt;&gt;;
+    pub fn reset(&amp;mut self);
+    pub fn min_speech_ms(&amp;self) -&gt; u32;
+    pub fn min_silence_ms(&amp;self) -&gt; u32;
+}
+
+fn zero_state(spec: &amp;TensorSpec) -&gt; anyhow::Result&lt;StateTensor&gt;;
+fn shape_usize(shape: &amp;[i64]) -&gt; anyhow::Result&lt;Vec&lt;usize&gt;&gt;;</code></pre>
+<ul class="note">
+  <li>状态张量必须声明固定形状；动态维会在初始化时拒绝。</li>
+  <li>每次 <code>push</code> 用上一帧状态输入，并用模型输出更新状态；<code>reset</code> 重建流式 fbank 并清零状态。</li>
+</ul>
+
+<h3 id="c4-9">4.9 vad/segmenter.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const TARGET_SAMPLE_RATE: u64;
+pub const MIN_SPEECH_MS: u32;
+pub const MIN_SILENCE_MS: u32;
+pub const PTT_AUTO_END_MS: u32;
+
+pub struct Segment {
+    pub samples: Vec&lt;f32&gt;,
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+pub enum SegmentEndReason { Silence, MaxDuration }
+pub enum SegmenterEvent {
+    SpeechStart,
+    SpeechEnd { segment: Segment, reason: SegmentEndReason },
+}
+
+pub struct Segmenter { /* active + pending + run counters */ }
+
+impl Segmenter {
+    pub fn new(max_segment_ms: u32) -&gt; Self;
+    pub fn push(&amp;mut self, frame: VadFrame, samples: &amp;[f32], mode: Mode)
+        -&gt; Option&lt;SegmenterEvent&gt;;
+    pub fn force_end(&amp;mut self) -&gt; Option&lt;Segment&gt;;
+    pub fn is_active(&amp;self) -&gt; bool;
+    pub fn active_samples(&amp;self) -&gt; &amp;[f32];
+    pub fn reset(&amp;mut self);
+}</code></pre>
+<ul class="note">
+  <li>SpeechStart 前的短暂语音样本保存在 <code>pending</code>，达到 <code>MIN_SPEECH_MS</code> 后并入活动段。</li>
+  <li>Continuous 使用 <code>MIN_SILENCE_MS</code> 结束；PTT / Toggle 使用 <code>PTT_AUTO_END_MS</code>。</li>
+</ul>
+
+<h3 id="c4-10">4.10 asr.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod features;
+pub mod firered_ctc;
+pub mod tokenizer;</code></pre>
+
+<h3 id="c4-11">4.11 asr/features.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const NUM_BINS: usize;
+pub const FRAME_MS: u32;
+pub const SHIFT_MS: u32;
+pub const SAMPLE_SCALE: f32;
+
+pub struct FbankConfig {
+    pub sample_rate: u32,
+    pub num_bins: usize,
+    pub frame_ms: u32,
+    pub shift_ms: u32,
+}
+impl Default for FbankConfig { /* 16 kHz / 80 / 25 / 10 */ }
+
+pub struct Fbank { /* options */ }
+impl Fbank {
+    pub fn new(config: FbankConfig) -&gt; Self;
+    pub fn compute(&amp;mut self, samples: &amp;[f32])
+        -&gt; anyhow::Result&lt;Vec&lt;Vec&lt;f32&gt;&gt;&gt;;
+}
+
+pub struct StreamingFbank { /* sliding window + pending */ }
+impl StreamingFbank {
+    pub fn new(config: FbankConfig) -&gt; Self;
+    pub fn push(&amp;mut self, samples: &amp;[f32])
+        -&gt; anyhow::Result&lt;Vec&lt;Vec&lt;f32&gt;&gt;&gt;;
+}
+
+fn fbank_options(config: FbankConfig) -&gt; FbankOptions;</code></pre>
+<ul class="note">
+  <li>输入统一乘 <code>SAMPLE_SCALE</code>；与 sherpa 对齐的参数见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
+  <li><code>Fbank::compute</code> 会 flush 最后一个窗口；<code>StreamingFbank</code> 只输出完整窗口。</li>
+</ul>
+
+<h3 id="c4-12">4.12 asr/firered_ctc.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct AsrOutput {
+    pub ids: Vec&lt;usize&gt;,
+    pub text: String,
+}
+
+pub struct FireRedCtc { /* session + tokenizer + CMVN + tensor names */ }
+
+impl FireRedCtc {
+    pub fn new(model: &amp;Path, tokens: &amp;Path, threads: usize)
+        -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn new_with_factory(artifact: &amp;CtcArtifact,
+                            factory: &amp;SessionFactory)
+        -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;])
+        -&gt; anyhow::Result&lt;AsrOutput&gt;;
+}
+
+pub fn greedy_decode(log_probs: &amp;[f32], frames: usize, vocab: usize) -&gt; Vec&lt;usize&gt;;
+pub fn parse_cmvn(text: &amp;str) -&gt; anyhow::Result&lt;Vec&lt;f32&gt;&gt;;
+fn read_cmvn(session: &amp;Session) -&gt; anyhow::Result&lt;(Vec&lt;f32&gt;, Vec&lt;f32&gt;)&gt;;
+fn find_inputs_from_session(session: &amp;Session) -&gt; anyhow::Result&lt;(String, String)&gt;;
+fn find_outputs_from_session(session: &amp;Session) -&gt; anyhow::Result&lt;(String, String)&gt;;</code></pre>
+<ul class="note">
+  <li><code>transcribe</code> 校验 CMVN 维度与 fbank bin 数，执行 CMVN、推理、greedy 解码与词表还原。</li>
+  <li><code>parse_cmvn</code> 接受 JSON 数组或空白 / 逗号 / 分号分隔的浮点串。</li>
+</ul>
+
+<h3 id="c4-13">4.13 asr/tokenizer.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct CtcTokenizer { /* tokens: Vec&lt;String&gt; */ }
+
+impl CtcTokenizer {
+    pub fn load(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn token_count(&amp;self) -&gt; usize;
+    pub fn decode(&amp;self, ids: &amp;[usize]) -&gt; String;
+}
+
+fn is_special(token: &amp;str) -&gt; bool;
+fn collapse_spaces(text: &amp;str) -&gt; String;</code></pre>
+
+<h3 id="c4-14">4.14 punc.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod firered;</code></pre>
+
+<h3 id="c4-15">4.15 punc/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const MAX_TOKENS: usize;
+
+pub struct PuncConfig { pub max_tokens: usize }
+impl Default for PuncConfig { /* MAX_TOKENS */ }
+
+pub struct FireRedPunc { /* session + tokenizer + labels */ }
+
+impl FireRedPunc {
+    pub fn new(model: &amp;Path, vocab: &amp;Path, labels: &amp;Path, threads: usize)
+        -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn new_with_factory(artifact: &amp;PuncArtifact,
+                            factory: &amp;SessionFactory,
+                            config: PuncConfig)
+        -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn punctuate(&amp;mut self, text: &amp;str) -&gt; anyhow::Result&lt;String&gt;;
+    fn punctuate_chunk(&amp;mut self, text: &amp;str) -&gt; anyhow::Result&lt;String&gt;;
+}
+
+fn load_wordpiece(vocab: &amp;Path) -&gt; anyhow::Result&lt;HfTokenizer&gt;;
+fn split_chunks(text: &amp;str, max_tokens: usize) -&gt; Vec&lt;String&gt;;
+fn argmax(values: &amp;[f32]) -&gt; usize;
+fn fix_ascii_punctuation(text: &amp;str) -&gt; String;
+fn fix_english_text(text: &amp;str) -&gt; String;</code></pre>
+<ul class="note">
+  <li><code>punctuate</code> 按 token 上限切块，逐块推理并按字符偏移插入标签；最后修正 ASCII / 英文标点。</li>
+  <li>模型类别数小于标签表、输出长度不足或输入类型不支持时返回错误。</li>
+</ul>
+
+<h3 id="c4-16">4.16 infer.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod session;</code></pre>
+
+<h3 id="c4-17">4.17 infer/session.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct SessionFactory {
+    threads: usize,
+    env: Arc&lt;Environment&gt;,
+}
+
+impl SessionFactory {
+    pub fn new(threads: usize) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn create(&amp;self, model: &amp;Path) -&gt; anyhow::Result&lt;Session&gt;;
+    pub fn build(&amp;self, artifact: &amp;Artifact) -&gt; anyhow::Result&lt;Session&gt;;
+}
+
+fn validate(session: &amp;Session, artifact: &amp;Artifact) -&gt; anyhow::Result&lt;()&gt;;
+fn validate_side(label: &amp;str, outlets: &amp;[Outlet], specs: &amp;[TensorSpec])
+    -&gt; anyhow::Result&lt;()&gt;;
+pub fn dtype_is_f32(dtype: &amp;str) -&gt; bool;
+pub fn dtype_is_i64(dtype: &amp;str) -&gt; bool;
+fn normalize_dtype(dtype: &amp;str) -&gt; String;
+pub fn element_type_of(spec: &amp;TensorSpec) -&gt; anyhow::Result&lt;TensorElementType&gt;;</code></pre>
+
+<h3 id="c4-18">4.18 pipeline.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const PARTIAL_INTERVAL_MS: u64;
+pub const PARTIAL_MIN_NEW_AUDIO_MS: u64;
+pub const PARTIAL_MAX_MS: u64;
+pub const VAD_BATCH_MS: u64;
+pub const SEGMENT_QUEUE_CAPACITY: usize;
+pub const AUDIO_STREAM_ERROR_LIMIT: u32;
+
+pub enum PipelineCommand { /* 见 USER §4.4 */ }
+pub enum PipelineEvent { /* 见 USER §4.4 */ }
+pub struct Pipeline { /* 见 USER §4.4 */ }
+pub fn spawn(config: &amp;Config, factory: SessionFactory,
+             audio_rx: Receiver&lt;AudioChunk&gt;) -&gt; anyhow::Result&lt;Pipeline&gt;; // 见 USER §4.4
+impl Pipeline {
+    pub fn start_segment(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn finish_segment(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn set_mode(&amp;self, mode: Mode) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn shutdown(self) -&gt; anyhow::Result&lt;()&gt;;
+}
+impl Drop for Pipeline { /* 发送 Shutdown 并 join */ }
+
+struct Worker { /* mode + vad + segmenter + asr + punc + queues */ }
+impl Worker {
+    fn new(manifest: &amp;ModelManifest, factory: &amp;SessionFactory,
+           events: Sender&lt;PipelineEvent&gt;) -&gt; anyhow::Result&lt;Self&gt;;
+    fn run(mut self, audio_rx: Receiver&lt;AudioChunk&gt;,
+           commands: Receiver&lt;PipelineCommand&gt;);
+    fn should_process(&amp;self) -&gt; bool;
+    fn handle_audio(&amp;mut self, chunk: &amp;AudioChunk) -&gt; anyhow::Result&lt;()&gt;;
+    fn process_pending_audio(&amp;mut self, flush: bool) -&gt; anyhow::Result&lt;()&gt;;
+    fn process_vad_batch(&amp;mut self, batch: &amp;[f32], frame_samples: usize)
+        -&gt; anyhow::Result&lt;()&gt;;
+    fn handle_frame(&amp;mut self, frame: VadFrame, audio: &amp;[f32])
+        -&gt; anyhow::Result&lt;()&gt;;
+    fn prepare_command(&amp;mut self, command: PipelineCommand,
+                       audio_rx: &amp;Receiver&lt;AudioChunk&gt;) -&gt; anyhow::Result&lt;()&gt;;
+    fn handle_command(&amp;mut self, command: PipelineCommand)
+        -&gt; anyhow::Result&lt;bool&gt;;
+    fn emit_partial(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    fn finish_partial_schedule(&amp;mut self, started: Instant);
+    fn reset_partial_schedule(&amp;mut self);
+    fn finalize(&amp;mut self, segment: Segment) -&gt; anyhow::Result&lt;()&gt;;
+    fn reset_after_segment(&amp;mut self);
+    fn enqueue(&amp;mut self, segment: Segment);
+    fn drain_queue(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    fn send(&amp;self, event: PipelineEvent);
+    fn frame_samples(&amp;self) -&gt; usize;
+    fn vad_batch_samples(&amp;self) -&gt; usize;
+    fn samples_for_ms(&amp;self, ms: u64) -&gt; usize;
+}
+
+fn keeps_collecting_after_end(mode: Mode, reason: SegmentEndReason) -&gt; bool;</code></pre>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 启动与模型加载</h3>
+<pre><code>voimed::main()
+└── voime_core::config::resolve(args)
+    ├── ModelManifest::load(manifest.json)
+    ├── ModelManifest::verify(model_dir)
+    │   ├── verify_file(vad/model, sha256)
+    │   ├── verify_file(asr/model.int8.onnx, sha256)
+    │   └── verify_file(punc/model.onnx, sha256)
+    └── ModelManifest::rebase(model_dir)
+
+voime_core::pipeline::spawn(&amp;config, factory, audio_rx)
+├── std::thread::Builder::spawn(Worker::run)
+└── Worker::new(&amp;manifest, &amp;factory, events)
+    ├── FireRedVad::new(&amp;manifest.vad, factory, VadConfig)
+    ├── FireRedCtc::new_with_factory(&amp;manifest.asr, factory)
+    ├── FireRedPunc::new_with_factory(&amp;manifest.punc, factory, PuncConfig)
+    └── Segmenter::new(manifest.max_segment_ms)</code></pre>
+<ul class="note">
+  <li>模型校验、会话创建与 worker 启动在 <code>pipeline::spawn</code> 返回前完成；任一步失败直接返回错误。</li>
+  <li>音频设备在 pipeline 成功后才打开；见 <a href="../../crates/voimed/CORE.html#c5-1">voimed CORE §5.1</a>。</li>
+</ul>
+
+<h3 id="c5-2">5.2 音频、VAD 与 Continuous</h3>
+<pre><code>Worker::run(audio_rx, commands)
+└── loop
+    ├── crossbeam_channel::select_biased!
+    │   ├── 判断 command → Worker::handle_command(command)
+    │   └── 判断 AudioChunk → Worker::handle_audio(chunk)
+    └── Worker::drain_queue()
+
+Worker::handle_audio(chunk)
+├── 判断 chunk.is_stream_error() → 丢弃当前段 + Recording(false)
+├── 判断 !should_process() → 清空待处理音频并返回
+├── 判断 resampler.is_none() → StreamResampler::new(chunk.sample_rate, chunk.channels)
+├── StreamResampler::push(chunk)
+└── Worker::process_pending_audio(false)
+    └── Worker::process_vad_batch(batch, frame_samples)
+        ├── FireRedVad::push(batch)
+        └── 逐帧 Worker::handle_frame(frame, audio)
+            └── Segmenter::push(frame, samples, mode)
+                ├── 判断 SpeechStart → PipelineEvent::Recording(true)
+                ├── 判断 Partial 门槛 → Worker::emit_partial()
+                └── 判断 SpeechEnd → Worker::finalize(segment) / enqueue(segment)</code></pre>
+<ul class="note">
+  <li>Continuous 的 <code>SpeechEnd</code> 进入容量有限的完成段队列；PTT / Toggle 立即 finalize。</li>
+  <li>Toggle 在 SpeechEnd 后保持 <code>collecting=true</code> 并再次发送 <code>Recording(true)</code>；PTT 仅在 MaxDuration 时继续收集。</li>
+</ul>
+
+<h3 id="c5-3">5.3 PTT / Toggle 命令</h3>
+<pre><code>Pipeline::start_segment()
+└── PipelineCommand::StartSegment
+    └── Worker::handle_command(StartSegment)
+        ├── 判断 mode != Continuous &amp;&amp; !collecting &amp;&amp; !segmenter.is_active()
+        ├── FireRedVad::reset()
+        ├── Segmenter::reset()
+        └── PipelineEvent::Recording(true)
+
+Pipeline::finish_segment()
+└── PipelineCommand::FinishSegment
+    ├── Worker::prepare_command(FinishSegment)
+    │   ├── 排空 audio_rx
+    │   └── Worker::process_pending_audio(true)
+    └── Worker::handle_command(FinishSegment)
+        ├── Segmenter::force_end()
+        ├── PipelineEvent::Recording(false)
+        └── Worker::finalize(segment) / SegmentDropped</code></pre>
+
+<h3 id="c5-4">5.4 Partial</h3>
+<pre><code>Worker::emit_partial()
+├── 判断 !segmenter.is_active() → reset_partial_schedule()
+├── 截取 active_samples() 末尾 PARTIAL_MAX_MS
+├── Fbank::new(fbank).compute(tail)
+├── FireRedCtc::transcribe(features)
+├── 判断 text 非空 → PipelineEvent::Partial(text)
+└── Worker::finish_partial_schedule(started)</code></pre>
+<ul class="note">
+  <li>尾部被截断时文本前加省略号；Partial 不进入历史、不提交。</li>
+  <li>慢推理会按耗时推迟下一次 Partial；具体调度见 <code>finish_partial_schedule</code>。</li>
+</ul>
+
+<h3 id="c5-5">5.5 Final 与标点</h3>
+<pre><code>Worker::finalize(segment)
+├── 判断 segment.samples.is_empty() → SegmentDropped("空语音段")
+├── Fbank::new(fbank).compute(segment.samples)
+├── 判断 features.is_empty() → SegmentDropped("音频过短")
+├── FireRedCtc::transcribe(features)
+├── 判断 asr.text.trim().is_empty() → SegmentDropped("空识别结果")
+├── FireRedPunc::punctuate(&amp;asr.text)
+├── Worker::reset_after_segment()
+└── 判断 final 非空 → PipelineEvent::Final(final)</code></pre>
+
+<h3 id="c5-6">5.6 音频错误、丢弃与关闭</h3>
+<pre><code>Worker::handle_audio(chunk)
+└── 判断 chunk.is_stream_error()
+    ├── audio_error_streak += 1
+    ├── Segmenter::reset()
+    ├── FireRedVad::reset()
+    ├── PipelineEvent::Recording(false)
+    ├── PipelineEvent::SegmentDropped("音频流错误")
+    └── 判断 audio_error_streak &gt;= AUDIO_STREAM_ERROR_LIMIT → anyhow::bail!
+
+Pipeline::shutdown()
+├── PipelineCommand::Shutdown
+├── Worker::run 返回
+└── JoinHandle::join()
+
+Worker::drain_queue()
+└── 逐个 Worker::finalize(segment)</code></pre>
+
+</body>
+</html>

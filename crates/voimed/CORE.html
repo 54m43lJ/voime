@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — voimed</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — voimed</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>crates/voimed/
+├── Cargo.toml
+└── src/
+    ├── <a href="#c4-1">lib.rs</a>
+    ├── <a href="#c4-2">main.rs</a>
+    ├── <a href="#c4-3">cli.rs</a>
+    ├── <a href="#c4-4">daemon.rs</a>
+    ├── <a href="#c4-5">state.rs</a>
+    └── <a href="#c4-6">ipc_server.rs</a></code></pre>
+<ul class="note">
+  <li><code>lib.rs</code> 导出 <code>daemon</code> / <code>ipc_server</code> / <code>state</code>，供根集成测试使用；<code>main.rs</code> 只做启动编排。</li>
+</ul>
+
+<ul class="note">
+  <li>本分支只保留文档；源码文件不在当前工作树，文件树描述源码分支结构。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>事件循环</td><td>daemon 主线程用 <code>crossbeam_channel::select!</code> 同时等待 IPC 事件与 pipeline 事件；100 ms 超时用于检查关闭。</td></tr>
+  <tr><td>客户端线程</td><td>accept 线程接受连接；每个客户端一个 reader 线程与一个 writer 线程；daemon 主线程只处理事件与状态。</td></tr>
+  <tr><td>客户端队列</td><td>每个客户端一个有界发送队列；Final / State 满时移除客户端，Partial 满时只丢该条。</td></tr>
+  <tr><td>角色表</td><td><code>clients: HashMap&lt;u64, ClientEntry&gt;</code> 由互斥锁保护；<code>set_role</code> 只允许一个 <code>Fcitx</code>。</td></tr>
+  <tr><td>状态机</td><td><code>State.phase</code> 只由 daemon 主线程修改；pipeline 事件与客户端命令都在同一线程串行处理。</td></tr>
+  <tr><td>段 ID</td><td><code>next_segment</code> 单调递增，wrapping 后跳过 0；当前段在 Final / 丢弃后清空。</td></tr>
+  <tr><td>模式生效</td><td>Idle 时立即 <code>pipeline.set_mode</code>；非 Idle 时暂存到 <code>pending_mode</code>，段结束后应用。</td></tr>
+  <tr><td>前端断开</td><td>前端状态置 disconnected；Continuous 退 PTT；结束当前段；广播 Snapshot。</td></tr>
+  <tr><td>退出顺序</td><td>广播 Bye → IPC shutdown → pipeline shutdown → audio stop → 删除端点。</td></tr>
+  <tr><td>过渡实现</td><td><code>ipc_server.rs</code> 当前直接使用 Unix socket；P0 后改为 <a href="../voime-transport/CORE.html">voime-transport</a>，daemon 不再 import <code>std::os::unix</code>。</td></tr>
+</table>
+<ul class="note">
+  <li>仓库级进程 / 线程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>
+</ul>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td><code>voime-core</code></td><td>配置、音频、模型、pipeline。</td></tr>
+  <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
+  <tr><td><code>voime-transport</code></td><td>本机端点（目标 P0；当前未依赖）。</td></tr>
+  <tr><td><code>clap</code></td><td>命令行参数。</td></tr>
+  <tr><td><code>crossbeam-channel</code></td><td>IPC 事件、pipeline 事件与客户端发送队列。</td></tr>
+  <tr><td><code>serde_json</code></td><td>当前 reader 线程直接反序列化 ClientMessage。</td></tr>
+  <tr><td><code>anyhow</code></td><td>启动 / 运行期错误上下文。</td></tr>
+  <tr><td><code>tempfile</code>（dev）</td><td>临时 socket 测试。</td></tr>
+</table>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod cli;
+pub mod daemon;
+pub mod ipc_server;
+pub mod state;</code></pre>
+
+<h3 id="c4-2">4.2 main.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>fn main() -&gt; std::process::ExitCode;
+fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;
+fn stop_audio(audio: CaptureHandle);</code></pre>
+<ul class="note">
+  <li><code>main</code> 先检查端点是否已有 daemon，再调用 <code>run</code>；<code>run</code> 按配置 → 会话工厂 → pipeline → 音频 → IPC → daemon 顺序初始化。</li>
+  <li>初始化失败按逆序释放已创建资源；音频打开失败时先关闭 pipeline。</li>
+</ul>
+
+<h3 id="c4-3">4.3 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Cli {
+    pub model_dir: Option&lt;PathBuf&gt;,
+    pub input_device: Option&lt;String&gt;,
+    pub threads: Option&lt;usize&gt;,
+    pub socket: Option&lt;PathBuf&gt;,
+    pub verbose: bool,
+}
+
+pub fn parse() -&gt; Cli;
+fn parse_positive_usize(value: &amp;str) -&gt; Result&lt;usize, String&gt;;</code></pre>
+
+<h3 id="c4-4">4.4 daemon.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Daemon {
+    _config: Config,
+    state: State,
+    pipeline: Pipeline,
+    audio: CaptureHandle,
+    ipc: IpcServer,
+    current_segment: Option&lt;u64&gt;,
+    next_segment: u64,
+    pending_mode: Option&lt;Mode&gt;,
+    pending_stop: bool,
+    shutdown: bool,
+    fatal: Option&lt;anyhow::Error&gt;,
+}
+
+impl Daemon {
+    pub fn new(config: Config, pipeline: Pipeline,
+               audio: CaptureHandle, ipc: IpcServer) -&gt; Self;
+    pub fn run(mut self) -&gt; anyhow::Result&lt;()&gt;;
+    fn on_server_event(&amp;mut self, event: ServerEvent);
+    fn on_client(&amp;mut self, client_id: u64, message: ClientMessage);
+    fn request_start(&amp;mut self, client_id: u64, segment_id: u64,
+                     source: TriggerSource);
+    fn request_stop(&amp;mut self, client_id: u64, segment_id: u64);
+    fn on_pipeline(&amp;mut self, event: PipelineEvent);
+    fn allocate_segment(&amp;mut self) -&gt; u64;
+    fn broadcast_state(&amp;self);
+    fn broadcast_snapshot(&amp;self);
+    fn apply_pipeline_mode(&amp;self);
+    fn apply_pending_mode(&amp;mut self);
+    fn effective_mode(&amp;self) -&gt; Mode;
+    fn send_error(&amp;self, client_id: u64, code: ErrorCode, message: &amp;str);
+}
+
+fn continuation_source(mode: Option&lt;Mode&gt;) -&gt; TriggerSource;</code></pre>
+
+<h3 id="c4-5">4.5 state.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct State {
+    pub mode: Option&lt;Mode&gt;,
+    pub hotkey: Option&lt;String&gt;,
+    pub phase: Phase,
+    pub partial: Option&lt;String&gt;,
+    pub transcript: Vec&lt;String&gt;,
+    pub addon: AddonState,
+}
+impl Default for State { /* Idle / Disconnected / empty history */ }
+
+impl State {
+    pub fn apply_mode(&amp;mut self, mode: Mode);
+    pub fn clear_history(&amp;mut self);
+    pub fn snapshot(&amp;self) -&gt; ServerMessage;
+    pub fn status(&amp;self, recording: bool, finalizing: bool,
+                  segment_id: Option&lt;u64&gt;) -&gt; Status;
+}</code></pre>
+
+<h3 id="c4-6">4.6 ipc_server.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum ServerEvent {
+    Connected { client_id: u64 },
+    Message { client_id: u64, message: ClientMessage },
+    BadMessage { client_id: u64, message: String },
+    Disconnected { client_id: u64, role: Option&lt;Role&gt; },
+}
+
+struct ClientEntry {
+    sender: Sender&lt;ServerMessage&gt;,
+    role: Option&lt;Role&gt;,
+}
+
+pub struct IpcServer {
+    path: PathBuf,
+    events_rx: Receiver&lt;ServerEvent&gt;,
+    clients: Arc&lt;Mutex&lt;HashMap&lt;u64, ClientEntry&gt;&gt;,
+    shutdown: Arc&lt;AtomicBool&gt;,
+    accept_thread: Option&lt;JoinHandle&lt;()&gt;&gt;,
+}
+
+impl IpcServer {
+    pub fn bind(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn events(&amp;self) -&gt; &amp;Receiver&lt;ServerEvent&gt;;
+    pub fn next_event(&amp;self) -&gt; anyhow::Result&lt;ServerEvent&gt;;
+    pub fn try_event(&amp;self) -&gt; Option&lt;ServerEvent&gt;;
+    pub fn broadcast(&amp;self, message: &amp;ServerMessage);
+    pub fn disconnect(&amp;self, client_id: u64);
+    pub fn send_to(&amp;self, client_id: u64, message: &amp;ServerMessage);
+    pub fn set_role(&amp;self, client_id: u64, role: Role) -&gt; bool;
+    pub fn role(&amp;self, client_id: u64) -&gt; Option&lt;Role&gt;;
+    pub fn client_count(&amp;self) -&gt; usize;
+    pub fn shutdown(&amp;mut self);
+}
+impl Drop for IpcServer { /* shutdown + remove socket */ }
+
+fn prepare_parent(path: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
+pub fn daemon_running(path: &amp;Path) -&gt; bool;
+fn spawn_client(stream: UnixStream, client_id: u64,
+                clients: &amp;Arc&lt;Mutex&lt;HashMap&lt;u64, ClientEntry&gt;&gt;&gt;,
+                events: &amp;Sender&lt;ServerEvent&gt;) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 启动</h3>
+<pre><code>systemd --user
+└── voimed::main()
+    ├── voimed::cli::parse()
+    ├── ipc_server::daemon_running(&amp;socket)
+    │   └── 判断已运行 → ExitCode::SUCCESS
+    ├── voimed::run(args)
+    │   ├── voime_core::config::resolve(args)
+    │   ├── voime_core::infer::session::SessionFactory::new(config.threads)
+    │   ├── voime_core::pipeline::spawn(&amp;config, factory, audio_rx)
+    │   ├── voime_core::audio::capture::start(config.input_device, audio_tx)
+    │   ├── ipc_server::IpcServer::bind(&amp;config.socket)
+    │   └── daemon::Daemon::new(config, pipeline, audio, ipc).run()
+    └── 判断 Err → eprintln! + ExitCode::from(1)</code></pre>
+
+<h3 id="c5-2">5.2 连接、Hello 与角色</h3>
+<pre><code>IpcServer accept thread
+└── UnixListener::accept()
+    └── ipc_server::spawn_client(stream, client_id, clients, events)
+        ├── UnixStream::try_clone()
+        ├── std::thread::Builder::spawn(writer loop)
+        └── std::thread::Builder::spawn(reader loop)
+            ├── read_until(b'\n')
+            ├── serde_json::from_slice::&lt;ClientMessage&gt;()
+            └── events.send(ServerEvent::Message)
+
+Daemon::run()
+└── Daemon::on_server_event(Message { client_id, message })
+    └── Daemon::on_client(client_id, Hello { role, version, config })
+        ├── 判断 version != PROTOCOL_VERSION → send Error(version_mismatch) + disconnect
+        ├── IpcServer::set_role(client_id, role)
+        ├── 判断 role == Fcitx → state.addon = Connected
+        ├── State::apply_mode(config.mode)
+        ├── Daemon::apply_pipeline_mode()
+        └── IpcServer::broadcast(Snapshot)</code></pre>
+
+<h3 id="c5-3">5.3 Start 与 SegmentStarted</h3>
+<pre><code>Daemon::on_client(client_id, Start { segment_id, source })
+└── Daemon::request_start(client_id, segment_id, source)
+    ├── 判断 state.phase != Idle → send Error(busy)
+    ├── Daemon::allocate_segment()
+    ├── Pipeline::start_segment()
+    ├── IpcServer::broadcast(SegmentStarted { segment_id, source })
+    └── Daemon::broadcast_state()</code></pre>
+
+<h3 id="c5-4">5.4 Stop、Toggle 与连续段</h3>
+<pre><code>Daemon::on_client(client_id, Stop { segment_id, source })
+└── Daemon::request_stop(client_id, segment_id)
+    ├── 判断 phase != Recording
+    │   └── 判断 mode == Toggle → pending_stop = true
+    ├── 判断 segment_id != 0 &amp;&amp; segment_id != current
+    │   └── 判断 mode != Toggle → send Error(busy)
+    └── Pipeline::finish_segment()
+
+Daemon::on_client(client_id, Toggle { segment_id, source })
+├── 判断 phase == Idle → Daemon::request_start(...)
+├── 判断 phase == Recording → Daemon::request_stop(...)
+└── 判断 phase == Finalizing → send Error(busy)
+
+pipeline::PipelineEvent::Recording(true)
+├── 判断 current_segment.is_none() → allocate_segment + broadcast SegmentStarted
+├── state.phase = Recording
+├── broadcast_state()
+└── 判断 pending_stop → Pipeline::finish_segment()</code></pre>
+
+<h3 id="c5-5">5.5 Pipeline 事件</h3>
+<pre><code>Daemon::run()
+└── Daemon::on_pipeline(event)
+    ├── Recording(true) → phase=Recording + broadcast_state
+    ├── Recording(false) → phase=Finalizing + broadcast_state
+    ├── Partial(text) → state.partial=Some + broadcast Partial
+    ├── Final(text) → transcript.push + phase=Idle + broadcast Final + broadcast_state
+    ├── SegmentDropped(reason) → phase=Idle + current_segment=None + broadcast Error(inference)
+    └── Fatal(error) → fatal=Some + shutdown=true</code></pre>
+
+<h3 id="c5-6">5.6 前端断开与模式回退</h3>
+<pre><code>ipc_server reader loop 退出
+└── events.send(ServerEvent::Disconnected { client_id, role })
+    └── Daemon::on_server_event(Disconnected)
+        ├── 判断 role == Fcitx → state.addon = Disconnected
+        ├── 判断 state.mode == Continuous → Pipeline::set_mode(Ptt)
+        ├── 判断 current_segment.is_some() → Pipeline::finish_segment()
+        └── Daemon::broadcast_snapshot()</code></pre>
+
+<h3 id="c5-7">5.7 退出</h3>
+<pre><code>Daemon::on_client(Quit)（role=Control）
+└── shutdown = true
+    └── Daemon::run() 跳出循环
+        ├── IpcServer::broadcast(Bye)
+        ├── IpcServer::shutdown()
+        │   ├── shutdown.store(true)
+        │   ├── accept_thread.join()
+        │   ├── clients.clear()
+        │   └── std::fs::remove_file(socket)
+        ├── Pipeline::shutdown()
+        └── CaptureHandle::stop()</code></pre>
+
+</body>
+</html>

@@ -1,0 +1,23 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "VAD / pipeline" as Vad
+participant "voimed" as Daemon
+participant "平台前端" as Frontend
+
+Vad -> Daemon : SpeechStart
+Daemon -> Frontend : SegmentStarted { source: continuous }
+Daemon -> Frontend : State { recording: true }
+
+loop 语音期间
+  Vad -> Daemon : Partial
+  Daemon -> Frontend : Partial
+end
+
+Vad -> Daemon : SpeechEnd
+Daemon -> Frontend : State { recording: false, finalizing: true }
+Daemon -> Frontend : Final
+Daemon -> Frontend : State { recording: false, finalizing: false }
+@enduml

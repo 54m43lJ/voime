@@ -1,0 +1,27 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "平台前端" as Frontend
+participant "voimed" as Daemon
+
+Frontend -> Daemon : Start { segment_id, source }
+Daemon -> Frontend : SegmentStarted { final_id }
+Daemon -> Frontend : State { recording: true }
+
+loop 录音期间
+  Daemon -> Frontend : Partial
+end
+
+alt Mode = Toggle
+  Daemon -> Frontend : Final
+  Daemon -> Frontend : State { recording: false, finalizing: true }
+  Daemon -> Frontend : State { recording: true, finalizing: false }
+  note right of Daemon : 同一 Toggle 会话继续下一段
+else Mode = Ptt / Continuous
+  Frontend -> Daemon : Stop（PTT 松开）
+  Daemon -> Frontend : Final
+  Daemon -> Frontend : State { recording: false, finalizing: false }
+end
+@enduml

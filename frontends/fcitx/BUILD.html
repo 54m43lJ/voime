@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BUILD — fcitx-addon</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>BUILD — fcitx-addon</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+</p>
+
+<p>
+本分支只保留文档；以下构建与运行命令用于源码分支。
+</p>
+
+<h2 id="b1">1. 环境</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>要求</th></tr>
+  <tr><td>平台</td><td>Linux + Fcitx5；Windows 不构建本组件。</td></tr>
+  <tr><td>编译器</td><td>C++20、CMake。</td></tr>
+  <tr><td>Fcitx5</td><td>≥ 5.1.23 开发头文件；Arch：<code>fcitx5</code>；Debian / Ubuntu：<code>libfcitx5core-dev</code> 等，按发行版为准。</td></tr>
+  <tr><td>JSON</td><td>仓库内 <code>third_party/nlohmann/json.hpp</code>（MIT），不需要额外安装。</td></tr>
+</table>
+
+<h2 id="b2">2. 构建与安装</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build build/fcitx
+sudo cmake --install build/fcitx</code></pre>
+
+<table>
+  <tr><th>产物</th><th>说明</th></tr>
+  <tr><td><code>build/fcitx/voime.so</code></td><td>Fcitx5 addon；安装到 <code>$PREFIX/lib/fcitx5/</code>。</td></tr>
+  <tr><td><code>share/fcitx5/addon/voime.conf</code></td><td>addon 描述文件；<code>OnDemand=False</code>，可配置。</td></tr>
+  <tr><td>图标</td><td><code>icons/voime.svg</code> 安装到 Fcitx 图标目录。</td></tr>
+  <tr><td>inputmethod 条目</td><td>不安装；Voime 不出现在输入法列表。</td></tr>
+</table>
+<ul class="note">
+  <li>CMake 设置 <code>PREFIX ""</code>，产物是 <code>voime.so</code>（不是 <code>libvoime.so</code>），与 <code>Library=voime</code> 对应。</li>
+  <li>构建根为 <code>frontends/fcitx/</code>；文件树保持相对结构。</li>
+  <li>根构建编排见 <a href="../../BUILD.html#b2">根 BUILD §2</a>。</li>
+</ul>
+
+<h2 id="b3">3. 配置与加载</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code># 重启 Fcitx
+fcitx5 -r
+
+# 确认 Addons 页面加载了 Voime；不需要加入输入法组
+fcitx5-configtool</code></pre>
+
+<table>
+  <tr><th>配置</th><th>路径</th></tr>
+  <tr><td>addon 描述</td><td><code>$PREFIX/share/fcitx5/addon/voime.conf</code></td></tr>
+  <tr><td>用户配置</td><td><code>~/.config/fcitx5/conf/voime.conf</code>（或 <code>XDG_CONFIG_HOME</code>）</td></tr>
+  <tr><td>旧配置迁移</td><td>无后缀的 <code>~/.config/fcitx5/conf/voime</code> 在启动时迁移到 <code>voime.conf</code>，然后删除旧文件。</td></tr>
+</table>
+<ul class="note">
+  <li>修改 <code>Mode</code> / <code>Hotkey</code> 后重新加载 addon 配置或重启 Fcitx。</li>
+  <li>如果 Addons 页面没有 Voime，检查描述文件前缀、<code>voime.so</code> 的 ABI 与依赖。</li>
+</ul>
+
+<h2 id="b4">4. 测试</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>cmake --build build/fcitx
+ctest --test-dir build/fcitx --output-on-failure</code></pre>
+
+<table>
+  <tr><th>测试</th><th>覆盖</th></tr>
+  <tr><td><code>tests/addon_test.cpp</code></td><td>Mode / 热键字符串 / IPC 枚举 / target 空引用。</td></tr>
+  <tr><td>手工验收</td><td>Addons 页面加载、不出现在输入法组、Mode 三态、热键冲突、临时窗口、Final 提交、目标失焦、daemon 重启重连。</td></tr>
+  <tr><td>frontend 覆盖</td><td>原生 Wayland、XWayland / XIM、支持 text-input 的终端；不支持输入法协议的窗口不承诺。</td></tr>
+</table>
+
+<h2 id="b5">5. 升级 / 卸载</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>操作</th><th>步骤</th></tr>
+  <tr><td>升级 Fcitx</td><td>重新编译并安装 <code>voime.so</code>；重启 Fcitx；确认 addon ABI 与输入法组中没有 Voime。</td></tr>
+  <tr><td>升级 addon</td><td>停止 daemon（可选）；重新构建 / 安装；重启 Fcitx；daemon 重启后 addon 自动重连。</td></tr>
+  <tr><td>卸载</td><td>删除 addon 描述文件、<code>voime.so</code> 与图标；重启 Fcitx；用户配置按需保留或删除。</td></tr>
+  <tr><td>清理旧条目</td><td>如果存在 <code>share/fcitx5/inputmethod/voime.conf</code>，删除并从输入法组移除 Voime。</td></tr>
+</table>
+
+</body>
+</html>

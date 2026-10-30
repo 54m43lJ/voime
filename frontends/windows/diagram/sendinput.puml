@@ -1,0 +1,21 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Windows 前端" as Frontend
+participant "UIA" as Uia
+participant "目标窗口" as App
+
+Frontend -> Uia : GetFocusedElement()
+Uia -> Frontend : RuntimeId
+Frontend -> App : GetForegroundWindow()
+App -> Frontend : HWND
+
+Frontend -> Frontend : 校验 HWND + RuntimeId
+alt 目标仍有效
+  Frontend -> App : SendInput(KEYEVENTF_UNICODE)
+else 目标失效 / UIPI 拒绝
+  Frontend -> Frontend : 不提交\n保留历史
+end
+@enduml

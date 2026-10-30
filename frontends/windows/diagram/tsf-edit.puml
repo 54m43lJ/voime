@@ -1,0 +1,18 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "TSF DLL" as Tsf
+participant "ITfContext" as Context
+participant "ITfRange" as Range
+
+Tsf -> Context : RequestEditSession(editSession)
+Context -> Tsf : DoEditSession(ec)
+Tsf -> Range : SetText(ec, text)
+alt 成功
+  Tsf -> Range : Collapse(ec, TF_AE_END)
+else 只读 / 选区变化 / context 销毁
+  Tsf -> Tsf : 不提交\n保留 daemon 历史
+end
+@enduml

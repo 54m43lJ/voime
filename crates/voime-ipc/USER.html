@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>USER — voime-ipc</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>USER — voime-ipc</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="CORE.html">CORE</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+本文是 Voime 线协议的单一事实来源。daemon、TUI、Linux addon 与 Windows 前端都实现本文；
+其他文档只链接具体小节，不复制消息定义。
+</p>
+
+<h2 id="u1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>消息（message）</td><td>一个 JSON 对象，带唯一外部标签；一行一个消息。</td></tr>
+  <tr><td>frame</td><td>消息 JSON + 一个换行符 <code>\n</code>；换行是唯一的消息边界。</td></tr>
+  <tr><td>外部标签</td><td>消息类型作为 JSON 对象的唯一键，例如 <code>{"Hello": {...}}</code>。</td></tr>
+  <tr><td>角色（Role）</td><td>客户端身份：<code>fcitx</code>（平台前端）、<code>tui</code>（监视器）或 <code>control</code>（一次性控制）。</td></tr>
+  <tr><td>模式（Mode）</td><td><code>ptt</code> / <code>toggle</code> / <code>continuous</code>；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
+  <tr><td>触发来源（TriggerSource）</td><td>段开始 / 停止的来源：<code>hold</code>、<code>toggle</code>、<code>tui</code>、<code>cli</code>、<code>continuous</code>。</td></tr>
+  <tr><td>阶段（Phase）</td><td>daemon 当前状态：<code>idle</code>、<code>recording</code>、<code>finalizing</code>。</td></tr>
+  <tr><td>前端状态（AddonState）</td><td>平台前端是否连接到 daemon：<code>connected</code> / <code>disconnected</code>。</td></tr>
+  <tr><td><code>segment_id</code></td><td>daemon 为语音段分配的唯一整数；客户端发送的 ID 只是提示，最终以 <code>SegmentStarted</code> 为准。</td></tr>
+  <tr><td>Snapshot</td><td>连接时的全量状态：模式、热键、phase、partial、历史、前端连接状态。</td></tr>
+  <tr><td>Partial / Final</td><td>临时结果 / 最终结果；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
+  <tr><td>错误码（ErrorCode）</td><td>稳定的 snake_case 标识；客户端按码处理，不解析文案。</td></tr>
+  <tr><td>协议版本</td><td><code>PROTOCOL_VERSION</code>；消息形状变化时提升。</td></tr>
+</table>
+
+<h2 id="u2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>编码</td><td>UTF-8 JSON；每个消息一行；不得 pretty-print；不得包含未转义的换行。</td></tr>
+  <tr><td>framing</td><td>消息以 <code>\n</code> 终止；缺少换行、超过 <code>MAX_MESSAGE_BYTES</code> 或不是合法 JSON 都是协议错误。</td></tr>
+  <tr><td>外部标签</td><td>消息类型是对象的唯一键；字段平铺在标签对象内。</td></tr>
+  <tr><td>枚举值</td><td><code>Mode</code> / <code>Role</code> / <code>TriggerSource</code> / <code>Phase</code> / <code>AddonState</code> 使用小写；<code>ErrorCode</code> 使用 snake_case。</td></tr>
+  <tr><td>握手顺序</td><td>连接后第一条消息必须是 <code>Hello</code>；版本或角色不合法时 daemon 发送 <code>Error</code> 并断开。</td></tr>
+  <tr><td>角色</td><td>只允许一个 <code>fcitx</code> 连接；<code>configure</code> 只接受 <code>fcitx</code>；<code>quit</code> 只接受 <code>control</code>。</td></tr>
+  <tr><td>配置</td><td><code>Hello.config</code> 可选；只有平台前端携带 <code>mode</code> / <code>hotkey</code>。daemon 不解析命令行模式。</td></tr>
+  <tr><td><code>segment_id</code></td><td>daemon 分配；<code>Start</code> / <code>Toggle</code> 的 ID 只是提示；<code>Stop</code> 的非零 ID 在 PTT / Continuous 下需匹配当前段，0 表示当前段（Toggle 例外）。</td></tr>
+  <tr><td>背压</td><td><code>Final</code> / <code>State</code> 不丢弃；<code>Partial</code> 可在队列满时丢弃；慢客户端由 daemon 断开。</td></tr>
+  <tr><td>版本</td><td>只有消息形状变化才提升 <code>PROTOCOL_VERSION</code>；新增平台前端不提升版本。</td></tr>
+  <tr><td>无持久化</td><td>协议消息不写磁盘；历史只存在于 daemon 内存。</td></tr>
+</table>
+
+<h2 id="u3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u3-1">3.1 握手与角色</h3>
+<div class="diagram"><img src="diagram/handshake.svg" alt="客户端连接、Hello、版本与角色校验的时序图"></div>
+<ul class="note">
+  <li>版本不匹配或第二个 <code>fcitx</code> 连接会收到 <code>Error</code>，随后连接被关闭。</li>
+  <li>TUI / Control 连接收到 <code>Snapshot</code>；前端连接还会触发 daemon 的前端状态更新。</li>
+</ul>
+
+<h3 id="u3-2">3.2 语音段消息流</h3>
+<div class="diagram"><img src="diagram/segment-flow.svg" alt="Start / SegmentStarted / Partial / Final 的消息顺序"></div>
+<ul class="note">
+  <li>Start / Toggle 只是请求；<code>SegmentStarted</code> 携带 daemon 分配的最终 <code>segment_id</code>。</li>
+  <li>Partial 与 Final 都携带 <code>segment_id</code>；前端只处理当前目标的段。</li>
+  <li>Continuous 的段开始由 daemon 自动广播，无需客户端 Start。</li>
+</ul>
+
+<h2 id="u4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u4-1">4.1 常量与编解码</h3>
+<pre><code>pub const PROTOCOL_VERSION: u32 = 1;
+pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+
+pub fn encode_message&lt;T: Serialize&gt;(message: &amp;T) -&gt; anyhow::Result&lt;Vec&lt;u8&gt;&gt;;
+pub fn write_message&lt;W: Write, T: Serialize&gt;(writer: &amp;mut W, message: &amp;T) -&gt; anyhow::Result&lt;()&gt;;
+pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
+    -&gt; anyhow::Result&lt;Option&lt;T&gt;&gt;;</code></pre>
+
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td><code>PROTOCOL_VERSION</code></td><td>当前为 1；消息形状变化时提升。</td></tr>
+  <tr><td><code>MAX_MESSAGE_BYTES</code></td><td>单行最大 1 MiB；编码与解码都检查。</td></tr>
+  <tr><td><code>encode_message</code></td><td>序列化为 JSON，检查长度，追加 <code>\n</code>。</td></tr>
+  <tr><td><code>write_message</code></td><td>编码后写入并 flush。</td></tr>
+  <tr><td><code>read_message</code></td><td>读取一行；返回 <code>Ok(None)</code> 表示干净 EOF；缺少换行或超长返回错误。</td></tr>
+</table>
+
+<h3 id="u4-2">4.2 ClientMessage</h3>
+<pre><code>pub enum ClientMessage {
+    Hello {
+        role: Role,
+        version: u32,
+        config: Option&lt;FcitxConfig&gt;,
+    },
+    Configure {
+        mode: Mode,
+        hotkey: String,
+    },
+    Start {
+        segment_id: u64,
+        source: TriggerSource,
+    },
+    Stop {
+        segment_id: u64,
+        source: TriggerSource,
+    },
+    Toggle {
+        segment_id: u64,
+        source: TriggerSource,
+    },
+    ClearHistory,
+    Status,
+    Quit,
+}</code></pre>
+
+<h3 id="u4-3">4.3 ServerMessage</h3>
+<pre><code>pub enum ServerMessage {
+    Snapshot {
+        mode: Option&lt;Mode&gt;,
+        phase: Phase,
+        partial: Option&lt;String&gt;,
+        transcript: Vec&lt;String&gt;,
+        addon: AddonState,
+        hotkey: Option&lt;String&gt;,
+    },
+    SegmentStarted {
+        segment_id: u64,
+        source: TriggerSource,
+    },
+    State {
+        recording: bool,
+        finalizing: bool,
+        segment_id: Option&lt;u64&gt;,
+    },
+    Partial {
+        segment_id: u64,
+        text: String,
+    },
+    Final {
+        segment_id: u64,
+        text: String,
+    },
+    HistoryCleared,
+    Status {
+        status: Status,
+    },
+    Error {
+        code: ErrorCode,
+        message: String,
+    },
+    Bye,
+}</code></pre>
+
+<h3 id="u4-4">4.4 辅助类型</h3>
+<pre><code>pub enum Mode { Ptt, Toggle, Continuous }
+pub enum Role { Fcitx, Tui, Control }
+pub enum TriggerSource { Hold, Toggle, Tui, Cli, Continuous }
+pub enum Phase { Idle, Recording, Finalizing }
+pub enum AddonState { Connected, Disconnected }
+
+pub enum ErrorCode {
+    InvalidMessage,
+    VersionMismatch,
+    RoleConflict,
+    Busy,
+    NoInputContext,
+    DaemonUnavailable,
+    Unavailable,
+    Inference,
+    Internal,
+}
+
+pub struct FcitxConfig {
+    pub mode: Mode,
+    pub hotkey: String,
+}
+
+pub struct Status {
+    pub recording: bool,
+    pub finalizing: bool,
+    pub segment_id: Option&lt;u64&gt;,
+    pub mode: Option&lt;Mode&gt;,
+    pub hotkey: Option&lt;String&gt;,
+    pub addon: AddonState,
+    pub transcript_count: usize,
+}</code></pre>
+
+<h3 id="u4-5">4.5 消息语义</h3>
+<table>
+  <tr><th>消息</th><th>方向</th><th>语义</th><th>建议动作</th></tr>
+  <tr><td><code>Hello</code></td><td>client → daemon</td><td>声明角色与版本；前端额外携带 Mode / Hotkey。</td><td>daemon 校验版本与角色；失败发 Error 并断开。</td></tr>
+  <tr><td><code>Configure</code></td><td>前端 → daemon</td><td>配置重载时更新 Mode / Hotkey；新模式在下一段生效。</td><td>daemon 更新快照并广播。</td></tr>
+  <tr><td><code>Start</code> / <code>Stop</code> / <code>Toggle</code></td><td>client → daemon</td><td>手动或热键触发；带提示 <code>segment_id</code> 与来源。</td><td>daemon 返回 <code>State</code> / <code>SegmentStarted</code> 或 <code>Error</code>。</td></tr>
+  <tr><td><code>ClearHistory</code></td><td>client → daemon</td><td>清空已完成历史；保留当前段与 partial。</td><td>daemon 广播 <code>HistoryCleared</code>。</td></tr>
+  <tr><td><code>Status</code></td><td>client → daemon</td><td>请求一次性状态。</td><td>daemon 返回 <code>Status</code>。</td></tr>
+  <tr><td><code>Quit</code></td><td>Control → daemon</td><td>停止 daemon。</td><td>daemon 广播 <code>Bye</code> 后退出。</td></tr>
+  <tr><td><code>Snapshot</code></td><td>daemon → client</td><td>连接时全量状态。</td><td>客户端初始化视图。</td></tr>
+  <tr><td><code>SegmentStarted</code></td><td>daemon → clients</td><td>段开始；携带最终 <code>segment_id</code> 与来源。</td><td>前端绑定 / 跟随目标。</td></tr>
+  <tr><td><code>State</code></td><td>daemon → clients</td><td>录音 / 收尾状态变化。</td><td>更新录音标记与临时窗口。</td></tr>
+  <tr><td><code>Partial</code></td><td>daemon → clients</td><td>临时文本；可丢弃。</td><td>显示，不提交。</td></tr>
+  <tr><td><code>Final</code></td><td>daemon → clients</td><td>最终文本；不丢弃。</td><td>清空临时文本并提交；加入历史。</td></tr>
+  <tr><td><code>HistoryCleared</code></td><td>daemon → clients</td><td>历史已清空。</td><td>清空 TUI 历史。</td></tr>
+  <tr><td><code>Status</code></td><td>daemon → client</td><td>一次性状态快照。</td><td>打印 / 更新状态。</td></tr>
+  <tr><td><code>Error</code></td><td>daemon → client</td><td>协议、角色、忙碌或推理错误。</td><td>按 <code>code</code> 处理；不解析文案。</td></tr>
+  <tr><td><code>Bye</code></td><td>daemon → clients</td><td>daemon 即将退出。</td><td>客户端清理并退出 / 等待重连。</td></tr>
+</table>
+
+<h3 id="u4-6">4.6 JSON 示例</h3>
+<pre><code>// client → daemon
+{"Hello":{"role":"fcitx","version":1,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
+
+// daemon → client
+{"SegmentStarted":{"segment_id":1,"source":"toggle"}}
+
+{"Partial":{"segment_id":1,"text":"明天的日程"}}
+
+{"Final":{"segment_id":1,"text":"明天的日程帮我确认一下。"}}
+
+{"Error":{"code":"role_conflict","message":"已有 Fcitx 客户端连接"}}</code></pre>
+
+<h3 id="u4-7">4.7 错误码</h3>
+<table>
+  <tr><th>错误码</th><th>触发条件</th><th>建议动作</th></tr>
+  <tr><td><code>invalid_message</code></td><td>JSON 非法、字段缺失、角色不允许该命令。</td><td>修正客户端；daemon 可断开。</td></tr>
+  <tr><td><code>version_mismatch</code></td><td><code>Hello.version</code> 与 daemon 不一致。</td><td>升级客户端或 daemon；重新连接。</td></tr>
+  <tr><td><code>role_conflict</code></td><td>已有 <code>fcitx</code> 连接。</td><td>关闭重复前端；定时重试。</td></tr>
+  <tr><td><code>busy</code></td><td>已有语音段、正在识别，或 <code>segment_id</code> 不匹配。</td><td>等待 Idle 后重试；不要强制提交。</td></tr>
+  <tr><td><code>no_input_context</code></td><td>没有可用的输入目标。</td><td>前端不开始语音段；提示用户聚焦输入框。</td></tr>
+  <tr><td><code>daemon_unavailable</code></td><td>客户端无法连接 daemon。</td><td>放行热键；定时重连。</td></tr>
+  <tr><td><code>unavailable</code></td><td>服务暂时不可用。</td><td>重试或查看日志。</td></tr>
+  <tr><td><code>inference</code></td><td>单段识别 / 标点失败。</td><td>丢弃该段；继续监听。</td></tr>
+  <tr><td><code>internal</code></td><td>daemon 内部错误。</td><td>查看日志；必要时重启 daemon。</td></tr>
+</table>
+
+<h3 id="u4-8">4.8 版本与兼容</h3>
+<table>
+  <tr><th>变化</th><th>版本策略</th></tr>
+  <tr><td>新增消息类型</td><td>旧客户端忽略未知标签；提升 <code>PROTOCOL_VERSION</code> 仅在旧客户端无法安全忽略时。</td></tr>
+  <tr><td>修改现有消息字段 / 类型</td><td>必须提升 <code>PROTOCOL_VERSION</code>；daemon 拒绝旧版本并返回 <code>version_mismatch</code>。</td></tr>
+  <tr><td>新增角色或平台前端</td><td>不改变现有消息形状时保持版本；新增角色需 daemon 与客户端同时支持。</td></tr>
+  <tr><td>兼容窗口</td><td>目标 P1 允许过渡期同时接受旧 <code>fcitx</code> 命名；具体兼容策略由 <a href="../voimed/USER.html#u2">voimed USER §2</a> 决定。</td></tr>
+</table>
+
+</body>
+</html>

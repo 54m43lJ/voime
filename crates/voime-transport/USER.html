@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>USER — voime-transport</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>USER — voime-transport</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+<strong>状态：</strong>目标 P0 接口。本文是 daemon / CLI / Rust 前端共同消费的传输契约；
+Unix 与 Windows 实现必须满足同一组语义。
+</p>
+
+<h2 id="u1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>端点（<code>Endpoint</code>）</td><td>一个本机传输地址：Unix 文件系统路径或 Windows 命名管道名。</td></tr>
+  <tr><td>监听器（<code>Listener</code>）</td><td>已绑定的端点；可阻塞 accept，也可从其他线程 shutdown 唤醒。</td></tr>
+  <tr><td>流（<code>Stream</code>）</td><td>一个已建立的字节流；实现 <code>Read + Write + Send</code>。</td></tr>
+  <tr><td><code>bind</code></td><td>创建 listener；负责父目录 / 权限 / 陈旧端点处理。</td></tr>
+  <tr><td><code>connect</code></td><td>客户端连接端点并返回 stream。</td></tr>
+  <tr><td><code>accept</code></td><td>从 listener 取出下一个 stream；阻塞直到有连接或被 shutdown 唤醒。</td></tr>
+  <tr><td><code>try_clone</code></td><td>复制流句柄，供读线程与写线程独立使用（Unix fd / Windows handle）。</td></tr>
+  <tr><td><code>shutdown</code></td><td>关闭 listener / stream，并唤醒阻塞的 accept / read。</td></tr>
+  <tr><td>EOF</td><td>对端关闭；读操作返回 0 字节。</td></tr>
+</table>
+
+<h2 id="u2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>平台选择</td><td>使用 <code>cfg(unix)</code> / <code>cfg(windows)</code> 与 target-specific dependencies；不引入用户可见的 <code>--features unix</code> / <code>--features windows</code>。</td></tr>
+  <tr><td>契约共享</td><td>Unix 与 Windows 实现不共享代码，只共享 trait 与函数签名。</td></tr>
+  <tr><td>字节流</td><td>只负责字节读写；不解析 JSON、不检查消息长度、不处理协议版本。</td></tr>
+  <tr><td>阻塞语义</td><td><code>accept</code> 与 <code>read</code> 可以阻塞；<code>shutdown</code> 必须能从其他线程唤醒。</td></tr>
+  <tr><td>线程安全</td><td><code>Listener</code> 必须 <code>Send + Sync</code>，可从 accept 线程与关闭线程共享；<code>Stream</code> 至少 <code>Send</code>。</td></tr>
+  <tr><td>读写分离</td><td>daemon 每个客户端用 <code>try_clone</code> 复制流：一个线程读、一个线程写。</td></tr>
+  <tr><td>安全</td><td>只允许当前用户访问：Unix 目录 0700 / socket 0600；Windows 当前用户 DACL、拒绝远程客户端。</td></tr>
+  <tr><td>陈旧端点</td><td>bind 前检查是否已有活动 daemon；Unix 删除陈旧 socket，Windows 关闭即消失。</td></tr>
+  <tr><td>错误</td><td>统一返回 <code>io::Error</code>，附端点 / 管道名上下文；不把 OS 错误码暴露给上层业务。</td></tr>
+  <tr><td>测试</td><td>内存 transport 只用于测试，放在 <code>cfg(test)</code> 或 dev-dependency，不作为生产 feature。</td></tr>
+</table>
+
+<h2 id="u3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u3-1">3.1 绑定、连接与关闭</h3>
+<div class="diagram"><img src="diagram/transport-lifecycle.svg" alt="voime-transport 的 bind / connect / accept / shutdown 生命周期"></div>
+<ul class="note">
+  <li>daemon 先 bind，客户端再 connect；accept 线程持续取出连接。</li>
+  <li>关闭 listener 会唤醒阻塞 accept；关闭 stream 会唤醒阻塞 read。</li>
+  <li>平台实现差异只出现在虚线框内，上层看到同一组方法。</li>
+</ul>
+
+<h2 id="u4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u4-1">4.1 端点</h3>
+<pre><code>pub enum Endpoint {
+    #[cfg(unix)]
+    Unix(PathBuf),
+    #[cfg(windows)]
+    NamedPipe(String),
+}</code></pre>
+
+<table>
+  <tr><th>变体</th><th>平台</th><th>契约</th></tr>
+  <tr><td><code>Unix(PathBuf)</code></td><td>Linux / macOS 等 Unix</td><td>文件系统路径；父目录由 transport 创建并设为 0700。</td></tr>
+  <tr><td><code>NamedPipe(String)</code></td><td>Windows</td><td>形如 <code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>；名字包含会话与用户标识。</td></tr>
+</table>
+
+<h3 id="u4-2">4.2 Listener / Stream</h3>
+<pre><code>pub trait Stream: Read + Write + Send {
+    fn try_clone(&amp;self) -&gt; io::Result&lt;Box&lt;dyn Stream&gt;&gt;;
+    fn shutdown(&amp;mut self) -&gt; io::Result&lt;()&gt;;
+}
+
+pub trait Listener: Send + Sync {
+    fn accept(&amp;self) -&gt; io::Result&lt;Box&lt;dyn Stream&gt;&gt;;
+    fn shutdown(&amp;self) -&gt; io::Result&lt;()&gt;;
+}</code></pre>
+
+<table>
+  <tr><th>方法</th><th>契约</th></tr>
+  <tr><td><code>Stream::try_clone</code></td><td>复制底层句柄；Unix 复制 fd，Windows 使用 <code>DuplicateHandle</code>。克隆出的流共享同一连接。</td></tr>
+  <tr><td><code>Stream::shutdown</code></td><td>关闭读写方向并唤醒阻塞 read；幂等。</td></tr>
+  <tr><td><code>Listener::accept</code></td><td>阻塞直到新连接；listener 被 shutdown 后返回错误。</td></tr>
+  <tr><td><code>Listener::shutdown</code></td><td>唤醒阻塞 accept 并释放端点；可从其他线程调用。</td></tr>
+</table>
+
+<h3 id="u4-3">4.3 入口函数</h3>
+<pre><code>pub fn bind(endpoint: &amp;Endpoint) -&gt; io::Result&lt;Box&lt;dyn Listener&gt;&gt;;
+pub fn connect(endpoint: &amp;Endpoint) -&gt; io::Result&lt;Box&lt;dyn Stream&gt;&gt;;</code></pre>
+
+<table>
+  <tr><th>函数</th><th>契约</th></tr>
+  <tr><td><code>bind</code></td><td>创建父目录 / 安全描述符、处理陈旧端点、绑定并返回 listener；端点已被活动 daemon 占用时返回错误。</td></tr>
+  <tr><td><code>connect</code></td><td>连接端点并返回 stream；失败附端点上下文。</td></tr>
+</table>
+
+<h3 id="u4-4">4.4 平台映射</h3>
+<table>
+  <tr><th>关注点</th><th>Unix adapter</th><th>Windows adapter</th></tr>
+  <tr><td>端点</td><td>文件系统路径</td><td><code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code></td></tr>
+  <tr><td>权限</td><td>父目录 0700、socket 0600</td><td>当前用户 DACL；<code>PIPE_REJECT_REMOTE_CLIENTS</code></td></tr>
+  <tr><td>陈旧端点</td><td>启动时尝试连接；失败则删除旧 socket</td><td>管道句柄关闭即消失；检查已有 daemon</td></tr>
+  <tr><td>accept</td><td>非阻塞 + 短睡眠，或可中断 accept</td><td>阻塞 <code>ConnectNamedPipe</code> 或 overlapped；shutdown 可取消</td></tr>
+  <tr><td>读写分离</td><td><code>try_clone</code> 复制 fd</td><td><code>DuplicateHandle</code></td></tr>
+  <tr><td>关闭</td><td><code>shutdown</code> + drop</td><td><code>DisconnectNamedPipe</code> / <code>CloseHandle</code></td></tr>
+  <tr><td>错误映射</td><td><code>io::Error</code> + 路径上下文</td><td><code>io::Error</code> + Win32 错误码 / 管道名上下文</td></tr>
+</table>
+
+<h3 id="u4-5">4.5 错误</h3>
+<table>
+  <tr><th>错误</th><th>触发条件</th><th>建议动作</th></tr>
+  <tr><td>端点已存在且可连接</td><td>已有 daemon 在运行。</td><td>daemon 幂等退出；客户端直接连接。</td></tr>
+  <tr><td>权限错误</td><td>目录 / socket / DACL 不允许当前用户。</td><td>检查运行用户与安装权限；不要放宽到其他用户。</td></tr>
+  <tr><td>连接被拒绝</td><td>daemon 未启动或端点陈旧。</td><td>客户端重试；daemon 清理陈旧端点。</td></tr>
+  <tr><td>accept / read 被 shutdown 唤醒</td><td>daemon 正在关闭。</td><td>上层视为正常退出。</td></tr>
+  <tr><td>句柄复制失败</td><td>fd / handle 耗尽或权限不足。</td><td>关闭客户端；记录上下文。</td></tr>
+</table>
+
+</body>
+</html>

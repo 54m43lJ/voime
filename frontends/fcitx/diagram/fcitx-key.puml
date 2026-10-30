@@ -1,0 +1,23 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "Fcitx5" as Fcitx
+participant "Voime addon" as Addon
+
+Fcitx -> Addon : InputContextKeyEvent
+Addon -> Addon : 按 Mode + Hotkey 匹配
+
+alt 命中 Hotkey
+  Addon -> Fcitx : filterAndAccept()\n消费按键
+  Addon -> Addon : Start / Stop 语音段
+else 未命中 / Mode=continuous
+  Addon -> Fcitx : 返回，不消费
+end
+
+note over Fcitx, Addon
+  普通按键继续由 Fcitx 路由；
+  Voime 不抓键盘、不转发、不注入。
+end note
+@enduml
