@@ -15,7 +15,6 @@
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
-<a href="ASR.html">ASR</a>
 </p>
 
 <h2 id="b1">1. 环境</h2>
@@ -87,7 +86,7 @@ scripts/install_models.sh --source-dir /path/to/official/weights</code></pre>
   <li>仓库内 <code>models/manifest.json</code> 是结构模板，SHA-256 为全零且模型目录不完整；必须先运行安装脚本生成真实模型包，不能直接启动 <code>voimed</code>。</li>
   <li><code>--source-dir</code> 只覆盖 FireRedPunc 权重、VAD ONNX / CMVN 与 FireRedASR2S 源码；FireRedASR2-CTC 仍从官方 <code>.tar.bz2</code> 下载，或复用 <code>$XDG_CACHE_HOME/voime/ctc/</code>（默认 <code>~/.cache/voime/ctc/</code>）缓存。</li>
   <li>CTC 压缩包会保留在 <code>$XDG_CACHE_HOME/voime/ctc/</code>（默认 <code>~/.cache/voime/ctc/</code>），重装时优先复用，不会重新下载。</li>
-  <li>模型包内容与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>；模型事实与 RTF 见 <a href="ASR.html">ASR 研究</a>。</li>
+  <li>模型包内容与张量契约见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
   <li>运行期不下载、不重新导出、不做动态量化。</li>
 </ul>
 
