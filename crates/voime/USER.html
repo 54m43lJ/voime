@@ -75,7 +75,7 @@
 
 <h3 id="u4-1">4.1 命令行</h3>
 <pre><code>voime [--endpoint &lt;ENDPOINT&gt;]
-voime ctl &lt;start|stop|toggle|status|clear|quit&gt; [--endpoint &lt;ENDPOINT&gt;]
+voime ctl &lt;start|stop|toggle|status|clear|models|use &lt;id&gt;|restart-backend|quit&gt; [--endpoint &lt;ENDPOINT&gt;]
 voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
 
 <table>
@@ -86,6 +86,9 @@ voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
   <tr><td><code>voime ctl toggle</code></td><td>发送 <code>Toggle { segment_id: 0, source: Cli }</code>。</td></tr>
   <tr><td><code>voime ctl status</code></td><td>发送 <code>Status</code>；打印一行状态。</td></tr>
   <tr><td><code>voime ctl clear</code></td><td>发送 <code>ClearHistory</code>；等待 <code>HistoryCleared</code>。</td></tr>
+  <tr><td><code>voime ctl models</code></td><td>列出已安装模型包；daemon 在线时同时显示 active / running，离线时回退扫描本地目录。</td></tr>
+  <tr><td><code>voime ctl use &lt;id&gt;</code></td><td>只写 <code>models/active</code>，不切换运行中的进程；需再执行 <code>restart-backend</code>。</td></tr>
+  <tr><td><code>voime ctl restart-backend</code></td><td>发送 <code>RestartBackend</code>；空闲时重建 ASR pipeline，录音中返回 Busy。</td></tr>
   <tr><td><code>voime ctl quit</code></td><td>发送 <code>Quit</code>；等待 <code>Bye</code>。</td></tr>
   <tr><td><code>voime doctor</code></td><td>只读检查；退出码 0 表示全部通过，1 表示存在 FAIL。</td></tr>
   <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名。</td></tr>

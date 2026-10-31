@@ -110,7 +110,8 @@
 <h3 id="u4-1">4.1 addon 配置</h3>
 <pre><code># ~/.config/fcitx5/conf/voime.conf
 Mode=ptt
-Hotkey=Super+F2</code></pre>
+Hotkey=Super+F2
+Model=sense-voice-2024-itn</code></pre>
 
 <table>
   <tr><th>配置项</th><th>取值</th><th>默认</th><th>说明</th></tr>
@@ -126,9 +127,16 @@ Hotkey=Super+F2</code></pre>
     <td><code>Super+F2</code></td>
     <td><code>ptt</code> 按住、<code>toggle</code> 切换、<code>continuous</code> 忽略；设为空可禁用。</td>
   </tr>
+  <tr>
+    <td><code>Model</code></td>
+    <td>已安装模型包的目录名，例如 <code>sense-voice-2024-itn</code></td>
+    <td>空（读取 <code>models/active</code>）</td>
+    <td>下拉列表由配置页动态扫描模型根目录生成；保存 / Apply 时若选择变化，会发送 <code>SetModel</code> + <code>RestartBackend</code>。</td>
+  </tr>
 </table>
 <ul class="note">
   <li>配置通过 <code>fcitx5-configtool</code> 的 Addons 页面或直接编辑文件完成；修改后重新加载 addon 配置或重启 Fcitx。</li>
+  <li>daemon 离线时选择模型只写 <code>models/active</code>；daemon 在线时由“保存 / Apply”请求重启后端，录音中会被拒绝并写入日志。</li>
   <li>旧版本无后缀的 <code>~/.config/fcitx5/conf/voime</code> 会在启动时迁移到 <code>voime.conf</code>。</li>
   <li>端点使用 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code> 默认路径，不作为用户配置项。</li>
 </ul>

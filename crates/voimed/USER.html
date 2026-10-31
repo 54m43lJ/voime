@@ -94,7 +94,7 @@
 
 <table>
   <tr><th>选项</th><th>契约</th></tr>
-  <tr><td><code>--model-dir</code></td><td>包含 <code>manifest.json</code> 的目录；默认见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</td></tr>
+  <tr><td><code>--model-dir</code></td><td>显式指定包含 <code>manifest.json</code> 的包目录，优先级高于 <code>models/active</code>；显式覆盖时 IPC <code>SetModel</code> 被拒绝。默认读取模型根目录下的 active，见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</td></tr>
   <tr><td><code>--input-device</code></td><td>输入设备名，按精确字符串匹配；省略时使用默认设备。</td></tr>
   <tr><td><code>--threads</code></td><td>ONNX Runtime intra-op 线程数；必须大于 0。</td></tr>
   <tr><td><code>--endpoint</code></td><td>本机传输端点；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名。</td></tr>
@@ -137,7 +137,7 @@
 <h3 id="u4-4">4.4 启动与默认值</h3>
 <table>
   <tr><th>项目</th><th>契约</th><th>所有者</th></tr>
-  <tr><td>模型目录</td><td>默认目录（Linux XDG / HOME 回退，Windows <code>%LOCALAPPDATA%\voime\models</code>）见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
+  <tr><td>模型目录</td><td>默认根目录（Linux XDG / HOME 回退，Windows <code>%LOCALAPPDATA%\voime\models</code>）下的 <code>active</code> 决定包目录；缺失时兼容根目录直接含 <code>manifest.json</code> 的旧布局。见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
   <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>（未设置时 <code>/tmp/voime-&lt;uid&gt;/voimed.sock</code>）；Windows 默认 <code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td><td><a href="../voime-transport/USER.html#u4">voime-transport USER §4</a></td></tr>
   <tr><td>线程数</td><td>默认 2；必须大于 0。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
   <tr><td>初始模式</td><td>无前端连接时有效模式为 <code>ptt</code>；前端 Hello 后使用其配置。</td><td>本组件 §2</td></tr>

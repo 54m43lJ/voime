@@ -82,7 +82,10 @@
 
 <h3 id="u4-1">4.1 配置</h3>
 <pre><code>pub struct Config {
+    pub model_root: PathBuf,
+    pub model_id: String,
     pub model_dir: PathBuf,
+    pub model_dir_override: Option&lt;PathBuf&gt;,
     pub input_device: Option&lt;String&gt;,
     pub threads: usize,
     pub manifest: ModelManifest,
@@ -100,11 +103,14 @@ pub fn default_model_dir() -&gt; PathBuf;</code></pre>
 
 <table>
   <tr><th>字段 / 函数</th><th>契约</th></tr>
-  <tr><td><code>model_dir</code></td><td>包含 <code>manifest.json</code> 的目录；默认 <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）。Windows 优先使用 <code>%LOCALAPPDATA%\voime\models</code>，仅在 <code>LOCALAPPDATA</code> 未设置时回退到 XDG / HOME 路径。</td></tr>
+  <tr><td><code>model_root</code></td><td>模型根目录，默认 <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）。Windows 优先使用 <code>%LOCALAPPDATA%\voime\models</code>，仅在 <code>LOCALAPPDATA</code> 未设置时回退到 XDG / HOME 路径。</td></tr>
+  <tr><td><code>model_id</code></td><td>当前包目录名；<code>legacy</code> 表示模型根目录本身就是旧布局包。</td></tr>
+  <tr><td><code>model_dir</code></td><td>解析后的包目录，包含 <code>manifest.json</code>。</td></tr>
+  <tr><td><code>model_dir_override</code></td><td><code>--model-dir</code> 显式覆盖；存在时忽略 <code>active</code> 且禁止 IPC 切换。</td></tr>
   <tr><td><code>input_device</code></td><td><code>None</code> 使用系统默认输入设备；<code>Some(name)</code> 按设备名精确匹配。</td></tr>
   <tr><td><code>threads</code></td><td>ONNX Runtime intra-op 线程数；必须大于 0。</td></tr>
   <tr><td><code>manifest</code></td><td><code>resolve</code> 加载、校验并重定位后的模型清单。</td></tr>
-  <tr><td><code>resolve</code></td><td>加载清单 → 校验 SHA-256 / 张量 / 词表 → 将相对路径重定位到 <code>model_dir</code>；失败返回带路径上下文的错误。</td></tr>
+  <tr><td><code>resolve</code></td><td>解析 <code>--model-dir</code> / <code>active</code> / 旧布局 → 加载清单 → 校验 SHA-256 / 张量 / 词表 → 将相对路径重定位到 <code>model_dir</code>；失败返回带 active 与路径上下文的错误。</td></tr>
   <tr><td><code>default_model_dir</code></td><td>平台默认模型目录；端点由 <a href="../voime-transport/USER.html">voime-transport</a> 管理。</td></tr>
 </table>
 

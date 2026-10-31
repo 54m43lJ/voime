@@ -196,7 +196,7 @@ Windows 前端使用系统托盘与一个无激活浮层。设置窗口使用 eg
 <table>
   <tr><th>元素</th><th>契约</th></tr>
   <tr><td>托盘图标</td><td>常驻通知区域；左键打开设置窗口，右键菜单包含设置、Mode、当前热键（点击进入录制）、Overlay、StartAtLogin、连接状态、启动 / 停止服务、诊断、退出。热键菜单不再提供固定预设列表。托盘进程以 GUI 子系统构建，启动不弹出控制台窗口。</td></tr>
-  <tr><td>设置窗口</td><td>标题“Voime 设置”；逻辑尺寸约 500×640，可缩放，最小约 460×540；egui 布局；包含模式分段选择、热键录制按钮、浮层 / 登录启动复选框、服务状态与启停 / 诊断按钮、保存 / 取消。热键字段不接受手工字符串输入。</td></tr>
+  <tr><td>设置窗口</td><td>标题“Voime 设置”；逻辑尺寸约 500×640，可缩放，最小约 460×540；egui 布局；包含模式分段选择、热键录制按钮、模型下拉与“重启后端”按钮、浮层 / 登录启动复选框、服务状态与启停 / 诊断按钮、保存 / 取消。热键字段不接受手工字符串输入。模型下拉列出 <code>%LOCALAPPDATA%\voime\models</code> 下的包；选择后写 active，重启按钮通过 IPC 请求 daemon 重建 pipeline。</td></tr>
   <tr><td>热键录制</td><td>点击热键按钮后直接按下组合键；只读取设置窗口的键盘事件，不安装全局钩子、不吞掉其他应用的按键。录制期间显示实时修饰键，Esc 取消，窗口失焦自动停止。点击“清除热键”禁用热键，“恢复默认”恢复 <code>Ctrl+Alt+Space</code>。</td></tr>
   <tr><td>设置窗口主题</td><td>跟随系统明暗主题；系统 UI 字体（Segoe UI / Microsoft YaHei）；强调色 <code>#527DFF</code>；圆角卡片与分段按钮；深色主题下自动使用对应背景与文字色。</td></tr>
   <tr><td>浮层</td><td>无激活、置顶、点击穿透（<code>WS_EX_NOACTIVATE</code> / <code>WS_EX_TOOLWINDOW</code> / <code>WS_EX_TRANSPARENT</code> / <code>WS_EX_TOPMOST</code>）；不进入 Alt+Tab；不抢焦点。</td></tr>

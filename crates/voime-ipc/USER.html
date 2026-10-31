@@ -86,7 +86,7 @@
 <p><a href="#top">↑</a></p>
 
 <h3 id="u4-1">4.1 常量与编解码</h3>
-<pre><code>pub const PROTOCOL_VERSION: u32 = 1;
+<pre><code>pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 pub fn encode_message&lt;T: Serialize&gt;(message: &amp;T) -&gt; anyhow::Result&lt;Vec&lt;u8&gt;&gt;;
@@ -96,7 +96,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
-  <tr><td><code>PROTOCOL_VERSION</code></td><td>当前为 1；消息形状变化时提升。</td></tr>
+  <tr><td><code>PROTOCOL_VERSION</code></td><td>当前为 2；新增模型管理消息后与两个前端同步升级。</td></tr>
   <tr><td><code>MAX_MESSAGE_BYTES</code></td><td>单行最大 1 MiB；编码与解码都检查。</td></tr>
   <tr><td><code>encode_message</code></td><td>序列化为 JSON，检查长度，追加 <code>\n</code>。</td></tr>
   <tr><td><code>write_message</code></td><td>编码后写入并 flush。</td></tr>
@@ -128,6 +128,11 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
     },
     ClearHistory,
     Status,
+    ListModels,
+    SetModel {
+        package_id: String,
+    },
+    RestartBackend,
     Quit,
 }</code></pre>
 
@@ -162,6 +167,17 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
     Status {
         status: Status,
     },
+    Models {
+        models: Vec&lt;ModelInfo&gt;,
+    },
+    ModelSelected {
+        package_id: String,
+    },
+    BackendState {
+        phase: BackendPhase,
+        model: Option&lt;ModelInfo&gt;,
+        message: Option&lt;String&gt;,
+    },
     Error {
         code: ErrorCode,
         message: String,
@@ -173,6 +189,14 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
 <pre><code>pub enum Mode { Ptt, Toggle, Continuous }
 pub enum Role { Frontend, Tui, Control }
 pub enum TriggerSource { Hold, Toggle, Tui, Cli, Continuous }
+pub enum BackendPhase { Restarting, Ready, Failed }
+pub struct ModelInfo {
+    pub id: String,
+    pub display_name: String,
+    pub kind: String,
+    pub active: bool,
+    pub running: bool,
+}
 pub enum Phase { Idle, Recording, Finalizing }
 pub enum FrontendState { Connected, Disconnected }
 
@@ -225,7 +249,7 @@ pub struct Status {
 
 <h3 id="u4-6">4.6 JSON 示例</h3>
 <pre><code>// client → daemon
-{"Hello":{"role":"frontend","version":1,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
+{"Hello":{"role":"frontend","version":2,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
 
 // daemon → client
 {"SegmentStarted":{"segment_id":1,"source":"toggle"}}
@@ -256,7 +280,7 @@ pub struct Status {
   <tr><td>新增消息类型</td><td>旧客户端忽略未知标签；提升 <code>PROTOCOL_VERSION</code> 仅在旧客户端无法安全忽略时。</td></tr>
   <tr><td>修改现有消息字段 / 类型</td><td>必须提升 <code>PROTOCOL_VERSION</code>；daemon 拒绝旧版本并返回 <code>version_mismatch</code>。</td></tr>
   <tr><td>新增角色或平台前端</td><td>不改变现有消息形状时保持版本；新增角色需 daemon 与客户端同时支持。</td></tr>
-  <tr><td>兼容窗口</td><td>线协议同时接受旧值 <code>fcitx</code> 与新值 <code>frontend</code>；Rust 旧类型名通过别名保留。消息形状未变化，<code>PROTOCOL_VERSION</code> 保持 1。</td></tr>
+  <tr><td>兼容窗口</td><td>线协议同时接受旧值 <code>fcitx</code> 与新值 <code>frontend</code>；Rust 旧类型名通过别名保留。模型管理消息把 <code>PROTOCOL_VERSION</code> 提升到 2，旧前端收到 <code>version_mismatch</code>。</td></tr>
 </table>
 
 </body>

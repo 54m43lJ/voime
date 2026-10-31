@@ -274,7 +274,12 @@ voime ctl quit
     ├── voime_ipc::encode_message(Bye)
     ├── voime_core::pipeline::Pipeline::shutdown()
     ├── voime_core::audio::capture::CaptureHandle::stop()
-    └── voime_transport::Listener::shutdown()</code></pre>
+    └── voime_transport::Listener::shutdown()
+
+voime ctl models / use / restart-backend
+├── models → ListModels → 扫描 <model_root>/*/manifest.json
+├── use <id> → 校验包目录并原子写 <model_root>/active
+└── restart-backend → Daemon::restart_backend() → 空闲时重建 pipeline</code></pre>
 <ul class="note">
   <li><code>voimed::ipc_server::IpcServer::shutdown()</code> 调用 <code>Listener::shutdown()</code>，由 transport 删除端点。</li>
   <li>TUI 的 <code>q</code> 只 detach，不发送 Quit；Linux 停止 daemon 使用 <code>ctl quit</code> 或 systemd；Windows 由托盘以子进程托管 daemon，退出托盘即停止（见 <a href="frontends/windows/CORE.html#c4-9">windows CORE §4.9</a>）。</li>
