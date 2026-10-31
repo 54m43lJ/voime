@@ -27,7 +27,7 @@ note over Asr
   不重新安装 / 编译二进制。
 end note
 note over Punc
-  FireRed CTC 使用 external；
-  SenseVoice 可选 builtin 或 external（use_itn=false）。
+  FireRed CTC / AED 使用 external；
+  SenseVoice 使用 builtin（use_itn=true）。
 end note
 @enduml
