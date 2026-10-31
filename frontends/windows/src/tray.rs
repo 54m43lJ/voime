@@ -25,6 +25,7 @@ const WINDOW_CLASS: PCWSTR = w!("VoimeTrayWindow");
 const ICON_ID: u32 = 1;
 const CALLBACK_MESSAGE: u32 = WM_APP + 1;
 const ACTIVATE_MESSAGE: u32 = WM_APP + 2;
+const COMMAND_MESSAGE: u32 = WM_APP + 3;
 
 const ID_SETTINGS: usize = 1000;
 const ID_PTT: usize = 1001;
@@ -45,10 +46,34 @@ pub enum FrontendStatus {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrayCommand {
+    StartDaemon,
+    StopDaemon,
+}
+
+impl TrayCommand {
+    fn from_usize(value: usize) -> Option<Self> {
+        match value {
+            0 => Some(Self::StartDaemon),
+            1 => Some(Self::StopDaemon),
+            _ => None,
+        }
+    }
+
+    fn as_usize(self) -> usize {
+        match self {
+            Self::StartDaemon => 0,
+            Self::StopDaemon => 1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum TrayEvent {
     ShowMenu,
     ShowSettings { focus_hotkey: bool },
+    Command(TrayCommand),
 }
 
 pub struct Tray {
@@ -128,6 +153,8 @@ impl Tray {
                 Some(TrayEvent::ShowSettings { focus_hotkey }) => {
                     frontend.open_settings(focus_hotkey)
                 }
+                Some(TrayEvent::Command(TrayCommand::StartDaemon)) => frontend.start_daemon(),
+                Some(TrayEvent::Command(TrayCommand::StopDaemon)) => unsafe { PostQuitMessage(0) },
                 None => break,
             }
         }
@@ -186,7 +213,9 @@ impl Tray {
                 Ok(())
             }
             ID_STOP_DAEMON => {
-                frontend.stop_daemon();
+                unsafe {
+                    PostQuitMessage(0);
+                }
                 Ok(())
             }
             ID_DOCTOR => {
@@ -278,7 +307,7 @@ impl Tray {
         );
         append(menu, MF_SEPARATOR, 0, PCWSTR::null());
         append(menu, MF_STRING, ID_START_DAEMON, w!("启动服务"));
-        append(menu, MF_STRING, ID_STOP_DAEMON, w!("停止服务"));
+        append(menu, MF_STRING, ID_STOP_DAEMON, w!("停止服务并退出"));
         append(menu, MF_STRING, ID_DOCTOR, w!("诊断..."));
         append(menu, MF_SEPARATOR, 0, PCWSTR::null());
         append(menu, MF_STRING, ID_QUIT, w!("退出"));
@@ -356,6 +385,12 @@ unsafe extern "system" fn window_proc(
         push_event(hwnd, TrayEvent::ShowMenu);
         return LRESULT(0);
     }
+    if message == COMMAND_MESSAGE {
+        if let Some(command) = TrayCommand::from_usize(wparam.0) {
+            push_event(hwnd, TrayEvent::Command(command));
+        }
+        return LRESULT(0);
+    }
     if message == WM_CLOSE {
         unsafe {
             let _ = DestroyWindow(hwnd);
@@ -427,4 +462,11 @@ pub fn activate_existing() {
     unsafe {
         let _ = PostMessageW(hwnd, ACTIVATE_MESSAGE, WPARAM(0), LPARAM(0));
     }
+}
+
+pub fn send_command(command: TrayCommand) -> bool {
+    let Ok(hwnd) = (unsafe { FindWindowW(WINDOW_CLASS, PCWSTR::null()) }) else {
+        return false;
+    };
+    unsafe { PostMessageW(hwnd, COMMAND_MESSAGE, WPARAM(command.as_usize()), LPARAM(0)).is_ok() }
 }

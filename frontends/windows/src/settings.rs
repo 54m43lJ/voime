@@ -32,8 +32,6 @@ pub enum SettingsAction {
         config: Config,
         ack: Sender<Result<(), String>>,
     },
-    StartDaemon,
-    StopDaemon,
 }
 
 pub fn run_process(config: Config, status: FrontendStatus, focus_hotkey: bool) -> Result<()> {
@@ -48,16 +46,6 @@ pub fn run_process(config: Config, status: FrontendStatus, focus_hotkey: bool) -
                             .and_then(|_| config.save(&config))
                             .map_err(|error| format!("{error:#}"));
                         let _ = ack.send(result);
-                    }
-                    SettingsAction::StartDaemon => {
-                        if let Err(error) = crate::control::start_daemon() {
-                            eprintln!("voime-settings: {error:#}");
-                        }
-                    }
-                    SettingsAction::StopDaemon => {
-                        if let Err(error) = crate::control::stop_daemon() {
-                            eprintln!("voime-settings: {error:#}");
-                        }
                     }
                 }
             }
@@ -384,7 +372,7 @@ impl eframe::App for SettingsApp {
                                 ui.add_space(10.0);
                                 self.options_section(ui);
                                 ui.add_space(10.0);
-                                self.daemon_section(ui);
+                                self.daemon_section(ui, ctx);
                                 ui.add_space(8.0);
                             });
                     },
@@ -582,7 +570,7 @@ impl SettingsApp {
         });
     }
 
-    fn daemon_section(&mut self, ui: &mut egui::Ui) {
+    fn daemon_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         section_title(ui, "后台服务");
         ui.add_space(6.0);
         let (label, color) = match self.status {
@@ -604,16 +592,29 @@ impl SettingsApp {
                 if ui.button("诊断…").clicked() {
                     self.start_doctor();
                 }
-                if ui.button("停止服务").clicked() {
-                    let _ = self.sender.send(SettingsAction::StopDaemon);
-                    self.daemon_hint = Some("已请求停止".to_string());
+                if ui.button("停止服务并退出").clicked() {
+                    if crate::tray::send_command(crate::tray::TrayCommand::StopDaemon) {
+                        self.daemon_hint = Some("正在停止服务并退出".to_string());
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    } else {
+                        self.daemon_hint = Some("托盘未运行，无法停止服务".to_string());
+                    }
                 }
                 if ui.button("启动服务").clicked() {
-                    let _ = self.sender.send(SettingsAction::StartDaemon);
-                    self.daemon_hint = Some("正在启动…".to_string());
+                    if crate::tray::send_command(crate::tray::TrayCommand::StartDaemon) {
+                        self.daemon_hint = Some("正在启动…".to_string());
+                    } else {
+                        self.daemon_hint = Some("托盘未运行，请先启动托盘".to_string());
+                    }
                 }
             });
         });
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("后台服务随托盘启动和退出，不再单独驻留。")
+                .size(12.0)
+                .color(ui.visuals().weak_text_color()),
+        );
     }
 
     fn notice(&self, ui: &mut egui::Ui, notice: &Notice) {
@@ -970,16 +971,12 @@ mod tests {
         app.start_at_login = false;
         let ctx = egui::Context::default();
         app.save(&ctx);
-        match receiver.try_recv().unwrap() {
-            SettingsAction::Save { config, ack } => {
-                assert_eq!(config.mode, Mode::Toggle);
-                assert_eq!(config.hotkey.to_string(), "Ctrl+Alt+F9");
-                assert!(!config.overlay_enabled);
-                assert!(!config.start_at_login);
-                ack.send(Ok(())).unwrap();
-            }
-            _ => panic!("unexpected settings action"),
-        }
+        let SettingsAction::Save { config, ack } = receiver.try_recv().unwrap();
+        assert_eq!(config.mode, Mode::Toggle);
+        assert_eq!(config.hotkey.to_string(), "Ctrl+Alt+F9");
+        assert!(!config.overlay_enabled);
+        assert!(!config.start_at_login);
+        ack.send(Ok(())).unwrap();
         app.poll_save(&ctx);
         assert!(!app.saving);
         assert!(app.save_wait.is_none());

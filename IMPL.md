@@ -548,7 +548,38 @@ Toggle 会话在 daemon 中跨多个 VAD 语音段；原 Windows 前端在每段
 | `frontends/windows/CORE.html` | §4.6 preview.rs；§5.2；§5.3 | 改 | 增加 `Overlay::show_empty`；Final 与失焦调用栈按 Toggle / 其他模式分支。 |
 | `frontends/windows/diagram/overlay.puml` / `overlay.svg` | — | 改 | 更新 Final 分支，重新导出 SVG。 |
 
-### 4.7 安装脚本处理文件占用
+### 4.7 Windows 托盘与 daemon 改为同生命周期
+
+**问题描述**
+此前 `voime-tray` 与 `voimed` 完全解耦：托盘按需拉起 daemon，退出托盘不停止 daemon，而 daemon 也不是 Windows 服务。实际安装只在登录时启动托盘，daemon 独立存活既没有服务管理上的收益，又会在托盘退出或崩溃后留下孤儿进程，继续占用命名管道和录音设备。
+
+**解决方法**
+- Windows 前端把 `voimed` 作为自己的子进程启动，并加入设置了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object；托盘正常退出、崩溃或被强制结束时，系统都会终止 daemon。
+- 托盘启动时先以 Control 角色发送 `Quit` 停掉已有的、非本托盘托管的 daemon，等待命名管道释放后再启动自己的子进程，避免多个所有者并存。
+- 托盘主循环轮询子进程；daemon 意外退出后清除句柄，并按原有重连/重启节奏重新拉起，托盘保留为唯一监督者。
+- 退出路径统一为：关闭 IPC / 热键 / 浮层 → 发送 `Quit` → 等待子进程退出（最多 3 秒）→ 关闭 Job Object 兜底终止。
+- 设置窗口不再自行启动或停止 daemon；按钮通过新的 `WM_APP` 托盘命令转交托盘处理，避免设置进程创建出生命周期外的 daemon。
+- 托盘菜单和设置窗口的停止项改为“停止服务并退出”，停止服务即退出托盘；设置窗口点击后自行关闭。
+- 只修改 `frontends/windows`：`control.rs` 负责子进程、Job Object 与控制通道，`main.rs`、`tray.rs`、`settings.rs` 调整生命周期和命令路由；`crates/voimed`、IPC 与 transport 不变，Linux / Fcitx 行为不受影响。
+
+**影响与边界**
+- 手动启动的 `voimed` 会在托盘启动时被停止并替换为托盘子进程；托盘退出时同样会停止它。
+- 托盘未运行时，设置窗口的“启动服务”不再生效，只提示先启动托盘。
+- Job Object 创建或分配失败时降级为“正常退出时停止 daemon”，崩溃后的清理能力随之失效。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `frontends/windows/USER.html` | §4.6 daemon 生命周期 | 改 | 改为服务随托盘启动和退出；停止服务即退出托盘；设置窗口启停转交托盘。 |
+| `frontends/windows/README.html` | §2 用户交互（daemon 生命周期） | 改 | 写明托盘是 daemon 的唯一所有者，退出托盘会停止 daemon。 |
+| `frontends/windows/CORE.html` | §1 文件树；§4.9 control.rs；§5.1 启动与连接 | 改 | 增加 Job Object、子进程托管、退出顺序与设置命令消息。 |
+| `README.html` | §2 用户交互（停止 daemon） | 改 | Windows 不再需要单独停止 daemon，退出托盘即可。 |
+| `crates/voimed/BUILD.html` | §1 环境（服务管理） | 改 | 说明 Windows 下 daemon 是托盘子进程，不使用独立服务或独立退出流程。 |
+| `WINDOWS.html` | §10 生命周期对比 | 不动 | 方案对比不变；具体 Windows 实现由前端文档拥有。 |
+| `PLATFORM.html` | §5.2 平台传输实现；§6 迁移 | 不动 | 平台差异不变；生命周期实现只在 Windows 前端。 |
+
+### 4.8 安装脚本处理文件占用
 
 **问题描述**
 `install.ps1` 用 `Stop-Process -Force` 后立即复制 `voimed.exe`；`Stop-Process` 返回时进程镜像句柄尚未完全释放，首次安装稳定报 `文件正由另一进程使用`，第二次等句柄释放后成功。托盘和 daemon 的停止顺序也可能让托盘短暂拉起 daemon。

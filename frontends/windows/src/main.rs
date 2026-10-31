@@ -103,14 +103,12 @@ fn run(mut frontend: Frontend) -> Result<()> {
     if let Some(overlay) = frontend.overlay.as_mut() {
         overlay.set_enabled(frontend.config.overlay_enabled);
     }
-    if frontend.try_connect().is_err() {
-        frontend.start_daemon();
-    }
-    loop {
+    frontend.start_daemon();
+    'main: loop {
         let mut message = MSG::default();
         while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
             if message.message == WM_QUIT {
-                return Ok(());
+                break 'main;
             }
             if message.message == WM_HOTKEY {
                 frontend.on_hotkey();
@@ -127,6 +125,8 @@ fn run(mut frontend: Frontend) -> Result<()> {
             Sleep(10);
         }
     }
+    frontend.shutdown();
+    Ok(())
 }
 
 fn ensure_single_instance() -> bool {
@@ -187,6 +187,7 @@ pub struct Frontend {
     toggle_active: bool,
     next_connect: Instant,
     last_focus_check: Instant,
+    daemon: Option<control::Daemon>,
     daemon_started: Option<Instant>,
     settings_child: Option<Child>,
 }
@@ -210,6 +211,7 @@ impl Frontend {
             toggle_active: false,
             next_connect: Instant::now(),
             last_focus_check: Instant::now(),
+            daemon: None,
             daemon_started: None,
             settings_child: None,
         }
@@ -225,15 +227,17 @@ impl Frontend {
 
     fn tick(&mut self) {
         self.poll_settings();
+        self.poll_daemon();
         let now = Instant::now();
         if self.ipc.is_none() && now >= self.next_connect {
             if let Err(error) = self.try_connect() {
                 eprintln!("voime-tray: {error:#}");
                 self.next_connect = now + RECONNECT_INTERVAL;
-                let start_daemon = self
-                    .daemon_started
-                    .map(|started| now.duration_since(started) >= DAEMON_RETRY_INTERVAL)
-                    .unwrap_or(true);
+                let start_daemon = self.daemon.is_none()
+                    && self
+                        .daemon_started
+                        .map(|started| now.duration_since(started) >= DAEMON_RETRY_INTERVAL)
+                        .unwrap_or(true);
                 if start_daemon {
                     self.start_daemon();
                 }
@@ -272,6 +276,16 @@ impl Frontend {
                     self.on_target_lost();
                 }
             }
+        }
+    }
+
+    fn poll_daemon(&mut self) {
+        let Some(daemon) = self.daemon.as_mut() else {
+            return;
+        };
+        if daemon.has_exited() {
+            self.daemon = None;
+            self.on_disconnect();
         }
     }
 
@@ -768,15 +782,23 @@ impl Frontend {
     }
 
     pub fn start_daemon(&mut self) {
-        if let Err(error) = control::start_daemon() {
-            eprintln!("voime-tray: {error:#}");
+        if self.daemon.is_some() || self.ipc.is_some() {
+            return;
         }
         self.daemon_started = Some(Instant::now());
+        control::stop_existing();
+        match control::Daemon::start() {
+            Ok(daemon) => self.daemon = Some(daemon),
+            Err(error) => eprintln!("voime-tray: {error:#}"),
+        }
     }
 
-    pub fn stop_daemon(&mut self) {
-        if let Err(error) = control::stop_daemon() {
-            eprintln!("voime-tray: {error:#}");
+    pub fn shutdown(&mut self) {
+        self.on_disconnect();
+        if let Some(mut daemon) = self.daemon.take() {
+            daemon.stop();
+        } else {
+            let _ = control::quit_running();
         }
     }
 
