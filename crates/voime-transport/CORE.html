@@ -164,6 +164,7 @@ impl Stream for MemoryStream { /* try_clone / shutdown */ }</code></pre>
 └── Listener::accept()
     ├── UnixListener::accept()
     └── NamedPipeListener::accept()
+        ├── duplicate_current_thread()
         └── ConnectNamedPipe()
 
 voimed shutdown
@@ -171,6 +172,7 @@ voimed shutdown
     ├── 设置取消标志
     ├── UnixListener::shutdown()
     └── NamedPipeListener::shutdown()
+        ├── CancelSynchronousIo(accept 线程)
         └── CancelIoEx / CloseHandle</code></pre>
 
 <h3 id="c5-3">5.3 connect 与读写分离</h3>

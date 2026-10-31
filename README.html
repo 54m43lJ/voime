@@ -14,11 +14,10 @@
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
-<a href="PLATFORM.html">PLATFORM</a>
-<a href="WINDOWS.html">WINDOWS</a>
 <a href="BUILD.html">BUILD</a>
 <a href="crates/voime-core/README.html">voime-core</a>
 <a href="crates/voime-ipc/README.html">voime-ipc</a>
+<a href="crates/voime-log/README.html">voime-log</a>
 <a href="crates/voime-transport/README.html">voime-transport</a>
 <a href="crates/voimed/README.html">voimed</a>
 <a href="crates/voime/README.html">voime</a>
@@ -114,7 +113,7 @@
   </tr>
   <tr>
     <td>停止 daemon</td>
-    <td><code>voime ctl quit</code>、停止平台服务，或使用 Windows 托盘菜单 / 设置窗口的“停止 daemon”；前端继续运行，热键因 daemon 不可用而放行。</td>
+    <td>Linux 使用 <code>voime ctl quit</code> 或停止 systemd 用户服务；Windows 托盘托管 daemon，托盘菜单 / 设置窗口的“停止服务并退出”会停止服务并退出托盘。</td>
     <td><a href="crates/voimed/USER.html#u4-1">voimed USER §4.1</a> · <a href="crates/voime/USER.html#u4-2">voime USER §4.2</a></td>
   </tr>
   <tr>
@@ -133,14 +132,13 @@
 ├── CORE.html                  仓库级结构：组件依赖、构建根、跨组件调用栈
 ├── PROVIDER.html              产品级下边界：平台宿主、音频、推理、模型
 ├── BUILD.html                 多构建根编排、模型安装、发布
-├── PLATFORM.html              跨平台项目结构提案
-├── WINDOWS.html               Windows 适配评估
 ├── GUIDELINES.md              文档规范
 ├── style.css                  共享样式
 │
 ├── crates/
 │   ├── voime-core/            README · USER · CORE · PROVIDER · BUILD
 │   ├── voime-ipc/             README · USER · CORE · BUILD
+│   ├── voime-log/             README · USER · CORE · BUILD
 │   ├── voime-transport/       README · USER · CORE · PROVIDER · BUILD
 │   ├── voimed/                README · USER · CORE · BUILD
 │   └── voime/                 README · USER · CORE · PROVIDER · BUILD
@@ -149,12 +147,12 @@
 │   ├── fcitx/                 README · USER · CORE · PROVIDER · BUILD
 │   └── windows/               README · USER · CORE · PROVIDER · BUILD（P3；TSF 为可选 P4）
 │
-└── diagram/                   根项目图表（PLATFORM / 产品级流程）</code></pre>
+└── diagram/                   产品级图表</code></pre>
 <ul class="note">
   <li>根 <code>README / USER / CORE / PROVIDER / BUILD</code> 是父文档；每个组件目录下的同名文档是子树。</li>
   <li>父文档只定义产品级边界与组件关系；组件内部类型、签名和调用栈只出现在组件 <code>CORE</code>。</li>
   <li><code>voime-transport</code> 与 <code>frontends/windows</code> 已落地；TSF 保持可选，未启用时不构建。</li>
-  <li>Fcitx 文档与源码均位于 <code>frontends/fcitx</code>；迁移记录见 <a href="PLATFORM.html#p7">PLATFORM §7</a>。</li>
+  <li>Fcitx 文档与源码均位于 <code>frontends/fcitx</code>。</li>
   <li>源码结构见 <a href="CORE.html#c1">根 CORE §1</a>。</li>
 </ul>
 
@@ -200,6 +198,15 @@
     <td><a href="crates/voime-ipc/CORE.html">CORE</a></td>
     <td>—</td>
     <td><a href="crates/voime-ipc/BUILD.html">BUILD</a></td>
+    <td>根 Cargo workspace · Linux / Windows</td>
+  </tr>
+  <tr>
+    <td><code>voime-log</code></td>
+    <td><a href="crates/voime-log/README.html">README</a></td>
+    <td><a href="crates/voime-log/USER.html">USER</a></td>
+    <td><a href="crates/voime-log/CORE.html">CORE</a></td>
+    <td>—</td>
+    <td><a href="crates/voime-log/BUILD.html">BUILD</a></td>
     <td>根 Cargo workspace · Linux / Windows</td>
   </tr>
   <tr>
@@ -252,7 +259,6 @@
   <li>文档树自根向下：根 README → 根 USER / CORE / PROVIDER / BUILD → 组件 README → 组件同名文档；跨组件引用只指向内容所有者。</li>
   <li><code>PROVIDER</code> 仅在下边界真实存在时创建；<code>voime-ipc</code> 与 <code>voimed</code> 没有直接外部 provider，故省略。</li>
   <li>根 <a href="BUILD.html">BUILD</a> 只负责多构建根编排、模型安装与发布；单组件命令在各自 <code>BUILD</code> 中维护。</li>
-  <li>PLATFORM 与 WINDOWS 是跨组件提案 / 评估，不是组件运行契约；实现契约以组件文档为准。</li>
 </ul>
 
 <h2 id="r5">5. Credits</h2>

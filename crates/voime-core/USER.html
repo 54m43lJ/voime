@@ -100,7 +100,7 @@ pub fn default_model_dir() -&gt; PathBuf;</code></pre>
 
 <table>
   <tr><th>字段 / 函数</th><th>契约</th></tr>
-  <tr><td><code>model_dir</code></td><td>包含 <code>manifest.json</code> 的目录；默认 <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）。</td></tr>
+  <tr><td><code>model_dir</code></td><td>包含 <code>manifest.json</code> 的目录；默认 <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）。Windows 优先使用 <code>%LOCALAPPDATA%\voime\models</code>，仅在 <code>LOCALAPPDATA</code> 未设置时回退到 XDG / HOME 路径。</td></tr>
   <tr><td><code>input_device</code></td><td><code>None</code> 使用系统默认输入设备；<code>Some(name)</code> 按设备名精确匹配。</td></tr>
   <tr><td><code>threads</code></td><td>ONNX Runtime intra-op 线程数；必须大于 0。</td></tr>
   <tr><td><code>manifest</code></td><td><code>resolve</code> 加载、校验并重定位后的模型清单。</td></tr>

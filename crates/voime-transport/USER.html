@@ -123,7 +123,7 @@ pub fn connect(endpoint: &amp;Endpoint) -&gt; io::Result&lt;Box&lt;dyn Stream&gt
   <tr><td>端点</td><td>文件系统路径</td><td><code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code></td></tr>
   <tr><td>权限</td><td>父目录 0700、socket 0600</td><td>当前用户 DACL；<code>PIPE_REJECT_REMOTE_CLIENTS</code></td></tr>
   <tr><td>陈旧端点</td><td>启动时尝试连接；失败则删除旧 socket</td><td>管道句柄关闭即消失；检查已有 daemon</td></tr>
-  <tr><td>accept</td><td>非阻塞 + 短睡眠，或可中断 accept</td><td>阻塞 <code>ConnectNamedPipe</code> 或 overlapped；shutdown 可取消</td></tr>
+  <tr><td>accept</td><td>非阻塞 + 短睡眠，或可中断 accept</td><td>阻塞 <code>ConnectNamedPipe</code>；shutdown 用 <code>CancelSynchronousIo</code> 取消</td></tr>
   <tr><td>读写分离</td><td><code>try_clone</code> 复制 fd</td><td><code>DuplicateHandle</code></td></tr>
   <tr><td>关闭</td><td><code>shutdown</code> + drop</td><td><code>DisconnectNamedPipe</code> / <code>CloseHandle</code></td></tr>
   <tr><td>错误映射</td><td><code>io::Error</code> + 路径上下文</td><td><code>io::Error</code> + Win32 错误码 / 管道名上下文</td></tr>

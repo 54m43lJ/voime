@@ -48,7 +48,7 @@
   <tr><td>事件循环</td><td>daemon 主线程用 <code>crossbeam_channel::select!</code> 同时等待 IPC 事件与 pipeline 事件；100 ms 超时用于检查关闭。</td></tr>
   <tr><td>客户端线程</td><td>accept 线程接受连接；每个客户端一个 reader 线程与一个 writer 线程；daemon 主线程只处理事件与状态。</td></tr>
   <tr><td>客户端队列</td><td>每个客户端一个有界发送队列；Final / State 满时移除客户端，Partial 满时只丢该条。</td></tr>
-  <tr><td>角色表</td><td><code>clients: HashMap&lt;u64, ClientEntry&gt;</code> 由互斥锁保护；<code>set_role</code> 只允许一个 <code>Fcitx</code>。</td></tr>
+  <tr><td>角色表</td><td><code>clients: HashMap&lt;u64, ClientEntry&gt;</code> 由互斥锁保护；<code>set_role</code> 只允许一个 <code>Frontend</code>（线协议仍接受 <code>fcitx</code> 兼容别名）。</td></tr>
   <tr><td>状态机</td><td><code>State.phase</code> 只由 daemon 主线程修改；pipeline 事件与客户端命令都在同一线程串行处理。</td></tr>
   <tr><td>段 ID</td><td><code>next_segment</code> 单调递增，wrapping 后跳过 0；当前段在 Final / 丢弃后清空。</td></tr>
   <tr><td>模式生效</td><td>Idle 时立即 <code>pipeline.set_mode</code>；非 Idle 时暂存到 <code>pending_mode</code>，段结束后应用。</td></tr>
@@ -210,7 +210,7 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
 <p><a href="#top">↑</a></p>
 
 <h3 id="c5-1">5.1 启动</h3>
-<pre><code>systemd --user
+<pre><code>systemd --user / voime-tray 子进程（Windows）
 └── voimed::main()
     ├── voime_log::init("voimed")
     ├── voimed::cli::parse()

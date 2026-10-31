@@ -70,7 +70,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
     <td>依赖方向</td>
-    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport + log；<code>voime</code> → core + ipc + transport + log（doctor）；前端 → ipc + transport + log。前端不依赖 core，core 不依赖 transport / daemon / 前端；<code>voime-log</code> 是零依赖叶子 crate，被 daemon、CLI doctor 与 Windows 前端消费；当前仅保留 <code>voime-ipc</code> 的 <code>Mode</code> 类型依赖，后续按 <a href="PLATFORM.html#p3-4">PLATFORM §3.4</a> 继续收敛。</td>
+    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport + log；<code>voime</code> → core + ipc + transport + log（doctor）；前端 → ipc + transport + log。前端不依赖 core，core 不依赖 transport / daemon / 前端；<code>voime-log</code> 是零依赖叶子 crate，被 daemon、CLI doctor 与 Windows 前端消费。</td>
   </tr>
   <tr>
     <td>OS API 位置</td>
@@ -213,7 +213,7 @@ pub fn default_directory() -&gt; PathBuf;
 <p><a href="#top">↑</a></p>
 
 <h3 id="c5-1">5.1 冷启动</h3>
-<pre><code>systemd --user / Windows 登录启动
+<pre><code>systemd --user / voime-tray 子进程（Windows）
 └── voimed::main()
     ├── voimed::cli::parse()
     ├── voime_core::config::resolve()
@@ -277,7 +277,7 @@ voime ctl quit
     └── voime_transport::Listener::shutdown()</code></pre>
 <ul class="note">
   <li><code>voimed::ipc_server::IpcServer::shutdown()</code> 调用 <code>Listener::shutdown()</code>，由 transport 删除端点。</li>
-  <li>TUI 的 <code>q</code> 只 detach，不发送 Quit；停止 daemon 只使用 <code>ctl quit</code> 或平台服务管理。</li>
+  <li>TUI 的 <code>q</code> 只 detach，不发送 Quit；Linux 停止 daemon 使用 <code>ctl quit</code> 或 systemd；Windows 由托盘以子进程托管 daemon，退出托盘即停止（见 <a href="frontends/windows/CORE.html#c4-9">windows CORE §4.9</a>）。</li>
 </ul>
 
 </body>

@@ -15,8 +15,6 @@
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
-<a href="PLATFORM.html">PLATFORM</a>
-<a href="WINDOWS.html">WINDOWS</a>
 </p>
 
 <p>
@@ -34,7 +32,7 @@
   <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）；首次构建需要网络下载 crate 与 ONNX Runtime。</td></tr>
   <tr><td>Linux 构建依赖</td><td>ALSA 开发头文件；Arch：<code>alsa-lib</code>；Debian / Ubuntu：<code>libasound2-dev</code>。</td></tr>
   <tr><td>addon 构建依赖</td><td>C++20、CMake、<code>Fcitx5Core</code> 开发头文件；Arch：<code>fcitx5</code>；Debian / Ubuntu：<code>libfcitx5core-dev</code> 等，按发行版为准。</td></tr>
-  <tr><td>Windows 构建依赖</td><td>Rust MSVC 工具链、Visual Studio / Windows SDK、CMake（TSF 可选阶段）。</td></tr>
+  <tr><td>Windows 构建依赖</td><td>Rust MSVC 工具链、Visual Studio / Windows SDK、CMake（TSF 可选阶段）。<code>x86_64-pc-windows-gnu</code> 没有 ONNX Runtime 预编译包；daemon / CLI 的构建与验收以 MSVC 为准。</td></tr>
   <tr><td>模型安装期</td><td>Python 3.10+、网络与约 740 MiB 磁盘空间；只用于 <code>scripts/install_models.*</code> 与 <code>tools/</code>。</td></tr>
   <tr><td>运行期</td><td>平台前端加载、<code>voimed</code> 运行中、可用录音设备；<code>voime</code> TUI 需要 TTY；daemon 不需要 TTY。</td></tr>
   <tr><td>运行期不需要</td><td>网络、Python 或独立输入法前端；Windows 设置窗口使用 OpenGL（glow）渲染。</td></tr>
@@ -195,7 +193,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoModels
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>前缀</td><td>默认 <code>%LOCALAPPDATA%\Programs\Voime</code>；<code>-Prefix</code> 可覆盖。</td></tr>
   <tr><td>登录启动</td><td>写入 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>；<code>-NoStartup</code> 跳过。</td></tr>
-  <tr><td>模型</td><td>默认调用 <code>scripts/install_models.ps1</code>；<code>-NoModels</code> 跳过。</td></tr>
+  <tr><td>模型</td><td>默认调用 <code>scripts/install_models.ps1</code>；<code>-NoModels</code> 跳过；<code>-ModelDir</code> / <code>-CacheDir</code> 传给模型脚本。</td></tr>
   <tr><td>卸载</td><td><code>packaging/windows/uninstall.ps1</code>；<code>-RemoveSettings</code> / <code>-RemoveModels</code> 按需删除配置与模型。</td></tr>
 </table>
 <ul class="note">
@@ -220,6 +218,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -ModelDir D:
 <table>
   <tr><th>行为</th><th>契约</th></tr>
   <tr><td>默认目录</td><td>Linux：<code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）；Windows：<code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
+  <tr><td>Windows 缓存</td><td><code>scripts/install_models.ps1</code> 在 <code>%LOCALAPPDATA%\voime\cache</code> 创建 Python venv，并按 requirements 文件的 SHA-256 哈希复用已安装依赖；<code>-CacheDir</code> 可覆盖。</td></tr>
   <tr><td>ASR</td><td>FireRedASR2-CTC int8：官方 <code>.tar.bz2</code>，解出 <code>asr/model.int8.onnx</code> 与 <code>asr/tokens.txt</code>。</td></tr>
   <tr><td>VAD / Punc</td><td>FireRedVAD 与 FireRedPunc 的 ONNX、词表、标签；由安装脚本下载 / 导出并校验。</td></tr>
   <tr><td>Manifest</td><td>schema 2；ASR <code>kind = "fire-red-ctc"</code>；<code>max_segment_ms = 30000</code>；SHA-256 写入清单。</td></tr>
@@ -251,9 +250,9 @@ voime
 voime ctl status
 voime doctor
 
-# Windows：托盘负责拉起 daemon，也可手动启动
+# Windows：托盘以子进程托管 daemon，启动托盘即可；手动启动仅用于无托盘排障
+# （托盘启动时会停止已有 daemon 并替换为自己的子进程）
 "%LOCALAPPDATA%\Programs\Voime\voime-tray.exe"
-"%LOCALAPPDATA%\Programs\Voime\voimed.exe" --verbose
 "%LOCALAPPDATA%\Programs\Voime\voime.exe" ctl status
 "%LOCALAPPDATA%\Programs\Voime\voime.exe" doctor</code></pre>
 
@@ -271,8 +270,8 @@ voime doctor
   <li><code>voimed</code> 不需要 <code>WAYLAND_DISPLAY</code> 或 <code>DISPLAY</code>；平台前端负责输入集成。</li>
   <li><code>scripts/install_voimed.sh</code> 生成 <code>~/.config/systemd/user/voime.service</code>，并把 <code>ExecStart</code> 替换为实际 <code>$BINDIR/voimed</code>。</li>
   <li><code>voime doctor</code> 固定检查默认模型目录与 <code>/usr</code>、<code>/usr/local</code> 下的 addon；自定义前缀或 <code>--model-dir</code> 部署需手工确认。</li>
-  <li>TUI 的 <code>q</code> / <code>Ctrl+C</code> 只 detach；停止 daemon 使用 <code>voime ctl quit</code> 或 systemd。</li>
-  <li>Windows 不使用 Session 0 服务；命名管道按当前会话与用户隔离，托盘负责启动与重连 daemon。</li>
+  <li>TUI 的 <code>q</code> / <code>Ctrl+C</code> 只 detach；停止 daemon：Linux 使用 <code>voime ctl quit</code> 或 systemd，Windows 退出托盘即停止。</li>
+  <li>Windows 不使用 Session 0 服务；命名管道按当前会话与用户隔离，托盘以子进程托管 daemon，退出托盘即停止。</li>
 </ul>
 
 <h2 id="b6">6. 测试与验收</h2>
@@ -296,7 +295,7 @@ cargo clippy --manifest-path frontends\windows\Cargo.toml --all-targets</code></
   <li><code>frontends/fcitx/tests</code> 覆盖 mode / 热键字符串 / IPC 枚举 / target 空引用；不覆盖真实 Fcitx keymatch 或 preview 渲染。</li>
   <li>RTF 验收参考（2 threads）：10 s ≤ 1.0 s、20 s ≤ 2.0 s、30 s ≤ 3.0 s。</li>
   <li>手工验收需同时在原生 Wayland、XWayland / XIM 与支持 text-input 的终端中测试热键、临时窗口与提交；Toggle 无语音时应出现空白窗口并保持到 toggle off 或目标失焦。</li>
-  <li>Windows 验收矩阵见 <a href="WINDOWS.html#w7-2">WINDOWS §7.2</a>；<code>frontends/windows</code> 单测覆盖热键解析、配置、UTF-16 分块、UIA 目标标识与命名管道客户端握手。</li>
+  <li>Windows 验收矩阵见 <a href="frontends/windows/BUILD.html#b4">windows BUILD §4</a>；<code>frontends/windows</code> 单测覆盖热键解析、配置、UTF-16 分块、UIA 目标标识与命名管道客户端握手。</li>
 </ul>
 
 <h2 id="b7">7. 发布</h2>
@@ -338,7 +337,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoBuild<
   <tr><td>配置迁移</td><td>旧版本无后缀的 <code>~/.config/fcitx5/conf/voime</code> 会在 addon 启动时迁移到 <code>voime.conf</code>，然后删除旧文件。</td></tr>
   <tr><td>卸载（Linux）</td><td><code>systemctl --user disable --now voime.service</code>；删除 addon 描述文件、<code>voime.so</code>、<code>~/.local/bin/voimed</code>、<code>~/.local/bin/voime</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录按需保留或删除。</td></tr>
   <tr><td>升级 / 卸载（Windows）</td><td>重新运行 <code>packaging/windows/install.ps1</code> 覆盖二进制；卸载运行 <code>uninstall.ps1</code>，按需附加 <code>-RemoveSettings</code> / <code>-RemoveModels</code>。TSF 若启用需重新注册。</td></tr>
-  <tr><td>停止顺序</td><td>先停止 daemon，再重启 / 关闭平台前端；卸载后宿主不保留 Voime 条目。</td></tr>
+  <tr><td>停止顺序</td><td>Linux 先停止 daemon，再重启 / 关闭平台前端；Windows 停止服务即退出托盘。卸载后宿主不保留 Voime 条目。</td></tr>
 </table>
 
 </body>

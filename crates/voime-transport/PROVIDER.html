@@ -40,6 +40,8 @@
   <tr><td>会话 ID</td><td>Windows 登录会话标识；管道名包含它，避免跨会话冲突。</td></tr>
   <tr><td><code>PIPE_REJECT_REMOTE_CLIENTS</code></td><td>拒绝远程客户端连接的管道标志。</td></tr>
   <tr><td><code>ConnectNamedPipe</code></td><td>服务端等待客户端连接的 Win32 调用。</td></tr>
+  <tr><td><code>PeekNamedPipe</code></td><td>查询管道中可读字节数的 Win32 调用；不阻塞。</td></tr>
+  <tr><td><code>CancelSynchronousIo</code></td><td>取消目标线程上挂起的同步 I/O；用于唤醒阻塞的 accept。</td></tr>
   <tr><td><code>DuplicateHandle</code></td><td>复制管道句柄，供读写线程独立使用。</td></tr>
   <tr><td><code>DisconnectNamedPipe</code></td><td>断开一个管道实例；与 <code>CloseHandle</code> 一起释放连接。</td></tr>
 </table>
@@ -95,10 +97,12 @@
 <table>
   <tr><th>调用 / 类型</th><th>用途</th></tr>
   <tr><td><code>CreateNamedPipeW</code></td><td>创建管道实例；指定 <code>PIPE_ACCESS_DUPLEX</code> 与安全描述符。</td></tr>
-  <tr><td><code>ConnectNamedPipe</code></td><td>等待客户端连接；可阻塞或 overlapped。</td></tr>
+  <tr><td><code>ConnectNamedPipe</code></td><td>等待客户端连接；同步阻塞调用。</td></tr>
   <tr><td><code>DisconnectNamedPipe</code></td><td>断开实例，准备复用或关闭。</td></tr>
   <tr><td><code>DuplicateHandle</code></td><td>复制读写句柄。</td></tr>
-  <tr><td><code>CancelIoEx</code> / <code>CloseHandle</code></td><td>取消阻塞 I/O 并释放资源。</td></tr>
+  <tr><td><code>PeekNamedPipe</code></td><td>read 前轮询可用字节，避免挂起的同步 <code>ReadFile</code> 阻塞同连接写。</td></tr>
+  <tr><td><code>CancelSynchronousIo</code></td><td>shutdown 时唤醒阻塞在同步 <code>ConnectNamedPipe</code> 的 accept 线程。</td></tr>
+  <tr><td><code>CancelIoEx</code> / <code>CloseHandle</code></td><td>取消连接上的 I/O 并释放资源。</td></tr>
   <tr><td><code>PIPE_REJECT_REMOTE_CLIENTS</code></td><td>拒绝远程客户端。</td></tr>
   <tr><td><code>ConvertStringSecurityDescriptorToSecurityDescriptorW</code></td><td>构造当前用户 DACL。</td></tr>
 </table>

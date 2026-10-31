@@ -58,7 +58,7 @@
   <tr><td>模式切换时机</td><td>Idle 时立即应用到 pipeline；非 Idle 时暂存，当前段 Final / 丢弃后应用。</td></tr>
   <tr><td>广播优先级</td><td>Final / State 不丢弃；Partial 可丢弃；慢客户端断开不影响其他客户端。</td></tr>
   <tr><td>历史</td><td>只存最终文本；<code>ClearHistory</code> 保留当前段与 partial。</td></tr>
-  <tr><td>角色</td><td>只允许一个 <code>fcitx</code> 连接；<code>Configure</code> 只接受前端；<code>Quit</code> 只接受 <code>control</code>。</td></tr>
+  <tr><td>角色</td><td>只允许一个 <code>frontend</code> 连接；<code>Configure</code> 只接受前端；<code>Quit</code> 只接受 <code>control</code>。</td></tr>
   <tr><td>退出顺序</td><td>广播 <code>Bye</code> → 关闭 IPC → 停止 pipeline → 停止音频 → 删除端点。</td></tr>
   <tr><td>无持久化</td><td>不写音频、按键或历史到磁盘；daemon 退出后历史丢失。</td></tr>
   <tr><td>端点</td><td>daemon 通过 <a href="../voime-transport/USER.html">voime-transport</a> 绑定端点；Unix 使用文件系统 socket，Windows 使用命名管道。</td></tr>
@@ -137,7 +137,7 @@
 <h3 id="u4-4">4.4 启动与默认值</h3>
 <table>
   <tr><th>项目</th><th>契约</th><th>所有者</th></tr>
-  <tr><td>模型目录</td><td>默认 <code>$XDG_DATA_HOME/voime/models</code>；Windows 目标 <code>%LOCALAPPDATA%</code>。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
+  <tr><td>模型目录</td><td>默认目录（Linux XDG / HOME 回退，Windows <code>%LOCALAPPDATA%\voime\models</code>）见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
   <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>（未设置时 <code>/tmp/voime-&lt;uid&gt;/voimed.sock</code>）；Windows 默认 <code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td><td><a href="../voime-transport/USER.html#u4">voime-transport USER §4</a></td></tr>
   <tr><td>线程数</td><td>默认 2；必须大于 0。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
   <tr><td>初始模式</td><td>无前端连接时有效模式为 <code>ptt</code>；前端 Hello 后使用其配置。</td><td>本组件 §2</td></tr>

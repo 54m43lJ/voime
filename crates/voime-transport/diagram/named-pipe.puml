@@ -17,5 +17,5 @@ loop 每个连接
 end
 
 Daemon -> Stream : DisconnectNamedPipe / CloseHandle
-Daemon -> Listener : CancelIoEx / CloseHandle
+Daemon -> Listener : CancelSynchronousIo / CancelIoEx / CloseHandle
 @enduml

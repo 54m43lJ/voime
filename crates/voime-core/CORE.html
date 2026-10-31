@@ -68,12 +68,11 @@
   <tr><td>分段</td><td><code>MIN_SPEECH_MS</code> / <code>MIN_SILENCE_MS</code> / <code>PTT_AUTO_END_MS</code> 由 segmenter 模块拥有；达到 <code>max_segment_ms</code> 时强制结束。</td></tr>
   <tr><td>模型校验</td><td>加载清单时校验 schema、采样率、张量声明与参数范围；<code>verify</code> 校验文件存在、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。</td></tr>
   <tr><td>错误边界</td><td>库内部使用 <code>anyhow::Result</code> + 上下文；音频错误类型保留 <code>AudioError</code>；pipeline 把可恢复错误转为 <code>SegmentDropped</code>。</td></tr>
-  <tr><td>无 OS 依赖</td><td>不直接使用 Unix socket、named pipe、Fcitx、Win32 或 TUI API；<code>config</code> 只保留模型目录的 XDG / HOME 回退。</td></tr>
+  <tr><td>无 OS 依赖</td><td>不直接使用 Unix socket、named pipe、Fcitx、Win32 或 TUI API；<code>config</code> 只保留模型目录的平台默认值回退（Windows 读 <code>LOCALAPPDATA</code>，Unix 走 XDG / HOME）。</td></tr>
 </table>
 <ul class="note">
   <li>仓库级依赖方向与进程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>。</li>
   <li>工程常量不在此表赋值；具体值以源码为准，推荐值可写在签名注释中。</li>
-  <li>当前 <code>Mode</code> 来自 <code>voime-ipc</code>；彻底去除该依赖的方案见 <a href="../../PLATFORM.html#p3-4">PLATFORM §3.4</a>。</li>
 </ul>
 
 <h2 id="c3">3. SBOM</h2>

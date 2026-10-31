@@ -20,7 +20,6 @@
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="BUILD.html">BUILD</a>
-｜ 评估：<a href="../../WINDOWS.html">WINDOWS</a>
 </p>
 
 <p>
@@ -99,7 +98,9 @@
   <tr><td>设置窗口键盘事件（winit）</td><td>热键录制；只在窗口聚焦时读取，Esc 取消，窗口失焦停止。</td></tr>
   <tr><td><code>GetAsyncKeyState</code></td><td>PTT 主键松开检测；录制时读取实时修饰键。</td></tr>
   <tr><td><code>GetForegroundWindow</code> / <code>GetGUIThreadInfo</code></td><td>取得前台窗口与焦点 HWND。</td></tr>
-  <tr><td>UIA <code>GetFocusedElement</code> / RuntimeId</td><td>取得焦点控件并复核目标。</td></tr>
+  <tr><td><code>CoInitializeEx</code>（STA）</td><td>托盘与设置进程各自在主线程以 STA 初始化 COM；UIA 调用的前提。</td></tr>
+  <tr><td>UIA <code>GetFocusedElement</code> / RuntimeId</td><td>取得焦点控件并复核目标；<code>GetRuntimeId</code> 返回 SAFEARRAY，按 LBound / UBound 读取后 <code>SafeArrayUnaccessData</code>，最后 <code>SafeArrayDestroy</code>；UIA 不可用时退化为只绑定 HWND。</td></tr>
+  <tr><td>winit 事件循环</td><td>每个进程只允许创建一个事件循环；设置窗口因此运行在独立进程（<code>voime-tray.exe --settings</code>）。</td></tr>
   <tr><td><code>SendInput</code> + <code>KEYEVENTF_UNICODE</code></td><td>注入 UTF-16 文本。</td></tr>
   <tr><td><code>CreateWindowExW</code> + <code>WS_EX_NOACTIVATE</code> / <code>WS_EX_TOOLWINDOW</code> / <code>WS_EX_TRANSPARENT</code></td><td>创建无激活、置顶、点击穿透的浮层。</td></tr>
   <tr><td>DPI / monitor API</td><td>浮层定位与缩放。</td></tr>

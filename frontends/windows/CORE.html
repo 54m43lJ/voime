@@ -32,28 +32,22 @@
 
 <pre><code>frontends/windows/
 ├── Cargo.toml                    独立 workspace
-├── src/
-│   ├── <a href="#c4-1">main.rs</a>              进程入口、事件循环、单实例
-│   ├── <a href="#c4-2">config.rs</a>            Mode / Hotkey / 设置持久化
-│   ├── control.rs             启动 / 停止 daemon
-│   ├── diagnostics.rs         voime doctor 输出
-│   ├── <a href="#c4-3">ipc.rs</a>               命名管道客户端 + ServerMessage 分发
-│   ├── <a href="#c4-4">hotkey.rs</a>            RegisterHotKey / GetAsyncKeyState / 热键解析
-│   ├── paths.rs               同目录 voime / voimed 定位
-│   ├── <a href="#c4-5">target.rs</a>            前台窗口 + UIA 焦点元素
-│   ├── <a href="#c4-6">preview.rs</a>           无激活浮层
-│   ├── <a href="#c4-7">commit.rs</a>            UTF-8 → UTF-16 + SendInput
-│   ├── <a href="#c4-8">tray.rs</a>              托盘图标与菜单
-│   └── <a href="#c4-10">settings.rs</a>          egui 设置窗口（模式 / 热键 / daemon）
-└── tsf/                          可选 P4
-    ├── CMakeLists.txt
-    └── src/
-        ├── <a href="#c4-9">text_service.cpp</a>   ITfTextInputProcessor
-        ├── <a href="#c4-9">key_sink.cpp</a>      ITfKeyEventSink
-        └── <a href="#c4-9">edit_session.cpp</a>  ITfEditSession / ITfRange</code></pre>
+└── src/
+    ├── <a href="#c4-1">main.rs</a>              进程入口、事件循环、单实例、设置进程分流
+    ├── <a href="#c4-2">config.rs</a>            Mode / Hotkey / 设置持久化
+    ├── <a href="#c4-9">control.rs</a>            daemon 子进程与 Job Object
+    ├── diagnostics.rs         voime doctor 输出
+    ├── <a href="#c4-3">ipc.rs</a>               命名管道客户端 + ServerMessage 分发
+    ├── <a href="#c4-4">hotkey.rs</a>            RegisterHotKey / GetAsyncKeyState / 热键解析
+    ├── paths.rs               同目录 voime / voimed 定位
+    ├── <a href="#c4-5">target.rs</a>            前台窗口 + UIA 焦点元素
+    ├── <a href="#c4-6">preview.rs</a>           无激活浮层
+    ├── <a href="#c4-7">commit.rs</a>            UTF-8 → UTF-16 + SendInput
+    ├── <a href="#c4-8">tray.rs</a>              托盘图标、菜单与 WM_APP 命令
+    └── <a href="#c4-10">settings.rs</a>          egui 设置窗口（模式 / 热键 / daemon）</code></pre>
 <ul class="note">
   <li>文件划分与当前 Rust 源码一致；前端不依赖 <code>voime-core</code>。</li>
-  <li><code>tsf/</code> 是可选子工程，不进入 Rust workspace；当前分支未包含，不启用 TSF 时无需构建。</li>
+  <li>TSF（P4）为可选子工程；当前分支未包含，<code>tsf/</code> 目录不存在，不启用 TSF 时无需构建。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -64,12 +58,12 @@
   <tr><td>独立构建根</td><td><code>frontends/windows</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>；不进入根 <code>cargo test --workspace</code>。</td></tr>
   <tr><td>平台</td><td>只构建 Windows 目标；Linux CI 不构建本 crate。</td></tr>
   <tr><td>无模型</td><td>不链接 ONNX Runtime，不加载模型，不做 VAD / CTC / 分段。</td></tr>
-  <tr><td>事件循环</td><td>主线程拥有托盘与消息循环；IPC reader 线程把消息送入有界通道；热键 / 目标 / 浮层更新回到主线程。设置窗口在独立线程运行 egui 事件循环，保存结果通过通道回到主线程。</td></tr>
+  <tr><td>事件循环</td><td>主线程拥有托盘与消息循环；IPC reader 线程把消息送入有界通道；热键 / 目标 / 浮层更新回到主线程。设置窗口在独立进程（<code>voime-tray.exe --settings</code>）运行唯一的 egui 事件循环，托盘轮询设置子进程并在其退出后重载配置。</td></tr>
+  <tr><td>daemon 生命周期</td><td>daemon 由托盘以子进程启动，并加入设置了 <code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code> 的 Job Object；托盘退出或崩溃即终止 daemon；托盘是 daemon 的唯一所有者。</td></tr>
   <tr><td>目标所有权</td><td>目标窗口 / 焦点元素属于前端私有类型；协议只传 <code>segment_id</code> 与事件。</td></tr>
   <tr><td>单实例</td><td>每用户一个前端进程；重复启动激活已有托盘。</td></tr>
   <tr><td>提交边界</td><td>SendInput 只在目标复核通过后调用；失败不重试其他窗口。</td></tr>
   <tr><td>日志</td><td>只记录错误码、端点、热键注册与目标变化；不记录按键内容或识别文本。</td></tr>
-  <tr><td>TSF</td><td>DLL 不加载模型；只通过命名管道连接 daemon；编辑会话失败不注入其他窗口。</td></tr>
 </table>
 <ul class="note">
   <li>仓库级依赖方向见 <a href="../../CORE.html#c2">根 CORE §2</a>；平台 API 与安全约束见 <a href="PROVIDER.html">PROVIDER</a>。</li>
@@ -102,6 +96,7 @@ fn ensure_single_instance() -&gt; bool;</code></pre>
 <ul class="note">
   <li>二进制使用 <code>windows_subsystem = "windows"</code>（测试构建除外），启动不显示控制台；启动时设置 per-monitor v2 DPI awareness。</li>
   <li><code>--settings</code> 参数在单实例检查前分流到独立设置进程；托盘进程不再创建 eframe 事件循环。</li>
+  <li><code>RegisterHotKey</code> 需要窗口句柄：先创建托盘窗口，连接 daemon 成功后才 <code>sync_hotkey</code> 注册热键。</li>
 </ul>
 
 <h3 id="c4-2">4.2 config.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -125,6 +120,7 @@ pub fn to_ipc_config(&amp;self) -&gt; IpcConfig;</code></pre>
 impl IpcClient {
     pub fn connect(endpoint: &amp;Endpoint) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn send(&amp;mut self, message: &amp;ClientMessage) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn try_event(&amp;mut self) -&gt; Option&lt;anyhow::Result&lt;ServerMessage&gt;&gt;;
     pub fn next_event(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
     pub fn snapshot(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
 }</code></pre>
@@ -157,7 +153,10 @@ pub fn unregister(handle: HotkeyHandle);</code></pre>
 
 pub fn capture() -&gt; anyhow::Result&lt;Target&gt;;
 pub fn focused(target: &amp;Target) -&gt; bool;
-pub fn same(a: &amp;Target, b: &amp;Target) -&gt; bool;</code></pre>
+fn current_runtime_id() -&gt; Option&lt;UiElementId&gt;;</code></pre>
+<ul class="note">
+  <li><code>current_runtime_id</code> 经 STA 初始化的 COM 取 UIA 焦点元素；<code>GetRuntimeId</code> 返回的 SAFEARRAY 按 LBound / UBound 读取后 <code>SafeArrayUnaccessData</code>，最后 <code>SafeArrayDestroy</code>。UIA 不可用时返回 <code>None</code>，目标退化为只绑定 HWND。</li>
+</ul>
 
 <h3 id="c4-6">4.6 preview.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Overlay { /* HWND + DPI + monitor */ }
@@ -184,16 +183,22 @@ impl Tray {
     pub fn poll_events(&amp;mut self, frontend: &amp;mut Frontend);
 }</code></pre>
 
-<h3 id="c4-9">4.9 tsf/（可选 P4） <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>class VoimeTextService : public ITfTextInputProcessorEx,
-                         public ITfThreadMgrEventSink,
-                         public ITfKeyEventSink { /* ... */ };
+<h3 id="c4-9">4.9 control.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Daemon { /* child + job handle + stopped */ }
 
-class VoimeEditSession : public ITfEditSession {
-    STDMETHOD(DoEditSession)(TfEditCookie ec) override;
-};
+impl Daemon {
+    pub fn start() -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn has_exited(&amp;mut self) -&gt; bool;
+    pub fn stop(&amp;mut self);
+}
 
-// COM 注册：CLSID、InprocServer32、x86 / x64 DLL。</code></pre>
+pub fn stop_existing();
+pub fn quit_running() -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+<ul class="note">
+  <li><code>start</code> 以 <code>CREATE_NO_WINDOW</code> 拉起同目录 <code>voimed.exe</code>，并把子进程 <code>AssignProcessToJobObject</code> 到 <code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code> 的 Job Object；Job 创建或分配失败时降级为仅在正常退出时停止 daemon。</li>
+  <li><code>stop</code> 先以 Control 角色发送 <code>Quit</code>，最多等 3 秒，超时 <code>kill</code>；<code>Drop</code> 关闭 Job 句柄兜底终止。</li>
+  <li><code>stop_existing</code> 在托盘启动时停止外部 daemon 并等待命名管道释放（最多 2 秒），保证托盘是唯一所有者。</li>
+</ul>
 
 <h3 id="c4-10">4.10 settings.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub enum SettingsAction {
@@ -201,8 +206,6 @@ class VoimeEditSession : public ITfEditSession {
         config: Config,
         ack: Sender&lt;Result&lt;(), String&gt;&gt;,
     },
-    StartDaemon,
-    StopDaemon,
 }
 
 pub fn run_process(config: Config, status: FrontendStatus,
@@ -214,8 +217,8 @@ fn run_window(config: Config, status: FrontendStatus,
               sender: Sender&lt;SettingsAction&gt;,
               focus_hotkey: bool) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 <ul class="note">
-  <li><code>--settings</code> 启动独立设置进程，<code>run_process</code> 在该进程主线程运行唯一的 egui 事件循环；保存、daemon 启停由动作线程执行，保存结果经 <code>ack</code> 返回窗口。</li>
-  <li>保存前由动作线程用消息窗口校验热键可用性；注册冲突回显在窗口内。</li>
+  <li><code>--settings</code> 启动独立设置进程，<code>run_process</code> 在该进程主线程运行唯一的 egui 事件循环；保存由动作线程执行（校验热键可用性后写盘），结果经 <code>ack</code> 返回窗口，冲突在窗口内显示。</li>
+  <li>设置窗口的“启动服务 / 停止服务并退出”经 <code>tray::send_command</code>（<code>WM_APP</code> 命令消息）转交托盘执行；托盘未运行时只在窗口内提示，不自行拉起 daemon。</li>
   <li>托盘打开设置前注销全局热键；设置子进程退出后托盘重新加载配置并恢复热键。</li>
 </ul>
 
@@ -225,33 +228,67 @@ fn run_window(config: Config, status: FrontendStatus,
 <h3 id="c5-1">5.1 启动与连接</h3>
 <pre><code>Windows 登录启动 / 用户双击
 └── frontends_windows::main()
-    ├── voime_log::init("voime-settings" | "voime-tray")
+    ├── 判断 --settings → settings::run_process()（独立设置进程，见 §5.5）
+    ├── voime_log::init("voime-tray")
     ├── ensure_single_instance()
     ├── config::load()
     └── run(Frontend::new(config))
+        ├── ComGuard::init()（STA，UIA 使用）
         ├── Tray::create(&amp;mut frontend)
         ├── frontend.attach_window(tray.hwnd())
         ├── Overlay::create()
-        ├── frontend.try_connect()
-        │   ├── IpcClient::connect(&amp;Endpoint::NamedPipe(name))
-        │   ├── IpcClient::send(Hello { role: Frontend, config })
-        │   ├── IpcClient::snapshot()
-        │   ├── frontend.sync_hotkey()
-        │   └── frontend.on_message(snapshot)
-        ├── frontend.start_daemon()（连接失败时）
-        └── Windows 消息循环</code></pre>
+        ├── frontend.start_daemon()
+        │   ├── control::stop_existing()
+        │   └── control::Daemon::start()
+        └── Windows 消息循环（退出 → frontend.shutdown()）
+
+frontend.tick()（消息循环每轮）
+├── poll_settings()
+├── poll_daemon()
+│   └── 判断 daemon 子进程已退出 → on_disconnect()
+├── 判断未连接且到达重连间隔 → frontend.try_connect()
+│   ├── IpcClient::connect(&amp;Endpoint::NamedPipe(name))
+│   ├── IpcClient::send(Hello { role: Frontend, config })
+│   ├── IpcClient::snapshot()
+│   ├── frontend.sync_hotkey()
+│   └── frontend.on_message(snapshot)
+├── IpcClient::try_event() → frontend.on_message(...)
+├── 判断 PTT 激活且 !config.hotkey.is_down() → stop_segment(Hold)
+└── 判断 target::focused() 失败 → on_target_lost()
+
+frontend.shutdown()
+├── on_disconnect()
+└── 判断有托管子进程 → control::Daemon::stop()；否则 control::quit_running()</code></pre>
+<ul class="note">
+  <li><code>start_daemon</code> 先停止外部 daemon 再拉起自己的子进程；连接失败时按 10 秒节奏重试拉起。</li>
+  <li>热键注册依赖托盘窗口句柄，因此在 <code>Tray::create</code> 之后、首次连接成功时执行。</li>
+  <li><code>Daemon::stop</code> 发送 <code>Quit</code> 后最多等 3 秒，超时 <code>kill</code>；<code>Drop</code> 关闭 Job 句柄兜底终止。</li>
+</ul>
 
 <h3 id="c5-2">5.2 热键到提交</h3>
-<pre><code>热键事件
+<pre><code>WM_HOTKEY
 └── frontend::on_hotkey()
-    ├── 判断 Mode == Ptt / Toggle
-    ├── target::capture()
-    ├── IpcClient::send(Start { segment_id, source })
-    ├── IpcClient::send(Stop { ... })（松开或再次按下）
-    └── 消息循环分发 ServerMessage
+    ├── 判断 hotkey_down → 按住期间的重复通知直接忽略
+    ├── 判断 Mode == Ptt
+    │   └── 判断 !finalizing &amp;&amp; !recording → start_segment(Hold)
+    └── 判断 Mode == Toggle
+        ├── 判断 toggle_active → stop_segment(Toggle)
+        └── 判断 !finalizing → start_segment(Toggle)
+
+frontend.tick()
+└── 判断 PTT 激活且热键已松开（GetAsyncKeyState 轮询 key-up）
+    └── stop_segment(Hold)
+
+start_segment(source)
+├── target::capture()
+└── IpcClient::send(Start { segment_id: 0, source })
+
+stop_segment(source)
+├── Overlay::hide()
+└── IpcClient::send(Stop { segment_id, source })
 
 frontend::on_message(Partial)
-└── Overlay::show(text, &amp;target)
+└── 判断 segment_id 匹配目标 → Overlay::show(text, &amp;target)
 
 frontend::on_message(Final)
 ├── 判断 message.segment_id == target.segment_id
@@ -259,6 +296,9 @@ frontend::on_message(Final)
 ├── 判断 Toggle 会话 active → Overlay::show_empty(&amp;target)
 ├── 其他模式 → Overlay::hide()
 └── commit::commit(&amp;target, &amp;text)</code></pre>
+<ul class="note">
+  <li>PTT 的 key-up 不依赖低级键盘钩子，由主循环用 <code>GetAsyncKeyState</code> 轮询；进入 finalizing 后忽略新的热键启动，避免与 daemon 的 <code>Busy</code> 竞争。</li>
+</ul>
 
 <h3 id="c5-3">5.3 Continuous 与目标失效</h3>
 <pre><code>frontend::on_message(SegmentStarted)
@@ -269,7 +309,7 @@ frontend::on_message(Final)
 
 frontend::on_focus_change()
 ├── 判断 !target::focused → Overlay::hide()
-├── 判断 Mode == Toggle && (toggle_active || recording)
+├── 判断 Mode == Toggle &amp;&amp; (toggle_active || recording)
 │   └── IpcClient::send(Stop { segment_id, Toggle })
 └── 放弃当前段提交</code></pre>
 
@@ -284,21 +324,7 @@ frontend::on_focus_change()
             ├── IpcClient::connect()
             └── IpcClient::snapshot()</code></pre>
 
-<h3 id="c5-5">5.5 TSF（可选 P4）</h3>
-<pre><code>目标应用进程加载 TSF DLL
-└── VoimeTextService::Activate()
-    ├── ITfThreadMgrEventSink 注册
-    ├── ITfKeyEventSink 注册
-    └── IpcClient::send(Hello { role: TextService })
-
-Final
-└── VoimeTextService::on_final(segment_id, text)
-    ├── 判断目标 ITfContext 仍有效
-    ├── ITfContext::RequestEditSession(VoimeEditSession)
-    └── VoimeEditSession::DoEditSession(ec)
-        └── ITfRange::SetText(ec, text)</code></pre>
-
-<h3 id="c5-6">5.6 设置窗口与 daemon 启停</h3>
+<h3 id="c5-5">5.5 设置窗口与 daemon 启停</h3>
 <pre><code>Tray::poll_events(ShowSettings) / 左键托盘 / 热键菜单项
 └── frontend.open_settings(focus_hotkey)
     ├── 判断 settings_child 仍在运行 → SetForegroundWindow(已有窗口)
@@ -310,9 +336,13 @@ Final
     └── settings::run_process(config, status, focus_hotkey)
         ├── settings::run_window → eframe::run_native(Voime 设置)
         └── action thread
-            ├── 判断 Save → hotkey::check_available() → Config::save() → ack
-            ├── 判断 StartDaemon → control::start_daemon()
-            └── 判断 StopDaemon → control::stop_daemon()
+            └── 判断 Save → hotkey::check_available() → Config::save() → ack
+
+设置窗口（启动 / 停止服务）
+└── tray::send_command(TrayCommand)（WM_APP 命令消息；托盘未运行时失败）
+    └── Tray::poll_events
+        ├── 判断 StartDaemon → frontend.start_daemon()
+        └── 判断 StopDaemon → PostQuitMessage(0)（停止服务即退出托盘）
 
 frontend.tick()
 └── poll_settings()

@@ -20,7 +20,6 @@
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
 <a href="BUILD.html">BUILD</a>
-｜ 评估：<a href="../../WINDOWS.html">WINDOWS</a>
 </p>
 
 <p>
@@ -36,7 +35,7 @@
   <tr><th>术语</th><th>定义</th></tr>
   <tr><td>Windows 前端</td><td>独立桌面进程：托盘、热键、目标绑定、浮层与提交；MVP 不注册为系统输入法。</td></tr>
   <tr><td>托盘（tray）</td><td>通知区域图标与菜单；用于配置、状态、启动 / 停止 daemon、退出。</td></tr>
-  <tr><td>全局热键</td><td>系统范围组合键；Toggle 可用 <code>RegisterHotKey</code>，PTT 需要 key-up。</td></tr>
+  <tr><td>全局热键</td><td>系统范围组合键；经 <code>RegisterHotKey</code> 注册，PTT 的 key-up 由前端轮询按键状态。</td></tr>
   <tr><td>目标窗口 / 焦点元素</td><td>语音段开始时前台窗口（HWND）及其 UIA 焦点元素；TSF 阶段为 <code>ITfContext</code>。</td></tr>
   <tr><td>浮层（overlay）</td><td>无激活、置顶、可点击穿透的临时文本窗口；显示 Partial。</td></tr>
   <tr><td><code>SendInput</code></td><td>Win32 合成输入 API；MVP 用 <code>KEYEVENTF_UNICODE</code> 注入 UTF-16 文本。</td></tr>
@@ -54,6 +53,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>配置所有权</td><td><code>Mode</code> / <code>Hotkey</code> 由前端拥有，通过 Hello / Configure 同步给 daemon；daemon 不提供独立模式设置。</td></tr>
   <tr><td>热键默认</td><td>默认使用不占用系统保留键的组合（推荐 <code>Ctrl+Alt+Space</code>）；用户可修改，空值禁用。</td></tr>
+  <tr><td>热键语义</td><td><code>RegisterHotKey</code> 只提供按下通知：PTT 按住期间由前端轮询按键状态，松开即结束；按住期间的重复按下通知被过滤，Toggle 一次按下只切换一次。</td></tr>
   <tr><td>一个语音段一个目标</td><td>段开始时绑定前台窗口 + 焦点元素；段内不改变；提交前复核。</td></tr>
   <tr><td>Partial 只显示</td><td>浮层显示 Partial；不提交、不进入历史；空 Partial 不清空上一行。</td></tr>
   <tr><td>Final 才提交</td><td>只处理当前目标 <code>segment_id</code> 的 Final；先清空浮层文本（Toggle 会话保留空白浮层），再注入。</td></tr>
@@ -72,6 +72,7 @@
 <div class="diagram"><img src="diagram/mvp-flow.svg" alt="Windows 前端从热键、浮层到 SendInput 的时序图"></div>
 <ul class="note">
   <li>热键触发后记录前台窗口与焦点元素，再发送 Start。</li>
+  <li>PTT 的松开由前端轮询按键状态检测（见 §2 热键语义）。</li>
   <li>Partial 只更新浮层；Final 先复核目标，再注入；失败时保留历史。</li>
 </ul>
 
@@ -142,7 +143,7 @@
 
 <table>
   <tr><th>消息</th><th>前端行为</th></tr>
-  <tr><td><code>Hello { role: Fcitx, version, config }</code></td><td>连接命名管道后发送；P1 后角色泛化为 Frontend。</td></tr>
+  <tr><td><code>Hello { role: Frontend, version, config }</code></td><td>连接命名管道后发送。</td></tr>
   <tr><td><code>Configure</code></td><td>托盘菜单 / 设置窗口的配置变化时发送。</td></tr>
   <tr><td><code>Start</code> / <code>Stop</code> / <code>Toggle</code></td><td>PTT / Toggle 热键触发；携带目标提示与 Hold / Toggle 来源。</td></tr>
   <tr><td><code>SegmentStarted</code></td><td>记录最终 <code>segment_id</code>；Continuous 续段绑定当前前台焦点；Toggle 续段仅在原目标仍聚焦时继续，否则停止会话。</td></tr>
@@ -178,10 +179,11 @@
 <table>
   <tr><th>操作</th><th>契约</th></tr>
   <tr><td>登录启动</td><td>安装脚本写入当前用户 <code>Run</code> 项启动 <code>voime-tray.exe</code>；不使用 Session 0 服务。</td></tr>
-  <tr><td>自动启动</td><td>托盘连接失败时启动同目录 <code>voimed.exe</code>，并按 2 s / 10 s 间隔重连与重试。</td></tr>
-  <tr><td>手动启停</td><td>托盘菜单与设置窗口提供启动 / 停止服务；停止通过 <code>voime ctl quit</code> 执行。</td></tr>
+  <tr><td>自动启动</td><td>托盘启动时先停止已有 daemon，再以子进程拉起同目录 <code>voimed.exe</code>；托盘是 daemon 的唯一所有者。连接失败按 2 s 间隔重连，daemon 重试按 10 s 间隔执行。</td></tr>
+  <tr><td>手动启停</td><td>托盘菜单与设置窗口提供启动 / 停止服务；设置窗口的操作转交托盘执行，托盘未运行时不生效。停止服务即退出托盘。</td></tr>
   <tr><td>手动诊断</td><td>“诊断”调用 <code>voime doctor</code> 并在消息框显示结果；不修改配置。</td></tr>
-  <tr><td>退出托盘</td><td>关闭浮层与 IPC 连接；daemon 是否继续运行由“停止 daemon”单独控制。</td></tr>
+  <tr><td>设置保存</td><td>设置窗口保存后自行退出，托盘自动重载配置并应用，无需重启托盘。</td></tr>
+  <tr><td>退出托盘</td><td>关闭浮层与 IPC 连接，并停止 daemon 子进程；退出托盘即停止服务。</td></tr>
 </table>
 
 <h2 id="u5">5. UI</h2>
