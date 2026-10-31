@@ -2218,6 +2218,7 @@ dependencies = [
  "anyhow",
  "crossbeam-channel",
  "eframe",
+ "image",
  "serde",
  "serde_json",
  "voime-ipc",

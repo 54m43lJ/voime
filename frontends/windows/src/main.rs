@@ -5,6 +5,7 @@ mod config;
 mod control;
 mod diagnostics;
 mod hotkey;
+mod icon;
 mod ipc;
 mod paths;
 mod preview;

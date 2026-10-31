@@ -10,13 +10,13 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::HICON;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    FindWindowW, GetCursorPos, GetWindowLongPtrW, LoadIconW, MessageBoxW, PostMessageW,
-    PostQuitMessage, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow,
-    TrackPopupMenu, GWLP_USERDATA, HMENU, IDI_APPLICATION, MB_ICONERROR, MB_OK, MENU_ITEM_FLAGS,
-    MF_CHECKED, MF_DISABLED, MF_POPUP, MF_SEPARATOR, MF_STRING, SW_SHOWNOACTIVATE, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
-    WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+    DestroyIcon, DestroyMenu, DestroyWindow, FindWindowW, GetCursorPos, GetWindowLongPtrW,
+    MessageBoxW, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
+    SetWindowLongPtrW, ShowWindow, TrackPopupMenu, GWLP_USERDATA, HMENU, LR_DEFAULTCOLOR,
+    MB_ICONERROR, MB_OK, MENU_ITEM_FLAGS, MF_CHECKED, MF_DISABLED, MF_POPUP, MF_SEPARATOR,
+    MF_STRING, SW_SHOWNOACTIVATE, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_CONTEXTMENU,
+    WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::Frontend;
@@ -109,8 +109,17 @@ impl Tray {
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Arc::as_ptr(&queue) as isize);
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
-        let icon = unsafe { LoadIconW(HINSTANCE::default(), IDI_APPLICATION) }
-            .context("加载托盘图标失败")?;
+        let icon = unsafe {
+            CreateIconFromResourceEx(
+                crate::icon::tray_png(),
+                true,
+                0x0003_0000,
+                32,
+                32,
+                LR_DEFAULTCOLOR,
+            )
+        }
+        .context("加载托盘图标失败")?;
         let mut tray = Self {
             hwnd,
             queue,
@@ -356,6 +365,7 @@ impl Drop for Tray {
             }
         }
         unsafe {
+            let _ = DestroyIcon(self.icon);
             let _ = DestroyWindow(self.hwnd);
         }
     }

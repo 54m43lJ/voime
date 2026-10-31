@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#FFFFFF"/>
+  <text x="32" y="6.5" font-family="Noto Sans CJK SC, Noto Sans, Arial, sans-serif" font-size="7"
+        font-weight="600" letter-spacing="0.6" fill="#2A5784" text-anchor="middle">abc</text>
+  <path transform="translate(2.4 1.6)"
+        d="M26.77 55.7 L9.47 7.3 L20.07 7.3 L32.31 43.12 L44.17 7.3 L54.53 7.3 L37.2 55.7 Z"
+        fill="#4E8CC9" stroke="#4E8CC9" stroke-width="1.8" stroke-linejoin="miter"/>
+  <path d="M26.77 55.7 L9.47 7.3 L20.07 7.3 L32.31 43.12 L44.17 7.3 L54.53 7.3 L37.2 55.7 Z"
+        fill="#2A5784" stroke="#2A5784" stroke-width="1.8" stroke-linejoin="miter"/>
+  <g fill="#2A5784">
+    <rect x="18.5" y="60.8" width="3.5" height="3" rx="1.75"/>
+    <rect x="24.25" y="59.8" width="3.5" height="4" rx="1.75"/>
+    <rect x="30.25" y="58.8" width="3.5" height="5" rx="1.75"/>
+    <rect x="36.25" y="59.8" width="3.5" height="4" rx="1.75"/>
+    <rect x="42" y="60.8" width="3.5" height="3" rx="1.75"/>
+  </g>
+</svg>

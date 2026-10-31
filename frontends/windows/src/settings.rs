@@ -775,7 +775,7 @@ fn run_window(
             .with_inner_size([500.0, 640.0])
             .with_min_inner_size([460.0, 540.0])
             .with_title("Voime 设置")
-            .with_icon(app_icon()),
+            .with_icon(crate::icon::window_icon()),
         centered: true,
         event_loop_builder: Some(Box::new(|builder| {
             use winit::platform::windows::EventLoopBuilderExtWindows;
@@ -832,68 +832,6 @@ fn install_fonts(ctx: &egui::Context) {
         break;
     }
     ctx.set_fonts(fonts);
-}
-
-fn app_icon() -> egui::IconData {
-    const SIZE: usize = 64;
-    let mut rgba = vec![0u8; SIZE * SIZE * 4];
-    let accent = [82.0f32, 125.0, 255.0];
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let mut background = 0.0;
-            let mut letter = 0.0;
-            for sy in 0..3 {
-                for sx in 0..3 {
-                    let px = x as f32 + (sx as f32 + 0.5) / 3.0;
-                    let py = y as f32 + (sy as f32 + 0.5) / 3.0;
-                    if rounded_rect(px, py, SIZE as f32, 14.0) {
-                        background += 1.0;
-                    }
-                    if v_shape(px, py) {
-                        letter += 1.0;
-                    }
-                }
-            }
-            let background = background / 9.0;
-            let letter = letter / 9.0;
-            let index = (y * SIZE + x) * 4;
-            for (channel, value) in accent.iter().enumerate() {
-                rgba[index + channel] =
-                    ((value * (1.0 - letter) + 255.0 * letter) * background) as u8;
-            }
-            rgba[index + 3] = (255.0 * background) as u8;
-        }
-    }
-    egui::IconData {
-        rgba,
-        width: SIZE as u32,
-        height: SIZE as u32,
-    }
-}
-
-fn rounded_rect(x: f32, y: f32, size: f32, radius: f32) -> bool {
-    if x < 0.0 || y < 0.0 || x > size || y > size {
-        return false;
-    }
-    let cx = x.clamp(radius, size - radius);
-    let cy = y.clamp(radius, size - radius);
-    let dx = x - cx;
-    let dy = y - cy;
-    dx * dx + dy * dy <= radius * radius
-}
-
-fn v_shape(x: f32, y: f32) -> bool {
-    segment_distance(x, y, 20.0, 17.0, 32.0, 47.0) <= 3.5
-        || segment_distance(x, y, 44.0, 17.0, 32.0, 47.0) <= 3.5
-}
-
-fn segment_distance(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
-    let dx = bx - ax;
-    let dy = by - ay;
-    let t = (((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
-    let x = ax + t * dx;
-    let y = ay + t * dy;
-    ((px - x).powi(2) + (py - y).powi(2)).sqrt()
 }
 
 fn configure_style(ctx: &egui::Context) {
