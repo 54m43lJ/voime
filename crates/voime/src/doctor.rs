@@ -126,15 +126,23 @@ fn check_model(ok: &mut bool) {
                 },
                 manifest.asr.partial_enabled()
             );
-            println!(
-                "         asr sha256 = {}…",
-                manifest
-                    .asr
-                    .model
-                    .as_ref()
-                    .map(|artifact| artifact.sha256.chars().take(12).collect::<String>())
-                    .unwrap_or_else(|| "(multi-graph)".to_string())
-            );
+            let sha_prefix = |artifact: &voime_core::model::Artifact| {
+                artifact.sha256.chars().take(12).collect::<String>()
+            };
+            let sha = match (
+                manifest.asr.encoder.as_ref(),
+                manifest.asr.decoder.as_ref(),
+                manifest.asr.model.as_ref(),
+            ) {
+                (Some(encoder), Some(decoder), _) => format!(
+                    "encoder {}… / decoder {}…",
+                    sha_prefix(encoder),
+                    sha_prefix(decoder)
+                ),
+                (_, _, Some(model)) => format!("{}…", sha_prefix(model)),
+                _ => "-".to_string(),
+            };
+            println!("         asr sha256 = {sha}");
             if manifest.verify(&model_dir).is_ok() {
                 println!("  OK   manifest 与 SHA-256 校验通过");
             } else {

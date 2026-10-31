@@ -2,7 +2,7 @@
 
 本分支 `poc/model-switch` 按 `PROPOSAL-sensevoice.html` 实现了包级切换的第一版：
 
-- 同一个 `voimed` 二进制支持 FireRedASR2-CTC 与 SenseVoice。
+- 同一个 `voimed` 二进制支持 FireRedASR2-CTC、SenseVoice 与 FireRedASR2-AED。
 - 切换只改 `models/active` 指针并重建 pipeline，不替换二进制、不重启 daemon。
 - IPC 协议提升到 2；新增 `ListModels`、`SetModel`、`RestartBackend`。
 - Windows 设置窗口与 Fcitx 配置页可选择已安装模型包；录音中拒绝重启。
@@ -21,11 +21,16 @@
 │   ├── manifest.json
 │   ├── vad/stream-vad.onnx
 │   └── asr/model.int8.onnx + tokens.txt
-└── sense-voice-2024-punc/          # use_itn=0 + FireRedPunc
+├── sense-voice-2024-punc/          # use_itn=0 + FireRedPunc
+│   ├── manifest.json
+│   ├── vad/stream-vad.onnx
+│   ├── punc/...
+│   └── asr/model.int8.onnx + tokens.txt
+└── fire-red-aed/                   # 实验后端；partial=false + FireRedPunc
     ├── manifest.json
     ├── vad/stream-vad.onnx
     ├── punc/...
-    └── asr/model.int8.onnx + tokens.txt
+    └── asr/encoder.int8.onnx + decoder.int8.onnx + tokens.txt
 ```
 
 解析顺序：`--model-dir` 显式覆盖 → `active` → 旧布局（模型根目录直接含
@@ -43,9 +48,13 @@ scripts/install_models.sh --asr sense-voice --variant itn --activate
 # SenseVoice + FireRedPunc：需要一个带 punc/ 的已有包
 scripts/install_models.sh --asr sense-voice --variant punc \
   --source-dir ~/.local/share/voime/models/firered-ctc --activate
+
+# FireRed AED：复用已有包的 VAD / FireRedPunc
+scripts/install_models.sh --asr fire-red-aed \
+  --source-dir ~/.local/share/voime/models/firered-ctc --activate
 ```
 
-Windows 对应参数为 `-Asr sense-voice -Variant itn|punc -Activate`。
+Windows 对应参数为 `-Asr sense-voice|fire-red-aed -Variant itn|punc -Activate`。
 
 ## 使用
 
@@ -75,6 +84,17 @@ Windows：设置窗口“模型”下拉 + “重启后端”。Fcitx：配置�
 - 标点策略由 `asr.options.punc` 决定：`builtin` 直接用模型输出；`external`
   交给 FireRedPunc。
 
+## FireRed AED 实现
+
+- encoder 输出 cross-attention KV；decoder 使用自回归 greedy 解码与 self KV cache。
+- 从 encoder ONNX metadata 读取 `num_decoder_layers` / `num_head` / `head_dim` /
+  `sos` / `eos` / `max_len` / `cmvn`，不硬编码层数或头数。
+- fbank 80 维、povey 窗、`(x - cmvn_mean) * cmvn_inv_stddev`；不做 LFR。
+- 默认 `partial=false`，避免自回归预览拖慢输入；Final 使用 FireRedPunc。
+- 只实现 CPU greedy search；beam search 与 GPU 不在 POC 范围。
+- 以 sherpa-onnx 1.12.27 的 decoder 语义为基准；已在 2026-02-26 int8 包上验证
+  普通话、四川话、天津话、河南话与中英混合样例。
+
 ## 测试
 
 ```bash
@@ -85,15 +105,19 @@ cargo clippy --workspace --all-targets -- -D warnings
 VOIME_SENSEVOICE_MODEL_DIR=<包目录> \
 VOIME_SENSEVOICE_AUDIO_DIR=<wav 目录> \
 cargo test --test asr_sensevoice -- --nocapture
+
+VOIME_AED_MODEL_DIR=<包目录> \
+VOIME_AED_AUDIO_DIR=<wav 目录> \
+cargo test --test asr_aed -- --nocapture
 ```
 
 本机已用 2024-07-17 ITN 包验证 5 条公开样例，输出与 sherpa-onnx 1.12.27
-一致（英文、中文、日文、粤语、韩文）。
+一致（英文、中文、日文、粤语、韩文）；AED 用 2026-02-26 int8 包验证了
+7 条 16 kHz 公开样例。
 
-## 暂未实现
+## 暂未实现 / 限制
 
-- FireRed AED 后端：清单类型已保留，`AsrBackend` 加载时会返回“尚未启用”，
-  不影响 CTC / SenseVoice 包切换与回滚。
+- AED 只实现 greedy search；beam search、GPU / NPU 与 partial 预览不在 POC 范围。
 - 运行时热切换：按提案要求不做；切换一律通过 `active` + 重启后端。
 - 产品文档（README / USER / CORE / PROVIDER / BUILD）尚未全部同步，正式合并
   前应按提案 §11 落到各所有者章节。

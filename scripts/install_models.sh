@@ -14,13 +14,14 @@ PREVIOUS=""
 for ARG in "$@"; do
   case "$ARG" in
     --asr=sense-voice) ASR="sense-voice" ;;
-    sense-voice)
-      if [ "$PREVIOUS" = "--asr" ]; then ASR="sense-voice"; fi
+    --asr=fire-red-aed) ASR="fire-red-aed" ;;
+    sense-voice|fire-red-aed)
+      if [ "$PREVIOUS" = "--asr" ]; then ASR="$ARG"; fi
       ;;
   esac
   PREVIOUS="$ARG"
 done
-if [ "$ASR" = "sense-voice" ]; then
+if [ "$ASR" = "sense-voice" ] || [ "$ASR" = "fire-red-aed" ]; then
   exec "$PYTHON" "$ROOT/tools/install_models.py" "$@"
 fi
 

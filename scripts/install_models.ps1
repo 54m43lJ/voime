@@ -2,7 +2,7 @@
 param(
     [string]$ModelDir = (Join-Path $env:LOCALAPPDATA 'voime\models'),
     [string]$ModelRoot = (Join-Path $env:LOCALAPPDATA 'voime\models'),
-    [ValidateSet('fire-red-ctc', 'sense-voice')]
+    [ValidateSet('fire-red-ctc', 'sense-voice', 'fire-red-aed')]
     [string]$Asr = 'fire-red-ctc',
     [ValidateSet('itn', 'punc')]
     [string]$Variant = 'itn',
@@ -48,19 +48,19 @@ function Invoke-Python {
 
 Invoke-Python @('-c', 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)')
 
-if ($Asr -eq 'sense-voice') {
-    $senseArgs = @(
+if ($Asr -eq 'sense-voice' -or $Asr -eq 'fire-red-aed') {
+    $packageArgs = @(
         (Join-Path $Root 'tools\install_models.py'),
-        '--asr', 'sense-voice',
+        '--asr', $Asr,
         '--variant', $Variant,
         '--model-root', $ModelRoot,
         '--cache-dir', $CacheDir
     )
     if ($PSBoundParameters.ContainsKey('ModelDir')) {
-        $senseArgs += @('--model-dir', $ModelDir)
+        $packageArgs += @('--model-dir', $ModelDir)
     }
-    if ($Activate) { $senseArgs += '--activate' }
-    & $Python @PythonPrefix @senseArgs
+    if ($Activate) { $packageArgs += '--activate' }
+    & $Python @PythonPrefix @packageArgs
     exit $LASTEXITCODE
 }
 

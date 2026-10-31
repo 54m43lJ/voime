@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Install FireRedASR2-CTC or SenseVoice model packages for Voime.
+"""Install FireRedASR2-CTC, SenseVoice, or FireRedASR2-AED packages for Voime.
 
-The runtime never calls this script. FireRed installation builds the VAD /
+The runtime never calls this script. FireRed CTC installation builds the VAD /
 FireRedPunc package with the export-only dependencies in a virtual
-environment; `--asr sense-voice` dispatches to the lightweight
-`install_sensevoice.py` downloader and does not import PyTorch.
+environment; `--asr sense-voice` and `--asr fire-red-aed` dispatch to the
+lightweight downloaders and do not import PyTorch.
 """
 
 from __future__ import annotations
@@ -237,7 +237,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--asr",
-        choices=["fire-red-ctc", "sense-voice"],
+        choices=["fire-red-ctc", "sense-voice", "fire-red-aed"],
         default="fire-red-ctc",
     )
     parser.add_argument("--variant", choices=["itn", "punc"], default="itn")
@@ -255,8 +255,8 @@ def main() -> int:
     parser.add_argument("--activate", action="store_true")
     args = parser.parse_args()
 
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     if args.asr == "sense-voice":
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
         from install_sensevoice import install
 
         return install(
@@ -265,6 +265,18 @@ def main() -> int:
             cache_dir=args.cache_dir,
             source_dir=args.source_dir,
             variant=args.variant,
+            activate=args.activate,
+        )
+    if args.asr == "fire-red-aed":
+        if args.variant != "itn":
+            fail("FireRed AED 不使用 SenseVoice 变体")
+        from install_aed import install
+
+        return install(
+            model_root=args.model_root,
+            target=args.model_dir,
+            cache_dir=args.cache_dir,
+            source_dir=args.source_dir,
             activate=args.activate,
         )
     if args.variant != "itn":

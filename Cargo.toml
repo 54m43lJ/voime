@@ -88,6 +88,10 @@ name = "asr_sensevoice"
 path = "tests/asr_sensevoice.rs"
 
 [[test]]
+name = "asr_aed"
+path = "tests/asr_aed.rs"
+
+[[test]]
 name = "model_switch"
 path = "tests/model_switch.rs"
 

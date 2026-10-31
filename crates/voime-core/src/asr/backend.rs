@@ -1,5 +1,6 @@
-use anyhow::{bail, Context};
+use anyhow::Context;
 
+use crate::asr::firered_aed::FireRedAed;
 use crate::asr::firered_ctc::{AsrOutput, FireRedCtc};
 use crate::asr::sense_voice::SenseVoice;
 use crate::infer::session::SessionFactory;
@@ -10,6 +11,7 @@ use crate::model::{AsrArtifact, AsrKind};
 pub enum AsrBackend {
     FireRedCtc(FireRedCtc),
     SenseVoice(SenseVoice),
+    FireRedAed(Box<FireRedAed>),
 }
 
 impl AsrBackend {
@@ -24,9 +26,9 @@ impl AsrBackend {
             AsrKind::SenseVoice => Ok(Self::SenseVoice(SenseVoice::new_with_factory(
                 artifact, factory,
             )?)),
-            AsrKind::FireRedAed => {
-                bail!("FireRed AED 后端尚未启用；请选择 fire-red-ctc 或 sense-voice 模型包")
-            }
+            AsrKind::FireRedAed => Ok(Self::FireRedAed(Box::new(FireRedAed::new_with_factory(
+                artifact, factory,
+            )?))),
         }
     }
 
@@ -34,6 +36,7 @@ impl AsrBackend {
         match self {
             Self::FireRedCtc(backend) => backend.transcribe(features),
             Self::SenseVoice(backend) => backend.transcribe(features),
+            Self::FireRedAed(backend) => backend.transcribe(features),
         }
     }
 
@@ -41,6 +44,7 @@ impl AsrBackend {
         match self {
             Self::FireRedCtc(_) => AsrKind::FireRedCtc,
             Self::SenseVoice(_) => AsrKind::SenseVoice,
+            Self::FireRedAed(_) => AsrKind::FireRedAed,
         }
     }
 

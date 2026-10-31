@@ -47,7 +47,7 @@
   <li>前端配置一个模式：<code>ptt</code>（按住说话）、<code>toggle</code>（按一下切换）或 <code>continuous</code>（VAD 自动分段）。</li>
   <li>前端配置一个热键；<code>ptt</code> 按住说话，<code>toggle</code> 切换录音，<code>continuous</code> 忽略热键。</li>
   <li>说话期间显示当前段的临时文本；最终结果提交到语音段开始时聚焦的输入位置，失焦时不向其他窗口注入。</li>
-  <li>音频、模型、VAD、FireRedASR2-CTC、FireRedPunc 与会话历史由独立 <code>voimed</code> 守护进程持有。</li>
+  <li>音频、模型、VAD、ASR 后端（FireRed CTC / SenseVoice / FireRed AED 可选模型包）、标点与会话历史由独立 <code>voimed</code> 守护进程持有；切换模型包只需改 <code>models/active</code> 并重启后端。</li>
   <li>可选 TUI 连接 daemon，显示模式、热键、临时结果与历史；关闭 TUI 不影响热键、临时窗口与上屏。</li>
   <li>运行时不需要网络、GPU 或 Python；模型由安装脚本生成，<code>voimed</code> 完全离线运行。</li>
 </ul>
