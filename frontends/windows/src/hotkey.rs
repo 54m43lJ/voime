@@ -29,6 +29,13 @@ use crate::Frontend;
 
 pub const HOTKEY_ID: i32 = 1;
 
+const MODIFIER_NAMES: [(u32, &str); 4] = [
+    (MOD_CONTROL.0, "Ctrl"),
+    (MOD_ALT.0, "Alt"),
+    (MOD_SHIFT.0, "Shift"),
+    (MOD_WIN.0, "Win"),
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Hotkey {
     pub modifiers: u32,
@@ -64,12 +71,7 @@ impl fmt::Display for Hotkey {
             return Ok(());
         }
         let mut first = true;
-        for (flag, name) in [
-            (MOD_CONTROL.0, "Ctrl"),
-            (MOD_ALT.0, "Alt"),
-            (MOD_SHIFT.0, "Shift"),
-            (MOD_WIN.0, "Win"),
-        ] {
+        for (flag, name) in MODIFIER_NAMES {
             if self.modifiers & flag != 0 {
                 if !first {
                     formatter.write_str("+")?;
@@ -86,18 +88,12 @@ impl fmt::Display for Hotkey {
 }
 
 pub fn modifier_names(modifiers: u32) -> String {
-    let mut names = Vec::new();
-    for (flag, name) in [
-        (MOD_CONTROL.0, "Ctrl"),
-        (MOD_ALT.0, "Alt"),
-        (MOD_SHIFT.0, "Shift"),
-        (MOD_WIN.0, "Win"),
-    ] {
-        if modifiers & flag != 0 {
-            names.push(name);
-        }
-    }
-    names.join("+")
+    MODIFIER_NAMES
+        .iter()
+        .filter(|(flag, _)| modifiers & flag != 0)
+        .map(|(_, name)| *name)
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 impl Serialize for Hotkey {
@@ -206,94 +202,125 @@ fn punctuation(character: &char) -> Option<VIRTUAL_KEY> {
     })
 }
 
+/// Single source of truth for named keys, one row per virtual-key code:
+/// `(code, display name, parse aliases)`. The first row under a display
+/// name is canonical and supplies that name's code when parsing; extra
+/// rows only add codes that display under the same name (left/right
+/// modifier variants). Parsing compares case-insensitively, so `"PGUP"`
+/// resolves through `PageUp`.
+const NAMED_KEYS: &[(u32, &str, &[&str])] = &[
+    (VK_SPACE.0 as u32, "Space", &[]),
+    (VK_TAB.0 as u32, "Tab", &[]),
+    (VK_RETURN.0 as u32, "Enter", &["Return", "NumpadEnter"]),
+    (VK_ESCAPE.0 as u32, "Escape", &["Esc"]),
+    (VK_BACK.0 as u32, "Backspace", &["Back"]),
+    (VK_DELETE.0 as u32, "Delete", &["Del"]),
+    (VK_INSERT.0 as u32, "Insert", &["Ins"]),
+    (VK_HOME.0 as u32, "Home", &[]),
+    (VK_END.0 as u32, "End", &[]),
+    (VK_PRIOR.0 as u32, "PageUp", &["PgUp"]),
+    (VK_NEXT.0 as u32, "PageDown", &["PgDn"]),
+    (VK_UP.0 as u32, "Up", &[]),
+    (VK_DOWN.0 as u32, "Down", &[]),
+    (VK_LEFT.0 as u32, "Left", &[]),
+    (VK_RIGHT.0 as u32, "Right", &[]),
+    (VK_SNAPSHOT.0 as u32, "PrintScreen", &["PrtSc", "Snapshot"]),
+    (VK_PAUSE.0 as u32, "Pause", &[]),
+    (VK_CAPITAL.0 as u32, "CapsLock", &[]),
+    (VK_NUMLOCK.0 as u32, "NumLock", &[]),
+    (VK_SCROLL.0 as u32, "ScrollLock", &[]),
+    (VK_APPS.0 as u32, "Apps", &["Menu"]),
+    (VK_SLEEP.0 as u32, "Sleep", &[]),
+    (VK_CLEAR.0 as u32, "Clear", &[]),
+    (VK_SELECT.0 as u32, "Select", &[]),
+    (VK_PRINT.0 as u32, "Print", &[]),
+    (VK_EXECUTE.0 as u32, "Execute", &[]),
+    (VK_HELP.0 as u32, "Help", &[]),
+    (VK_SEPARATOR.0 as u32, "Separator", &[]),
+    (VK_VOLUME_MUTE.0 as u32, "VolumeMute", &["Mute"]),
+    (VK_VOLUME_DOWN.0 as u32, "VolumeDown", &[]),
+    (VK_VOLUME_UP.0 as u32, "VolumeUp", &[]),
+    (
+        VK_MEDIA_NEXT_TRACK.0 as u32,
+        "MediaNext",
+        &["MediaNextTrack"],
+    ),
+    (
+        VK_MEDIA_PREV_TRACK.0 as u32,
+        "MediaPrev",
+        &["MediaPrevTrack"],
+    ),
+    (VK_MEDIA_STOP.0 as u32, "MediaStop", &[]),
+    (VK_MEDIA_PLAY_PAUSE.0 as u32, "MediaPlayPause", &[]),
+    (VK_LAUNCH_MAIL.0 as u32, "LaunchMail", &[]),
+    (VK_LAUNCH_MEDIA_SELECT.0 as u32, "LaunchMedia", &[]),
+    (VK_LAUNCH_APP1.0 as u32, "LaunchApp1", &[]),
+    (VK_LAUNCH_APP2.0 as u32, "LaunchApp2", &[]),
+    (VK_BROWSER_BACK.0 as u32, "BrowserBack", &[]),
+    (VK_BROWSER_FORWARD.0 as u32, "BrowserForward", &[]),
+    (VK_BROWSER_REFRESH.0 as u32, "BrowserRefresh", &[]),
+    (VK_BROWSER_STOP.0 as u32, "BrowserStop", &[]),
+    (VK_BROWSER_SEARCH.0 as u32, "BrowserSearch", &[]),
+    (VK_BROWSER_FAVORITES.0 as u32, "BrowserFavorites", &[]),
+    (VK_BROWSER_HOME.0 as u32, "BrowserHome", &[]),
+    (VK_KANA.0 as u32, "Kana", &[]),
+    (VK_HANJA.0 as u32, "Hanja", &[]),
+    (VK_IME_ON.0 as u32, "ImeOn", &[]),
+    (VK_IME_OFF.0 as u32, "ImeOff", &[]),
+    (VK_CONVERT.0 as u32, "Convert", &[]),
+    (VK_NONCONVERT.0 as u32, "NonConvert", &[]),
+    (VK_ACCEPT.0 as u32, "Accept", &[]),
+    (VK_MODECHANGE.0 as u32, "ModeChange", &[]),
+    (VK_PROCESSKEY.0 as u32, "ProcessKey", &[]),
+    (VK_OEM_PLUS.0 as u32, "Equal", &["Plus"]),
+    (VK_OEM_MINUS.0 as u32, "Minus", &[]),
+    (VK_OEM_COMMA.0 as u32, "Comma", &[]),
+    (VK_OEM_PERIOD.0 as u32, "Period", &["Dot"]),
+    (VK_OEM_2.0 as u32, "Slash", &[]),
+    (VK_OEM_1.0 as u32, "Semicolon", &[]),
+    (VK_OEM_7.0 as u32, "Quote", &["Apostrophe"]),
+    (VK_OEM_3.0 as u32, "Backquote", &["Grave", "Tilde"]),
+    (VK_OEM_4.0 as u32, "LeftBracket", &["BracketLeft"]),
+    (VK_OEM_5.0 as u32, "Backslash", &[]),
+    (VK_OEM_6.0 as u32, "RightBracket", &["BracketRight"]),
+    (VK_OEM_102.0 as u32, "Oem102", &[]),
+    (VK_NUMPAD0.0 as u32, "Numpad0", &[]),
+    (VK_NUMPAD0.0 as u32 + 1, "Numpad1", &[]),
+    (VK_NUMPAD0.0 as u32 + 2, "Numpad2", &[]),
+    (VK_NUMPAD0.0 as u32 + 3, "Numpad3", &[]),
+    (VK_NUMPAD0.0 as u32 + 4, "Numpad4", &[]),
+    (VK_NUMPAD0.0 as u32 + 5, "Numpad5", &[]),
+    (VK_NUMPAD0.0 as u32 + 6, "Numpad6", &[]),
+    (VK_NUMPAD0.0 as u32 + 7, "Numpad7", &[]),
+    (VK_NUMPAD0.0 as u32 + 8, "Numpad8", &[]),
+    (VK_NUMPAD0.0 as u32 + 9, "Numpad9", &[]),
+    (VK_MULTIPLY.0 as u32, "NumpadMultiply", &["Multiply"]),
+    (VK_ADD.0 as u32, "NumpadAdd", &["Add"]),
+    (VK_SUBTRACT.0 as u32, "NumpadSubtract", &["Subtract"]),
+    (VK_DIVIDE.0 as u32, "NumpadDivide", &["Divide"]),
+    (VK_DECIMAL.0 as u32, "NumpadDecimal", &["Decimal"]),
+    // 左右修饰键变体共用显示名，解析按名字取首行的规范码。
+    (VK_SHIFT.0 as u32, "Shift", &[]),
+    (VK_LSHIFT.0 as u32, "Shift", &[]),
+    (VK_RSHIFT.0 as u32, "Shift", &[]),
+    (VK_CONTROL.0 as u32, "Ctrl", &[]),
+    (VK_LCONTROL.0 as u32, "Ctrl", &[]),
+    (VK_RCONTROL.0 as u32, "Ctrl", &[]),
+    (VK_MENU.0 as u32, "Alt", &[]),
+    (VK_LMENU.0 as u32, "Alt", &[]),
+    (VK_RMENU.0 as u32, "Alt", &[]),
+    (VK_LWIN.0 as u32, "Win", &[]),
+    (VK_RWIN.0 as u32, "Win", &[]),
+];
+
 fn named(name: &str) -> Option<VIRTUAL_KEY> {
-    let key = match name {
-        "SPACE" => VK_SPACE,
-        "TAB" => VK_TAB,
-        "ENTER" | "RETURN" => VK_RETURN,
-        "ESC" | "ESCAPE" => VK_ESCAPE,
-        "BACKSPACE" | "BACK" => VK_BACK,
-        "DELETE" | "DEL" => VK_DELETE,
-        "INSERT" | "INS" => VK_INSERT,
-        "HOME" => VK_HOME,
-        "END" => VK_END,
-        "PAGEUP" | "PGUP" => VK_PRIOR,
-        "PAGEDOWN" | "PGDN" => VK_NEXT,
-        "UP" => VK_UP,
-        "DOWN" => VK_DOWN,
-        "LEFT" => VK_LEFT,
-        "RIGHT" => VK_RIGHT,
-        "PRINTSCREEN" | "PRTSC" | "SNAPSHOT" => VK_SNAPSHOT,
-        "PAUSE" => VK_PAUSE,
-        "CAPSLOCK" => VK_CAPITAL,
-        "NUMLOCK" => VK_NUMLOCK,
-        "SCROLLLOCK" => VK_SCROLL,
-        "APPS" | "MENU" => VK_APPS,
-        "SLEEP" => VK_SLEEP,
-        "CLEAR" => VK_CLEAR,
-        "SELECT" => VK_SELECT,
-        "PRINT" => VK_PRINT,
-        "EXECUTE" => VK_EXECUTE,
-        "HELP" => VK_HELP,
-        "SEPARATOR" => VK_SEPARATOR,
-        "MUTE" | "VOLUMEMUTE" => VK_VOLUME_MUTE,
-        "VOLUMEDOWN" => VK_VOLUME_DOWN,
-        "VOLUMEUP" => VK_VOLUME_UP,
-        "MEDIANEXT" | "MEDIANEXTTRACK" => VK_MEDIA_NEXT_TRACK,
-        "MEDIAPREV" | "MEDIAPREVTRACK" => VK_MEDIA_PREV_TRACK,
-        "MEDIASTOP" => VK_MEDIA_STOP,
-        "MEDIAPLAYPAUSE" => VK_MEDIA_PLAY_PAUSE,
-        "LAUNCHMAIL" => VK_LAUNCH_MAIL,
-        "LAUNCHMEDIA" => VK_LAUNCH_MEDIA_SELECT,
-        "LAUNCHAPP1" => VK_LAUNCH_APP1,
-        "LAUNCHAPP2" => VK_LAUNCH_APP2,
-        "BROWSERBACK" => VK_BROWSER_BACK,
-        "BROWSERFORWARD" => VK_BROWSER_FORWARD,
-        "BROWSERREFRESH" => VK_BROWSER_REFRESH,
-        "BROWSERSTOP" => VK_BROWSER_STOP,
-        "BROWSERSEARCH" => VK_BROWSER_SEARCH,
-        "BROWSERFAVORITES" => VK_BROWSER_FAVORITES,
-        "BROWSERHOME" => VK_BROWSER_HOME,
-        "KANA" => VK_KANA,
-        "HANJA" => VK_HANJA,
-        "IMEON" => VK_IME_ON,
-        "IMEOFF" => VK_IME_OFF,
-        "CONVERT" => VK_CONVERT,
-        "NONCONVERT" => VK_NONCONVERT,
-        "ACCEPT" => VK_ACCEPT,
-        "MODECHANGE" => VK_MODECHANGE,
-        "PROCESSKEY" => VK_PROCESSKEY,
-        "PLUS" | "EQUAL" => VK_OEM_PLUS,
-        "MINUS" => VK_OEM_MINUS,
-        "COMMA" => VK_OEM_COMMA,
-        "PERIOD" | "DOT" => VK_OEM_PERIOD,
-        "SLASH" => VK_OEM_2,
-        "SEMICOLON" => VK_OEM_1,
-        "QUOTE" | "APOSTROPHE" => VK_OEM_7,
-        "BACKQUOTE" | "GRAVE" | "TILDE" => VK_OEM_3,
-        "LEFTBRACKET" | "BRACKETLEFT" => VK_OEM_4,
-        "BACKSLASH" => VK_OEM_5,
-        "RIGHTBRACKET" | "BRACKETRIGHT" => VK_OEM_6,
-        "OEM102" => VK_OEM_102,
-        "NUMPAD0" => VK_NUMPAD0,
-        "NUMPAD1" => VIRTUAL_KEY(VK_NUMPAD0.0 + 1),
-        "NUMPAD2" => VIRTUAL_KEY(VK_NUMPAD0.0 + 2),
-        "NUMPAD3" => VIRTUAL_KEY(VK_NUMPAD0.0 + 3),
-        "NUMPAD4" => VIRTUAL_KEY(VK_NUMPAD0.0 + 4),
-        "NUMPAD5" => VIRTUAL_KEY(VK_NUMPAD0.0 + 5),
-        "NUMPAD6" => VIRTUAL_KEY(VK_NUMPAD0.0 + 6),
-        "NUMPAD7" => VIRTUAL_KEY(VK_NUMPAD0.0 + 7),
-        "NUMPAD8" => VIRTUAL_KEY(VK_NUMPAD0.0 + 8),
-        "NUMPAD9" => VIRTUAL_KEY(VK_NUMPAD0.0 + 9),
-        "NUMPADMULTIPLY" | "MULTIPLY" => VK_MULTIPLY,
-        "NUMPADADD" | "ADD" => VK_ADD,
-        "NUMPADSUBTRACT" | "SUBTRACT" => VK_SUBTRACT,
-        "NUMPADDIVIDE" | "DIVIDE" => VK_DIVIDE,
-        "NUMPADDECIMAL" | "DECIMAL" => VK_DECIMAL,
-        "NUMPADENTER" => VK_RETURN,
-        _ => return None,
-    };
-    Some(key)
+    NAMED_KEYS
+        .iter()
+        .find(|(_, canonical, aliases)| {
+            canonical.eq_ignore_ascii_case(name)
+                || aliases.iter().any(|alias| alias.eq_ignore_ascii_case(name))
+        })
+        .map(|(code, _, _)| VIRTUAL_KEY(*code as u16))
 }
 
 pub fn key_name(key: u32) -> String {
@@ -303,88 +330,8 @@ pub fn key_name(key: u32) -> String {
     if (VK_F1.0 as u32..=VK_F1.0 as u32 + 23).contains(&key) {
         return format!("F{}", key - VK_F1.0 as u32 + 1);
     }
-    let name = match VIRTUAL_KEY(key as u16) {
-        VK_SPACE => "Space",
-        VK_TAB => "Tab",
-        VK_RETURN => "Enter",
-        VK_ESCAPE => "Escape",
-        VK_BACK => "Backspace",
-        VK_DELETE => "Delete",
-        VK_INSERT => "Insert",
-        VK_HOME => "Home",
-        VK_END => "End",
-        VK_PRIOR => "PageUp",
-        VK_NEXT => "PageDown",
-        VK_UP => "Up",
-        VK_DOWN => "Down",
-        VK_LEFT => "Left",
-        VK_RIGHT => "Right",
-        VK_SNAPSHOT => "PrintScreen",
-        VK_PAUSE => "Pause",
-        VK_CAPITAL => "CapsLock",
-        VK_NUMLOCK => "NumLock",
-        VK_SCROLL => "ScrollLock",
-        VK_APPS => "Apps",
-        VK_SLEEP => "Sleep",
-        VK_CLEAR => "Clear",
-        VK_SELECT => "Select",
-        VK_PRINT => "Print",
-        VK_EXECUTE => "Execute",
-        VK_HELP => "Help",
-        VK_SEPARATOR => "Separator",
-        VK_VOLUME_MUTE => "VolumeMute",
-        VK_VOLUME_DOWN => "VolumeDown",
-        VK_VOLUME_UP => "VolumeUp",
-        VK_MEDIA_NEXT_TRACK => "MediaNext",
-        VK_MEDIA_PREV_TRACK => "MediaPrev",
-        VK_MEDIA_STOP => "MediaStop",
-        VK_MEDIA_PLAY_PAUSE => "MediaPlayPause",
-        VK_LAUNCH_MAIL => "LaunchMail",
-        VK_LAUNCH_MEDIA_SELECT => "LaunchMedia",
-        VK_LAUNCH_APP1 => "LaunchApp1",
-        VK_LAUNCH_APP2 => "LaunchApp2",
-        VK_BROWSER_BACK => "BrowserBack",
-        VK_BROWSER_FORWARD => "BrowserForward",
-        VK_BROWSER_REFRESH => "BrowserRefresh",
-        VK_BROWSER_STOP => "BrowserStop",
-        VK_BROWSER_SEARCH => "BrowserSearch",
-        VK_BROWSER_FAVORITES => "BrowserFavorites",
-        VK_BROWSER_HOME => "BrowserHome",
-        VK_KANA => "Kana",
-        VK_HANJA => "Hanja",
-        VK_IME_ON => "ImeOn",
-        VK_IME_OFF => "ImeOff",
-        VK_CONVERT => "Convert",
-        VK_NONCONVERT => "NonConvert",
-        VK_ACCEPT => "Accept",
-        VK_MODECHANGE => "ModeChange",
-        VK_PROCESSKEY => "ProcessKey",
-        VK_OEM_PLUS => "Equal",
-        VK_OEM_MINUS => "Minus",
-        VK_OEM_COMMA => "Comma",
-        VK_OEM_PERIOD => "Period",
-        VK_OEM_2 => "Slash",
-        VK_OEM_1 => "Semicolon",
-        VK_OEM_7 => "Quote",
-        VK_OEM_3 => "Backquote",
-        VK_OEM_4 => "LeftBracket",
-        VK_OEM_5 => "Backslash",
-        VK_OEM_6 => "RightBracket",
-        VK_OEM_102 => "Oem102",
-        VK_NUMPAD0 => "Numpad0",
-        VK_ADD => "NumpadAdd",
-        VK_SUBTRACT => "NumpadSubtract",
-        VK_MULTIPLY => "NumpadMultiply",
-        VK_DIVIDE => "NumpadDivide",
-        VK_DECIMAL => "NumpadDecimal",
-        VK_LSHIFT | VK_RSHIFT | VK_SHIFT => "Shift",
-        VK_LCONTROL | VK_RCONTROL | VK_CONTROL => "Ctrl",
-        VK_LMENU | VK_RMENU | VK_MENU => "Alt",
-        VK_LWIN | VK_RWIN => "Win",
-        _ if (VK_NUMPAD0.0 as u32 + 1..=VK_NUMPAD0.0 as u32 + 9).contains(&key) => {
-            return format!("Numpad{}", key - VK_NUMPAD0.0 as u32);
-        }
-        _ => return format!("VK_0x{key:02X}"),
+    let Some((_, name, _)) = NAMED_KEYS.iter().find(|(code, _, _)| *code == key) else {
+        return format!("VK_0x{key:02X}");
     };
     name.to_string()
 }
@@ -545,6 +492,32 @@ mod tests {
         ] {
             let spec = format!("Ctrl+{}", key_name(key));
             assert_eq!(parse(&spec).unwrap().key, key, "{spec}");
+        }
+    }
+
+    #[test]
+    fn named_keys_have_unique_codes() {
+        for (index, (code, name, _)) in NAMED_KEYS.iter().enumerate() {
+            for (other, other_name, _) in &NAMED_KEYS[..index] {
+                assert_ne!(code, other, "{name} 与 {other_name} 共用键码 0x{code:02X}");
+            }
+        }
+    }
+
+    #[test]
+    fn named_keys_round_trip_through_display_and_parse() {
+        for (code, name, _) in NAMED_KEYS {
+            assert_eq!(key_name(*code), *name, "0x{code:02X}");
+        }
+        // 修饰键名在 parse() 里会被截为修饰符，不能作为主键出现。
+        for (code, name, _) in NAMED_KEYS {
+            if matches!(*name, "Shift" | "Ctrl" | "Alt" | "Win") {
+                continue;
+            }
+            let spec = format!("Ctrl+{name}");
+            let hotkey = parse(&spec).unwrap();
+            assert_eq!(hotkey.key, *code, "{spec}");
+            assert_eq!(hotkey.to_string(), spec);
         }
     }
 }
