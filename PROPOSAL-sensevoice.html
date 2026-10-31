@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>提案 — SenseVoice 可选后端与包级 ASR 切换</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>提案 — SenseVoice 可选后端与包级 ASR 切换</h1>
+
+<p class="doc-links">
+<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+｜ 状态：待评审 · 未实现 · 2026-10-31
+</p>
+
+<p>
+本文验证“用 SenseVoice 替换 FireRedASR2-CTC 以降低错别字”的假设，并给出可选的迁移方案。
+结论先行：<strong>技术可行，但“换 SenseVoice 就能减少错别字”目前没有证据支持，且大概率不是中文听写场景的精度升级。</strong>
+SenseVoice 的定位是速度、多语种与内置 ITN，不是中文精度；2025-09-09 包还是粤语微调版，不适合作为普通话默认模型。
+如果目标是精度，优先评测同一模型家族的 <strong>FireRedASR2-AED</strong>；SenseVoice 可以作为可选的快速 / 多语种后端保留。
+</p>
+
+<p>
+<strong>决策更新（2026-10-31）：</strong>已确认<strong>不做运行时热切换</strong>，采用<strong>模型包级切换</strong>。
+二进制一次构建同时支持 FireRed CTC 与 SenseVoice；之后切换只改模型目录 / <code>models/active</code> 指针并重启 daemon，
+<strong>不重新安装、替换或重新编译任何二进制</strong>。首次获得 SenseVoice 支持仍需要一次正常的版本升级。
+</p>
+
+<h2 id="s1">1. 摘要</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>决策点</th><th>建议</th></tr>
+  <tr>
+    <td>是否替换默认 ASR</td>
+    <td><strong>否</strong>。默认继续使用 FireRedASR2-CTC；SenseVoice 先作为可选后端，不改变现有用户行为。</td>
+  </tr>
+  <tr>
+    <td>SenseVoice 选型</td>
+    <td>普通话 / 中英混合优先 <code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>；<code>2025-09-09</code> 仅用于粤语或经过目标语料验证后再考虑。</td>
+  </tr>
+  <tr>
+    <td>切换方式</td>
+    <td>模型包级切换：固定模型根目录 + <code>models/active</code> 指针（或 <code>--model-dir</code> 显式覆盖）；切换 = 改指针 + 重启 daemon。不重装二进制，不做双模型常驻热切换。</td>
+  </tr>
+  <tr>
+    <td>精度升级路径</td>
+    <td>先评测 FireRedASR2-AED（同家族、已有权重）；若 AED 通过门禁，优先于 SenseVoice 进入产品。SenseVoice 用于速度 / 多语种 / 低资源场景。</td>
+  </tr>
+  <tr>
+    <td>自由切换成本</td>
+    <td>包级切换包含在 SenseVoice 接入成本内；运行时热切换已确认不做，不纳入成本。</td>
+  </tr>
+  <tr>
+    <td>质量门禁</td>
+    <td>目标语料上 CER 相对下降 ≥ 10%，且任一类别不回归超过 2%；否则不切换默认后端。</td>
+  </tr>
+  <tr>
+    <td>初步成本</td>
+    <td>SenseVoice 可选后端 + 包级切换约 8–12 人日；FireRed AED 另计 5–8 人日；均不含语料标注与模型下载时间。</td>
+  </tr>
+</table>
+
+<ul class="note">
+  <li>本文中的“SenseVoice”指 SenseVoiceSmall 的 sherpa-onnx 模型包，不是 sherpa-onnx 运行时；本项目仍然直接使用 ONNX Runtime。</li>
+  <li>当前 README §1.3 的非目标写着“不引入第二个 ASR 模型”；接受本提案意味着要把该条改为“默认只运行一个 ASR 后端，可选模型包不并行加载”。</li>
+  <li>如果只是验证效果，Phase 0 不需要改 Rust：用 sherpa-onnx Python API 在目标语料上做 A/B 即可，成本主要是语料标注；确认有效后再进入 Phase 1。</li>
+  <li>本文是设计提案，不是产品契约；实现完成后，行为应迁移到 USER / CORE / PROVIDER / BUILD 的所有者章节。</li>
+</ul>
+
+<p>
+按“田忌赛马”的定位，三个后端对应三档：<strong>FireRed CTC</strong> 最快、错别字多；<strong>SenseVoice</strong> 是中间档，速度接近 CTC、精度待验证；<strong>FireRed AED</strong> 最慢、精度最高。
+包级切换的目录与 <code>active</code> 机制不绑定具体后端；未来加 AED 只是新增一个 <code>AsrKind</code> / 模型包，切换方式不变。
+</p>
+
+<h2 id="s2">2. 目标与非目标</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="s2-1">2.1 目标</h3>
+<ul>
+  <li>验证 SenseVoice 是否能降低目标场景的错别字，而不是只改变错误分布。</li>
+  <li>在不破坏现有 FireRedASR2-CTC 行为的前提下，引入可选的 SenseVoice 后端。</li>
+  <li>支持模型包级切换：同一份代码可以加载 FireRed CTC 或 SenseVoice，不需要改代码、不需要重编译。</li>
+  <li>复用现有 VAD、分段、音频采集、IPC、前端提交与 ONNX Runtime 边界。</li>
+  <li>失败可回滚：SenseVoice 包缺失、校验失败或推理失败时，不影响 FireRed 包继续使用。</li>
+  <li>为后续 FireRedASR2-AED、上下文偏置或重打分留出同一接缝。</li>
+</ul>
+
+<h3 id="s2-2">2.2 非目标</h3>
+<ul>
+  <li>不承诺 SenseVoice 一定提升精度；不以“换模型”替代评测。</li>
+  <li>不实现运行时双模型热切换，也不在录音过程中切换后端；切换通过包级指针 + 重启完成。</li>
+  <li>不引入第二个推理框架、GPU / NPU、Python 运行时或云端 API。</li>
+  <li>不改变 IPC 消息、<code>Final</code> 语义、前端提交规则或目标绑定规则。</li>
+  <li>不做模型微调、领域自适应训练或通用文本润色；如需领域适配，另立提案。</li>
+  <li>不把 SenseVoice 的语言 / 情感 / 事件标签暴露给前端；一期只消费文本。</li>
+</ul>
+
+<h2 id="s3">3. 现状与约束</h2>
+<p><a href="#top">↑</a></p>
+
+<p>当前最终识别路径只有 CTC 与标点两个文本阶段：</p>
+
+<pre><code>Worker::finalize(segment)
+├── Fbank::compute(segment.samples)
+├── FireRedCtc::transcribe(features)
+├── FireRedPunc::punctuate(&amp;asr.text)
+└── PipelineEvent::Final(text)</code></pre>
+
+<table>
+  <tr><th>现有约束</th><th>对 SenseVoice 的影响</th></tr>
+  <tr>
+    <td>项目直接使用 <code>ort</code>，不链接 sherpa-onnx 运行时</td>
+    <td>“同属 sherpa-onnx 模型包”只复用文件格式与 ORT，不复用 sherpa 的预处理 / 解码代码；SenseVoice 的 LFR、CMVN、四输入与特殊 token 需要在项目内实现。</td>
+  </tr>
+  <tr>
+    <td><code>ModelManifest::load</code> 只接受 <code>kind = "fire-red-ctc"</code></td>
+    <td>必须把 <code>kind</code> 变成可扩展的后端选择；否则 SenseVoice 包在启动时直接被拒绝。</td>
+  </tr>
+  <tr>
+    <td><code>punc</code> 清单是必填，<code>Worker::new</code> 总是构造 FireRedPunc</td>
+    <td>SenseVoice 可以用内置 ITN + 标点，或者继续使用 FireRedPunc；需要把标点策略变成清单字段，并允许 <code>punc</code> 缺省。</td>
+  </tr>
+  <tr>
+    <td>fbank 固定 80 bin、25 / 10 ms、默认窗函数、输入乘 32768</td>
+    <td>SenseVoice 需要 80 bin、25 / 10 ms，但窗函数必须是 <code>hamming</code>；需要把窗函数纳入清单 / <code>FbankConfig</code>。</td>
+  </tr>
+  <tr>
+    <td>CTC 输入 <code>x[1,T,80]</code> + <code>x_lens[1]</code>，输出 8667 类</td>
+    <td>SenseVoice 输入 <code>x[1,T,560]</code> + <code>x_length</code> + <code>language</code> + <code>text_norm</code>，输出 25055 类；需要 LFR 7/6 与 560 维 CMVN。</td>
+  </tr>
+  <tr>
+    <td>pipeline 只有一个工作线程，VAD / ASR / 标点串行</td>
+    <td>SenseVoice 单次推理更快，对收尾延迟有利；但 LFR / CMVN / 特殊 token 解析不能放进音频回调线程。</td>
+  </tr>
+  <tr>
+    <td><code>max_segment_ms</code> 默认 30000</td>
+    <td>SenseVoice 官方示例的 VAD 段上限通常更短；建议 SenseVoice 包用 20000 ms，并用 20 / 30 s 样本验证长段稳定性。</td>
+  </tr>
+  <tr>
+    <td>模型清单是唯一契约；SHA-256、张量、词表都在启动时校验</td>
+    <td>SenseVoice 的 ONNX metadata 也要参与校验：LFR、CMVN、blank、ITN、语言 id 必须存在且与清单一致。</td>
+  </tr>
+  <tr>
+    <td>运行期不联网、不使用 GPU / Python；模型只读</td>
+    <td>模型下载与 SHA 写入仍然只在安装脚本中完成；运行期只读本地文件。</td>
+  </tr>
+</table>
+
+<ul class="note">
+  <li>“切换成本最小”只对模型下载、文件格式和 ORT 会话成立；代码侧仍有中等成本，不能按“只换一个 ONNX 路径”估算。</li>
+  <li>现有 <code>FireRedCtc</code> 的 CMVN 在 80 维 fbank 上做；SenseVoice 的 CMVN 在 LFR 后的 560 维上做，二者不能共用同一段实现。</li>
+</ul>
+
+<h2 id="s4">4. 思路验证</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="s4-1">4.1 技术可行性</h3>
+
+<table>
+  <tr><th>项目</th><th>FireRedASR2-CTC（现状）</th><th>SenseVoice 2024-07-17</th><th>影响</th></tr>
+  <tr>
+    <td>模型大小</td>
+    <td><code>model.int8.onnx</code> 约 740 MiB</td>
+    <td><code>model.int8.onnx</code> 约 229 MiB</td>
+    <td>安装包与内存占用明显下降。</td>
+  </tr>
+  <tr>
+    <td>语言</td>
+    <td>中文（含 20+ 方言 / 口音）+ 英文 + 中英混合</td>
+    <td>中文、粤语、英文、日文、韩文</td>
+    <td>SenseVoice 多语种更广；中文方言覆盖不如 FireRed。</td>
+  </tr>
+  <tr>
+    <td>ONNX 输入</td>
+    <td><code>x[1,T,80]</code> f32、<code>x_lens[1]</code> i64</td>
+    <td><code>x[1,T,560]</code> f32、<code>x_length[1]</code> i32、<code>language[1]</code> i32、<code>text_norm[1]</code> i32</td>
+    <td>需要新增 560 维特征与两个控制张量。</td>
+  </tr>
+  <tr>
+    <td>fbank</td>
+    <td>80 bin、25 / 10 ms、默认窗函数、<code>snip_edges=true</code>、输入乘 32768</td>
+    <td>80 bin、25 / 10 ms、<code>hamming</code>、<code>snip_edges=true</code>、输入乘 32768</td>
+    <td><code>FbankConfig</code> 需要增加窗函数；其余参数可复用。</td>
+  </tr>
+  <tr>
+    <td>LFR</td>
+    <td>无</td>
+    <td>7 帧拼接、6 帧移，边缘复制首 / 尾帧</td>
+    <td>新增约 40 行确定性代码与单元测试。</td>
+  </tr>
+  <tr>
+    <td>CMVN</td>
+    <td>80 维；metadata <code>cmvn_mean</code> / <code>cmvn_inv_stddev</code></td>
+    <td>560 维；metadata <code>neg_mean</code> / <code>inv_stddev</code>；公式 <code>(x + neg_mean) * inv_stddev</code></td>
+    <td>不能复用 FireRed 的 <code>read_cmvn</code> 语义；需要新的解析与维度校验。</td>
+  </tr>
+  <tr>
+    <td>解码</td>
+    <td>CTC greedy：argmax → 合并重复 → 去 blank 0</td>
+    <td>CTC greedy，但有效长度是 <code>LFR 帧数 + 4</code>，并跳过前 4 个解码 token（语言 / 情感 / 事件 / 文本规整查询）</td>
+    <td>可复用 <code>greedy_decode</code>，但必须处理特殊前缀，不能直接输出。</td>
+  </tr>
+  <tr>
+    <td>词表</td>
+    <td>8667 类；SentencePiece 风格 <code>▁</code></td>
+    <td>25055 类；包含 <code>&lt;unk&gt;</code> / <code>&lt;s&gt;</code> / <code>&lt;/s&gt;</code> / <code>&lt;|zh|&gt;</code> 等特殊 token</td>
+    <td>复用 <code>CtcTokenizer</code>；现有 <code>is_special</code> 会丢弃 <code>&lt;...&gt;</code>，正好覆盖特殊 token。</td>
+  </tr>
+  <tr>
+    <td>标点</td>
+    <td>外部 FireRedPunc</td>
+    <td><code>use_itn=1</code> 时模型输出标点与 ITN；<code>use_itn=0</code> 时无标点</td>
+    <td>需要标点策略：外部标点 / 内置标点 / 去标点后再外部标点。</td>
+  </tr>
+  <tr>
+    <td>RTF（本机冒烟，16 线程）</td>
+    <td>约 0.067</td>
+    <td>约 0.005</td>
+    <td>SenseVoice 约快一个数量级；对 Partial 与短段收尾有利。</td>
+  </tr>
+  <tr>
+    <td>许可证</td>
+    <td>Apache-2.0</td>
+    <td>模型卡标为 <code>model-license</code>，需单独确认分发与商用条款</td>
+    <td>Phase 0 必须完成许可证评审；未通过则不能随安装包分发。</td>
+  </tr>
+</table>
+
+<p>
+技术结论：<strong>可行，但不是“零成本切换”。</strong> 模型包替换本身很简单，代码侧需要新增
+SenseVoice 预处理、四输入、特殊 token 解码与标点策略；规模大约是一个新 ASR 模块加清单 / pipeline 改造。
+</p>
+
+<h3 id="s4-2">4.2 精度证据</h3>
+
+<table>
+  <tr><th>模型 / 口径</th><th>公开数据</th><th>说明</th></tr>
+  <tr>
+    <td>FireRedASR2-AED</td>
+    <td>普通话 4 个公开测试集平均 CER <strong>3.05%</strong>；AISHELL-1 <strong>0.57%</strong>、AISHELL-2 <strong>2.51%</strong></td>
+    <td>FireRedASR2S 官方 README；1.1B 参数，中文 + 20+ 方言 + 英文。</td>
+  </tr>
+  <tr>
+    <td>FireRedASR2-CTC（现状）</td>
+    <td>官方未单独发布 CTC 版本 CER；它由 AED 的 encoder + CTC 分支导出</td>
+    <td>当前基线；不能直接拿 AED 的 3.05% 当成 CTC 的成绩，但可视为同家族上限参考。</td>
+  </tr>
+  <tr>
+    <td>SenseVoiceSmall</td>
+    <td>FunASR 官方 184 条中文长音频基准：CER <strong>7.81%</strong>（fp32）/ <strong>8.17%</strong>（Q8）；第三方整理的 AISHELL-1 约 <strong>3.0%</strong></td>
+    <td>234M 参数；不同测试集、不同 VAD / 文本归一化口径，不能与上表直接横比，但方向清楚：SenseVoice 不是中文精度优先模型。</td>
+  </tr>
+  <tr>
+    <td>SenseVoice 2025-09-09</td>
+    <td>由 2024-07-17 用 21.8k 小时粤语数据微调；官方说明“不支持标点”</td>
+    <td>粤语专用增强版；不应作为普通话默认模型。</td>
+  </tr>
+</table>
+
+<ul class="note">
+  <li>“错别字”在 ASR 中主要是替换错误（同音 / 近音 / 专名 / 数字），换一个更小的 CTC 模型通常只会改变错误分布，不会系统性消除替换错误。</li>
+  <li>SenseVoice 的优势是速度、多语种、内置 ITN；它的训练目标与产品定位不是“中文最低 CER”。</li>
+  <li>如果目标场景中英混合、英文或粤语占比高，SenseVoice 可能更有价值；如果是纯普通话听写，FireRed 家族更值得优先。</li>
+</ul>
+
+<h3 id="s4-3">4.3 本机冒烟对比</h3>
+
+<p>
+在 2026-10-31 用 sherpa-onnx 1.12.27 Python API、CPU 16 线程，对 13 条公开测试音频做了非正式对比：
+FireRedASR2-CTC、FireRedASR2-AED（本地权重）、SenseVoice 2024-07-17、SenseVoice 2025-09-09。
+这不是基准测试：音频来自模型包自带的少量样例，不是目标场景，也没有统计显著性；只用于判断方向与验证接口。
+</p>
+
+<table>
+  <tr><th>音频</th><th>FireRed CTC</th><th>FireRed AED</th><th>SenseVoice 2024（noITN）</th><th>SenseVoice 2025（noITN）</th></tr>
+  <tr>
+    <td><code>0.wav</code></td>
+    <td>昨天是 MOAY TOAY IS礼拜八二 THEAY AFTER TOMORROW是星期三</td>
+    <td>昨天是 monday today is礼拜二 the day after tomorrow是星期三</td>
+    <td>昨天是 monday today is礼拜二 the day after tomorrow 是星期三</td>
+    <td>昨天是 MONDAY TODAY IS 礼拜二 THE DAY AFTER TOMORROW 是星期三</td>
+  </tr>
+  <tr>
+    <td><code>2.wav</code></td>
+    <td>这个是平繁的啊不认识记下来 FREQUENTLY平繁的</td>
+    <td>这个是频繁的啊不认识记下来 frequently频繁的</td>
+    <td>就是平凡的啊不然是接下来 frequently平繁的</td>
+    <td>这是平凡的啊不然是接下来 FREQUNTL平凡的</td>
+  </tr>
+  <tr>
+    <td><code>4-tianjin.wav</code></td>
+    <td>其实他就是嘛每个人就可守法……法律意识太单薄了</td>
+    <td>其实他就是那每个人都会守法……法律意识太淡薄了</td>
+    <td>其实他就是慢每个人都会守法……法律意识太单薄了</td>
+    <td>其实他就是话每个人就会守法……法律意识太单薄了</td>
+  </tr>
+  <tr>
+    <td><code>zh.wav</code></td>
+    <td>开放时间早上九点至下午五点</td>
+    <td>开放时间早上九点至下午五点</td>
+    <td>开饭时间早上九点至下午五点</td>
+    <td>开放时间早上九点至下午五点</td>
+  </tr>
+  <tr>
+    <td><code>en.wav</code></td>
+    <td>THE DRIAL CHIEFIN CALLED FOR THE BOY AND PRESENTED HIM WITH FIFTY PIECES OF COLD</td>
+    <td>the tribal chieftain called for the boy and presented him with fifty pieces of gold</td>
+    <td>the tribal chieftain called for the boy and presented him with fifty pieces of gold</td>
+    <td>THE TRIVAL CHIEFTHIN … FIFTY PIECES OF COOOD</td>
+  </tr>
+  <tr>
+    <td><code>ja.wav</code></td>
+    <td>目内排树院安排</td>
+    <td>目前主要特别东西目的地内部国事员结构安排</td>
+    <td>うちの中学は弁当制で持っていけない場合は50円の学校販売のパンを買う</td>
+    <td>家中学便当制持合五十円学校摊売使</td>
+  </tr>
+  <tr>
+    <td><code>yue.wav</code></td>
+    <td>呢几个字都表达唔到我想讲嘅意思</td>
+    <td>呢几个字都表达唔到我想讲嘅意思</td>
+    <td>呢几个字都表达唔到我想讲嘅意思</td>
+    <td>呢几个字都表达唔到我想讲嘅意思</td>
+  </tr>
+</table>
+
+<table>
+  <tr><th>模型</th><th>典型 RTF</th><th>相对 FireRed CTC</th><th>备注</th></tr>
+  <tr><td>FireRedASR2-CTC</td><td>约 0.067</td><td>1×</td><td>当前默认；740 MiB。</td></tr>
+  <tr><td>FireRedASR2-AED</td><td>约 0.2–0.4</td><td>3–6× 慢</td><td>Python CPU 冒烟；不是优化后的 Rust 实现。</td></tr>
+  <tr><td>SenseVoice 2024-07-17</td><td>约 0.005</td><td>约 13× 快</td><td>229 MiB；单次前向 + CTC。</td></tr>
+  <tr><td>SenseVoice 2025-09-09</td><td>约 0.005</td><td>约 13× 快</td><td>粤语微调；普通话 / 英 / 日 / 韩样例明显退化。</td></tr>
+</table>
+
+<ul class="note">
+  <li>上表只摘录代表性样例；完整 13 条输出包含更多同音错误、英文拼写错误与方言差异，未做 CER 统计。</li>
+  <li>FireRed AED 在 <code>0.wav</code>、<code>2.wav</code>、<code>4-tianjin.wav</code>、<code>en.wav</code> 上明显优于 CTC；这说明“错别字”更可能来自 CTC 分支 / 贪心解码，而不是“模型家族不够新”。</li>
+  <li>SenseVoice 2024 在 <code>0.wav</code>、<code>en.wav</code> 上表现好，但在 <code>zh.wav</code> 的 noITN 模式下把“开放”识别成“开饭”；ITN 模式又改对。说明 <code>text_norm</code> 不是单纯的格式开关，会影响识别结果。</li>
+  <li>SenseVoice 2025 在普通话、英文、日文、韩文样例上明显差于 2024；它不是 2024 的通用升级版，而是粤语增强版。</li>
+  <li>FireRed 只支持中文 / 英文，<code>ja.wav</code> / <code>ko.wav</code> 行只用于展示 SenseVoice 的多语种；FireRed 输出不应作为日韩比较。</li>
+  <li>复现使用 <code>sherpa_onnx.OfflineRecognizer.from_fire_red_asr_ctc(...)</code> 与 <code>from_sense_voice(..., language="auto", use_itn=...)</code>；音频、线程数与模型版本固定后即可重跑。</li>
+</ul>
+
+<h3 id="s4-4">4.4 结论</h3>
+
+<table>
+  <tr><th>原假设</th><th>验证结果</th></tr>
+  <tr>
+    <td>“已经在用 sherpa-onnx 跑 FireRedASR2”</td>
+    <td><strong>看指什么。</strong> 如果指 sherpa-onnx 模型包，成立；如果指运行时，不成立——当前项目直接使用 <code>ort</code>，只复用模型文件与 ORT 会话。</td>
+  </tr>
+  <tr>
+    <td>“都是 sherpa-onnx 模型包，切换成本最小”</td>
+    <td><strong>部分成立。</strong> 模型包、ORT 会话、词表格式可以复用；但预处理、四输入、特殊 token、标点策略需要新代码，属于中等成本。</td>
+  </tr>
+  <tr>
+    <td>“换 SenseVoice 能减少错别字”</td>
+    <td><strong>不成立 / 证据不足。</strong> 公开数据与冒烟样例都不支持 SenseVoiceSmall 在普通话上优于 FireRedASR2；它更可能改变错误分布，而不是减少替换错误。</td>
+  </tr>
+  <tr>
+    <td>“SenseVoice 2025-09-09 是最新版本，应该更好”</td>
+    <td><strong>不成立。</strong> 它是粤语微调版；普通话、英文、日文、韩文样例均出现退化，且不支持标点。</td>
+  </tr>
+  <tr>
+    <td>“后处理不满意，所以换模型”</td>
+    <td><strong>方向可以理解，但选错了对照。</strong> 更值得先比较的是 FireRedASR2-AED（同家族、同语料、同标点）与 CTC + 上下文偏置 / 重打分；SenseVoice 不是精度对照的第一选择。</td>
+  </tr>
+</table>
+
+<p>
+因此，本文建议把目标从“用 SenseVoice 替换 FireRed”改成：
+<strong>先建立一个可重复的 A/B 评测，确认错别字到底来自声学模型、CTC 解码、ITN 还是领域词；再决定是否引入 SenseVoice 作为可选后端。</strong>
+如果评测显示错别字主要来自 CTC 分支，FireRed AED 的收益会比 SenseVoice 更直接。
+</p>
+
+<h2 id="s5">5. 方案选型</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>方案</th><th>收益</th><th>代价</th><th>结论</th></tr>
+  <tr>
+    <td>A. 直接用 SenseVoice 替换 FireRed CTC</td>
+    <td>模型更小、更快、多语种、内置 ITN。</td>
+    <td>普通话精度大概率下降；标点 / ITN 行为改变；需要新后端代码；许可证待确认。</td>
+    <td><strong>不采用。</strong></td>
+  </tr>
+  <tr>
+    <td>B. SenseVoice 作为可选后端，模型包级切换</td>
+    <td>保留 FireRed 默认行为；可对特定场景（粤语、多语种、低算力）启用；切换只改模型目录 / 指针，不重装二进制。</td>
+    <td>新增一个 ASR 模块与清单分支；需要维护两套后端；模型包体积增加（按目录分开）。</td>
+    <td><strong>采用。</strong> 作为实验 / 特定场景后端，不改变默认；已确认不做热切换。</td>
+  </tr>
+  <tr>
+    <td>C. 运行时热切换（同进程双后端）</td>
+    <td>用户可在设置里切换，无需重启。</td>
+    <td>双模型内存、会话状态、Partial 一致性、并发与生命周期复杂；与“默认只跑一个 ASR”冲突。</td>
+    <td><strong>不做。</strong> 用户已明确不需要；切换通过包级指针 + 重启完成。</td>
+  </tr>
+  <tr>
+    <td>D. FireRedASR2-AED 作为精度升级</td>
+    <td>同家族、同语料、同标点；冒烟样例中明显修正 CTC 的同音 / 中英混合错误。</td>
+    <td>需要实现自回归 decoder / beam search；模型约 1.2 GB；RTF 约 0.2–0.4，收尾延迟更高。</td>
+    <td><strong>建议先评测。</strong> 若精度门禁通过，优先于 SenseVoice。</td>
+  </tr>
+  <tr>
+    <td>E. CTC Partial + AED Final 混合</td>
+    <td>Partial 低延迟，Final 高精度。</td>
+    <td>两套模型常驻；Partial / Final 文本可能不一致；内存与复杂度最高。</td>
+    <td><strong>未来选项。</strong> 不在本提案范围。</td>
+  </tr>
+</table>
+
+<ul class="note">
+  <li>方案 B 与 D 不互斥：可以先把 B 的接缝做出来，再用同一接缝接 AED；但不要在同一变更里同时做两套后端。</li>
+  <li>如果最终目标只是“减少错别字”，D 的优先级高于 B；B 的价值主要是速度、多语种与可选性。</li>
+</ul>
+
+<h2 id="s6">6. 迁移设计</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="s6-1">6.1 目标架构</h3>
+
+<div class="diagram"><img src="diagram/sensevoice-migration.svg" alt="ASR 后端选择与标点策略"></div>
+<ul class="note">
+  <li>后端由模型包 <code>manifest.kind</code> 在启动时决定；录音过程中不切换。</li>
+  <li>标点策略由 <code>asr.options.punc</code> 决定；FireRed CTC 使用外部 FireRedPunc，SenseVoice 可用内置 ITN 或外部标点。</li>
+  <li>前端与 IPC 不需要知道当前后端；<code>Final</code> 仍然是单个字符串。</li>
+</ul>
+
+<h3 id="s6-2">6.2 清单与类型</h3>
+
+<pre><code>pub enum AsrKind {
+    FireRedCtc,
+    SenseVoice,
+}
+
+pub enum PuncPolicy {
+    External,   // 默认：ASR 输出不带标点，交给 FireRedPunc
+    Builtin,    // SenseVoice use_itn=true，模型输出已含标点
+    None,       // 不做标点；只用于测试 / 诊断
+}
+
+pub struct AsrOptions {
+    pub language: Option&lt;String&gt;,  // SenseVoice: auto / zh / en / ja / ko / yue
+    pub use_itn: bool,             // SenseVoice；FireRed 忽略
+    pub punc: PuncPolicy,
+}
+
+pub struct AsrArtifact {
+    pub kind: AsrKind,
+    pub model: Artifact,
+    pub tokens: PathBuf,
+    pub token_count: usize,
+    #[serde(default)]
+    pub options: AsrOptions,
+}
+
+pub struct ModelManifest {
+    /* ... 现有字段 ... */
+    pub asr: AsrArtifact,
+    #[serde(default)]
+    pub punc: Option&lt;PuncArtifact&gt;,
+}
+
+pub struct FbankManifest {
+    /* ... 现有字段 ... */
+    #[serde(default = "default_window_type")]
+    pub window_type: String,       // "povey" | "hamming"
+}</code></pre>
+
+<ul class="note">
+  <li><code>AsrKind</code> 可以用自定义 <code>Deserialize</code> 从字符串解析，也可以保留 <code>kind: String</code> 并在 <code>ModelManifest::load</code> 中匹配；后者改动更小，前者类型更安全。</li>
+  <li><code>punc</code> 变为 <code>Option</code> 是向后兼容的：旧清单仍有该段；SenseVoice 内置标点包可以省略。但 <code>verify</code> / <code>rebase</code> / <code>artifacts</code> 必须同步处理 <code>None</code>，不能继续假设三个模型文件都存在。</li>
+  <li><code>schema</code> 保持 2：新增可选字段属于向后兼容变更；若未来把 <code>punc</code> 改为必填或改变 <code>kind</code> 语义，再提升版本。</li>
+  <li><code>FbankManifest.window_type</code> 默认 <code>povey</code>，保持 FireRed 现有行为；SenseVoice 包显式写 <code>hamming</code>。</li>
+  <li><code>AsrOptions</code> 需要实现 <code>Default</code>：<code>punc = External</code>、<code>use_itn = false</code>、<code>language = None</code>；旧清单没有 <code>options</code> 时保持 FireRed 行为。</li>
+  <li>未来加 FireRed AED 时，新增 <code>FireRedAed</code> 变体、对应模块与模型包即可；<code>active</code> 指针和安装布局不变。</li>
+</ul>
+
+<h3 id="s6-3">6.3 模块与接口</h3>
+
+<pre><code>crates/voime-core/src/
+├── asr.rs                      模块入口
+├── asr/
+│   ├── features.rs             增加 window_type；保持现有 fbank / StreamingFbank
+│   ├── firered_ctc.rs          现有 FireRed CTC
+│   ├── sense_voice.rs          新增：LFR、CMVN、四输入、特殊 token 解码
+│   └── tokenizer.rs            复用 CtcTokenizer
+├── model.rs                    AsrKind / AsrArtifact / PuncPolicy / 可选 punc
+├── pipeline.rs                 AsrBackend 选择、标点策略、错误文案
+└── config.rs                   可选的后端 / 模型目录参数</code></pre>
+
+<pre><code>pub enum AsrBackend {
+    FireRed(FireRedCtc),
+    SenseVoice(SenseVoice),
+}
+
+impl AsrBackend {
+    pub fn new_with_factory(
+        artifact: &amp;AsrArtifact,
+        factory: &amp;SessionFactory,
+    ) -&gt; anyhow::Result&lt;Self&gt;;
+
+    pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;]) -&gt; anyhow::Result&lt;AsrOutput&gt;;
+}
+
+pub struct SenseVoice {
+    session: Session,
+    tokens: CtcTokenizer,
+    neg_mean: Vec&lt;f32&gt;,
+    inv_stddev: Vec&lt;f32&gt;,
+    lfr_window: usize,
+    lfr_shift: usize,
+    blank_id: usize,
+    language_id: i32,
+    with_itn_id: i32,
+    without_itn_id: i32,
+    x_name: String,
+    x_length_name: String,
+    language_name: String,
+    text_norm_name: String,
+    logits_name: String,
+}</code></pre>
+
+<p>SenseVoice 的 <code>transcribe</code> 顺序固定如下：</p>
+
+<pre><code>SenseVoice::transcribe(features)
+├── 判断 features.is_empty() → AsrOutput::default()
+├── ApplyLfr(features, self.lfr_window, self.lfr_shift) → lfr_frames
+├── 判断 lfr_frames 的维度 == 560
+├── 逐帧 (x + neg_mean) * inv_stddev → cmvn_frames
+├── 构造 x[1, T, 560] f32
+├── 构造 x_length[1] i32 = T
+├── 构造 language[1] i32
+├── 构造 text_norm[1] i32 = with_itn / without_itn
+├── Session::run({x, x_length, language, text_norm})
+├── 取 logits[1, T', 25055]
+├── valid = min(T' , T + 4)
+├── greedy_decode(logits, valid, 25055) → ids
+├── 判断 ids.len() &gt;= 4 → 跳过前 4 个特殊 token
+└── CtcTokenizer::decode(ids[4..])</code></pre>
+
+<ul class="note">
+  <li><code>greedy_decode</code> 可复用现有实现；它已经处理 blank 0、连续重复与越界。</li>
+  <li>“跳过前 4 个解码 token”与 sherpa 的 <code>ConvertSenseVoiceResult(start=4)</code> 对齐；不是跳过前 4 帧。</li>
+  <li>如果 <code>ids</code> 少于 4 个，说明模型没有输出完整的语言 / 情感 / 事件 / 文本规整前缀；应返回错误或空文本，而不是把剩余 token 当正文。</li>
+  <li><code>text_norm</code> 不能只当格式开关：冒烟中 <code>zh.wav</code> 的 noITN 输出“开饭”，ITN 输出“开放”；两种模式必须分别评测。</li>
+  <li>现有 <code>greedy_decode</code> 固定 blank 0；SenseVoice metadata 的 <code>blank_id</code> 也是 0，一期可以先断言 <code>blank_id == 0</code>，未来再把 blank 参数化。</li>
+  <li>普通话为主时建议同时评测 <code>language=zh</code> 与 <code>auto</code>；固定 <code>zh</code> 可减少短段语言误判，但会失去多语种自动路由。</li>
+</ul>
+
+<h3 id="s6-4">6.4 pipeline 改造</h3>
+
+<pre><code>Worker::new(manifest, factory, events)
+├── FireRedVad::new(&amp;manifest.vad, factory, VadConfig)
+├── AsrBackend::new_with_factory(&amp;manifest.asr, factory)
+├── 判断 manifest.punc.is_some() && punc == External
+│   └── FireRedPunc::new_with_factory(&amp;manifest.punc, factory, PuncConfig)
+└── Segmenter::new(manifest.max_segment_ms)</code></pre>
+
+<pre><code>Worker::finalize(segment)
+├── Fbank::compute(segment.samples)
+├── AsrBackend::transcribe(features)
+├── 判断 asr.text.trim().is_empty() → SegmentDropped("空识别结果")
+├── match manifest.asr.options.punc
+│   ├── External → FireRedPunc::punctuate(&amp;asr.text)
+│   ├── Builtin  → asr.text
+│   └── None     → asr.text
+├── 判断外部标点失败 → SegmentDropped("标点推理失败")
+├── Worker::reset_after_segment()
+└── 判断 final 非空 → PipelineEvent::Final(final)</code></pre>
+
+<table>
+  <tr><th>行为</th><th>FireRed CTC</th><th>SenseVoice</th></tr>
+  <tr><td>Partial</td><td>CTC 尾部 6 秒 → Partial</td><td>同一后端；沿用相同 <code>text_norm</code>，不额外加标点。</td></tr>
+  <tr><td>Final 标点</td><td>外部 FireRedPunc</td><td><code>Builtin</code> 直接用模型输出；<code>External</code> 用 FireRedPunc。</td></tr>
+  <tr><td>错误文案</td><td><code>CTC 推理失败</code></td><td>建议改为通用的 <code>ASR 推理失败</code>，避免前端 / 日志把后端写死。</td></tr>
+  <tr><td>最大段长</td><td>30 s</td><td>20 s（建议）；用 20 / 30 s 样本验证后再定。</td></tr>
+  <tr><td>标点失败</td><td>丢段</td><td><code>External</code> 时丢段；<code>Builtin</code> 时不涉及标点模型。</td></tr>
+</table>
+
+<ul class="note">
+  <li>如果 SenseVoice 使用 <code>Builtin</code>，标点质量不再由 FireRedPunc 保证；需要单独评测标点 F1，不能只看 CER。</li>
+  <li><code>Builtin</code> 也不会经过 FireRedPunc 的 <code>fix_ascii_punctuation</code> / <code>fix_english_text</code>；如果这些修正是产品契约，应抽成公共函数并在 <code>Builtin</code> 后调用，或者改用 <code>External</code>。</li>
+  <li>如果使用 <code>External</code> + <code>use_itn=true</code>，必须先把模型输出中的标点去掉再喂 FireRedPunc；否则会出现重复标点。这个“去标点”逻辑一期不做，作为可选优化。</li>
+  <li>Partial 与 Final 必须使用同一个 <code>text_norm</code>，否则用户会看到 Partial 与 Final 文本不一致；不要为了省延迟在 Partial 用 noITN、Final 用 ITN。</li>
+</ul>
+
+<h3 id="s6-5">6.5 包级切换</h3>
+
+<p>
+目标：<strong>二进制一次构建同时支持 FireRed CTC 与 SenseVoice；之后切换只操作模型目录，不重新安装、替换或重新编译二进制。</strong>
+切换通过固定模型根目录下的 <code>active</code> 指针完成；daemon 启动时读取指针并加载对应模型包，重启后生效。
+</p>
+
+<pre><code>~/.local/share/voime/models/
+├── active                      # 单行文本：当前包目录名，例如 sense-voice-2024
+├── firered-ctc/
+│   ├── manifest.json
+│   ├── vad/stream-vad.onnx
+│   ├── punc/model.onnx
+│   └── asr/model.int8.onnx + tokens.txt
+├── sense-voice-2024/
+│   ├── manifest.json
+│   ├── vad/stream-vad.onnx
+│   ├── punc/model.onnx         # 可选；Builtin 时不需要
+│   └── asr/model.int8.onnx + tokens.txt
+└── sense-voice-2025-yue/       # 可选，仅粤语
+    └── ...</code></pre>
+
+<p>解析顺序固定如下，保持旧安装兼容：</p>
+
+<pre><code>Config::resolve(args)
+├── 判断 args.model_dir.is_some() → 使用显式目录（开发 / 排障）
+├── 读取 &lt;model_root&gt;/active
+│   ├── 文件存在且值为 legacy → 使用 &lt;model_root&gt; 本身（旧布局兼容）
+│   ├── 文件存在 → 读取第一行 package_id → &lt;model_root&gt;/&lt;package_id&gt;
+│   └── 文件缺失 → 兼容旧布局：&lt;model_root&gt;/manifest.json 存在则使用 model_root
+├── 校验目标目录的 manifest.json / SHA-256 / 张量 / 词表
+└── 失败 → daemon 启动失败，日志说明 active 与目标目录</code></pre>
+
+<table>
+  <tr><th>操作</th><th>命令 / 行为</th><th>是否重装二进制</th></tr>
+  <tr>
+    <td>安装包</td>
+    <td><code>scripts/install_models.sh --asr sense-voice</code> 下载并校验到 <code>models/sense-voice-2024/</code>；首次安装且 <code>active</code> 缺失时写入该包。</td>
+    <td>否</td>
+  </tr>
+  <tr>
+    <td>切换</td>
+    <td>把 <code>active</code> 写成目标包目录名，重启 daemon。</td>
+    <td>否</td>
+  </tr>
+  <tr>
+    <td>回滚</td>
+    <td>把 <code>active</code> 写回旧包目录名，重启 daemon。</td>
+    <td>否</td>
+  </tr>
+  <tr>
+    <td>显式覆盖</td>
+    <td><code>voimed --model-dir &lt;dir&gt;</code> 直接指定包目录；优先级高于 <code>active</code>。</td>
+    <td>否</td>
+  </tr>
+  <tr>
+    <td>便捷命令（可选）</td>
+    <td><code>voime model use sense-voice-2024</code> 只写 <code>active</code>，不切换运行中进程；重启 daemon 后生效。</td>
+    <td>否；首次升级到带该命令的二进制除外</td>
+  </tr>
+</table>
+
+<pre><code># Linux
+printf '%s\n' sense-voice-2024 &gt; ~/.local/share/voime/models/active
+systemctl --user restart voime
+
+# Windows（当前用户）
+Set-Content -Encoding Ascii "$env:LOCALAPPDATA\voime\models\active" "sense-voice-2024"
+# 然后重启托盘 / voimed</code></pre>
+
+<ul class="note">
+  <li>两个后端都编译进同一个 <code>voimed</code>；不使用 Cargo feature、动态插件或按后端拆分的可执行文件，避免切换时换二进制。</li>
+  <li>“不重装二进制”指切换阶段；首次获得 SenseVoice 支持仍然需要一次正常的版本升级。升级后所有切换都只操作模型目录与 <code>active</code> 文件。</li>
+  <li>不做运行时热切换：daemon 启动时加载 <code>active</code> 指向的包，录音中不改变后端；切换后重启 daemon 生效。</li>
+  <li><code>active</code> 只允许单行包目录名，禁止绝对路径与 <code>..</code>；解析时走 <code>resolve_inside</code>，避免指向模型根目录之外。读取时去掉首尾空白与 UTF-8 BOM；保留值 <code>legacy</code> 表示模型根目录本身就是旧布局包，仅用于升级兼容。</li>
+  <li>如果 <code>active</code> 缺失且旧布局存在，继续使用旧布局；升级不强制迁移，避免破坏现有安装。切回旧布局时写 <code>legacy</code>。</li>
+  <li><code>voime doctor</code> 报告 <code>active</code> 包名、解析后的目录、<code>manifest.kind</code>、SHA 前缀与标点策略；解析逻辑与 <code>Config::resolve</code> 共用，不重复实现。</li>
+  <li>不把 <code>--model-dir</code> 作为日常切换入口：systemd / 托盘启动参数固定，改参数比改 <code>active</code> 更容易出错；<code>--model-dir</code> 保留给开发与排障。</li>
+  <li>切换后端需要重启 daemon；录音过程中不改变模型，避免延迟与文本风格突变。</li>
+</ul>
+
+<h3 id="s6-6">6.6 安装与打包</h3>
+
+<pre><code>scripts/install_models.sh --asr fire-red-ctc
+scripts/install_models.sh --asr sense-voice
+scripts/install_models.sh --asr sense-voice --sense-voice-model 2024-07-17
+scripts/install_models.sh --asr sense-voice --sense-voice-model 2025-09-09  # 仅粤语
+scripts/install_models.sh --asr sense-voice --activate                     # 安装后设为当前包</code></pre>
+
+<ul class="note">
+  <li>安装脚本默认只安装，不改变 <code>active</code>；显式 <code>--activate</code> 或首次安装且 <code>active</code> 缺失时才写入。</li>
+  <li><code>--model-dir</code> 继续表示“这个包的安装目录”；默认在模型根目录下按 package id 建子目录，<code>--activate</code> 只对根目录下的包生效。</li>
+  <li>每个包目录各自完整，切换与回滚最简单；缺点是 VAD / Punc 重复约 100 MiB。后续可以抽 <code>common/</code> 共享，但一期不做。</li>
+  <li>Windows <code>scripts/install_models.ps1</code> 需要同样的 <code>-Asr</code> / <code>-Activate</code> 开关，不能只改 Linux 脚本。</li>
+  <li>安装脚本必须校验 SHA-256、张量、词表与 metadata；运行期仍然只读。</li>
+  <li>SenseVoice 模型许可证未确认前，只允许本地实验，不随安装包分发；Phase 0 完成评审后再决定是否进入默认安装。</li>
+</ul>
+
+<h3 id="s6-7">6.7 测试</h3>
+
+<table>
+  <tr><th>层级</th><th>覆盖内容</th></tr>
+  <tr><td>单元测试</td><td>LFR 输出帧数 / 边缘复制；560 维 CMVN；特殊 token 跳过；<code>ids.len() &lt; 4</code>；token_count 校验；窗函数参数。</td></tr>
+  <tr><td>清单测试</td><td>FireRed 旧清单；SenseVoice 清单；<code>punc</code> 缺省；未知 <code>kind</code>；<code>Builtin</code> + <code>use_itn=false</code> 非法；<code>External</code> + 缺少 <code>punc</code> 启动失败。</td></tr>
+  <tr><td>pipeline 集成测试</td><td>用测试桩替换 <code>AsrBackend</code>：成功、空结果、推理失败、外部标点失败、内置标点跳过。</td></tr>
+  <tr><td>模型金样测试</td><td>固定短音频 + 期望文本；模型存在时运行，缺失时跳过；不进入默认 CI 的慢测试。</td></tr>
+  <tr><td>性能测试</td><td>目标 CPU 上的 RTF、p95 收尾延迟、峰值 RSS、模型加载时间；SenseVoice 与 FireRed 分开记录。</td></tr>
+  <tr><td>回归测试</td><td>FireRed 包在未改清单 / 未改默认参数时，输出与当前版本一致。</td></tr>
+  <tr><td>切换测试</td><td>安装两个包，写 <code>active</code>，重启 daemon；doctor 报告正确；全程不执行 <code>cargo build</code> / 不替换二进制。</td></tr>
+</table>
+
+<h2 id="s7">7. 模型包契约</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="s7-1">7.1 FireRed CTC 清单（保持兼容）</h3>
+
+<pre><code>{
+  "schema": 2,
+  "sample_rate": 16000,
+  "fbank": {
+    "num_bins": 80,
+    "frame_ms": 25,
+    "shift_ms": 10,
+    "window_type": "povey"
+  },
+  "max_segment_ms": 30000,
+  "vad": { /* ... 现有字段 ... */ },
+  "asr": {
+    "kind": "fire-red-ctc",
+    "model": { /* ... 现有字段 ... */ },
+    "tokens": "asr/tokens.txt",
+    "token_count": 8667,
+    "options": { "punc": "external" }
+  },
+  "punc": { /* ... 现有字段 ... */ }
+}</code></pre>
+
+<h3 id="s7-2">7.2 SenseVoice 清单</h3>
+
+<pre><code>{
+  "schema": 2,
+  "sample_rate": 16000,
+  "fbank": {
+    "num_bins": 80,
+    "frame_ms": 25,
+    "shift_ms": 10,
+    "window_type": "hamming"
+  },
+  "max_segment_ms": 20000,
+  "vad": { /* ... 现有字段 ... */ },
+  "asr": {
+    "kind": "sense-voice",
+    "model": {
+      "model": "asr/model.int8.onnx",
+      "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51",
+      "inputs": [
+        { "name": "x", "dtype": "float32", "shape": [1, -1, 560] },
+        { "name": "x_length", "dtype": "int32", "shape": [1] },
+        { "name": "language", "dtype": "int32", "shape": [1] },
+        { "name": "text_norm", "dtype": "int32", "shape": [1] }
+      ],
+      "outputs": [
+        { "name": "logits", "dtype": "float32", "shape": [1, -1, 25055] }
+      ]
+    },
+    "tokens": "asr/tokens.txt",
+    "token_count": 25055,
+    "options": {
+      "language": "auto",
+      "use_itn": true,
+      "punc": "builtin"
+    }
+  }
+}</code></pre>
+
+<ul class="note">
+  <li>SHA-256 为 2026-10-31 下载的 <code>2024-07-17</code> 包实测值；官方包若重新上传，安装脚本应以实际文件重新计算并写入清单。</li>
+  <li><code>tokens.txt</code> SHA-256 为 <code>f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc</code>，两个 SenseVoice 包共用同一词表。</li>
+  <li><code>2025-09-09</code> 包的模型 SHA-256 为 <code>12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d</code>，仅作为粤语候选，不写进普通话默认清单。</li>
+  <li>清单中的 <code>window_type</code> 与 ONNX metadata 的 <code>normalize_samples</code> 必须一起校验；SenseVoice metadata 为 <code>normalize_samples=0</code>，表示输入需要乘 32768。</li>
+</ul>
+
+<h3 id="s7-3">7.3 ONNX metadata 契约</h3>
+
+<table>
+  <tr><th>metadata</th><th>SenseVoice 值</th><th>用途</th></tr>
+  <tr><td><code>lfr_window_size</code></td><td><code>7</code></td><td>LFR 拼接帧数。</td></tr>
+  <tr><td><code>lfr_window_shift</code></td><td><code>6</code></td><td>LFR 帧移。</td></tr>
+  <tr><td><code>normalize_samples</code></td><td><code>0</code></td><td>输入乘 32768；与项目现有 fbank 缩放一致。</td></tr>
+  <tr><td><code>vocab_size</code></td><td><code>25055</code></td><td>必须等于 <code>token_count</code> 与 logits 最后一维。</td></tr>
+  <tr><td><code>blank_id</code></td><td><code>0</code>（缺省）</td><td>CTC blank；token 0 是 <code>&lt;unk&gt;</code>，解码时跳过。</td></tr>
+  <tr><td><code>with_itn</code> / <code>without_itn</code></td><td><code>14</code> / <code>15</code></td><td>text_norm 控制 token。</td></tr>
+  <tr><td><code>lang_auto</code> / <code>lang_zh</code> / <code>lang_en</code> / <code>lang_yue</code> / <code>lang_ja</code> / <code>lang_ko</code></td><td><code>0</code> / <code>3</code> / <code>4</code> / <code>7</code> / <code>11</code> / <code>12</code></td><td>language 控制 token；清单只允许这些值。</td></tr>
+  <tr><td><code>neg_mean</code> / <code>inv_stddev</code></td><td>560 维浮点串</td><td>CMVN：<code>(x + neg_mean) * inv_stddev</code>；长度必须等于 <code>80 × lfr_window_size</code>。</td></tr>
+</table>
+
+<ul class="note">
+  <li>metadata 是模型的一部分；清单只声明期望值，启动时以 ONNX metadata 为准做交叉校验。两者不一致时启动失败。</li>
+  <li>不要从 tokens.txt 推断语言 id；语言 / ITN id 必须来自 metadata，否则模型升级后容易错位。</li>
+  <li>如果未来换用其他 SenseVoice 导出（例如 FunASR Nano），metadata 契约可能不同；应新增 <code>kind</code>，不要复用本契约。</li>
+</ul>
+
+<h3 id="s7-4">7.4 标点策略</h3>
+
+<table>
+  <tr><th><code>punc</code></th><th>ASR 输出</th><th>标点来源</th><th>适用</th></tr>
+  <tr><td><code>external</code></td><td>不带标点</td><td>FireRedPunc</td><td>FireRed CTC；SenseVoice <code>use_itn=false</code>。</td></tr>
+  <tr><td><code>builtin</code></td><td>已含标点 / ITN</td><td>SenseVoice 模型</td><td>SenseVoice <code>use_itn=true</code>；一期实现。</td></tr>
+  <tr><td><code>none</code></td><td>原样</td><td>无</td><td>测试 / 诊断；不建议产品使用。</td></tr>
+  <tr><td><code>strip_then_external</code></td><td>ITN 后去标点</td><td>FireRedPunc</td><td>未来优化；需要可靠的标点剥离，一期不做。</td></tr>
+</table>
+
+<ul class="note">
+  <li><code>builtin</code> 与 <code>external</code> 必须分别评测：前者省一个标点模型，后者保持现有标点质量。</li>
+  <li>不要同时保留 SenseVoice 标点与 FireRedPunc 标点；重复标点比少标点更难接受。</li>
+</ul>
+
+<h2 id="s8">8. 质量评测与验收</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="s8-1">8.1 评测集</h3>
+<ul>
+  <li>300–500 条目标场景语音，覆盖 3–15 秒短句与 15–30 秒长句；与产品输入方式一致（近场麦克风、桌面环境）。</li>
+  <li>分层：纯普通话、中文专名 / 术语、数字 / 日期 / 金额、中英混合、英文、方言 / 口音、噪声 / 远场。</li>
+  <li>每条语音有人工参考文本；参考文本统一标点、大小写与数字写法，另存一份“原始口语”版本用于分析 ITN。</li>
+  <li>包含“当前 FireRed 已经正确”的负样本，用来观察 SenseVoice 是否引入新错误。</li>
+  <li>测试集不参与模型选择；如果要用它调 <code>use_itn</code> / 标点策略，另留开发集。</li>
+</ul>
+
+<h3 id="s8-2">8.2 指标与门禁</h3>
+
+<table>
+  <tr><th>指标</th><th>定义</th><th>建议门禁</th></tr>
+  <tr><td>CER（中文）</td><td>字符错误率，去标点后计算</td><td>相对 FireRed CTC 下降 ≥ 10%</td></tr>
+  <tr><td>WER（英文）</td><td>词错误率，统一大小写</td><td>不回归；英文场景优先看绝对错误数</td></tr>
+  <tr><td>替换错误率</td><td>替换错误字符 / 总字符，直接对应“错别字”</td><td>相对下降 ≥ 10%，且不被插入 / 删除抵消</td></tr>
+  <tr><td>实体准确率</td><td>人名、地名、产品名、数字、日期、金额的精确匹配</td><td>不回归；专名优先</td></tr>
+  <tr><td>句级准确率</td><td>与参考文本完全一致的句子比例</td><td>不低于基线，且有提升</td></tr>
+  <tr><td>标点 F1</td><td>标点位置与类别的 F1</td><td><code>builtin</code> 不低于 FireRedPunc 基线超过 2 个点</td></tr>
+  <tr><td>ITN 准确率</td><td>数字 / 日期 / 金额 / 单位转换正确率</td><td>不低于基线；错误 ITN 视为替换错误</td></tr>
+  <tr><td>p95 收尾延迟</td><td>从 SpeechEnd 到 Final 的墙钟时间</td><td>≤ 500 ms（目标 CPU）</td></tr>
+  <tr><td>峰值 RSS</td><td>daemon 相对基线的增量</td><td>≤ 1.5× 基线；SenseVoice 应更低</td></tr>
+  <tr><td>失败率</td><td>推理失败 / 空结果 / 丢段比例</td><td>不高于基线</td></tr>
+</table>
+
+<ul class="note">
+  <li>门禁数值是建议起点，Phase 0 必须先测基线再冻结；不要用本文的冒烟结果直接当验收数据。</li>
+  <li>“CER 下降”与“错别字下降”不是同一个指标；必须单列替换错误率，否则插入 / 删除错误会掩盖问题。</li>
+  <li>统计显著性建议用配对 bootstrap 95% 置信区间；只报平均值不够。</li>
+</ul>
+
+<h3 id="s8-3">8.3 决策规则</h3>
+
+<table>
+  <tr><th>结果</th><th>决策</th></tr>
+  <tr>
+    <td>SenseVoice 相对 FireRed CTC：CER 下降 ≥ 10%，替换错误率下降 ≥ 10%，无类别回归 &gt; 2%，标点 / ITN 达标</td>
+    <td>可以把 SenseVoice 设为该场景的默认后端；仍保留 FireRed 包回滚。</td>
+  </tr>
+  <tr>
+    <td>SenseVoice 只在部分类别（如粤语、英文、多语种）更好</td>
+    <td>保留为可选后端；按语言 / 场景选择模型包，不做全局默认替换。</td>
+  </tr>
+  <tr>
+    <td>SenseVoice 没有显著提升，或普通话 / 专名回归</td>
+    <td>不切换默认；保留实验后端或直接删除，避免维护两套代码。</td>
+  </tr>
+  <tr>
+    <td>FireRed AED 通过同一门禁</td>
+    <td>优先把 AED 作为精度升级；SenseVoice 只保留速度 / 多语种价值。</td>
+  </tr>
+  <tr>
+    <td>两者都不通过</td>
+    <td>保持 FireRed CTC；转向上下文偏置、术语表、重打分或数据侧改进。</td>
+  </tr>
+</table>
+
+<h2 id="s9">9. 分阶段落地与成本</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>阶段</th><th>范围</th><th>退出条件</th><th>估算</th></tr>
+  <tr>
+    <td>Phase 0：验证与基线</td>
+    <td>整理目标语料；用 sherpa-onnx Python 或离线脚本跑 FireRed CTC / AED / SenseVoice 2024/2025；输出 CER、替换错误率、标点 F1、RTF。</td>
+    <td>评测报告评审通过；明确错别字主要来源；决定是否进入实现。</td>
+    <td>2–3 人日 + 语料标注</td>
+  </tr>
+  <tr>
+    <td>Phase 1：接缝与清单</td>
+    <td><code>AsrKind</code> / <code>AsrArtifact</code> / <code>PuncPolicy</code> / 可选 <code>punc</code> / <code>window_type</code>；<code>AsrBackend</code> 枚举；不改默认行为。</td>
+    <td>FireRed 旧包输出不变；旧清单兼容；单元 / 清单测试通过。</td>
+    <td>2–3 人日</td>
+  </tr>
+  <tr>
+    <td>Phase 2：SenseVoice 后端</td>
+    <td>LFR、CMVN、四输入、特殊 token、<code>builtin</code>（<code>use_itn=true</code>）/ <code>external</code>（<code>use_itn=false</code>）标点；单元与金样测试。</td>
+    <td>固定样例输出稳定；无 panic；错误路径可回退。</td>
+    <td>3–5 人日</td>
+  </tr>
+  <tr>
+    <td>Phase 3：打包与切换</td>
+    <td>安装脚本 <code>--asr</code> / <code>--activate</code>；模型根目录与 <code>active</code> 解析；可选的 <code>voime model use</code>；doctor；BUILD / PROVIDER 文档；回滚演练。</td>
+    <td>改 <code>active</code> + 重启即可切换；不重装二进制；SHA 校验；回滚不丢数据。</td>
+    <td>2–3 人日</td>
+  </tr>
+  <tr>
+    <td>Phase 4：默认与发布</td>
+    <td>仅当 Phase 0/2 门禁通过；决定默认后端、模型分发、许可证与发布说明。</td>
+    <td>质量、延迟、内存、许可证全部通过。</td>
+    <td>1–2 人日</td>
+  </tr>
+</table>
+
+<ul class="note">
+  <li>SenseVoice 可选后端 + 包级切换合计约 8–12 人日；不含语料标注、模型下载与跨平台打包验证。</li>
+  <li>运行时热切换已确认不做，不纳入成本；FireRed AED 另加 5–8 人日（自回归 decoder / beam search / 性能调优）。</li>
+  <li>如果 Phase 0 显示 SenseVoice 不达标，应该停在 Phase 0，而不是“先把后端做完再看效果”。</li>
+</ul>
+
+<h2 id="s10">10. 风险与待决策</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>风险</th><th>影响</th><th>缓解</th></tr>
+  <tr><td>普通话精度回归</td><td>错别字更多，用户直接感知。</td><td>Phase 0 A/B；不达标不切换默认；保留 FireRed 包。</td></tr>
+  <tr><td>2025 包误用</td><td>普通话 / 英文 / 日韩明显退化。</td><td>默认只提供 2024-07-17；2025 包标注“粤语专用”。</td></tr>
+  <tr><td>标点重复 / 缺失</td><td>文本可读性下降。</td><td><code>builtin</code> 与 <code>external</code> 互斥；不做双标点；单独评测标点 F1。</td></tr>
+  <tr><td>ITN 不一致</td><td>数字 / 日期格式与 FireRed 行为不同。</td><td>按后端固定 <code>use_itn</code>；不要 Partial / Final 混用；评测 ITN 准确率。</td></tr>
+  <tr><td>许可证</td><td>无法随安装包分发 SenseVoice 权重。</td><td>Phase 0 完成模型许可证评审；未通过则只允许本地实验或放弃。</td></tr>
+  <tr><td>两套后端维护</td><td>长期测试、文档、模型更新成本翻倍。</td><td>只有 Phase 0 证明有明确场景价值才保留；否则删除实验后端。</td></tr>
+  <tr><td>长段稳定性</td><td>SenseVoice 在 20–30 s 段上可能退化。</td><td>默认 20 s；用 20 / 30 s 样本评测；必要时在 VAD 段长上做后端区分。</td></tr>
+  <tr><td>模型包 SHA 变化</td><td>官方重新上传导致校验失败。</td><td>安装脚本重新计算并写入；运行期只信任本地清单。</td></tr>
+  <tr><td><code>active</code> 指向错误 / 缺失</td><td>启动失败或加载错误包。</td><td>启动时校验目标 <code>manifest.json</code> / SHA / kind；<code>doctor</code> 显示 <code>active</code> 与解析目录；回滚只改指针；旧布局兼容。</td></tr>
+  <tr><td>与 README 非目标冲突</td><td>产品文档自相矛盾。</td><td>接受提案时同步修改 README §1.3，明确“默认单后端，可选包不并行加载”。</td></tr>
+</table>
+
+<p>需要产品 / 维护者确认的事项：</p>
+<ol>
+  <li>目标场景是纯普通话听写，还是中英混合 / 多语种 / 粤语？这决定 SenseVoice 是否有价值。</li>
+  <li>是否接受 FireRed AED 带来的 3–6× 收尾延迟？如果接受，AED 应优先评测。</li>
+  <li>SenseVoice 权重的许可证是否允许随安装包分发？</li>
+  <li>已确认只要包级切换、不做运行时热切换；剩余要确认的是切换入口用 <code>active</code> 文件即可，还是再加一个可选的 <code>voime model use</code> 便捷命令。</li>
+  <li>是否愿意长期维护两个 ASR 后端？如果只是实验，建议 Phase 0 后删除失败方案。</li>
+</ol>
+
+<h2 id="s11">11. 文档落点</h2>
+<p><a href="#top">↑</a></p>
+
+<p>
+实现阶段需要把行为写入现有文档；本文只做提案，不替换任何契约。建议按以下所有者更新：
+</p>
+
+<table>
+  <tr><th>文档</th><th>计划变更</th></tr>
+  <tr><td>根 <a href="README.html">README</a></td><td>GOAL 说明“默认单 ASR 后端，可选模型包”；非目标从“不引入第二个 ASR 模型”改为“不并行加载多个 ASR 模型”；Credits 增加 SenseVoice / FireRedASR2-AED。</td></tr>
+  <tr><td>根 <a href="USER.html">USER</a></td><td><code>Final</code> 术语补充“标点可能由 ASR 内置或 FireRedPunc 生成”；不新增前端配置。</td></tr>
+  <tr><td>根 <a href="CORE.html">CORE</a></td><td>最终提交调用栈增加 <code>AsrBackend</code> 选择；不改变依赖方向。</td></tr>
+  <tr><td>根 <a href="PROVIDER.html">PROVIDER</a></td><td>模型包条目增加 SenseVoice / AED；仍由 <code>voime-core</code> 消费。</td></tr>
+  <tr><td><a href="crates/voime-core/README.html">voime-core README</a></td><td>“拥有 / 不拥有”表增加可选 ASR 后端；说明仍不接触前端与 IPC。</td></tr>
+  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td><code>AsrBackend</code>、<code>PuncPolicy</code>、错误文案、<code>Final</code> 定义；<code>Config</code> 是否新增 <code>asr</code> 字段。</td></tr>
+  <tr><td><a href="crates/voime-core/CORE.html">voime-core CORE</a></td><td>文件树增加 <code>asr/sense_voice.rs</code>；签名与调用栈；SBOM 不新增依赖（复用 <code>ort</code> / <code>serde</code>）。</td></tr>
+  <tr><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>唯一模型契约：FireRed CTC / SenseVoice 清单、张量、metadata、SHA、标点策略、大小 / 延迟 / 失败映射。</td></tr>
+  <tr><td><a href="crates/voimed/USER.html">voimed USER</a> / <a href="crates/voimed/CORE.html">CORE</a></td><td><code>--model-dir</code>、<code>models/active</code> 解析顺序、启动策略；IPC 不变。</td></tr>
+  <tr><td><a href="crates/voime/USER.html">voime USER</a></td><td><code>doctor</code> 报告 <code>active</code> 包名、解析目录、当前后端、SHA 前缀与标点策略。</td></tr>
+  <tr><td><a href="BUILD.html">BUILD</a></td><td>模型安装、<code>--activate</code>、SHA 校验、可选 SenseVoice / AED 包、许可证与体积记录。</td></tr>
+  <tr><td>平台前端 USER / CORE</td><td>只说明 <code>Final</code> 的标点来源可能变化；协议与提交流程不变，不新增代码。</td></tr>
+</table>
+
+<ul class="note">
+  <li>模型契约只写在 <code>voime-core PROVIDER</code>；其他文档链接，不复制张量定义。</li>
+  <li>实现完成后，本文可归档或删除；不要在产品文档中保留“提案”与“现状”双份描述。</li>
+</ul>
+
+<h2 id="s12">12. 参考</h2>
+<p><a href="#top">↑</a></p>
+
+<ul>
+  <li><a href="https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html">sherpa-onnx SenseVoice 预训练模型</a>：2024-07-17 与 2025-09-09 包的下载、文件、语言与标点说明。</li>
+  <li><a href="https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models">sherpa-onnx asr-models 发布页</a>：模型包下载入口。</li>
+  <li><a href="https://k2-fsa.github.io/sherpa/onnx/FireRedAsr/pretrained.html">sherpa-onnx FireRedASR 预训练模型</a>：FireRedASR2-CTC / AED 的文件、张量与示例输出。</li>
+  <li><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam/FireRedASR2S</a>：FireRedASR2 的公开基准与模型说明。</li>
+  <li><a href="https://github.com/FunAudioLLM/SenseVoice">FunAudioLLM/SenseVoice</a> / <a href="https://huggingface.co/FunAudioLLM/SenseVoiceSmall">SenseVoiceSmall 模型卡</a>：多语种、ITN、速度与许可证信息。</li>
+  <li><a href="https://github.com/modelscope/FunASR/blob/main/runtime/llama.cpp/BENCHMARKS.md">FunASR 中文长音频基准</a>：SenseVoiceSmall 7.81% / 8.17% CER 的来源。</li>
+</ul>
+
+<ul class="note">
+  <li>公开基准的测试集、VAD、文本归一化与标点口径不同；本文只用来判断方向，不用于替代目标语料 A/B。</li>
+  <li>本机冒烟使用的模型包与命令见文中的版本号；复现时应固定 sherpa-onnx 版本、线程数与音频文件。</li>
+</ul>
+
+</body>
+</html>
