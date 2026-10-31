@@ -11,7 +11,7 @@ use windows::Win32::System::Registry::{
     KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
 
-use crate::hotkey::{self, Hotkey};
+use crate::hotkey::Hotkey;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -130,10 +130,6 @@ pub fn set_start_at_login(enabled: bool) -> Result<()> {
         let _ = RegCloseKey(key);
     }
     result
-}
-
-pub fn parse_hotkey(spec: &str) -> Result<Hotkey> {
-    hotkey::parse(spec)
 }
 
 fn default_mode() -> Mode {

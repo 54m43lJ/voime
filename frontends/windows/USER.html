@@ -56,7 +56,7 @@
   <tr><td>热键默认</td><td>默认使用不占用系统保留键的组合（推荐 <code>Ctrl+Alt+Space</code>）；用户可修改，空值禁用。</td></tr>
   <tr><td>一个语音段一个目标</td><td>段开始时绑定前台窗口 + 焦点元素；段内不改变；提交前复核。</td></tr>
   <tr><td>Partial 只显示</td><td>浮层显示 Partial；不提交、不进入历史；空 Partial 不清空上一行。</td></tr>
-  <tr><td>Final 才提交</td><td>只处理当前目标 <code>segment_id</code> 的 Final；先隐藏 / 清空浮层，再注入。</td></tr>
+  <tr><td>Final 才提交</td><td>只处理当前目标 <code>segment_id</code> 的 Final；先清空浮层文本（Toggle 会话保留空白浮层），再注入。</td></tr>
   <tr><td>失焦不误提交</td><td>前台窗口、焦点元素或 UIA RuntimeId 变化时不提交；Toggle 停止；文本保留在 daemon 历史。</td></tr>
   <tr><td>daemon 不可用</td><td>放行热键、清空浮层、定时重连；不阻塞普通键盘输入。</td></tr>
   <tr><td>编码</td><td>内部使用 UTF-8；注入前转 UTF-16；emoji 按代理对处理，长文本分批。</td></tr>
@@ -90,10 +90,11 @@
 </ul>
 
 <h3 id="u3-4">3.4 临时浮层</h3>
-<div class="diagram"><img src="diagram/overlay.svg" alt="Windows 浮层显示 Partial 并在 Final 时隐藏的时序图"></div>
+<div class="diagram"><img src="diagram/overlay.svg" alt="Windows 浮层显示 Partial；Toggle 会话在 Final 后保留空白浮层，其他模式隐藏"></div>
 <ul class="note">
   <li>浮层不抢焦点、不进入 Alt+Tab、不阻塞点击。</li>
-  <li>停止、失焦与断线都隐藏浮层；Final 前先隐藏。</li>
+  <li>PTT / Continuous：停止、Final、失焦与断线都隐藏浮层。</li>
+  <li>Toggle：首次按下立即显示浮层，没有 Partial 时保持空白；Partial 更新文本；Final、空段或 ASR 错误后清空文本但保留空白浮层，直到再次按热键、目标失焦、输入不可用或断线。</li>
 </ul>
 
 <h3 id="u3-5">3.5 TSF（可选 P4）</h3>
@@ -111,13 +112,15 @@
 <table>
   <tr><th>配置项</th><th>取值</th><th>默认</th><th>说明</th></tr>
   <tr><td><code>Mode</code></td><td><code>ptt</code> · <code>toggle</code> · <code>continuous</code></td><td><code>ptt</code></td><td>热键语义与 daemon 自动分段。</td></tr>
-  <tr><td><code>Hotkey</code></td><td>Windows 组合键</td><td><code>Ctrl+Alt+Space</code></td><td>PTT 按住、Toggle 切换、Continuous 忽略；空值禁用。</td></tr>
+  <tr><td><code>Hotkey</code></td><td>Windows 组合键</td><td><code>Ctrl+Alt+Space</code></td><td>PTT 按住、Toggle 切换、Continuous 忽略；空值禁用。设置窗口通过按键录制，不要求用户输入字符串。</td></tr>
   <tr><td><code>StartAtLogin</code></td><td>布尔</td><td><code>true</code></td><td>登录后启动托盘与 daemon。</td></tr>
   <tr><td><code>OverlayEnabled</code></td><td>布尔</td><td><code>true</code></td><td>关闭后仍正常提交，仅不显示浮层。</td></tr>
 </table>
 <ul class="note">
   <li>设置载体为 <code>%APPDATA%\voime\config.json</code>；字段名与语义固定，托盘右键菜单与设置窗口负责修改。</li>
   <li>修改 Mode / Hotkey 后立即通过 Configure 同步；新模式在下一段生效。</li>
+  <li>热键必须包含至少一个修饰键（Ctrl / Alt / Shift / Win）。录制使用设置窗口的键盘事件，覆盖字母、数字、F1–F24、方向键、导航键与常用标点键；配置层仍兼容 <code>VK_0xXX</code> 扩展键。系统保留组合在保存时由 <code>RegisterHotKey</code> 拒绝并提示。</li>
+  <li>设置窗口在独立进程运行；打开时托盘注销全局热键，设置进程退出后托盘重新加载 <code>config.json</code> 并恢复热键，避免配置时误触发听写。</li>
 </ul>
 
 <h3 id="u4-2">4.2 目标与提交</h3>
@@ -128,8 +131,8 @@
   <tr><td>提交 API</td><td>MVP：<code>SendInput</code> + <code>KEYEVENTF_UNICODE</code>；TSF：<code>ITfRange::SetText</code>。</td></tr>
   <tr><td>编码</td><td>UTF-8 → UTF-16；emoji 使用代理对；长文本分批注入。</td></tr>
   <tr><td>UIPI</td><td>普通完整性进程不向提权窗口注入；不自动提权、不绕过。</td></tr>
-  <tr><td>失败</td><td>不重试其他窗口；隐藏浮层；文本保留在 daemon 历史 / TUI。</td></tr>
-  <tr><td>浮层</td><td>提交前隐藏 / 清空；不依赖浮层存在。</td></tr>
+  <tr><td>失败</td><td>不重试其他窗口；清空浮层文本（Toggle 会话保持空白浮层）；文本保留在 daemon 历史 / TUI。</td></tr>
+  <tr><td>浮层</td><td>提交前清空文本（Toggle 会话保持空白浮层）；不依赖浮层存在。</td></tr>
 </table>
 
 <h3 id="u4-3">4.3 daemon IPC 参与</h3>
@@ -142,10 +145,10 @@
   <tr><td><code>Hello { role: Fcitx, version, config }</code></td><td>连接命名管道后发送；P1 后角色泛化为 Frontend。</td></tr>
   <tr><td><code>Configure</code></td><td>托盘菜单 / 设置窗口的配置变化时发送。</td></tr>
   <tr><td><code>Start</code> / <code>Stop</code> / <code>Toggle</code></td><td>PTT / Toggle 热键触发；携带目标提示与 Hold / Toggle 来源。</td></tr>
-  <tr><td><code>SegmentStarted</code></td><td>记录最终 <code>segment_id</code>；Continuous / Toggle 续段绑定当前前台焦点。</td></tr>
+  <tr><td><code>SegmentStarted</code></td><td>记录最终 <code>segment_id</code>；Continuous 续段绑定当前前台焦点；Toggle 续段仅在原目标仍聚焦时继续，否则停止会话。</td></tr>
   <tr><td><code>State</code></td><td>更新浮层与录音标记。</td></tr>
   <tr><td><code>Partial</code></td><td>更新浮层文本；不提交。</td></tr>
-  <tr><td><code>Final</code></td><td>复核目标并注入；隐藏浮层。</td></tr>
+  <tr><td><code>Final</code></td><td>复核目标并注入；Toggle 会话保留空白浮层，其他模式隐藏浮层。</td></tr>
   <tr><td><code>Error</code> / <code>Bye</code></td><td>清理状态；按重连策略重连。</td></tr>
 </table>
 
@@ -155,7 +158,7 @@
   <tr><td>托盘状态</td><td>显示 daemon 连接、当前 Mode / Hotkey、最近错误码；不显示识别文本。</td></tr>
   <tr><td>日志</td><td>记录端点、热键注册、目标变化、注入失败；不记录按键内容或识别文本。</td></tr>
   <tr><td>doctor（目标）</td><td>Windows 版检查命名管道、麦克风隐私、设备、前端进程、模型与 TSF 注册（若启用）。</td></tr>
-  <tr><td>托盘诊断</td><td>托盘菜单 / 设置窗口的“诊断”调用 <code>voime doctor</code>，在消息框显示检查结果。</td></tr>
+  <tr><td>托盘诊断</td><td>托盘菜单的“诊断”调用 <code>voime doctor</code> 并在消息框显示结果；设置窗口在窗口内的诊断面板显示同一输出。</td></tr>
 </table>
 
 <h3 id="u4-5">4.5 覆盖与错误</h3>
@@ -176,7 +179,7 @@
   <tr><th>操作</th><th>契约</th></tr>
   <tr><td>登录启动</td><td>安装脚本写入当前用户 <code>Run</code> 项启动 <code>voime-tray.exe</code>；不使用 Session 0 服务。</td></tr>
   <tr><td>自动启动</td><td>托盘连接失败时启动同目录 <code>voimed.exe</code>，并按 2 s / 10 s 间隔重连与重试。</td></tr>
-  <tr><td>手动启停</td><td>托盘菜单与设置窗口提供“启动 daemon”“停止 daemon”；停止通过 <code>voime ctl quit</code> 执行。</td></tr>
+  <tr><td>手动启停</td><td>托盘菜单与设置窗口提供启动 / 停止服务；停止通过 <code>voime ctl quit</code> 执行。</td></tr>
   <tr><td>手动诊断</td><td>“诊断”调用 <code>voime doctor</code> 并在消息框显示结果；不修改配置。</td></tr>
   <tr><td>退出托盘</td><td>关闭浮层与 IPC 连接；daemon 是否继续运行由“停止 daemon”单独控制。</td></tr>
 </table>
@@ -185,19 +188,21 @@
 <p><a href="#top">↑</a></p>
 
 <p>
-Windows 前端使用系统托盘与一个无激活浮层。浮层只使用系统字体与系统前景 / 背景色，
-不复制 Linux TUI 的调色板。
+Windows 前端使用系统托盘与一个无激活浮层。设置窗口使用 egui / eframe 绘制，跟随系统明暗主题并用单一强调色；浮层使用同一主题的圆角卡片、Microsoft YaHei UI / Segoe UI 字体与左侧录音强调条，不再使用系统信息框样式。
 </p>
 
 <table>
   <tr><th>元素</th><th>契约</th></tr>
-  <tr><td>托盘图标</td><td>常驻通知区域；左键打开设置窗口，右键菜单包含设置、Mode、Hotkey、Overlay、StartAtLogin、连接状态、启动 / 停止 daemon、诊断、退出。</td></tr>
-  <tr><td>设置窗口</td><td>标题“Voime 设置”；96 DPI 客户端约 440×330；系统字体与系统配色；包含模式下拉框、热键输入框、浮层 / 登录启动复选框、daemon 启停 / 诊断按钮与保存 / 取消。</td></tr>
+  <tr><td>托盘图标</td><td>常驻通知区域；左键打开设置窗口，右键菜单包含设置、Mode、当前热键（点击进入录制）、Overlay、StartAtLogin、连接状态、启动 / 停止服务、诊断、退出。热键菜单不再提供固定预设列表。托盘进程以 GUI 子系统构建，启动不弹出控制台窗口。</td></tr>
+  <tr><td>设置窗口</td><td>标题“Voime 设置”；逻辑尺寸约 500×640，可缩放，最小约 460×540；egui 布局；包含模式分段选择、热键录制按钮、浮层 / 登录启动复选框、服务状态与启停 / 诊断按钮、保存 / 取消。热键字段不接受手工字符串输入。</td></tr>
+  <tr><td>热键录制</td><td>点击热键按钮后直接按下组合键；只读取设置窗口的键盘事件，不安装全局钩子、不吞掉其他应用的按键。录制期间显示实时修饰键，Esc 取消，窗口失焦自动停止。点击“清除热键”禁用热键，“恢复默认”恢复 <code>Ctrl+Alt+Space</code>。</td></tr>
+  <tr><td>设置窗口主题</td><td>跟随系统明暗主题；系统 UI 字体（Segoe UI / Microsoft YaHei）；强调色 <code>#527DFF</code>；圆角卡片与分段按钮；深色主题下自动使用对应背景与文字色。</td></tr>
   <tr><td>浮层</td><td>无激活、置顶、点击穿透（<code>WS_EX_NOACTIVATE</code> / <code>WS_EX_TOOLWINDOW</code> / <code>WS_EX_TRANSPARENT</code> / <code>WS_EX_TOPMOST</code>）；不进入 Alt+Tab；不抢焦点。</td></tr>
   <tr><td>浮层内容</td><td>当前 Partial 的纯文本；不显示候选、按钮或历史。</td></tr>
   <tr><td>状态</td><td>隐藏 / 录音 / 收尾 / 错误；错误只显示简短提示，不显示识别文本。</td></tr>
-  <tr><td>主题</td><td>字体 <code>DEFAULT_GUI_FONT</code>；文字 <code>COLOR_INFOTEXT</code>；背景 <code>COLOR_INFOBK</code>；整体不透明度 235/255；方角，无品牌色。</td></tr>
-  <tr><td>几何</td><td>96 DPI 基准：内边距 10、最小宽度 120、最大文本宽度 560、最小高度 20；随目标窗口 DPI 等比缩放。</td></tr>
+  <tr><td>浮层主题</td><td>跟随系统明暗主题；浅色背景 <code>#FAFAFC</code> / 深色背景 <code>#202124</code>；文字 <code>#202124</code> / <code>#E8EAED</code>；边框 <code>#DADCE0</code> / <code>#3C4043</code>；强调色 <code>#527DFF</code> / <code>#7A9BFF</code>；整体不透明度 240/255；12 px 圆角、左侧 3 px 录音强调条、<code>CS_DROPSHADOW</code> 阴影。</td></tr>
+  <tr><td>浮层字体</td><td><code>Microsoft YaHei UI</code>（缺失时由系统字体回退）；96 DPI 基准 15 px，随目标窗口 DPI 缩放。</td></tr>
+  <tr><td>几何</td><td>96 DPI 基准：内边距 12、强调条 3 + 间距 9、最小宽度 120、最大文本宽度 600、最小高度 20；随目标窗口 DPI 等比缩放。</td></tr>
   <tr><td>定位</td><td>优先放在目标光标下方 4 px；无光标矩形时放在目标窗口左下外侧；限制在当前显示器工作区内。</td></tr>
   <tr><td>无浮层</td><td><code>OverlayEnabled=false</code> 或浮层创建失败时仍正常提交。</td></tr>
 </table>

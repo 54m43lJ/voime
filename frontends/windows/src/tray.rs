@@ -36,15 +36,7 @@ const ID_START_DAEMON: usize = 1201;
 const ID_STOP_DAEMON: usize = 1202;
 const ID_DOCTOR: usize = 1203;
 const ID_QUIT: usize = 1204;
-const ID_HOTKEY_BASE: usize = 2000;
-
-const HOTKEYS: &[(&str, &str)] = &[
-    ("Ctrl+Alt+Space", "Ctrl+Alt+Space"),
-    ("Ctrl+Shift+Space", "Ctrl+Shift+Space"),
-    ("Alt+Space", "Alt+Space"),
-    ("Ctrl+Alt+F2", "Ctrl+Alt+F2"),
-    ("", "禁用"),
-];
+const ID_EDIT_HOTKEY: usize = 1004;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrontendStatus {
@@ -56,7 +48,7 @@ pub enum FrontendStatus {
 #[derive(Clone, Copy, Debug)]
 enum TrayEvent {
     ShowMenu,
-    ShowSettings,
+    ShowSettings { focus_hotkey: bool },
 }
 
 pub struct Tray {
@@ -133,7 +125,9 @@ impl Tray {
             let event = self.queue.lock().expect("tray queue poisoned").pop_front();
             match event {
                 Some(TrayEvent::ShowMenu) => self.show_menu(frontend),
-                Some(TrayEvent::ShowSettings) => frontend.open_settings(),
+                Some(TrayEvent::ShowSettings { focus_hotkey }) => {
+                    frontend.open_settings(focus_hotkey)
+                }
                 None => break,
             }
         }
@@ -167,13 +161,6 @@ impl Tray {
         let Some(command) = command else {
             return;
         };
-        if (ID_HOTKEY_BASE..ID_HOTKEY_BASE + HOTKEYS.len()).contains(&command) {
-            let spec = HOTKEYS[command - ID_HOTKEY_BASE].0;
-            if let Err(error) = frontend.set_hotkey(spec) {
-                Self::show_error(&error);
-            }
-            return;
-        }
         let result = match command {
             ID_PTT => frontend.set_mode(voime_ipc::Mode::Ptt),
             ID_TOGGLE => frontend.set_mode(voime_ipc::Mode::Toggle),
@@ -187,7 +174,11 @@ impl Tray {
                 frontend.set_start_at_login(enabled)
             }
             ID_SETTINGS => {
-                frontend.open_settings();
+                frontend.open_settings(false);
+                Ok(())
+            }
+            ID_EDIT_HOTKEY => {
+                frontend.open_settings(true);
                 Ok(())
             }
             ID_START_DAEMON => {
@@ -257,24 +248,19 @@ impl Tray {
         );
         append(menu, MF_POPUP, modes.0 as usize, w!("模式"));
 
-        let hotkeys = CreatePopupMenu().ok()?;
         let current = frontend.config.hotkey.to_string();
-        for (index, (spec, label)) in HOTKEYS.iter().enumerate() {
-            let checked = if spec.is_empty() {
-                current.is_empty()
-            } else {
-                current.eq_ignore_ascii_case(spec)
-            };
-            let label = to_wide(label);
-            append_checked(
-                hotkeys,
-                MF_STRING,
-                (ID_HOTKEY_BASE + index) as u32,
-                PCWSTR(label.as_ptr()),
-                checked,
-            );
-        }
-        append(menu, MF_POPUP, hotkeys.0 as usize, w!("热键"));
+        let hotkey_label = if current.is_empty() {
+            "热键：未设置（点击修改）".to_string()
+        } else {
+            format!("热键：{current}（点击修改）")
+        };
+        let hotkey_label = to_wide(&hotkey_label);
+        append(
+            menu,
+            MF_STRING,
+            ID_EDIT_HOTKEY,
+            PCWSTR(hotkey_label.as_ptr()),
+        );
 
         append_checked(
             menu,
@@ -291,8 +277,8 @@ impl Tray {
             frontend.config.start_at_login,
         );
         append(menu, MF_SEPARATOR, 0, PCWSTR::null());
-        append(menu, MF_STRING, ID_START_DAEMON, w!("启动 daemon"));
-        append(menu, MF_STRING, ID_STOP_DAEMON, w!("停止 daemon"));
+        append(menu, MF_STRING, ID_START_DAEMON, w!("启动服务"));
+        append(menu, MF_STRING, ID_STOP_DAEMON, w!("停止服务"));
         append(menu, MF_STRING, ID_DOCTOR, w!("诊断..."));
         append(menu, MF_SEPARATOR, 0, PCWSTR::null());
         append(menu, MF_STRING, ID_QUIT, w!("退出"));
@@ -357,7 +343,12 @@ unsafe extern "system" fn window_proc(
         if mouse == WM_RBUTTONUP || mouse == WM_CONTEXTMENU {
             push_event(hwnd, TrayEvent::ShowMenu);
         } else if mouse == WM_LBUTTONUP {
-            push_event(hwnd, TrayEvent::ShowSettings);
+            push_event(
+                hwnd,
+                TrayEvent::ShowSettings {
+                    focus_hotkey: false,
+                },
+            );
         }
         return LRESULT(0);
     }

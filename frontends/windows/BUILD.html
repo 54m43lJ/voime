@@ -37,6 +37,7 @@
   <tr><td>Rust</td><td>MSVC 工具链；独立 workspace。</td></tr>
   <tr><td>Windows SDK</td><td>Win32 / UIA / TSF 头文件与库；TSF 需要 C++20 与 CMake。</td></tr>
   <tr><td>共享 crate</td><td><code>voime-ipc</code>、<code>voime-transport</code> 通过 path dependency 复用。</td></tr>
+  <tr><td>设置窗口</td><td><code>eframe</code> / <code>egui</code>（glow / OpenGL）；随二进制分发，不依赖 WebView2、Node 或前端构建工具。</td></tr>
   <tr><td>模型 / daemon</td><td>由根 workspace 构建 <code>voimed.exe</code> / <code>voime.exe</code>；前端不加载模型。</td></tr>
 </table>
 
@@ -58,7 +59,7 @@ cargo build --release -p voimed -p voime
 
 <table>
   <tr><th>产物</th><th>说明</th></tr>
-  <tr><td><code>voime-tray.exe</code></td><td>托盘 / 热键 / 目标 / 浮层 / SendInput。</td></tr>
+  <tr><td><code>voime-tray.exe</code></td><td>托盘 / 热键 / 目标 / 浮层 / SendInput / egui 设置窗口。</td></tr>
   <tr><td><code>voimed.exe</code> / <code>voime.exe</code></td><td>由根 workspace 构建；前端通过命名管道连接。</td></tr>
   <tr><td><code>onnxruntime</code></td><td>当前 <code>ort</code> 预编译包在 Windows 静态链接；如切换为动态链接，随 daemon 分发 <code>onnxruntime.dll</code>。前端不链接。</td></tr>
   <tr><td>TSF DLL（可选）</td><td>x86 / x64 两份；COM 注册后由目标应用加载。</td></tr>

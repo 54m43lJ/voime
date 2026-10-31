@@ -18,6 +18,36 @@ function Assert-Success {
     }
 }
 
+function Stop-VoimeProcesses {
+    foreach ($name in @('voime-tray', 'voimed', 'voime')) {
+        Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Process -Name voime-tray,voimed,voime -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) {
+        Start-Sleep -Milliseconds 100
+    }
+}
+
+function Copy-InstalledFile {
+    param([string]$Source, [string]$Destination)
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        try {
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force
+            return
+        }
+        catch [System.IO.IOException] {
+            if ($attempt -eq 19) {
+                throw
+            }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+}
+
+Stop-VoimeProcesses
+
 if (-not $NoBuild) {
     Push-Location $Root
     try {
@@ -44,16 +74,16 @@ foreach ($source in $sources) {
     }
 }
 
-Get-Process -Name voime-tray,voimed,voime -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Stop-VoimeProcesses
 New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
 foreach ($source in $sources) {
-    Copy-Item -LiteralPath $source.Path -Destination (Join-Path $Prefix $source.Name) -Force
+    Copy-InstalledFile -Source $source.Path -Destination (Join-Path $Prefix $source.Name)
     Write-Host "install: installed $($source.Name)"
 }
 
 $runtime = Get-ChildItem -LiteralPath (Join-Path $Root 'target\release') -Filter onnxruntime.dll -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($runtime) {
-    Copy-Item -LiteralPath $runtime.FullName -Destination (Join-Path $Prefix 'onnxruntime.dll') -Force
+    Copy-InstalledFile -Source $runtime.FullName -Destination (Join-Path $Prefix 'onnxruntime.dll')
     Write-Host 'install: installed onnxruntime.dll'
 }
 else {

@@ -11,6 +11,10 @@ Daemon -> Frontend : Partial
 Frontend -> Overlay : show(text, target)
 Overlay -> Overlay : 无激活 / 置顶 / 点击穿透
 Daemon -> Frontend : Final
-Frontend -> Overlay : hide()
 Frontend -> Frontend : 复核目标并提交
+alt Toggle 会话
+  Frontend -> Overlay : show_empty(target)
+else 其他模式
+  Frontend -> Overlay : hide()
+end
 @enduml

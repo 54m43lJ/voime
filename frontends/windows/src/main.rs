@@ -1,39 +1,43 @@
+#![cfg_attr(not(test), windows_subsystem = "windows")]
+
 mod commit;
 mod config;
+mod control;
+mod diagnostics;
 mod hotkey;
 mod ipc;
+mod paths;
 mod preview;
 mod settings;
 mod target;
 mod tray;
 
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
-use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossbeam_channel::{Receiver, Sender};
 use voime_ipc::{
     ClientMessage, ErrorCode, FrontendState, Mode, Phase, Role, ServerMessage, TriggerSource,
     PROTOCOL_VERSION,
 };
-use windows::core::w;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Threading::{CreateMutexW, Sleep, CREATE_NO_WINDOW};
+use windows::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE, WM_HOTKEY, WM_QUIT,
+    DispatchMessageW, FindWindowW, PeekMessageW, SetForegroundWindow, TranslateMessage, MSG,
+    PM_REMOVE, WM_HOTKEY, WM_QUIT,
 };
 
 use crate::commit::commit;
 use crate::config::Config;
-use crate::hotkey::{Hotkey, HotkeyHandle};
+use crate::hotkey::HotkeyHandle;
 use crate::ipc::IpcClient;
 use crate::preview::Overlay;
-use crate::settings::SettingsAction;
 use crate::target::Target;
 use crate::tray::{FrontendStatus, Tray};
 
@@ -41,12 +45,51 @@ const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
 const DAEMON_RETRY_INTERVAL: Duration = Duration::from_secs(10);
 
 fn main() -> windows::core::Result<()> {
+    unsafe {
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--settings") {
+        let focus_hotkey = args.iter().any(|arg| arg == "--focus-hotkey");
+        let status = args
+            .iter()
+            .find_map(|arg| arg.strip_prefix("--status="))
+            .map(status_from_arg)
+            .unwrap_or(FrontendStatus::Disconnected);
+        let config = match config::load() {
+            Ok(config) => config,
+            Err(error) => {
+                settings::show_error(&error);
+                return Ok(());
+            }
+        };
+        if let Err(error) = settings::run_process(config, status, focus_hotkey) {
+            settings::show_error(&error);
+        }
+        return Ok(());
+    }
     if !ensure_single_instance() {
         tray::activate_existing();
         return Ok(());
     }
     let config = config::load().map_err(to_windows)?;
     run(Frontend::new(config)).map_err(to_windows)
+}
+
+fn status_from_arg(value: &str) -> FrontendStatus {
+    match value {
+        "connected" => FrontendStatus::Connected,
+        "error" => FrontendStatus::Error,
+        _ => FrontendStatus::Disconnected,
+    }
+}
+
+fn status_arg(status: FrontendStatus) -> &'static str {
+    match status {
+        FrontendStatus::Connected => "connected",
+        FrontendStatus::Disconnected => "disconnected",
+        FrontendStatus::Error => "error",
+    }
 }
 
 fn run(mut frontend: Frontend) -> Result<()> {
@@ -140,17 +183,16 @@ pub struct Frontend {
     finalizing: bool,
     ptt_active: bool,
     hotkey_down: bool,
+    hotkey_suspended: bool,
+    toggle_active: bool,
     next_connect: Instant,
     last_focus_check: Instant,
     daemon_started: Option<Instant>,
-    settings_tx: Sender<SettingsAction>,
-    settings_rx: Receiver<SettingsAction>,
-    settings_open: Arc<AtomicBool>,
+    settings_child: Option<Child>,
 }
 
 impl Frontend {
     fn new(config: Config) -> Self {
-        let (settings_tx, settings_rx) = crossbeam_channel::unbounded();
         Self {
             config,
             status: FrontendStatus::Disconnected,
@@ -164,12 +206,12 @@ impl Frontend {
             finalizing: false,
             ptt_active: false,
             hotkey_down: false,
+            hotkey_suspended: false,
+            toggle_active: false,
             next_connect: Instant::now(),
             last_focus_check: Instant::now(),
             daemon_started: None,
-            settings_tx,
-            settings_rx,
-            settings_open: Arc::new(AtomicBool::new(false)),
+            settings_child: None,
         }
     }
 
@@ -182,6 +224,7 @@ impl Frontend {
     }
 
     fn tick(&mut self) {
+        self.poll_settings();
         let now = Instant::now();
         if self.ipc.is_none() && now >= self.next_connect {
             if let Err(error) = self.try_connect() {
@@ -208,10 +251,6 @@ impl Frontend {
                 }
                 None => break,
             }
-        }
-
-        while let Ok(action) = self.settings_rx.try_recv() {
-            self.on_settings_action(action);
         }
 
         let hotkey_down = !self.config.hotkey.is_empty() && self.config.hotkey.is_down();
@@ -312,25 +351,39 @@ impl Frontend {
                     return;
                 };
                 if target.segment_id != segment_id {
+                    if self.config.mode == Mode::Toggle && !self.toggle_active {
+                        self.target = None;
+                        if let Some(overlay) = self.overlay.as_mut() {
+                            overlay.hide();
+                        }
+                    }
                     return;
                 }
-                if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.hide();
-                }
-                self.target = None;
+                let keep_toggle_preview = self.config.mode == Mode::Toggle && self.toggle_active;
                 self.current_segment = None;
                 self.recording = false;
                 self.finalizing = false;
                 self.ptt_active = false;
-                if text.is_empty() {
-                    return;
-                }
                 if !target::focused(&target) {
                     eprintln!("voime-tray: 目标已失效，未提交 segment {segment_id}");
+                    self.on_target_lost();
                     return;
                 }
-                if let Err(error) = commit(&target, &text) {
-                    eprintln!("voime-tray: 提交失败（segment {segment_id}）：{error:#}");
+                if keep_toggle_preview {
+                    if let Some(overlay) = self.overlay.as_mut() {
+                        overlay.show_empty(&target);
+                    }
+                    self.target = Some(target.clone());
+                } else {
+                    self.target = None;
+                    if let Some(overlay) = self.overlay.as_mut() {
+                        overlay.hide();
+                    }
+                }
+                if !text.is_empty() {
+                    if let Err(error) = commit(&target, &text) {
+                        eprintln!("voime-tray: 提交失败（segment {segment_id}）：{error:#}");
+                    }
                 }
             }
             ServerMessage::Error { code, message } => match code {
@@ -340,10 +393,12 @@ impl Frontend {
                     eprintln!("voime-tray: daemon 拒绝连接（{code:?}）：{message}");
                     self.on_disconnect();
                 }
-                ErrorCode::Busy
-                | ErrorCode::NoInputContext
-                | ErrorCode::Unavailable
-                | ErrorCode::Inference => {
+                ErrorCode::Busy | ErrorCode::NoInputContext | ErrorCode::Unavailable => {
+                    eprintln!("voime-tray: daemon 错误（{code:?}）：{message}");
+                    self.toggle_active = false;
+                    self.clear_segment();
+                }
+                ErrorCode::Inference => {
                     eprintln!("voime-tray: daemon 错误（{code:?}）：{message}");
                     self.clear_segment();
                 }
@@ -355,8 +410,19 @@ impl Frontend {
     }
 
     fn on_segment_started(&mut self, segment_id: u64, source: TriggerSource) {
-        if !self.recording && source != TriggerSource::Continuous {
+        let toggle_continuation = self.config.mode == Mode::Toggle
+            && self.toggle_active
+            && source == TriggerSource::Toggle;
+        if !self.recording && source != TriggerSource::Continuous && !toggle_continuation {
             return;
+        }
+        if toggle_continuation {
+            if let Some(target) = self.target.as_ref() {
+                if !target::focused(target) {
+                    self.on_target_lost();
+                    return;
+                }
+            }
         }
         let bind = match self.target.as_ref() {
             None => true,
@@ -371,9 +437,19 @@ impl Frontend {
             target.segment_id = segment_id;
         }
         self.current_segment = Some(segment_id);
+        if self.target.is_none() && toggle_continuation {
+            self.on_target_lost();
+            return;
+        }
         if let Some(target) = self.target.as_ref() {
             if !target::focused(target) {
                 self.on_target_lost();
+                return;
+            }
+        }
+        if toggle_continuation {
+            if let (Some(overlay), Some(target)) = (self.overlay.as_mut(), self.target.as_ref()) {
+                overlay.show_empty(target);
             }
         }
     }
@@ -384,23 +460,28 @@ impl Frontend {
     }
 
     fn on_hotkey(&mut self) {
-        if self.ipc.is_none() || self.finalizing || self.hotkey_down {
+        if self.ipc.is_none() || self.hotkey_down {
             return;
         }
         self.hotkey_down = true;
         match self.config.mode {
             Mode::Continuous => {}
             Mode::Ptt => {
-                if self.recording {
+                if self.finalizing || self.recording {
                     return;
                 }
                 self.start_segment(TriggerSource::Hold);
             }
             Mode::Toggle => {
-                if self.recording {
+                if self.toggle_active {
+                    self.toggle_active = false;
                     self.stop_segment(TriggerSource::Toggle);
                 } else {
+                    if self.finalizing {
+                        return;
+                    }
                     self.start_segment(TriggerSource::Toggle);
+                    self.toggle_active = self.recording;
                 }
             }
         }
@@ -423,6 +504,11 @@ impl Frontend {
         self.finalizing = false;
         self.ptt_active = source == TriggerSource::Hold;
         self.current_segment = None;
+        if source == TriggerSource::Toggle {
+            if let (Some(overlay), Some(target)) = (self.overlay.as_mut(), self.target.as_ref()) {
+                overlay.show_empty(target);
+            }
+        }
     }
 
     fn stop_segment(&mut self, source: TriggerSource) {
@@ -430,9 +516,10 @@ impl Frontend {
             overlay.hide();
         }
         let segment_id = self.current_segment.unwrap_or(0);
+        let active = self.recording || self.current_segment.is_some();
         if self.send(&ClientMessage::Stop { segment_id, source }) {
             self.recording = false;
-            self.finalizing = true;
+            self.finalizing = active;
             if source == TriggerSource::Hold {
                 self.ptt_active = false;
             }
@@ -453,7 +540,9 @@ impl Frontend {
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.hide();
         }
-        if self.config.mode == Mode::Toggle && self.recording {
+        if self.config.mode == Mode::Toggle && (self.toggle_active || self.recording) {
+            let active = self.recording || self.current_segment.is_some();
+            self.toggle_active = false;
             let segment_id = self.current_segment.unwrap_or(0);
             if let Some(ipc) = self.ipc.as_mut() {
                 let _ = ipc.send(&ClientMessage::Stop {
@@ -462,7 +551,8 @@ impl Frontend {
                 });
             }
             self.recording = false;
-            self.finalizing = true;
+            self.finalizing = active;
+            self.current_segment = None;
         }
         self.target = None;
     }
@@ -481,19 +571,42 @@ impl Frontend {
         self.finalizing = false;
         self.ptt_active = false;
         self.hotkey_down = false;
+        self.toggle_active = false;
         self.status = FrontendStatus::Disconnected;
         self.next_connect = Instant::now() + RECONNECT_INTERVAL;
     }
 
-    fn clear_segment(&mut self) {
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.hide();
+    fn leave_toggle_preview(&mut self) {
+        if self.toggle_active && self.config.mode != Mode::Toggle {
+            self.toggle_active = false;
+            if let Some(overlay) = self.overlay.as_mut() {
+                overlay.hide();
+            }
         }
-        self.target = None;
+    }
+
+    fn clear_segment(&mut self) {
+        let keep_toggle_preview = self.config.mode == Mode::Toggle && self.toggle_active;
         self.current_segment = None;
         self.recording = false;
         self.finalizing = false;
         self.ptt_active = false;
+        if keep_toggle_preview {
+            if let Some(target) = self.target.as_ref() {
+                if target::focused(target) {
+                    if let Some(overlay) = self.overlay.as_mut() {
+                        overlay.show_empty(target);
+                    }
+                    return;
+                }
+            }
+            self.on_target_lost();
+            return;
+        }
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.hide();
+        }
+        self.target = None;
     }
 
     fn sync_hotkey(&mut self) -> Result<()> {
@@ -502,6 +615,7 @@ impl Frontend {
         }
         self.hotkey_down = false;
         if self.ipc.is_some()
+            && !self.hotkey_suspended
             && self.config.mode != Mode::Continuous
             && !self.config.hotkey.is_empty()
         {
@@ -522,20 +636,7 @@ impl Frontend {
             let _ = self.sync_hotkey();
             return Err(error);
         }
-        self.persist()?;
-        self.configure()?;
-        Ok(())
-    }
-
-    pub fn set_hotkey(&mut self, spec: &str) -> Result<()> {
-        let hotkey: Hotkey = config::parse_hotkey(spec)?;
-        let previous = self.config.hotkey;
-        self.config.hotkey = hotkey;
-        if let Err(error) = self.sync_hotkey() {
-            self.config.hotkey = previous;
-            let _ = self.sync_hotkey();
-            return Err(error);
-        }
+        self.leave_toggle_preview();
         self.persist()?;
         self.configure()?;
         Ok(())
@@ -555,31 +656,83 @@ impl Frontend {
         self.persist()
     }
 
-    pub fn open_settings(&mut self) {
-        if self.settings_open.swap(true, Ordering::SeqCst) {
+    pub fn open_settings(&mut self, focus_hotkey: bool) {
+        self.poll_settings();
+        if self.settings_running() {
+            if let Ok(hwnd) = unsafe { FindWindowW(PCWSTR::null(), w!("Voime 设置")) } {
+                unsafe {
+                    let _ = SetForegroundWindow(hwnd);
+                }
+            }
             return;
         }
-        if let Err(error) = settings::open(
-            self.config.clone(),
-            self.status,
-            self.settings_tx.clone(),
-            Arc::clone(&self.settings_open),
-        ) {
-            self.settings_open.store(false, Ordering::SeqCst);
-            settings::show_error(&error);
+        if let Some(handle) = self.hotkey.take() {
+            hotkey::unregister(handle);
+        }
+        self.hotkey_down = false;
+        self.hotkey_suspended = true;
+        let executable = match std::env::current_exe() {
+            Ok(executable) => executable,
+            Err(error) => {
+                self.hotkey_suspended = false;
+                let _ = self.sync_hotkey();
+                settings::show_error(&error.into());
+                return;
+            }
+        };
+        let mut command = Command::new(executable);
+        command
+            .arg("--settings")
+            .arg(format!("--status={}", status_arg(self.status)))
+            .creation_flags(CREATE_NO_WINDOW.0);
+        if focus_hotkey {
+            command.arg("--focus-hotkey");
+        }
+        match command.spawn() {
+            Ok(child) => self.settings_child = Some(child),
+            Err(error) => {
+                self.hotkey_suspended = false;
+                let _ = self.sync_hotkey();
+                settings::show_error(&error.into());
+            }
         }
     }
 
-    fn on_settings_action(&mut self, action: SettingsAction) {
-        match action {
-            SettingsAction::Save(config) => {
+    fn settings_running(&mut self) -> bool {
+        let Some(child) = self.settings_child.as_mut() else {
+            return false;
+        };
+        match child.try_wait() {
+            Ok(None) => true,
+            Ok(Some(_)) => {
+                self.settings_child = None;
+                false
+            }
+            Err(error) => {
+                eprintln!("voime-tray: 检查设置进程失败：{error}");
+                true
+            }
+        }
+    }
+
+    fn poll_settings(&mut self) {
+        if self.settings_child.is_none() {
+            return;
+        }
+        if self.settings_running() {
+            return;
+        }
+        self.hotkey_suspended = false;
+        match config::load() {
+            Ok(config) => {
                 if let Err(error) = self.apply_settings(config) {
                     settings::show_error(&error);
                 }
             }
-            SettingsAction::StartDaemon => self.start_daemon(),
-            SettingsAction::StopDaemon => self.stop_daemon(),
-            SettingsAction::RunDoctor => self.run_doctor(),
+            Err(error) => {
+                settings::show_error(&error);
+                let _ = self.sync_hotkey();
+            }
         }
     }
 
@@ -593,6 +746,7 @@ impl Frontend {
             let _ = self.sync_hotkey();
             return Err(error);
         }
+        self.leave_toggle_preview();
         self.config.overlay_enabled = config.overlay_enabled;
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.set_enabled(config.overlay_enabled);
@@ -610,59 +764,19 @@ impl Frontend {
     }
 
     pub fn run_doctor(&mut self) {
-        let executable = cli_path();
-        let mut command = Command::new(&executable);
-        command.arg("doctor").creation_flags(CREATE_NO_WINDOW.0);
-        let output = match command.output() {
-            Ok(output) => output,
-            Err(error) => {
-                settings::show_error(&error.into());
-                return;
-            }
-        };
-        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-        if !output.stderr.is_empty() {
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&String::from_utf8_lossy(&output.stderr));
-        }
-        if text.trim().is_empty() {
-            text = format!("doctor 退出码：{:?}", output.status.code());
-        }
-        settings::show_text("Voime 诊断", &text);
+        settings::show_text("Voime 诊断", &diagnostics::doctor_text());
     }
 
     pub fn start_daemon(&mut self) {
-        let executable = daemon_path();
-        let mut command = Command::new(&executable);
-        command.creation_flags(CREATE_NO_WINDOW.0);
-        match command.spawn() {
-            Ok(_) => {
-                self.daemon_started = Some(Instant::now());
-            }
-            Err(error) => {
-                eprintln!(
-                    "voime-tray: 启动 daemon 失败 {}：{error}",
-                    executable.display()
-                );
-                self.daemon_started = Some(Instant::now());
-            }
+        if let Err(error) = control::start_daemon() {
+            eprintln!("voime-tray: {error:#}");
         }
+        self.daemon_started = Some(Instant::now());
     }
 
     pub fn stop_daemon(&mut self) {
-        let executable = cli_path();
-        let mut command = Command::new(&executable);
-        command
-            .arg("ctl")
-            .arg("quit")
-            .creation_flags(CREATE_NO_WINDOW.0);
-        if let Err(error) = command.spawn() {
-            eprintln!(
-                "voime-tray: 停止 daemon 失败 {}：{error}",
-                executable.display()
-            );
+        if let Err(error) = control::stop_daemon() {
+            eprintln!("voime-tray: {error:#}");
         }
     }
 
@@ -679,42 +793,5 @@ impl Frontend {
             anyhow::bail!("daemon 连接已断开");
         }
         Ok(())
-    }
-}
-
-fn daemon_path() -> PathBuf {
-    executable_path("voimed.exe")
-}
-
-fn cli_path() -> PathBuf {
-    executable_path("voime.exe")
-}
-
-fn executable_path(name: &str) -> PathBuf {
-    if let Ok(executable) = std::env::current_exe() {
-        if let Some(directory) = executable.parent() {
-            let candidate = directory.join(name);
-            if candidate.is_file() {
-                return candidate;
-            }
-            for ancestor in directory.ancestors().take(6) {
-                let candidate = ancestor.join("target").join("release").join(name);
-                if candidate.is_file() {
-                    return candidate;
-                }
-            }
-        }
-    }
-    PathBuf::from(name)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn daemon_path_points_to_sibling_when_present() {
-        let path = daemon_path();
-        assert!(path.is_absolute() || path.as_os_str() == "voimed.exe");
     }
 }

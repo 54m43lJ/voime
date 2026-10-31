@@ -37,7 +37,7 @@
   <tr><td>Windows 构建依赖</td><td>Rust MSVC 工具链、Visual Studio / Windows SDK、CMake（TSF 可选阶段）。</td></tr>
   <tr><td>模型安装期</td><td>Python 3.10+、网络与约 740 MiB 磁盘空间；只用于 <code>scripts/install_models.*</code> 与 <code>tools/</code>。</td></tr>
   <tr><td>运行期</td><td>平台前端加载、<code>voimed</code> 运行中、可用录音设备；<code>voime</code> TUI 需要 TTY；daemon 不需要 TTY。</td></tr>
-  <tr><td>运行期不需要</td><td>网络、GPU、Python、自绘 GUI 或独立输入法前端。</td></tr>
+  <tr><td>运行期不需要</td><td>网络、Python 或独立输入法前端；Windows 设置窗口使用 OpenGL（glow）渲染。</td></tr>
 </table>
 
 <h2 id="b2">2. 构建根与命令</h2>

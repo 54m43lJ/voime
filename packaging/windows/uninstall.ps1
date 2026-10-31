@@ -8,11 +8,39 @@ param(
 $ErrorActionPreference = 'Stop'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 
-Get-Process -Name voime-tray,voimed,voime -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+function Stop-VoimeProcesses {
+    foreach ($name in @('voime-tray', 'voimed', 'voime')) {
+        Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Process -Name voime-tray,voimed,voime -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) {
+        Start-Sleep -Milliseconds 100
+    }
+}
+
+function Remove-WithRetry {
+    param([string]$Path)
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force
+            return
+        }
+        catch [System.IO.IOException] {
+            if ($attempt -eq 19) {
+                throw
+            }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+}
+
+Stop-VoimeProcesses
 Remove-ItemProperty -Path $runKey -Name 'VoimeTray' -ErrorAction SilentlyContinue
 
 if (Test-Path -LiteralPath $Prefix) {
-    Remove-Item -LiteralPath $Prefix -Recurse -Force
+    Remove-WithRetry -Path $Prefix
     Write-Host "uninstall: removed $Prefix"
 }
 

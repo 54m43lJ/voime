@@ -428,175 +428,139 @@ Windows 没有 Fcitx `InputContext` 等价物，目标绑定依赖 UIA 焦点元
 | `crates/voime-core/USER.html` | §4.1 配置 | 改 | 增加 Windows 默认路径与 XDG 路径的优先级。 |
 | `frontends/windows/CORE.html` | §4.2 config.rs | 不动 | 前端配置路径与模型路径分离，模型路径由 core/USER 拥有。 |
 
-## 4. 后续 ISSUES 修复的 BUG
+## 4. UI 与运行时改进
 
-### 4.1 TSF（P4）仍未实现
+### 4.1 设置窗口从 Win32 控件迁移到 egui / eframe
 
 **问题描述**
-当前交付是后台听写 MVP；需要“被系统选为输入法”的场景还没有 TSF DLL、COM 注册、多客户端路由和进程内编辑会话。
+原 `settings.rs` 使用 `STATIC` / `EDIT` / `COMBOBOX` / `BUTTON` 等原生 Win32 控件，字体与配色固定为系统默认，界面与新的托盘/浮层风格不一致，配置项也没有清晰的分组与状态反馈。
 
 **解决方法**
-- 保持 `frontends/windows/tsf` 为可选子工程，不进入 Rust workspace。
-- 先完成单应用 TSF 原型，再决定 keyboard TIP / speech TIP；不假设后台旁路。
-- 验证 x86/x64 DLL、多应用加载、升级时旧 DLL 残留和编辑会话失败。
+- 设置窗口改用 `eframe` / `egui` 0.32.3（`glow` / OpenGL 后端），不引入 WebView2、Node 或前端构建链。
+- 使用系统 UI 字体（Segoe UI / Microsoft YaHei）、跟随系统明暗主题的配色、单一强调色 `#527DFF`、圆角卡片与分段按钮。
+- 模式改为三段式选择；热键区域改为录制按钮；浮层/登录启动改为单行复选框；daemon 状态与启停、诊断合并为一行。
+- 保存改为 `Save { config, ack }`，由处理线程写盘并把结果回传窗口；注册冲突等错误在窗口内显示，不再弹 MessageBox。
+- 设置窗口使用代码生成的品牌图标，避免 eframe 默认图标。
 
 **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `frontends/windows/README.html` | §1.3 非目标；状态 | 不动 | 已标明 P4 可选且当前分支未包含。 |
-| `frontends/windows/CORE.html` | §4.9 tsf/ | 不动 | 保留目标接口草案，等 P4 实现时再落代码。 |
-| `WINDOWS.html` | §6.2 P1（决定做 TSF 后） | 不动 | 作为后续决策清单保留，不与 P3 验收混淆。 |
+| `frontends/windows/Cargo.toml` | 依赖 | 改 | 增加 `eframe`、`winit`；保持 `windows` crate 的 Win32 / UIA / GDI 依赖。 |
+| `frontends/windows/CORE.html` | §1 文件树；§3 SBOM；§4.10 settings.rs；§5.6 | 改 | 文件树加入 `paths.rs`、`diagnostics.rs`、`control.rs`；SBOM 加入 eframe / egui / winit；设置窗口签名与调用栈同步。 |
+| `frontends/windows/USER.html` | §5 UI | 改 | 设置窗口尺寸、主题、控件与热键录制契约。 |
+| `frontends/windows/README.html` | Credits | 改 | 补 eframe / egui。 |
+| `BUILD.html` / `frontends/windows/BUILD.html` | 运行期依赖 | 改 | 说明设置窗口使用 OpenGL（glow），不依赖 WebView2 / Node。 |
 
-### 4.2 daemon 常开麦克风与蓝牙耳机策略
+### 4.2 设置窗口改为独立进程，避免 winit 事件循环重建
 
 **问题描述**
-daemon 启动即打开输入流并常驻，Windows 会常亮麦克风指示；蓝牙耳机可能被拉入 HFP，隐私设置拒绝或设备拔出时用户只看到“未连接”。
+winit 只允许每个进程创建一个 `EventLoop`。原实现每次打开设置都新建线程并调用 `eframe::run_native`，第一次正常，关闭后再次打开会报 `winit EventLoopError: EventLoop can't be recreated`。把设置窗口长期挂在托盘进程里又会与托盘消息循环、浮层和退出路径耦合。
 
 **解决方法**
-- 后续评估按段开流/关流，至少增加可配置的音频生命周期。
-- doctor 和托盘应展示实际设备、隐私拒绝错误与设备切换错误。
-- 蓝牙设备策略单独做验收，不把“能启动”当作“可用”。
+- `voime-tray.exe` 增加 `--settings` 模式：设置窗口在独立进程中运行，每个进程只创建一次事件循环，关闭即退出。
+- 托盘打开设置时启动同目录 `voime-tray.exe --settings --status=... [--focus-hotkey]`，并暂停全局热键；设置进程退出后，托盘重新读取 `%APPDATA%\voime\config.json`、应用配置并恢复热键。
+- 设置进程内的保存、启动/停止服务由动作线程执行；诊断在窗口内异步执行；保存结果通过 `ack` 回传窗口。
+- 设置进程负责在写盘前校验配置；异常通过窗口内提示或 MessageBox 显示，不把错误留给托盘进程。
 
 **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `WINDOWS.html` | §6.1 P0 #4 音频适配；§7.1 风险 | 不动 | 已记录按段开流与蓝牙风险，作为后续 issue 来源。 |
-| `crates/voime-core/USER.html` | §4.2 音频采集 | 增 | 后续补上音频生命周期与设备选择契约。 |
-| `frontends/windows/USER.html` | §4.6 daemon 生命周期 | 增 | 增加“失败原因展示”与音频设备错误的用户提示。 |
+| `frontends/windows/CORE.html` | §1 文件树；§4.1 main.rs；§5.6 | 改 | 写明 `--settings` 模式、设置进程、动作线程与托盘重载流程；删除“设置窗口线程”描述。 |
+| `frontends/windows/USER.html` | §4.1 配置；§5 UI | 改 | 说明设置保存后由托盘重载，以及设置进程退出后的热键恢复。 |
+| `frontends/windows/PROVIDER.html` | §4.1 Win32 / UIA 调用 | 改 | 补充设置进程只创建一个消息循环的约束。 |
 
-### 4.3 daemon 启动失败不可见，重试可能反复拉起
+### 4.3 浮层重做为圆角主题卡片
 
 **问题描述**
-托盘只显示“daemon 未连接”；如果 `voimed.exe` 因模型缺失、音频占用或隐私设置退出，用户没有直接错误。当前重连逻辑还会按间隔反复 spawn daemon，可能造成重复启动和模型加载压力。
+原浮层使用 `COLOR_INFOBK` / `COLOR_INFOTEXT`、`DEFAULT_GUI_FONT`、方角和固定内边距，视觉上仍是系统信息框；高 DPI 下窗口尺寸与字体比例也不一致。
 
 **解决方法**
-- 后续记录 daemon stderr 到 `%LOCALAPPDATA%\voime\logs`，或把首行错误回传给托盘状态。
-- 用 PID/退出码跟踪启动结果，避免失败后无界重试；增加退避。
-- 设置窗口显示最近错误，并提供“诊断”和“打开日志”。
+- 浮层改为圆角卡片：12 px 圆角、12 px 内边距、左侧 3 px 录音强调条、`CS_DROPSHADOW` 阴影。
+- 跟随系统明暗主题：浅色背景 `#FAFAFC`、深色背景 `#202124`；文字、边框与强调色分别取两套值。
+- 字体改为 `Microsoft YaHei UI`，96 DPI 基准 15 px，随目标窗口 DPI 缩放；最大文本宽度 600。
+- 启动时设置 per-monitor v2 DPI awareness，浮层窗口按真实 DPI 计算尺寸与位置。
 
 **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `frontends/windows/USER.html` | §4.4 诊断；§4.6 daemon 生命周期 | 增 | 增加启动失败原因、日志位置与重试策略。 |
-| `frontends/windows/CORE.html` | §5.6 设置窗口与 daemon 启停 | 改 | 增加 `start_daemon` 的退出码/日志反馈。 |
+| `frontends/windows/USER.html` | §5 UI（浮层、主题、几何） | 改 | 更新浮层颜色、字体、圆角、强调条、内边距与最大宽度。 |
+| `frontends/windows/CORE.html` | §4.6 preview.rs | 不改签名 | 浮层视觉与 DPI 细节由 USER 拥有；CORE 只保留 `Overlay::show / hide / set_enabled`。 |
+| `frontends/windows/PROVIDER.html` | §4.1 Win32 / UIA 调用 | 不动 | GDI 绘制属于实现细节，不改变 provider 边界。 |
 
-### 4.4 SendInput 在真实应用中的覆盖矩阵未完成
+### 4.4 启动不显示控制台，并统一进程 DPI 感知
 
 **问题描述**
-当前只验证了编译、IPC 和目标复核逻辑，没有在中文输入法开启、Chromium/Electron、Office、Windows Terminal、UWP、提权窗口、游戏等真实目标中逐项验证。
+`voime-tray.exe` 默认是控制台子系统，登录启动或双击时会先出现命令行窗口；浮层、托盘与设置窗口的 DPI 感知不一致，导致高 DPI 下尺寸与位置偏移。
 
 **解决方法**
-- 按 WINDOWS §7.2 的矩阵执行手工验收，记录每个应用的通过/降级/不承诺状态。
-- 中文输入法开启时重点验证 Unicode 注入是否被吞；提权窗口记录为不注入。
-- 失败场景保留 daemon 历史；必要时再做 TSF 或白名单回退。
+- `main.rs` 增加 `#![cfg_attr(not(test), windows_subsystem = "windows")]`，release / debug 二进制都以 GUI 子系统启动，测试构建保留控制台输出。
+- `main` 在创建任何窗口前调用 `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`。
+- 启动 daemon / 停止 daemon / 打开设置进程继续使用 `CREATE_NO_WINDOW`，不产生额外控制台。
 
 **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `WINDOWS.html` | §7.2 测试矩阵；§7.4 未知项 | 不动 | 保留完整矩阵，作为后续验收 issue。 |
-| `frontends/windows/USER.html` | §4.5 覆盖与错误 | 不动 | 已声明各应用边界；等实测数据再更新“需实测”项。 |
-| `BUILD.html` | §6 测试与验收 | 改 | 增加“Windows 应用矩阵”作为发布门槛。 |
+| `frontends/windows/CORE.html` | §4.1 main.rs | 改 | 写明 GUI 子系统与 per-monitor v2 DPI awareness。 |
+| `frontends/windows/USER.html` | §5 UI（托盘） | 改 | 写明启动不弹出控制台窗口。 |
+| `frontends/windows/BUILD.html` | §1 环境；§2 构建 | 改 | 说明设置窗口使用 OpenGL、二进制为 GUI 子系统，不需要额外控制台。 |
 
-### 4.5 设置窗口的热键冲突反馈滞后
+### 4.5 配置与 daemon 动作解耦
 
 **问题描述**
-设置窗口保存时只校验格式；真正的 `RegisterHotKey` 冲突在主线程应用设置后才发现，此时设置窗口已经关闭，用户需要重新打开才能修改。
+设置窗口原先通过内存通道把保存、daemon 启停交回托盘主线程，设置窗口与托盘生命周期强绑定；设置窗口退出后，托盘无法感知配置是否已更新。
 
 **解决方法**
-- 后续让设置窗口保存时同步等待主线程的“应用结果”，失败则保留窗口并显示错误。
-- 或提前在设置线程用临时窗口尝试注册热键，再正式应用；注意排除当前窗口已占用的组合。
+- 设置进程保存配置后退出；托盘在 `tick` 中轮询设置子进程，检测到退出后重新加载配置文件并应用。
+- 启动 / 停止服务、诊断在设置进程或托盘各自执行，仍使用 `paths` 定位同目录的 `voimed.exe` / `voime.exe`。
+- 新增 `control.rs` 统一封装启动 / 停止服务，避免托盘和设置进程重复拼装命令。
 
 **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `frontends/windows/USER.html` | §4.1 配置 | 增 | 写明热键注册冲突时的用户反馈与窗口保留策略。 |
-| `frontends/windows/CORE.html` | §5.6 设置窗口与 daemon 启停 | 增 | 增加 Save 请求/响应通道与失败回滚调用栈。 |
+| `frontends/windows/CORE.html` | §1 文件树；§4.10 settings.rs；§5.6 | 改 | 增加 `paths.rs`、`diagnostics.rs`、`control.rs` 与设置子进程重载流程。 |
+| `frontends/windows/USER.html` | §4.6 daemon 生命周期 | 改 | 说明设置窗口保存后由托盘自动重载，不需要重启托盘。 |
+| `README.html` / `frontends/windows/README.html` | 用户交互（配置） | 改 | 保持“托盘菜单或设置窗口配置”，不承诺设置窗口与托盘同进程。 |
 
-### 4.6 DPI 感知与多显示器浮层定位仍需验证
+### 4.6 Toggle 会话保持预览浮层
 
 **问题描述**
-浮层按目标窗口 DPI 计算尺寸，但进程没有显式声明 per-monitor DPI awareness，且多显示器、混合缩放、光标矩形边界还没有完整实测。
+Toggle 会话在 daemon 中跨多个 VAD 语音段；原 Windows 前端在每段 Final 后直接 `Overlay::hide()` 并清空目标，导致 Toggle 开启期间预览窗口消失。文档也写成“Windows 浮层在 Final 后隐藏”，与 Toggle 会话语义不一致。
 
 **解决方法**
-- 启动时设置 `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`，或使用应用 manifest。
-- 在不同 DPI、多显示器、最大化/最小化目标窗口下验证浮层尺寸和位置。
-- 用 `GetGUIThreadInfo` 光标矩形失败时回退到窗口矩形。
+- 前端新增 `toggle_active`，Toggle 首次按下时立即显示空白浮层；每个 Final 提交后清空文本但调用 `Overlay::show_empty()` 保持浮层，直到 toggle off、目标失焦或断线。
+- Toggle 续段在 `SegmentStarted` 时先检查原目标是否仍聚焦；失焦则发送 Stop 并结束会话，不在新窗口重建预览。
+- PTT / Continuous 仍在 Final 后隐藏；Toggle 的 ASR 错误（Inference）保留空白浮层，Busy / NoInputContext / 断线结束会话。
+- 更新 `overlay.puml` 并重新导出 `overlay.svg`：Final 分支区分 Toggle `show_empty()` 与其他模式 `hide()`。
 
 **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `frontends/windows/USER.html` | §5 UI（几何 / 定位） | 增 | 增加 DPI awareness 与多显示器验收要求。 |
-| `frontends/windows/PROVIDER.html` | §4.1 DPI / monitor API | 改 | 写明进程 DPI 模式与目标窗口 DPI 的关系。 |
+| `frontends/windows/USER.html` | §2 CONVENTIONS；§3.4；§4.3 | 改 | 明确 Toggle 会话在 Final / 空段 / ASR 错误后保留空白浮层，直到 toggle off、目标失焦或断线；Final 消息行为按模式区分。 |
+| `frontends/windows/README.html` | §2 用户交互 | 改 | Toggle 行与临时浮层行说明会话期间保持预览。 |
+| `README.html` | §2 用户交互（Toggle、临时文本窗口） | 改 | 移除“Windows 浮层在 Final 后隐藏”的平台差异，统一为 Toggle 保留空白窗口。 |
+| `USER.html` | §3.2；§4.4 | 改 | 补充 Toggle 会话预览生命周期与目标失效停止约束。 |
+| `frontends/windows/CORE.html` | §4.6 preview.rs；§5.2；§5.3 | 改 | 增加 `Overlay::show_empty`；Final 与失焦调用栈按 Toggle / 其他模式分支。 |
+| `frontends/windows/diagram/overlay.puml` / `overlay.svg` | — | 改 | 更新 Final 分支，重新导出 SVG。 |
 
-### 4.7 命名管道轮询读的技术债
+### 4.7 安装脚本处理文件占用
 
 **问题描述**
-当前 Windows 读使用 5 ms 间隔的 `PeekNamedPipe` 轮询，解决了同步读阻塞写的问题，但每个客户端空闲时仍有周期唤醒；大量客户端或长时间运行时会产生不必要的 CPU 唤醒。
+`install.ps1` 用 `Stop-Process -Force` 后立即复制 `voimed.exe`；`Stop-Process` 返回时进程镜像句柄尚未完全释放，首次安装稳定报 `文件正由另一进程使用`，第二次等句柄释放后成功。托盘和 daemon 的停止顺序也可能让托盘短暂拉起 daemon。
 
 **解决方法**
-- 后续可改为 overlapped I/O + 事件等待，保留 shutdown 取消；
-- 或按连接改为阻塞读 + 独立写句柄/线程模型，先做并发压测再替换。
-- 保留双平台 transport conformance 测试，防止回退到会死锁的同步读。
+- 先停 `voime-tray`，再停 `voimed` / `voime`；等待最多 10 秒确认进程全部退出。
+- 复制文件遇到 `IOException` 时重试 20 次（每次 250ms）；卸载删除目录也使用等待与重试。
+- 构建前和复制前各执行一次停止流程，避免构建产物或安装目录被占用。
 
 **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-transport/PROVIDER.html` | §2 阻塞与取消 | 不动 | 当前实现已记录；等 overlapped 替换时再更新。 |
-| `crates/voime-transport/CORE.html` | §2 Windows 读写 | 不动 | 轮询是实现细节，不改变 Stream 契约。 |
-
-### 4.8 停止 daemon 依赖外部 `voime.exe`
-
-**问题描述**
-托盘“停止 daemon”通过启动同目录 `voime.exe ctl quit` 实现；如果安装不完整、`voime.exe` 缺失或版本不匹配，停止按钮无效，且托盘不显示子进程失败原因。
-
-**解决方法**
-- 后续直接在托盘内建立 `Role::Control` 连接并发送 `Quit`，复用 `voime-transport`，不依赖外部进程。
-- 保留 `voime ctl quit` 作为 CLI 入口和故障兜底。
-
-**修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `frontends/windows/CORE.html` | §4.3 ipc.rs；§5.6 daemon 启停 | 增 | 增加 Control 连接发送 Quit 的客户端路径。 |
-| `frontends/windows/USER.html` | §4.6 daemon 生命周期 | 改 | 停止 daemon 的契约从“调用 voime ctl quit”改为“前端直接发送 Quit”。 |
-
-### 4.9 模型安装依赖 Python、网络与较大磁盘
-
-**问题描述**
-Windows 主安装器默认安装模型时需要 Python 3.10+、网络和约 740 MiB 以上空间；当前没有断点续传、镜像回退或离线校验包，首次安装失败后用户体验较差。
-
-**解决方法**
-- 后续把模型安装拆成显式可选步骤，提供断点/重试与本地包校验。
-- 主安装器默认只装二进制，模型由用户选择或由发布包附带校验脚本。
-- 在设置/诊断中显示模型目录、缺失文件与 SHA 校验结果。
-
-**修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `BUILD.html` | §4 安装模型 | 改 | 写明 Windows 的 Python/网络/磁盘前置条件与失败恢复方式。 |
-| `frontends/windows/BUILD.html` | §3 安装与启动 | 改 | 安装器默认行为与 `-NoModels` 的取舍写清楚。 |
-
-### 4.10 Linux 回归尚未在本环境执行
-
-**问题描述**
-本次只在 Windows 上运行了完整测试、clippy、fmt 与 release 构建；虽然共享 crate 的代码路径保持 cfg 隔离，但没有在本机 Linux/Fcitx5 环境重新跑 Linux 验收。
-
-**解决方法**
-- 在 Linux CI 或开发机执行 `cargo test --workspace`、Fcitx5 addon CMake/ctest 与手工验收。
-- 重点检查 `Endpoint::from_path`、`doctor` 的 Linux 分支、systemd 安装脚本和 Fcitx 提交路径。
-- 双平台共享测试保持同一组协议/分段/状态用例。
-
-**修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `BUILD.html` | §6 测试与验收 | 改 | 增加 Linux 回归作为 Windows 改动的合并门槛。 |
-| `PLATFORM.html` | §6.5 CI 矩阵；§8 验收规则 | 不动 | 已定义双平台 CI 与“Linux 不回归”规则。 |
+| `packaging/windows/install.ps1` | 构建前、复制前 | 改 | 增加进程等待与复制重试。 |
+| `packaging/windows/uninstall.ps1` | 卸载 | 改 | 增加进程等待与目录删除重试。 |

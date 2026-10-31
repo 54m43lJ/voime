@@ -74,7 +74,7 @@
   </tr>
   <tr>
     <td>配置</td>
-    <td>Linux 在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 中设置 <code>Mode</code> 与 <code>Hotkey</code>；Windows 在托盘右键菜单或设置窗口中配置。</td>
+    <td>Linux 在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 中设置 <code>Mode</code> 与 <code>Hotkey</code>；Windows 在托盘右键菜单或设置窗口中配置，热键通过按键录制。</td>
     <td><a href="frontends/fcitx/USER.html#u4-1">fcitx-addon USER §4.1</a> · <a href="frontends/windows/USER.html#u4-1">windows USER §4.1</a></td>
   </tr>
   <tr>
@@ -84,7 +84,7 @@
   </tr>
   <tr>
     <td>Toggle 模式</td>
-    <td><code>Mode=toggle</code>：按一下 <code>Hotkey</code> 开始，再按一下结束；目标失焦时自动结束；Linux 会话期间没有语音也保持空白临时窗口，Windows 浮层隐藏。</td>
+    <td><code>Mode=toggle</code>：按一下 <code>Hotkey</code> 开始，再按一下结束；每个 Final 后清空文本但保留空白临时窗口；目标失焦或断线时自动结束。</td>
     <td><a href="frontends/fcitx/USER.html#u3-1">fcitx-addon USER §3.1</a> · <a href="frontends/windows/USER.html#u3-1">windows USER §3.1</a></td>
   </tr>
   <tr>
@@ -94,7 +94,7 @@
   </tr>
   <tr>
     <td>临时文本窗口</td>
-    <td>说话期间显示当前段的 <code>Partial</code>；Linux Toggle 会话在 Final/空段后保持空白窗口，Windows 浮层在 Final 后隐藏；直到再次按热键关闭或目标失焦。</td>
+    <td>说话期间显示当前段的 <code>Partial</code>；Toggle 会话在 Final/空段/ASR 错误后保持空白窗口，直到再次按热键关闭、目标失焦或断线；PTT / Continuous 在 Final 后清空。</td>
     <td><a href="frontends/fcitx/USER.html#u3-3">fcitx-addon USER §3.3</a> · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td>
   </tr>
   <tr>

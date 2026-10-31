@@ -16,10 +16,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 crossbeam-channel = "0.5"
+eframe = { version = "0.32.3", default-features = false, features = ["glow", "default_fonts"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 voime-ipc = { path = "../../crates/voime-ipc" }
 voime-transport = { path = "../../crates/voime-transport" }
+winit = "0.30"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

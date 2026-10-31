@@ -145,7 +145,7 @@
 <div class="diagram"><img src="diagram/seq-ptt.svg" alt="PTT / Toggle 从热键到最终提交的端到端时序图"></div>
 <ul class="note">
   <li><code>ptt</code> 按下开始、松开结束；<code>toggle</code> 按一下开始、再按一下结束。</li>
-  <li>录音期间 Partial 写入临时文本区域；Final 产生后先清空，再提交。Linux Toggle 会话在提交后保留空白窗口，Windows 浮层在 Final 后隐藏；直到 toggle off 或目标失焦。</li>
+  <li>录音期间 Partial 写入临时文本区域；Final 产生后先清空，再提交。Toggle 会话在提交后保留空白临时窗口，直到 toggle off、目标失焦或断线；PTT / Continuous 在 Final 后清空。</li>
   <li>目标失焦时最终结果不提交，保留在 daemon / TUI。</li>
 </ul>
 
@@ -203,7 +203,8 @@
   <tr><th>阶段</th><th>契约</th><th>实现所有者</th></tr>
   <tr><td>触发</td><td>PTT / Toggle 在按键事件中绑定目标并发 Start / Stop；Continuous 由 VAD 自动开始 / 结束。</td><td>平台前端 · <a href="crates/voimed/USER.html#u2">voimed USER §2</a></td></tr>
   <tr><td>临时文本</td><td>收到 Partial 显示；为空时保留上一行；不提交。</td><td>平台前端 · <a href="frontends/fcitx/USER.html#u3-3">fcitx-addon USER §3.3</a> · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td></tr>
-  <tr><td>最终文本</td><td>只接受当前段 <code>segment_id</code> 的 Final；先清空临时文本，再提交。</td><td>平台前端 · <a href="crates/voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a></td></tr>
+  <tr><td>Toggle 会话</td><td>首次按下显示临时窗口并保持；每个 Final / 空段 / ASR 错误后清空文本但保留空白窗口，直到再次按下、目标失效或断线。</td><td>平台前端 · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td></tr>
+  <tr><td>最终文本</td><td>只接受当前段 <code>segment_id</code> 的 Final；先清空临时文本（Toggle 会话保留空白窗口），再提交。</td><td>平台前端 · <a href="crates/voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a></td></tr>
   <tr><td>目标失效</td><td>不提交；清空临时文本；Toggle 停止；文本保留在 daemon 历史。</td><td>平台前端 · <a href="crates/voimed/USER.html#u3">voimed USER §3</a></td></tr>
   <tr><td>daemon 断线</td><td>放行热键、清空临时文本、定时重连；不阻塞普通输入。</td><td>平台前端 · <a href="crates/voime-transport/USER.html">voime-transport USER</a></td></tr>
 </table>

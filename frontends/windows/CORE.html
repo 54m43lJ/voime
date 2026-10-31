@@ -35,13 +35,16 @@
 ├── src/
 │   ├── <a href="#c4-1">main.rs</a>              进程入口、事件循环、单实例
 │   ├── <a href="#c4-2">config.rs</a>            Mode / Hotkey / 设置持久化
+│   ├── control.rs             启动 / 停止 daemon
+│   ├── diagnostics.rs         voime doctor 输出
 │   ├── <a href="#c4-3">ipc.rs</a>               命名管道客户端 + ServerMessage 分发
-│   ├── <a href="#c4-4">hotkey.rs</a>            RegisterHotKey / GetAsyncKeyState key-up
+│   ├── <a href="#c4-4">hotkey.rs</a>            RegisterHotKey / GetAsyncKeyState / 热键解析
+│   ├── paths.rs               同目录 voime / voimed 定位
 │   ├── <a href="#c4-5">target.rs</a>            前台窗口 + UIA 焦点元素
 │   ├── <a href="#c4-6">preview.rs</a>           无激活浮层
 │   ├── <a href="#c4-7">commit.rs</a>            UTF-8 → UTF-16 + SendInput
 │   ├── <a href="#c4-8">tray.rs</a>              托盘图标与菜单
-│   └── <a href="#c4-10">settings.rs</a>          设置窗口（模式 / 热键 / daemon）
+│   └── <a href="#c4-10">settings.rs</a>          egui 设置窗口（模式 / 热键 / daemon）
 └── tsf/                          可选 P4
     ├── CMakeLists.txt
     └── src/
@@ -61,7 +64,7 @@
   <tr><td>独立构建根</td><td><code>frontends/windows</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>；不进入根 <code>cargo test --workspace</code>。</td></tr>
   <tr><td>平台</td><td>只构建 Windows 目标；Linux CI 不构建本 crate。</td></tr>
   <tr><td>无模型</td><td>不链接 ONNX Runtime，不加载模型，不做 VAD / CTC / 分段。</td></tr>
-  <tr><td>事件循环</td><td>主线程拥有托盘与消息循环；IPC reader 线程把消息送入有界通道；热键 / 目标 / 浮层更新回到主线程。</td></tr>
+  <tr><td>事件循环</td><td>主线程拥有托盘与消息循环；IPC reader 线程把消息送入有界通道；热键 / 目标 / 浮层更新回到主线程。设置窗口在独立线程运行 egui 事件循环，保存结果通过通道回到主线程。</td></tr>
   <tr><td>目标所有权</td><td>目标窗口 / 焦点元素属于前端私有类型；协议只传 <code>segment_id</code> 与事件。</td></tr>
   <tr><td>单实例</td><td>每用户一个前端进程；重复启动激活已有托盘。</td></tr>
   <tr><td>提交边界</td><td>SendInput 只在目标复核通过后调用；失败不重试其他窗口。</td></tr>
@@ -79,9 +82,9 @@
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
   <tr><td><code>voime-transport</code></td><td>命名管道客户端。</td></tr>
-  <tr><td><code>windows</code> crate（计划）</td><td>RegisterHotKey、UIA、SendInput、托盘、窗口 API。</td></tr>
+  <tr><td><code>windows</code> crate</td><td>RegisterHotKey、UIA、SendInput、托盘、窗口 API。</td></tr>
+  <tr><td><code>eframe</code> / <code>egui</code> / <code>winit</code></td><td>设置窗口：窗口、输入、字体与绘制；glow 渲染后端，不使用 WebView。</td></tr>
   <tr><td><code>serde</code> / <code>serde_json</code></td><td>设置文件。</td></tr>
-  <tr><td><code>tray-icon</code> 或 Win32 托盘（计划）</td><td>通知区域图标与菜单；具体 crate 以实现时为准。</td></tr>
   <tr><td>C++ / COM / CMake</td><td>可选 TSF DLL；Windows SDK。</td></tr>
 </table>
 <ul class="note">
@@ -95,6 +98,10 @@
 <pre><code>fn main() -&gt; windows::core::Result&lt;()&gt;;
 fn run(frontend: Frontend) -&gt; windows::core::Result&lt;()&gt;;
 fn ensure_single_instance() -&gt; bool;</code></pre>
+<ul class="note">
+  <li>二进制使用 <code>windows_subsystem = "windows"</code>（测试构建除外），启动不显示控制台；启动时设置 per-monitor v2 DPI awareness。</li>
+  <li><code>--settings</code> 参数在单实例检查前分流到独立设置进程；托盘进程不再创建 eframe 事件循环。</li>
+</ul>
 
 <h3 id="c4-2">4.2 config.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Config {
@@ -122,12 +129,21 @@ pub fn dispatch(message: ServerMessage, frontend: &amp;mut Frontend);</code></pr
 
 <h3 id="c4-4">4.4 hotkey.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Hotkey { /* modifiers + virtual key */ }
-pub struct HotkeyHandle { /* registered id / hook handle */ }
+pub struct HotkeyHandle { /* registered id */ }
 
 pub fn parse(spec: &amp;str) -&gt; anyhow::Result&lt;Hotkey&gt;;
+pub fn key_name(key: u32) -&gt; String;
+pub fn modifier_names(modifiers: u32) -&gt; String;
+pub fn modifier_state() -&gt; u32;
+pub fn win_down() -&gt; bool;
+pub fn check_available(hotkey: &amp;Hotkey) -&gt; anyhow::Result&lt;()&gt;;
 pub fn register(hotkey: &amp;Hotkey, frontend: &amp;mut Frontend)
     -&gt; anyhow::Result&lt;HotkeyHandle&gt;;
 pub fn unregister(handle: HotkeyHandle);</code></pre>
+<ul class="note">
+  <li>热键录制由设置窗口的 egui / winit 键盘事件完成，不安装低级键盘钩子；<code>modifier_state</code> / <code>win_down</code> 只用于读取实时修饰键。</li>
+  <li><code>check_available</code> 用消息窗口试注册热键，避免把被占用的组合写入配置。</li>
+</ul>
 
 <h3 id="c4-5">4.5 target.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Target {
@@ -146,6 +162,7 @@ pub fn same(a: &amp;Target, b: &amp;Target) -&gt; bool;</code></pre>
 impl Overlay {
     pub fn create() -&gt; anyhow::Result&lt;Self&gt;;
     pub fn show(&amp;mut self, text: &amp;str, target: &amp;Target);
+    pub fn show_empty(&amp;mut self, target: &amp;Target);
     pub fn hide(&amp;mut self);
     pub fn set_enabled(&amp;mut self, enabled: bool);
 }</code></pre>
@@ -177,23 +194,26 @@ class VoimeEditSession : public ITfEditSession {
 
 <h3 id="c4-10">4.10 settings.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub enum SettingsAction {
-    Save(Config),
+    Save {
+        config: Config,
+        ack: Sender&lt;Result&lt;(), String&gt;&gt;,
+    },
     StartDaemon,
     StopDaemon,
-    RunDoctor,
 }
 
-pub fn open(config: Config, status: FrontendStatus,
-            sender: Sender&lt;SettingsAction&gt;,
-            open_flag: Arc&lt;AtomicBool&gt;) -&gt; anyhow::Result&lt;()&gt;;
+pub fn run_process(config: Config, status: FrontendStatus,
+                   focus_hotkey: bool) -&gt; anyhow::Result&lt;()&gt;;
 pub fn show_error(error: &amp;anyhow::Error);
 pub fn show_text(title: &amp;str, text: &amp;str);
 
 fn run_window(config: Config, status: FrontendStatus,
-              sender: Sender&lt;SettingsAction&gt;) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+              sender: Sender&lt;SettingsAction&gt;,
+              focus_hotkey: bool) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 <ul class="note">
-  <li>设置窗口在独立线程运行；保存、daemon 启停与诊断通过有界通道回到主线程执行。</li>
-  <li>热键在保存前由 <code>hotkey::parse</code> 校验；注册冲突由主线程返回并提示。</li>
+  <li><code>--settings</code> 启动独立设置进程，<code>run_process</code> 在该进程主线程运行唯一的 egui 事件循环；保存、daemon 启停由动作线程执行，保存结果经 <code>ack</code> 返回窗口。</li>
+  <li>保存前由动作线程用消息窗口校验热键可用性；注册冲突回显在窗口内。</li>
+  <li>托盘打开设置前注销全局热键；设置子进程退出后托盘重新加载配置并恢复热键。</li>
 </ul>
 
 <h2 id="c5">5. Call stack tree</h2>
@@ -231,19 +251,22 @@ frontend::on_message(Partial)
 
 frontend::on_message(Final)
 ├── 判断 message.segment_id == target.segment_id
-├── 判断 target::focused(&amp;target)
-├── Overlay::hide()
+├── 判断 target::focused(&amp;target) → 否则 on_target_lost()
+├── 判断 Toggle 会话 active → Overlay::show_empty(&amp;target)
+├── 其他模式 → Overlay::hide()
 └── commit::commit(&amp;target, &amp;text)</code></pre>
 
 <h3 id="c5-3">5.3 Continuous 与目标失效</h3>
 <pre><code>frontend::on_message(SegmentStarted)
 ├── 判断 source == Continuous / Toggle 续段
+├── 判断 Toggle 续段且原 target 失焦 → on_target_lost()
 ├── target::capture()
-└── 判断 target::focused → 绑定；否则不绑定
+└── 判断 target::focused → 绑定；否则 on_target_lost()
 
 frontend::on_focus_change()
 ├── 判断 !target::focused → Overlay::hide()
-├── 判断 Mode == Toggle → IpcClient::send(Stop { 0, Toggle })
+├── 判断 Mode == Toggle && (toggle_active || recording)
+│   └── IpcClient::send(Stop { segment_id, Toggle })
 └── 放弃当前段提交</code></pre>
 
 <h3 id="c5-4">5.4 断线与重连</h3>
@@ -272,21 +295,25 @@ Final
         └── ITfRange::SetText(ec, text)</code></pre>
 
 <h3 id="c5-6">5.6 设置窗口与 daemon 启停</h3>
-<pre><code>Tray::poll_events(ShowSettings) / 左键托盘
-└── frontend.open_settings()
-    ├── 判断 settings_open
-    └── settings::open(config, status, sender, open_flag)
-        └── settings thread
-            ├── CreateWindowExW(VoimeSettings)
-            ├── 控件：Mode / Hotkey / Overlay / StartAtLogin
-            └── 判断 保存 → SettingsAction::Save(Config)
+<pre><code>Tray::poll_events(ShowSettings) / 左键托盘 / 热键菜单项
+└── frontend.open_settings(focus_hotkey)
+    ├── 判断 settings_child 仍在运行 → SetForegroundWindow(已有窗口)
+    ├── hotkey::unregister()
+    └── Command::new(current_exe, --settings --status=... --focus-hotkey)
+
+设置进程
+└── main(--settings)
+    └── settings::run_process(config, status, focus_hotkey)
+        ├── settings::run_window → eframe::run_native(Voime 设置)
+        └── action thread
+            ├── 判断 Save → hotkey::check_available() → Config::save() → ack
+            ├── 判断 StartDaemon → control::start_daemon()
+            └── 判断 StopDaemon → control::stop_daemon()
 
 frontend.tick()
-└── settings_rx.try_recv()
-    ├── 判断 Save → frontend.apply_settings(config)
-    ├── 判断 StartDaemon → frontend.start_daemon()
-    ├── 判断 StopDaemon → frontend.stop_daemon()
-    └── 判断 RunDoctor → frontend.run_doctor()</code></pre>
+└── poll_settings()
+    └── 判断 settings_child 已退出 → config::load() → apply_settings()
+        └── sync_hotkey()</code></pre>
 
 </body>
 </html>

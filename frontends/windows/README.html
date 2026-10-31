@@ -71,12 +71,12 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
 <table>
   <tr><th>场景</th><th>行为</th><th>契约</th></tr>
   <tr><td>安装 / 启动</td><td>每用户安装，登录后启动托盘与 daemon；托盘显示连接状态。</td><td><a href="BUILD.html#b3">BUILD §3</a></td></tr>
-  <tr><td>配置</td><td>托盘右键菜单或设置窗口设置 Mode / Hotkey / 浮层 / 登录启动；默认组合避开系统保留键。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
+  <tr><td>配置</td><td>托盘右键菜单或设置窗口设置 Mode / 浮层 / 登录启动；热键在设置窗口直接按键录制，默认组合避开系统保留键。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
   <tr><td>daemon 生命周期</td><td>登录启动托盘，托盘自动拉起 daemon；托盘菜单与设置窗口提供启动、停止、诊断。</td><td><a href="USER.html#u4-6">USER §4.6</a></td></tr>
   <tr><td>PTT</td><td>按住热键开始，松开结束；需要 key-up。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
-  <tr><td>Toggle</td><td>按一下开始，再按一下结束；目标失焦自动结束。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
+  <tr><td>Toggle</td><td>按一下开始，再按一下结束；目标失焦自动结束；会话期间预览浮层保持可见。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
   <tr><td>Continuous</td><td>VAD 自动分段；热键不参与。</td><td><a href="USER.html#u3-2">USER §3.2</a></td></tr>
-  <tr><td>临时浮层</td><td>显示当前 Partial；不抢焦点、可点击穿透。</td><td><a href="USER.html#u3-4">USER §3.4</a></td></tr>
+  <tr><td>临时浮层</td><td>显示当前 Partial；Toggle 会话在 Final 后保留空白浮层，直到 toggle off / 失焦；不抢焦点、可点击穿透。</td><td><a href="USER.html#u3-4">USER §3.4</a></td></tr>
   <tr><td>最终提交</td><td>SendInput 注入 UTF-16 文本；提交前校验目标。</td><td><a href="USER.html#u4-2">USER §4.2</a></td></tr>
   <tr><td>daemon 不可用</td><td>放行热键、清空浮层、定时重连。</td><td><a href="USER.html#u4-5">USER §4.5</a></td></tr>
 </table>
@@ -104,7 +104,8 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
   <tr><th>项目</th><th>在本组件中的角色</th><th>技术栈 / 许可</th></tr>
   <tr><td>Windows Win32 / UIA</td><td>热键、前台窗口、焦点元素、文本注入</td><td>Windows SDK</td></tr>
   <tr><td>TSF / COM</td><td>可选系统输入法（P4）</td><td>Windows SDK</td></tr>
-  <tr><td><code>windows</code> crate（计划）</td><td>Win32 API 绑定</td><td>Rust · MIT / Apache-2.0</td></tr>
+  <tr><td><code>windows</code> crate</td><td>Win32 API 绑定</td><td>Rust · MIT / Apache-2.0</td></tr>
+  <tr><td><code>eframe</code> / <code>egui</code></td><td>设置窗口与热键录制界面</td><td>Rust · MIT / Apache-2.0</td></tr>
   <tr><td><code>voime-ipc</code> / <code>voime-transport</code></td><td>协议与命名管道客户端</td><td>本仓库</td></tr>
   <tr><td><code>voimed</code></td><td>音频、模型、识别与会话</td><td>本仓库</td></tr>
 </table>

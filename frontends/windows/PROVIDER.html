@@ -38,8 +38,7 @@
   <tr><td>RuntimeId</td><td>UIA 焦点元素的稳定标识；同一窗口内切换控件时变化。</td></tr>
   <tr><td><code>SendInput</code></td><td>Win32 合成输入 API；使用 <code>KEYEVENTF_UNICODE</code> 注入 UTF-16 单元。</td></tr>
   <tr><td><code>RegisterHotKey</code></td><td>注册系统范围热键；只提供按下，不提供 PTT 所需的 key-up。</td></tr>
-  <tr><td><code>WH_KEYBOARD_LL</code></td><td>低级键盘钩子；PTT 需要 key-up 时使用。</td></tr>
-  <tr><td><code>GetAsyncKeyState</code></td><td>轮询按键状态；可作为 PTT key-up 的备选。</td></tr>
+  <tr><td><code>GetAsyncKeyState</code></td><td>轮询主键状态；PTT 松开检测使用此方式，同时用于读取录制时的实时修饰键。</td></tr>
   <tr><td>UIPI</td><td>用户界面特权隔离；阻止普通完整性进程向高完整性窗口注入。</td></tr>
   <tr><td>DACL</td><td>命名管道的访问控制列表；只授予当前用户。</td></tr>
   <tr><td>TSF</td><td>Text Services Framework；Windows 输入法框架。</td></tr>
@@ -56,7 +55,7 @@
 <table>
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>进程模型</td><td>每用户桌面进程；不使用 Session 0 Windows 服务采集音频或注入文本。</td></tr>
-  <tr><td>热键</td><td>Toggle 可用 <code>RegisterHotKey</code>；PTT 使用低级钩子或轮询获取 key-up；只处理配置热键，不记录其他按键。</td></tr>
+  <tr><td>热键</td><td>全局热键用 <code>RegisterHotKey</code>；PTT 的 key-up 用 <code>GetAsyncKeyState</code> 轮询；录制使用设置窗口的 winit 键盘事件，不安装低级钩子，不记录其他按键。</td></tr>
   <tr><td>目标</td><td>前台窗口 + UIA 焦点元素；提交前复核 HWND 与 RuntimeId。</td></tr>
   <tr><td>编码</td><td>UTF-8 内部字符串转 UTF-16；emoji 代理对不拆分；长文本分批。</td></tr>
   <tr><td>UIPI</td><td>不尝试绕过；提权窗口默认不支持。</td></tr>
@@ -96,9 +95,9 @@
 <h3 id="p4-1">4.1 Win32 / UIA 调用</h3>
 <table>
   <tr><th>调用 / 类型</th><th>用途</th></tr>
-  <tr><td><code>RegisterHotKey</code> / <code>UnregisterHotKey</code></td><td>Toggle 或非 PTT 热键注册。</td></tr>
-  <tr><td><code>SetWindowsHookEx(WH_KEYBOARD_LL, ...)</code></td><td>PTT key-up；只处理配置热键。</td></tr>
-  <tr><td><code>GetAsyncKeyState</code></td><td>PTT key-up 轮询备选。</td></tr>
+  <tr><td><code>RegisterHotKey</code> / <code>UnregisterHotKey</code></td><td>PTT / Toggle 全局热键注册；设置窗口打开时注销，关闭后重注册。</td></tr>
+  <tr><td>设置窗口键盘事件（winit）</td><td>热键录制；只在窗口聚焦时读取，Esc 取消，窗口失焦停止。</td></tr>
+  <tr><td><code>GetAsyncKeyState</code></td><td>PTT 主键松开检测；录制时读取实时修饰键。</td></tr>
   <tr><td><code>GetForegroundWindow</code> / <code>GetGUIThreadInfo</code></td><td>取得前台窗口与焦点 HWND。</td></tr>
   <tr><td>UIA <code>GetFocusedElement</code> / RuntimeId</td><td>取得焦点控件并复核目标。</td></tr>
   <tr><td><code>SendInput</code> + <code>KEYEVENTF_UNICODE</code></td><td>注入 UTF-16 文本。</td></tr>
@@ -134,7 +133,7 @@
 <h3 id="p4-4">4.4 错误与边界</h3>
 <table>
   <tr><th>情况</th><th>触发条件</th><th>处理</th></tr>
-  <tr><td>热键注册失败</td><td>组合被系统或其他应用占用。</td><td>托盘提示；要求用户修改 Hotkey；不静默吞键。</td></tr>
+  <tr><td>热键注册失败</td><td>组合被系统或其他应用占用、系统保留或缺少修饰键。</td><td>设置窗口内提示；要求重新录制或清除 Hotkey；不静默吞键。</td></tr>
   <tr><td>UIA 焦点不可用</td><td>应用不暴露 UIA 或焦点元素为空。</td><td>只绑定前台 HWND；提交前尽力复核。</td></tr>
   <tr><td>UIPI 拒绝</td><td>目标窗口完整性级别更高。</td><td>不注入；保留历史；提示用户。</td></tr>
   <tr><td><code>SendInput</code> 部分失败</td><td>目标拒绝或以 Unicode 处理异常。</td><td>停止后续输入；不重复注入；记录错误码。</td></tr>
