@@ -152,7 +152,7 @@ fn check_fcitx(snapshot: Option<&ServerMessage>, ok: &mut bool) {
         Some(path) if path.is_file() => println!("  OK   用户配置 {}", path.display()),
         _ => println!("  WARN 尚无用户配置（将使用默认 Mode=ptt Hotkey=Super+F2）"),
     }
-    print_snapshot(snapshot, "Fcitx addon", ok);
+    print_snapshot(snapshot, "Fcitx addon");
 }
 
 #[cfg(windows)]
@@ -176,10 +176,10 @@ fn check_windows(snapshot: Option<&ServerMessage>, ok: &mut bool) {
         None => println!("  WARN 未读取到麦克风隐私设置"),
     }
     println!("  OK   未启用 TSF（可选）");
-    print_snapshot(snapshot, "前端", ok);
+    print_snapshot(snapshot, "前端");
 }
 
-fn print_snapshot(snapshot: Option<&ServerMessage>, label: &str, ok: &mut bool) {
+fn print_snapshot(snapshot: Option<&ServerMessage>, label: &str) {
     let Some(ServerMessage::Snapshot {
         mode,
         hotkey,
@@ -201,7 +201,6 @@ fn print_snapshot(snapshot: Option<&ServerMessage>, label: &str, ok: &mut bool) 
     if *addon == FrontendState::Disconnected {
         println!("  WARN {label} 未连接 daemon");
     }
-    let _ = ok;
 }
 
 #[cfg(unix)]

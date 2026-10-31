@@ -43,7 +43,7 @@ pub fn run_process(config: Config, status: FrontendStatus, focus_hotkey: bool) -
                 match action {
                     SettingsAction::Save { config, ack } => {
                         let result = hotkey::check_available(&config.hotkey)
-                            .and_then(|_| config.save(&config))
+                            .and_then(|_| config.save())
                             .map_err(|error| format!("{error:#}"));
                         let _ = ack.send(result);
                     }

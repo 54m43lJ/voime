@@ -157,7 +157,7 @@ struct ComGuard(bool);
 impl ComGuard {
     fn init() -> Self {
         let result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-        Self(result.ok().is_ok())
+        Self(result.is_ok())
     }
 }
 
@@ -248,7 +248,7 @@ impl Frontend {
         loop {
             let event = self.ipc.as_mut().and_then(|ipc| ipc.try_event());
             match event {
-                Some(Ok(message)) => ipc::dispatch(message, self),
+                Some(Ok(message)) => self.on_message(message),
                 Some(Err(error)) => {
                     eprintln!("voime-tray: {error:#}");
                     self.on_disconnect();
@@ -306,7 +306,7 @@ impl Frontend {
             eprintln!("voime-tray: {error:#}");
             self.status = FrontendStatus::Error;
         }
-        ipc::dispatch(snapshot, self);
+        self.on_message(snapshot);
         Ok(())
     }
 
@@ -804,7 +804,7 @@ impl Frontend {
     }
 
     fn persist(&self) -> Result<()> {
-        self.config.save(&self.config)
+        self.config.save()
     }
 
     fn configure(&mut self) -> Result<()> {

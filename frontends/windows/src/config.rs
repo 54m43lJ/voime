@@ -44,13 +44,13 @@ impl Config {
         }
     }
 
-    pub fn save(&self, config: &Config) -> Result<()> {
+    pub fn save(&self) -> Result<()> {
         let path = config_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("创建配置目录失败 {}", parent.display()))?;
         }
-        let bytes = serde_json::to_vec_pretty(config).context("序列化配置失败")?;
+        let bytes = serde_json::to_vec_pretty(self).context("序列化配置失败")?;
         let temporary = path.with_extension("json.tmp");
         fs::write(&temporary, bytes)
             .with_context(|| format!("写入配置文件失败 {}", temporary.display()))?;

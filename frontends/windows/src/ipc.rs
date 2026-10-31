@@ -3,8 +3,6 @@ use crossbeam_channel::{Receiver, TryRecvError};
 use voime_ipc::{read_message, write_message, ClientMessage, ServerMessage};
 use voime_transport::{Endpoint, Stream};
 
-use crate::Frontend;
-
 pub struct IpcClient {
     writer: Box<dyn Stream>,
     events: Receiver<anyhow::Result<ServerMessage>>,
@@ -79,10 +77,6 @@ impl Drop for IpcClient {
     fn drop(&mut self) {
         let _ = self.writer.shutdown();
     }
-}
-
-pub fn dispatch(message: ServerMessage, frontend: &mut Frontend) {
-    frontend.on_message(message);
 }
 
 #[cfg(test)]

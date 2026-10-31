@@ -204,7 +204,6 @@ impl FireRedVad {
             };
         }
     }
-
 }
 
 fn zero_state(spec: &TensorSpec) -> anyhow::Result<StateTensor> {
