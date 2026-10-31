@@ -66,6 +66,7 @@ cargo build --release -p voimed -p voime
 </table>
 <ul class="note">
   <li><code>frontends/windows</code> 使用独立 <code>Cargo.lock</code>，避免 Windows-only 依赖污染 Linux 根构建。</li>
+  <li>本目录被根 <code>Cargo.toml</code> <code>exclude</code>，VSCode 打开仓库根时 rust-analyzer 默认不加载本 workspace。可在本地 <code>.vscode/settings.json</code>（不入库）配置：<code>"rust-analyzer.linkedProjects": ["Cargo.toml", "frontends/windows/Cargo.toml"]</code>。</li>
   <li>Linux 上可跑 <code>cargo check --target x86_64-pc-windows-msvc</code> 做快速反馈，但不能替代 Windows 链接 / COM / TSF 验证。</li>
 </ul>
 

@@ -75,6 +75,7 @@ cmake --build build/tsf-x86 --config Release</code></pre>
   <li>本节只构建；二进制、addon 与 systemd 服务的安装步骤见 <a href="#b3">§3</a>。</li>
   <li>构建过程通过 <code>ort</code> 的 <code>download-binaries</code> 获取 ONNX Runtime；构建完成后运行期不联网。</li>
   <li><code>frontends/windows</code> 使用独立 workspace，不进入根 <code>cargo test --workspace</code>。</li>
+  <li>IDE 同理不共享 workspace：VSCode 打开仓库根时，rust-analyzer 默认只加载根 workspace，需要在本地（不入库）配置 <code>rust-analyzer.linkedProjects</code> 才能分析 <code>frontends/windows</code> 下的代码，见 <a href="frontends/windows/BUILD.html">windows BUILD</a>。</li>
   <li>Linux 构建不编译 Windows 专用 crate；Windows 构建不要求 Fcitx5 或 Linux 音频头文件。</li>
 </ul>
 
