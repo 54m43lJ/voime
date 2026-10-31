@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>USER — voime-log</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>USER — voime-log</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="CORE.html">CORE</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<h2 id="u1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>组件（component）</td><td>写日志的进程身份；每个组件一个独立的 <code>{component}.log</code> 文件。当前组件名：<code>voimed</code>、<code>voime-tray</code>、<code>voime-settings</code>。</td></tr>
+  <tr><td>日志目录</td><td>存放各组件日志文件的目录；由 <code>VOIME_LOG</code> 决定。</td></tr>
+</table>
+
+<h2 id="u2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>隐私</td><td>识别结果（Partial / Final 文本）只记录字符数，不记录内容。</td></tr>
+  <tr><td>时间戳</td><td>UTC，格式 <code>YYYY-MM-DDTHH:MM:SS.mmmZ</code>。</td></tr>
+  <tr><td>静默默认</td><td>不设 <code>VOIME_LOG</code> 时不产生任何文件、任何开销。</td></tr>
+</table>
+
+<h2 id="u3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<p>无进程边界交互；日志是本地文件输出。</p>
+
+<h2 id="u4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u4-1">4.1 环境变量 <code>VOIME_LOG</code></h3>
+
+<table>
+  <tr><th>取值</th><th>行为</th></tr>
+  <tr><td>未设置 / 空字符串</td><td>日志关闭。</td></tr>
+  <tr><td><code>1</code> / <code>true</code> / <code>on</code></td><td>写入默认日志目录：Windows 为 <code>%LOCALAPPDATA%\voime\logs</code>；Unix 为 <code>$XDG_STATE_HOME/voime/logs</code>（缺省 <code>~/.local/state/voime/logs</code>）。</td></tr>
+  <tr><td>其他非空值</td><td>视为日志目录路径；目录不存在时自动创建。</td></tr>
+</table>
+<ul class="note">
+  <li>文件为追加式 UTF-8 文本，每行 <code>时间戳 [组件] 消息</code>。</li>
+  <li>单个文件超过 10 MiB 时，在下一次组件启动时轮转为 <code>{component}.log.1</code>（只保留一份）。</li>
+  <li>重复设置环境变量对已运行进程无效；进程启动时读取一次。</li>
+</ul>
+
+</body>
+</html>

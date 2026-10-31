@@ -70,6 +70,7 @@ voimed --verbose</code></pre>
   <tr><td>停止</td><td><code>voime ctl quit</code> 或 <code>systemctl --user stop voime.service</code>。</td></tr>
   <tr><td>重启</td><td><code>systemctl --user restart voime.service</code>；前端会定时重连。</td></tr>
   <tr><td>诊断</td><td><code>voime doctor</code> 检查端点、daemon、模型、音频与前端。</td></tr>
+  <tr><td>日志</td><td>给服务环境设 <code>VOIME_LOG=1</code>（或目录路径）后重启，日志写入 <code>{XDG_STATE_HOME}/voime/logs/voimed.log</code>。</td></tr>
   <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>；自定义端点用 <code>--endpoint</code>（<code>--socket</code> 为兼容别名）。</td></tr>
 </table>
 <ul class="note">

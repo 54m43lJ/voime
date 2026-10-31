@@ -156,7 +156,7 @@
 <table>
   <tr><th>检查</th><th>契约</th></tr>
   <tr><td>托盘状态</td><td>显示 daemon 连接、当前 Mode / Hotkey、最近错误码；不显示识别文本。</td></tr>
-  <tr><td>日志</td><td>记录端点、热键注册、目标变化、注入失败；不记录按键内容或识别文本。</td></tr>
+  <tr><td>日志</td><td>记录连接、热键、daemon 消息、浮层显隐与段事件；默认关闭，设 <code>VOIME_LOG=1</code> 或目录路径启用，取值见 <a href="../../crates/voime-log/USER.html#u4-1">voime-log USER §4.1</a>。不记录按键内容或识别文本。</td></tr>
   <tr><td>doctor（目标）</td><td>Windows 版检查命名管道、麦克风隐私、设备、前端进程、模型与 TSF 注册（若启用）。</td></tr>
   <tr><td>托盘诊断</td><td>托盘菜单的“诊断”调用 <code>voime doctor</code> 并在消息框显示结果；设置窗口在窗口内的诊断面板显示同一输出。</td></tr>
 </table>

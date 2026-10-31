@@ -32,6 +32,7 @@
 ├── crates/
 │   ├── voime-core/                    → <a href="crates/voime-core/CORE.html#c1">voime-core CORE §1</a>
 │   ├── voime-ipc/                     → <a href="crates/voime-ipc/CORE.html#c1">voime-ipc CORE §1</a>
+│   ├── voime-log/                     → <a href="crates/voime-log/CORE.html#c1">voime-log CORE §1</a>
 │   ├── voime-transport/               → <a href="crates/voime-transport/CORE.html#c1">voime-transport CORE §1</a>
 │   ├── voimed/                        → <a href="crates/voimed/CORE.html#c1">voimed CORE §1</a>
 │   └── voime/                         → <a href="crates/voime/CORE.html#c1">voime CORE §1</a>
@@ -69,7 +70,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
     <td>依赖方向</td>
-    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport；<code>voime</code> → core + ipc + transport；前端 → ipc + transport。前端不依赖 core，core 不依赖 transport / daemon / 前端；当前仅保留 <code>voime-ipc</code> 的 <code>Mode</code> 类型依赖，后续按 <a href="PLATFORM.html#p3-4">PLATFORM §3.4</a> 继续收敛。</td>
+    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport + log；<code>voime</code> → core + ipc + transport + log（doctor）；前端 → ipc + transport + log。前端不依赖 core，core 不依赖 transport / daemon / 前端；<code>voime-log</code> 是零依赖叶子 crate，被 daemon、CLI doctor 与 Windows 前端消费；当前仅保留 <code>voime-ipc</code> 的 <code>Mode</code> 类型依赖，后续按 <a href="PLATFORM.html#p3-4">PLATFORM §3.4</a> 继续收敛。</td>
   </tr>
   <tr>
     <td>OS API 位置</td>
@@ -199,6 +200,14 @@ struct TargetRef { /* ... */ };
 <pre><code>// P3 已实现；TSF 为可选 P4
 fn main() -&gt; windows::core::Result&lt;()&gt;;
 // 托盘 / 热键 / 目标 / 浮层 / 提交见 windows CORE §4 / §5</code></pre>
+
+<h3 id="c4-8">4.8 crates/voime-log <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub fn init(component: &amp;str) -&gt; bool;            // 见 voime-log USER §4.1
+pub fn enabled() -&gt; bool;
+pub fn log_path() -&gt; Option&lt;PathBuf&gt;;
+pub fn default_directory() -&gt; PathBuf;
+#[macro_export] macro_rules! vlog;
+// 初始化与写入细节见 voime-log CORE §4 / §5</code></pre>
 
 <h2 id="c5">5. Call stack tree</h2>
 <p><a href="#top">↑</a></p>

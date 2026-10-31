@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — voime-log</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — voime-log</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>crates/voime-log/
+├── Cargo.toml
+└── src/
+    └── <a href="#c4-1">lib.rs</a></code></pre>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>零依赖</td><td>只用 std；不引入日志框架。</td></tr>
+  <tr><td>无 OS API</td><td>只用 <code>std::env</code> / <code>std::fs</code> / <code>std::time</code>；平台差异收敛到默认目录的选择。</td></tr>
+  <tr><td>失败静默</td><td>写日志失败不 panic、不反馈给调用方；日志永远不能拖垮业务。</td></tr>
+  <tr><td>全局单例</td><td>每个进程一个组件、一个日志文件；<code>init</code> 可重复调用，以最后一次为准。</td></tr>
+  <tr><td>宏优先</td><td>调用方一律使用 <code>vlog!</code>；未启用时连 <code>format_args</code> 的求值都省去。</td></tr>
+</table>
+<ul class="note">
+  <li>仓库级依赖方向见 <a href="../../CORE.html#c2">根 CORE §2</a>；环境变量契约见 <a href="USER.html#u4-1">USER §4.1</a>。</li>
+</ul>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<p>无第三方依赖。</p>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>const ROTATE_BYTES: u64;                         // 轮转阈值；推荐值 10 MiB
+static ENABLED: AtomicBool;
+static LOGGER: OnceLock&lt;Mutex&lt;Option&lt;Logger&gt;&gt;&gt;;
+struct Logger { file: File, path: PathBuf, component: String }
+
+pub fn init(component: &amp;str) -&gt; bool;            // true = 已启用
+pub fn enabled() -&gt; bool;
+pub fn log_path() -&gt; Option&lt;PathBuf&gt;;            // 当前组件日志文件路径
+pub fn default_directory() -&gt; PathBuf;           // VOIME_LOG=1 时的目录
+pub fn write(message: fmt::Arguments&lt;'_&gt;);
+
+#[macro_export] macro_rules! vlog;               // enabled() 才格式化并写入
+
+fn render(component: &amp;str, message: fmt::Arguments&lt;'_&gt;) -&gt; String;
+fn resolve_dir(raw: Option&lt;OsString&gt;) -&gt; Option&lt;PathBuf&gt;;
+fn base_state_dir() -&gt; PathBuf;
+fn open_log(dir: &amp;Path, component: &amp;str) -&gt; io::Result&lt;File&gt;;
+fn open_log_at(dir: &amp;Path, component: &amp;str, rotate_at: u64) -&gt; io::Result&lt;File&gt;;  // 测试注入阈值
+fn timestamp() -&gt; String;                        // UTC，USER §2 格式
+fn civil_from_days(days: i64) -&gt; (i64, u32, u32);</code></pre>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 初始化</h3>
+<pre><code>进程 main()
+└── voime_log::init(component)
+    ├── resolve_dir(env::var_os("VOIME_LOG"))
+    │   ├── 判断未设置 / 空 → 禁用返回
+    │   ├── 判断 "1" / "true" / "on" → default_directory()
+    │   │   └── base_state_dir().join("voime").join("logs")
+    │   └── 其他值 → PathBuf::from(值)
+    └── open_log(dir, component)
+        ├── fs::create_dir_all(dir)
+        ├── 判断 metadata(path).len() ≥ ROTATE_BYTES → fs::rename(path, path + ".1")
+        └── OpenOptions append + create → File</code></pre>
+
+<h3 id="c5-2">5.2 写入</h3>
+<pre><code>调用方 vlog!(...)
+├── 判断 enabled()（AtomicBool，未启用即返回）
+└── voime_log::write(format_args!(...))
+    ├── render(component, message) → "时间戳 [组件] 消息\n"
+    ├── File::write_all(line)
+    └── File::flush()</code></pre>
+
+</body>
+</html>

@@ -36,7 +36,7 @@
   </tr>
   <tr>
     <td>哪些部分放在同一个 Cargo workspace？</td>
-    <td><code>voime-core</code>、<code>voime-ipc</code>、<code>voime-transport</code>、<code>voimed</code>、<code>voime</code>。这五个 crate 同时服务 Linux 与 Windows。</td>
+    <td><code>voime-core</code>、<code>voime-ipc</code>、<code>voime-log</code>、<code>voime-transport</code>、<code>voimed</code>、<code>voime</code>。这六个 crate 同时服务 Linux 与 Windows。</td>
   </tr>
   <tr>
     <td>Windows 前端放哪里？</td>
@@ -113,6 +113,7 @@
 ├── crates/
 │   ├── voime-core/            # 平台无关：音频、VAD、CTC、标点、pipeline、模型
 │   ├── voime-ipc/             # 消息、JSON lines、编解码；不含 OS API
+│   ├── voime-log/             # 零依赖运行日志；VOIME_LOG 启用
 │   ├── voime-transport/       # Endpoint / Listener / Stream 契约 + Unix/Windows 实现
 │   ├── voimed/                # daemon；只依赖 transport 契约
 │   └── voime/                 # CLI / TUI / ctl / doctor
@@ -145,6 +146,7 @@
   <tr><th>路径</th><th>职责</th><th>平台</th></tr>
   <tr><td><code>crates/voime-core</code></td><td>16 kHz 单声道音频、重采样、VAD、CTC、标点、分段、pipeline、模型校验。</td><td>Linux / Windows</td></tr>
   <tr><td><code>crates/voime-ipc</code></td><td>消息类型、JSON lines、<code>MAX_MESSAGE_BYTES</code>、协议版本；不包含 socket / pipe。</td><td>Linux / Windows</td></tr>
+  <tr><td><code>crates/voime-log</code></td><td><code>VOIME_LOG</code> 启用的追加式运行日志；零第三方依赖。</td><td>Linux / Windows</td></tr>
   <tr><td><code>crates/voime-transport</code></td><td><code>Endpoint</code>、<code>Listener</code>、<code>Stream</code> 契约；Unix socket 与 Windows named pipe 适配器。</td><td>Linux / Windows</td></tr>
   <tr><td><code>crates/voimed</code></td><td>daemon 状态机、会话、背压、IPC 服务；不直接 import OS socket。</td><td>Linux / Windows</td></tr>
   <tr><td><code>crates/voime</code></td><td>CLI、TUI、<code>ctl</code>、<code>doctor</code>；doctor 的平台检查放子模块。</td><td>Linux / Windows</td></tr>
@@ -305,6 +307,7 @@ Unix / named pipe 的平台差异与安全细节见
   <tr><th>组件</th><th>Linux</th><th>Windows</th><th>构建根</th><th>产物</th></tr>
   <tr><td><code>voime-core</code></td><td>是</td><td>是</td><td>根 Cargo workspace</td><td>库</td></tr>
   <tr><td><code>voime-ipc</code></td><td>是</td><td>是</td><td>根 Cargo workspace</td><td>库</td></tr>
+  <tr><td><code>voime-log</code></td><td>是</td><td>是</td><td>根 Cargo workspace</td><td>库</td></tr>
   <tr><td><code>voime-transport</code></td><td>Unix 后端</td><td>named pipe 后端</td><td>根 Cargo workspace</td><td>库</td></tr>
   <tr><td><code>voimed</code></td><td>是</td><td>是</td><td>根 Cargo workspace</td><td><code>voimed</code> / <code>voimed.exe</code></td></tr>
   <tr><td><code>voime</code></td><td>是</td><td>是</td><td>根 Cargo workspace</td><td><code>voime</code> / <code>voime.exe</code></td></tr>
@@ -319,6 +322,7 @@ Unix / named pipe 的平台差异与安全细节见
   <tr><th>crate</th><th>允许的 cfg</th><th>禁止</th></tr>
   <tr><td><code>voime-core</code></td><td>无 OS cfg；仅测试/调试 cfg</td><td><code>cfg(windows)</code>、Fcitx、socket、路径</td></tr>
   <tr><td><code>voime-ipc</code></td><td>无 OS cfg</td><td>任何平台 API</td></tr>
+  <tr><td><code>voime-log</code></td><td>仅默认目录选择（<code>cfg(windows)</code>）</td><td>业务逻辑、协议、传输</td></tr>
   <tr><td><code>voime-transport</code></td><td><code>cfg(unix)</code> / <code>cfg(windows)</code></td><td>业务逻辑、模型、协议消息</td></tr>
   <tr><td><code>voimed</code></td><td>仅日志/诊断等非核心分支</td><td>直接 import <code>std::os::unix</code> / Win32</td></tr>
   <tr><td><code>voime</code></td><td><code>doctor</code> 的平台检查、配置目录</td><td>热键/目标/提交逻辑</td></tr>
@@ -336,6 +340,7 @@ Unix / named pipe 的平台差异与安全细节见
 members = [
     "crates/voime-core",
     "crates/voime-ipc",
+    "crates/voime-log",
     "crates/voime-transport",
     "crates/voimed",
     "crates/voime",

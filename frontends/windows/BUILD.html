@@ -90,6 +90,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\uninstall.ps1 -Remove
   <tr><td>安装</td><td>每用户安装到 <code>%LOCALAPPDATA%\Programs\Voime</code>；不要求管理员，除非启用 TSF 注册。</td></tr>
   <tr><td>登录启动</td><td>写入 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>；登录后启动托盘；托盘负责拉起 daemon。</td></tr>
   <tr><td>模型</td><td><code>%LOCALAPPDATA%\voime\models</code>；由 <code>scripts/install_models.ps1</code> 生成。</td></tr>
+  <tr><td>日志</td><td>启动托盘前设 <code>VOIME_LOG=1</code>（或目录路径）；托盘与 daemon 分别写 <code>%LOCALAPPDATA%\voime\logs\voime-tray.log</code> / <code>voimed.log</code>。</td></tr>
   <tr><td>TSF 注册</td><td>可选 P4；COM / TSF profile 注册通常需要管理员，按用户启用。</td></tr>
   <tr><td>卸载</td><td>停止托盘与 daemon；删除安装目录与登录启动项；<code>-RemoveSettings</code> / <code>-RemoveModels</code> 按需删除配置与模型。</td></tr>
 </table>

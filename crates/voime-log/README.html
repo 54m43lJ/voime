@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>README — voime-log</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>README — voime-log</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<h2 id="r1">1. WHAT &amp; WHY</h2>
+<p><a href="#top">↑</a></p>
+
+<p><strong>IDEAL：</strong>voimed 与 Windows 托盘都以无控制台方式运行，进程内出现状态异常（会话不结束、
+浮层滞留、启动即退出）时没有任何现场可查；引入日志框架又远超需求。</p>
+
+<p><strong>GOAL：</strong>一个零依赖、按需启用的轻量运行日志。设 <code>VOIME_LOG</code> 即写文件，
+不设即完全静默；识别文本等隐私内容只记长度、不记内容。</p>
+
+<table>
+  <tr><th>非目标</th><th>说明</th></tr>
+  <tr><td>日志等级 / 过滤</td><td>状态追踪日志量很小，无需分级。</td></tr>
+  <tr><td>多进程共享一个文件</td><td>每个组件写自己的 <code>{component}.log</code>，避免跨进程争用。</td></tr>
+</table>
+
+<h2 id="r2">2. User interactions</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>入口</th><th>结果</th><td>详见</td></tr>
+  <tr><td>设置环境变量 <code>VOIME_LOG</code> 后启动 daemon / 托盘</td><td>各组件在日志目录写追加式文本日志。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
+  <tr><td><code>voime doctor</code></td><td>报告日志是否启用及文件位置。</td><td><a href="../voime/USER.html#u4-4">voime USER §4.4</a></td></tr>
+</table>
+
+<h2 id="r3">3. Credits</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>用途</th><th>形式 · 许可</th></tr>
+  <tr><td>Howard Hinnant 的 <code>civil_from_days</code> 算法</td><td>UTC 日期换算</td><td>算法 · 公有领域表述</td></tr>
+</table>
+
+</body>
+</html>

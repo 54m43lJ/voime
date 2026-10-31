@@ -23,6 +23,7 @@ use voime_ipc::{
     PROTOCOL_VERSION,
 };
 use windows::core::{w, PCWSTR};
+use voime_log::vlog;
 use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Threading::{CreateMutexW, Sleep, CREATE_NO_WINDOW};
@@ -51,6 +52,8 @@ fn main() -> windows::core::Result<()> {
     }
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--settings") {
+        let _ = voime_log::init("voime-settings");
+        vlog!("设置进程启动");
         let focus_hotkey = args.iter().any(|arg| arg == "--focus-hotkey");
         let status = args
             .iter()
@@ -69,11 +72,14 @@ fn main() -> windows::core::Result<()> {
         }
         return Ok(());
     }
+    let _ = voime_log::init("voime-tray");
     if !ensure_single_instance() {
+        vlog!("已有托盘实例，激活既有窗口后退出");
         tray::activate_existing();
         return Ok(());
     }
     let config = config::load().map_err(to_windows)?;
+    vlog!("托盘启动 mode={:?} hotkey={}", config.mode.as_str(), config.hotkey);
     run(Frontend::new(config)).map_err(to_windows)
 }
 
@@ -98,7 +104,7 @@ fn run(mut frontend: Frontend) -> Result<()> {
     let mut tray = Tray::create(&mut frontend)?;
     frontend.attach_window(tray.hwnd());
     if let Err(error) = config::set_start_at_login(frontend.config.start_at_login) {
-        eprintln!("voime-tray: {error:#}");
+        vlog!("设置登录启动失败：{error:#}");
     }
     frontend.overlay = Overlay::create().ok();
     if let Some(overlay) = frontend.overlay.as_mut() {
@@ -127,6 +133,7 @@ fn run(mut frontend: Frontend) -> Result<()> {
         }
     }
     frontend.shutdown();
+    vlog!("托盘退出");
     Ok(())
 }
 
@@ -232,7 +239,7 @@ impl Frontend {
         let now = Instant::now();
         if self.ipc.is_none() && now >= self.next_connect {
             if let Err(error) = self.try_connect() {
-                eprintln!("voime-tray: {error:#}");
+                vlog!("连接 daemon 失败：{error:#}");
                 self.next_connect = now + RECONNECT_INTERVAL;
                 let start_daemon = self.daemon.is_none()
                     && self
@@ -264,6 +271,7 @@ impl Frontend {
             && !self.config.hotkey.is_empty()
             && !hotkey_down
         {
+            vlog!("PTT 松开，结束语音段");
             self.stop_segment(TriggerSource::Hold);
         }
         self.hotkey_down = hotkey_down;
@@ -285,6 +293,7 @@ impl Frontend {
             return;
         };
         if daemon.has_exited() {
+            vlog!("daemon 子进程已退出");
             self.daemon = None;
             self.on_disconnect();
         }
@@ -302,8 +311,9 @@ impl Frontend {
         self.ipc = Some(client);
         self.status = FrontendStatus::Connected;
         self.next_connect = Instant::now();
+        vlog!("已连接 daemon");
         if let Err(error) = self.sync_hotkey() {
-            eprintln!("voime-tray: {error:#}");
+            vlog!("注册热键失败：{error:#}");
             self.status = FrontendStatus::Error;
         }
         self.on_message(snapshot);
@@ -354,6 +364,7 @@ impl Frontend {
                     .as_ref()
                     .is_some_and(|target| target.segment_id == segment_id)
                 {
+                    vlog!("Partial seg={segment_id} chars={}", text.len());
                     if let (Some(overlay), Some(target)) =
                         (self.overlay.as_mut(), self.target.as_ref())
                     {
@@ -363,9 +374,11 @@ impl Frontend {
             }
             ServerMessage::Final { segment_id, text } => {
                 let Some(target) = self.target.clone() else {
+                    vlog!("Final seg={segment_id} 无目标，忽略");
                     return;
                 };
                 if target.segment_id != segment_id {
+                    vlog!("Final seg={segment_id} 与目标段 {:?} 不匹配", target.segment_id);
                     if self.config.mode == Mode::Toggle && !self.toggle_active {
                         self.target = None;
                         if let Some(overlay) = self.overlay.as_mut() {
@@ -380,7 +393,7 @@ impl Frontend {
                 self.finalizing = false;
                 self.ptt_active = false;
                 if !target::focused(&target) {
-                    eprintln!("voime-tray: 目标已失效，未提交 segment {segment_id}");
+                    vlog!("目标已失效，未提交 segment {segment_id}");
                     self.on_target_lost();
                     return;
                 }
@@ -396,8 +409,9 @@ impl Frontend {
                     }
                 }
                 if !text.is_empty() {
+                    vlog!("提交文本 seg={segment_id} chars={}", text.len());
                     if let Err(error) = commit(&target, &text) {
-                        eprintln!("voime-tray: 提交失败（segment {segment_id}）：{error:#}");
+                        vlog!("提交失败（segment {segment_id}）：{error:#}");
                     }
                 }
             }
@@ -405,19 +419,19 @@ impl Frontend {
                 ErrorCode::VersionMismatch
                 | ErrorCode::RoleConflict
                 | ErrorCode::DaemonUnavailable => {
-                    eprintln!("voime-tray: daemon 拒绝连接（{code:?}）：{message}");
+                    vlog!("daemon 拒绝连接（{code:?}）：{message}");
                     self.on_disconnect();
                 }
                 ErrorCode::Busy | ErrorCode::NoInputContext | ErrorCode::Unavailable => {
-                    eprintln!("voime-tray: daemon 错误（{code:?}）：{message}");
+                    vlog!("daemon 错误（{code:?}）：{message}");
                     self.toggle_active = false;
                     self.clear_segment();
                 }
                 ErrorCode::Inference => {
-                    eprintln!("voime-tray: daemon 错误（{code:?}）：{message}");
+                    vlog!("daemon 错误（{code:?}）：{message}");
                     self.clear_segment();
                 }
-                _ => eprintln!("voime-tray: daemon 错误（{code:?}）：{message}"),
+                _ => vlog!("daemon 错误（{code:?}）：{message}"),
             },
             ServerMessage::Bye => self.on_disconnect(),
             ServerMessage::HistoryCleared | ServerMessage::Status { .. } => {}
@@ -479,6 +493,12 @@ impl Frontend {
             return;
         }
         self.hotkey_down = true;
+        vlog!(
+            "热键触发 mode={:?} recording={} toggle_active={}",
+            self.config.mode.as_str(),
+            self.recording,
+            self.toggle_active
+        );
         match self.config.mode {
             Mode::Continuous => {}
             Mode::Ptt => {
@@ -504,7 +524,7 @@ impl Frontend {
 
     fn start_segment(&mut self, source: TriggerSource) {
         let Ok(mut target) = target::capture() else {
-            eprintln!("voime-tray: 没有可用的前台输入目标");
+            vlog!("没有可用的前台输入目标，放弃启动");
             return;
         };
         target.segment_id = 0;
@@ -519,6 +539,7 @@ impl Frontend {
         self.finalizing = false;
         self.ptt_active = source == TriggerSource::Hold;
         self.current_segment = None;
+        vlog!("请求开始语音段 source={source:?}");
         if source == TriggerSource::Toggle {
             if let (Some(overlay), Some(target)) = (self.overlay.as_mut(), self.target.as_ref()) {
                 overlay.show_empty(target);
@@ -532,6 +553,7 @@ impl Frontend {
         }
         let segment_id = self.current_segment.unwrap_or(0);
         let active = self.recording || self.current_segment.is_some();
+        vlog!("请求结束语音段 source={source:?} seg={segment_id}");
         if self.send(&ClientMessage::Stop { segment_id, source }) {
             self.recording = false;
             self.finalizing = active;
@@ -552,6 +574,12 @@ impl Frontend {
     }
 
     fn on_target_lost(&mut self) {
+        vlog!(
+            "目标失效 mode={:?} toggle_active={} recording={}",
+            self.config.mode.as_str(),
+            self.toggle_active,
+            self.recording
+        );
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.hide();
         }
@@ -573,6 +601,7 @@ impl Frontend {
     }
 
     fn on_disconnect(&mut self) {
+        vlog!("与 daemon 断开");
         self.ipc.take();
         if let Some(handle) = self.hotkey.take() {
             hotkey::unregister(handle);
@@ -674,6 +703,7 @@ impl Frontend {
     pub fn open_settings(&mut self, focus_hotkey: bool) {
         self.poll_settings();
         if self.settings_running() {
+            vlog!("设置进程已在运行，激活其窗口");
             if let Ok(hwnd) = unsafe { FindWindowW(PCWSTR::null(), w!("Voime 设置")) } {
                 unsafe {
                     let _ = SetForegroundWindow(hwnd);
@@ -689,6 +719,7 @@ impl Frontend {
         let executable = match std::env::current_exe() {
             Ok(executable) => executable,
             Err(error) => {
+                vlog!("读取设置进程路径失败：{error:#}");
                 self.hotkey_suspended = false;
                 let _ = self.sync_hotkey();
                 settings::show_error(&error.into());
@@ -704,8 +735,12 @@ impl Frontend {
             command.arg("--focus-hotkey");
         }
         match command.spawn() {
-            Ok(child) => self.settings_child = Some(child),
+            Ok(child) => {
+                vlog!("设置进程已启动");
+                self.settings_child = Some(child);
+            }
             Err(error) => {
+                vlog!("启动设置进程失败：{error:#}");
                 self.hotkey_suspended = false;
                 let _ = self.sync_hotkey();
                 settings::show_error(&error.into());
@@ -724,7 +759,7 @@ impl Frontend {
                 false
             }
             Err(error) => {
-                eprintln!("voime-tray: 检查设置进程失败：{error}");
+                vlog!("检查设置进程失败：{error}");
                 true
             }
         }
@@ -737,6 +772,7 @@ impl Frontend {
         if self.settings_running() {
             return;
         }
+        vlog!("设置进程退出，重载配置");
         self.hotkey_suspended = false;
         match config::load() {
             Ok(config) => {
@@ -787,14 +823,16 @@ impl Frontend {
             return;
         }
         self.daemon_started = Some(Instant::now());
+        vlog!("启动 daemon 子进程");
         control::stop_existing();
         match control::Daemon::start() {
             Ok(daemon) => self.daemon = Some(daemon),
-            Err(error) => eprintln!("voime-tray: {error:#}"),
+            Err(error) => vlog!("启动 daemon 失败：{error:#}"),
         }
     }
 
     pub fn shutdown(&mut self) {
+        vlog!("托盘关闭流程开始");
         self.on_disconnect();
         if let Some(mut daemon) = self.daemon.take() {
             daemon.stop();

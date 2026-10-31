@@ -2205,6 +2205,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "voime-log"
+version = "0.1.0"
+
+[[package]]
 name = "voime-transport"
 version = "0.1.0"
 dependencies = [
@@ -2222,6 +2226,7 @@ dependencies = [
  "serde",
  "serde_json",
  "voime-ipc",
+ "voime-log",
  "voime-transport",
  "windows",
  "winit",

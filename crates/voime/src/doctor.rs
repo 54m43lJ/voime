@@ -13,11 +13,34 @@ pub fn run(endpoint: &Endpoint) -> bool {
     let snapshot = check_daemon(endpoint, &mut ok);
     check_model(&mut ok);
     check_audio(&mut ok);
+    check_log();
     #[cfg(unix)]
     check_fcitx(snapshot.as_ref(), &mut ok);
     #[cfg(windows)]
     check_windows(snapshot.as_ref(), &mut ok);
     ok
+}
+
+fn check_log() {
+    println!("log:");
+    if voime_log::enabled() {
+        if let Some(path) = voime_log::log_path() {
+            println!("  OK   已启用 {}", path.display());
+        }
+    } else if std::env::var_os("VOIME_LOG")
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+    {
+        println!(
+            "  OK   VOIME_LOG 已设置，daemon 与托盘将写入 {}",
+            voime_log::default_directory().display()
+        );
+    } else {
+        println!(
+            "  WARN 未启用（设 VOIME_LOG=1 开启，默认 {}）",
+            voime_log::default_directory().display()
+        );
+    }
 }
 
 #[cfg(unix)]

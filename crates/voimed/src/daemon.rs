@@ -7,6 +7,7 @@ use voime_core::pipeline::{Pipeline, PipelineEvent};
 use voime_ipc::{
     ClientMessage, ErrorCode, FrontendState, Mode, Phase, Role, ServerMessage, TriggerSource,
 };
+use voime_log::vlog;
 
 use crate::ipc_server::{IpcServer, ServerEvent};
 use crate::state::State;
@@ -45,6 +46,7 @@ impl Daemon {
     }
 
     pub fn run(mut self) -> anyhow::Result<()> {
+        vlog!("daemon 主循环启动");
         while !self.shutdown {
             crossbeam_channel::select! {
                 recv(self.ipc.events()) -> message => match message {
@@ -62,10 +64,12 @@ impl Daemon {
             }
         }
 
+        vlog!("daemon 开始退出 fatal={:?}", self.fatal.is_some());
         self.ipc.broadcast(&ServerMessage::Bye);
         self.ipc.shutdown();
         let pipeline_result = self.pipeline.shutdown();
         self.audio.stop();
+        vlog!("daemon 退出完成 pipeline_ok={}", pipeline_result.is_ok());
         match self.fatal.take() {
             Some(error) => Err(error),
             None => pipeline_result.context("停止 pipeline 失败"),
@@ -75,10 +79,11 @@ impl Daemon {
     fn on_server_event(&mut self, event: ServerEvent) {
         match event {
             ServerEvent::Connected { client_id } => {
-                let _ = client_id;
+                vlog!("连接建立 id={client_id}");
             }
             ServerEvent::Message { client_id, message } => self.on_client(client_id, message),
             ServerEvent::BadMessage { client_id, message } => {
+                vlog!("坏消息 id={client_id}：{message}");
                 self.ipc.send_to(
                     client_id,
                     &ServerMessage::Error {
@@ -88,7 +93,7 @@ impl Daemon {
                 );
             }
             ServerEvent::Disconnected { client_id, role } => {
-                let _ = client_id;
+                vlog!("客户端断开 id={client_id} role={role:?}");
                 if role == Some(Role::Frontend) {
                     self.state.addon = FrontendState::Disconnected;
                     self.session_active = false;
@@ -112,6 +117,7 @@ impl Daemon {
                 version,
                 config,
             } => {
+                vlog!("Hello id={client_id} role={role:?} version={version}");
                 if version != voime_ipc::PROTOCOL_VERSION {
                     self.ipc.send_to(
                         client_id,
@@ -128,6 +134,7 @@ impl Daemon {
                     return;
                 }
                 if !self.ipc.set_role(client_id, role) {
+                    vlog!("角色冲突，断开 id={client_id}");
                     self.ipc.send_to(
                         client_id,
                         &ServerMessage::Error {
@@ -158,6 +165,7 @@ impl Daemon {
                 }
             }
             ClientMessage::Configure { mode, hotkey } => {
+                vlog!("Configure mode={mode:?} hotkey={hotkey}");
                 if self.ipc.role(client_id) != Some(Role::Frontend) {
                     self.send_error(client_id, ErrorCode::InvalidMessage, "只有前端可以配置");
                     return;
@@ -174,6 +182,7 @@ impl Daemon {
                     }
                 } else {
                     self.pending_mode = Some(mode);
+                    vlog!("会话进行中，挂起模式 {}", mode.as_str());
                 }
                 if let Err(error) = self.sync_audio_result() {
                     self.send_error(
@@ -227,11 +236,16 @@ impl Daemon {
 
     fn request_start(&mut self, client_id: u64, segment_id: u64, source: TriggerSource) {
         if self.state.phase != Phase::Idle {
+            vlog!(
+                "Start 拒绝（Busy）id={client_id} phase={:?}",
+                self.state.phase
+            );
             self.send_error(client_id, ErrorCode::Busy, "已有语音段");
             return;
         }
         self.session_active = false;
         if let Err(error) = self.audio.play() {
+            vlog!("Start 打开录音设备失败：{error:#}");
             self.send_error(
                 client_id,
                 ErrorCode::Internal,
@@ -246,6 +260,7 @@ impl Daemon {
         self.state.phase = Phase::Recording;
         self.state.partial = None;
         if let Err(error) = self.pipeline.start_segment() {
+            vlog!("Start 失败：{error:#}");
             self.current_segment = None;
             self.state.phase = Phase::Idle;
             self.sync_audio();
@@ -253,6 +268,7 @@ impl Daemon {
             return;
         }
         self.session_active = true;
+        vlog!("语音段开始 id={id} source={source:?}");
         self.ipc.broadcast(&ServerMessage::SegmentStarted {
             segment_id: id,
             source,
@@ -264,6 +280,10 @@ impl Daemon {
         if self.state.phase != Phase::Recording {
             // Toggle may stop between a Final and the continuation
             // SegmentStarted; remember it for the next Recording(true).
+            vlog!(
+                "Stop 落在 phase={:?}，pending_stop 锁存 id={client_id}",
+                self.state.phase
+            );
             if self.state.mode == Some(Mode::Toggle) {
                 self.pending_stop = true;
             }
@@ -277,13 +297,16 @@ impl Daemon {
             return;
         };
         if segment_id != 0 && segment_id != current && self.state.mode != Some(Mode::Toggle) {
+            vlog!("Stop 段不匹配 id={client_id} {segment_id} ≠ {current}");
             self.send_error(client_id, ErrorCode::Busy, "segment_id 不匹配");
             return;
         }
         if self.effective_mode() != Mode::Continuous {
             self.session_active = false;
         }
+        vlog!("Stop seg={current} source 段收尾");
         if let Err(error) = self.pipeline.finish_segment() {
+            vlog!("Stop 发送失败：{error:#}");
             self.send_error(client_id, ErrorCode::Internal, &format!("{error:#}"));
         }
         self.sync_audio();
@@ -292,9 +315,11 @@ impl Daemon {
     fn on_pipeline(&mut self, event: PipelineEvent) {
         match event {
             PipelineEvent::Recording(true) => {
+                vlog!("pipeline Recording(true)");
                 if self.current_segment.is_none() {
                     let id = self.allocate_segment();
                     self.current_segment = Some(id);
+                    vlog!("续段开始 id={id}");
                     self.ipc.broadcast(&ServerMessage::SegmentStarted {
                         segment_id: id,
                         source: continuation_source(self.state.mode),
@@ -305,21 +330,25 @@ impl Daemon {
                 self.broadcast_state();
                 if self.pending_stop {
                     self.pending_stop = false;
+                    vlog!("pending_stop 命中，立即结束续段");
                     let _ = self.pipeline.finish_segment();
                 }
             }
             PipelineEvent::Recording(false) => {
+                vlog!("pipeline Recording(false)");
                 self.state.phase = Phase::Finalizing;
                 self.broadcast_state();
             }
             PipelineEvent::Partial(text) => {
                 if let Some(segment_id) = self.current_segment {
+                    vlog!("Partial seg={segment_id} chars={}", text.len());
                     self.state.partial = Some(text.clone());
                     self.ipc
                         .broadcast(&ServerMessage::Partial { segment_id, text });
                 }
             }
             PipelineEvent::Final(text) => {
+                vlog!("Final chars={}", text.len());
                 self.state.transcript.push(text.clone());
                 self.state.partial = None;
                 self.state.phase = Phase::Idle;
@@ -331,6 +360,7 @@ impl Daemon {
                 self.apply_pending_mode();
             }
             PipelineEvent::SegmentDropped { reason } => {
+                vlog!("语音段丢弃：{reason}");
                 self.state.partial = None;
                 self.state.phase = Phase::Idle;
                 self.current_segment = None;
@@ -342,6 +372,7 @@ impl Daemon {
                 self.apply_pending_mode();
             }
             PipelineEvent::Fatal(error) => {
+                vlog!("pipeline 致命错误：{error}");
                 eprintln!("voimed: pipeline 致命错误：{error}");
                 self.fatal = Some(anyhow::anyhow!(error));
                 self.shutdown = true;
@@ -375,6 +406,7 @@ impl Daemon {
     fn apply_pending_mode(&mut self) {
         if let Some(mode) = self.pending_mode.take() {
             self.session_active = false;
+            vlog!("应用挂起模式 {}", mode.as_str());
             let _ = self
                 .pipeline
                 .set_mode(if self.state.addon == FrontendState::Connected {
@@ -400,6 +432,7 @@ impl Daemon {
 
     fn sync_audio(&mut self) {
         if let Err(error) = self.sync_audio_result() {
+            vlog!("切换录音流状态失败：{error:#}");
             eprintln!("voimed: 切换录音流状态失败：{error:#}");
         }
     }

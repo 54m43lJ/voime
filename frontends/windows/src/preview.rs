@@ -29,6 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::target::Target;
+use voime_log::vlog;
 
 const PADDING: i32 = 12;
 const CORNER_RADIUS: i32 = 12;
@@ -95,6 +96,7 @@ impl Overlay {
         if !self.enabled || text.is_empty() {
             return;
         }
+        vlog!("浮层显示 chars={}", text.len());
         self.show_text(text, target);
     }
 
@@ -102,6 +104,7 @@ impl Overlay {
         if !self.enabled {
             return;
         }
+        vlog!("浮层显示空白预览");
         self.show_text("", target);
     }
 
@@ -152,12 +155,14 @@ impl Overlay {
     }
 
     pub fn hide(&mut self) {
+        vlog!("浮层隐藏");
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
         }
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
+        vlog!("浮层 {}", if enabled { "启用" } else { "禁用" });
         self.enabled = enabled;
         if !enabled {
             self.hide();

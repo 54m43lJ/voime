@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BUILD — voime-log</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>BUILD — voime-log</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+</p>
+
+<h2 id="b1">1. 环境</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项</th><th>要求</th></tr>
+  <tr><td>工具链</td><td>仓库 <code>rust-toolchain.toml</code> 指定的 stable；无平台专有依赖。</td></tr>
+  <tr><td>第三方依赖</td><td>无。</td></tr>
+</table>
+
+<h2 id="b2">2. 构建与测试</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code># 根 workspace 内
+cargo build -p voime-log
+cargo test -p voime-log</code></pre>
+<ul class="note">
+  <li>本 crate 不单独发布；由 <code>voimed</code>、<code>voime</code>（doctor）与 <code>frontends/windows</code> 以路径依赖消费。</li>
+  <li>集成启用方式见 <a href="USER.html#u4-1">USER §4.1</a>：给进程设 <code>VOIME_LOG=1</code> 或目录路径。</li>
+</ul>
+
+</body>
+</html>

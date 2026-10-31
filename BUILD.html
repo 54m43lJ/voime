@@ -43,9 +43,9 @@
 <h2 id="b2">2. 构建根与命令</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code># 根 Cargo workspace：core / ipc / transport / daemon / cli
+<pre><code># 根 Cargo workspace：core / ipc / log / transport / daemon / cli
 cargo build --release -p voimed -p voime
-cargo test -p voime-core -p voime-ipc -p voime-transport -p voimed -p voime
+cargo test -p voime-core -p voime-ipc -p voime-log -p voime-transport -p voimed -p voime
 
 # Linux 前端（frontends/fcitx）
 cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr
@@ -66,6 +66,7 @@ cmake --build build/tsf-x86 --config Release</code></pre>
   <tr><td>根 Cargo workspace</td><td><code>voimed</code> / <code>voime</code></td><td><a href="crates/voimed/BUILD.html">voimed BUILD</a> · <a href="crates/voime/BUILD.html">voime BUILD</a></td></tr>
   <tr><td><code>voime-core</code></td><td>库</td><td><a href="crates/voime-core/BUILD.html">voime-core BUILD</a></td></tr>
   <tr><td><code>voime-ipc</code></td><td>库</td><td><a href="crates/voime-ipc/BUILD.html">voime-ipc BUILD</a></td></tr>
+  <tr><td><code>voime-log</code></td><td>库</td><td><a href="crates/voime-log/BUILD.html">voime-log BUILD</a></td></tr>
   <tr><td><code>voime-transport</code></td><td>库</td><td><a href="crates/voime-transport/BUILD.html">voime-transport BUILD</a></td></tr>
   <tr><td>Linux CMake</td><td><code>voime.so</code> + addon 描述文件</td><td><a href="frontends/fcitx/BUILD.html">fcitx-addon BUILD</a></td></tr>
   <tr><td>Windows Cargo workspace</td><td><code>voime-tray.exe</code></td><td><a href="frontends/windows/BUILD.html">windows BUILD</a></td></tr>

@@ -198,11 +198,9 @@ pub mod segmenter;</code></pre>
 
 pub struct VadConfig {
     pub speech_threshold: f32,
-    pub min_speech_ms: u32,
-    pub min_silence_ms: u32,
     pub fbank: FbankConfig,
 }
-impl Default for VadConfig { /* 0.5 / 80 ms / 200 ms / 默认 fbank */ }
+impl Default for VadConfig { /* 0.5 / 默认 fbank */ }
 
 pub struct VadFrame {
     pub speech_prob: f32,
@@ -217,8 +215,6 @@ impl FireRedVad {
     pub fn push(&amp;mut self, samples_16k: &amp;[f32])
         -&gt; anyhow::Result&lt;Vec&lt;VadFrame&gt;&gt;;
     pub fn reset(&amp;mut self);
-    pub fn min_speech_ms(&amp;self) -&gt; u32;
-    pub fn min_silence_ms(&amp;self) -&gt; u32;
 }
 
 fn zero_state(spec: &amp;TensorSpec) -&gt; anyhow::Result&lt;StateTensor&gt;;
@@ -310,8 +306,6 @@ fn fbank_options(config: FbankConfig) -&gt; FbankOptions;</code></pre>
 pub struct FireRedCtc { /* session + tokenizer + CMVN + tensor names */ }
 
 impl FireRedCtc {
-    pub fn new(model: &amp;Path, tokens: &amp;Path, threads: usize)
-        -&gt; anyhow::Result&lt;Self&gt;;
     pub fn new_with_factory(artifact: &amp;CtcArtifact,
                             factory: &amp;SessionFactory)
         -&gt; anyhow::Result&lt;Self&gt;;
@@ -321,9 +315,7 @@ impl FireRedCtc {
 
 pub fn greedy_decode(log_probs: &amp;[f32], frames: usize, vocab: usize) -&gt; Vec&lt;usize&gt;;
 pub fn parse_cmvn(text: &amp;str) -&gt; anyhow::Result&lt;Vec&lt;f32&gt;&gt;;
-fn read_cmvn(session: &amp;Session) -&gt; anyhow::Result&lt;(Vec&lt;f32&gt;, Vec&lt;f32&gt;)&gt;;
-fn find_inputs_from_session(session: &amp;Session) -&gt; anyhow::Result&lt;(String, String)&gt;;
-fn find_outputs_from_session(session: &amp;Session) -&gt; anyhow::Result&lt;(String, String)&gt;;</code></pre>
+fn read_cmvn(session: &amp;Session) -&gt; anyhow::Result&lt;(Vec&lt;f32&gt;, Vec&lt;f32&gt;)&gt;;</code></pre>
 <ul class="note">
   <li><code>transcribe</code> 校验 CMVN 维度与 fbank bin 数，执行 CMVN、推理、greedy 解码与词表还原。</li>
   <li><code>parse_cmvn</code> 接受 JSON 数组或空白 / 逗号 / 分号分隔的浮点串。</li>
@@ -353,8 +345,6 @@ impl Default for PuncConfig { /* MAX_TOKENS */ }
 pub struct FireRedPunc { /* session + tokenizer + labels */ }
 
 impl FireRedPunc {
-    pub fn new(model: &amp;Path, vocab: &amp;Path, labels: &amp;Path, threads: usize)
-        -&gt; anyhow::Result&lt;Self&gt;;
     pub fn new_with_factory(artifact: &amp;PuncArtifact,
                             factory: &amp;SessionFactory,
                             config: PuncConfig)

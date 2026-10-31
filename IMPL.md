@@ -595,3 +595,48 @@ Toggle 会话在 daemon 中跨多个 VAD 语音段；原 Windows 前端在每段
 |---|---|---|---|
 | `packaging/windows/install.ps1` | 构建前、复制前 | 改 | 增加进程等待与复制重试。 |
 | `packaging/windows/uninstall.ps1` | 卸载 | 改 | 增加进程等待与目录删除重试。 |
+
+## 5. 死代码清理、文档同步与运行日志
+
+### 5.1 无调用面 API 清理
+
+**问题描述**
+多轮实现迭代积累了从未被调用的 API 与重复机制：`FireRedVad` 的 `min_speech_ms` / `min_silence_ms` 配置与访问器（真实值由 `segmenter.rs` 常量持有）、`FireRedCtc::new` / `FireRedPunc::new`（管线只用 `*_with_factory`）、`IpcServer` 的 `try_event` / `client_count` / `endpoint`、`target::same`（仅自身测试引用）、`Frontend` 的 `let _ = frontend` 参数等。
+
+**解决方法**
+- 删除上述 API 及其专属 helper 与结构体字段；`IpcServer` 移除只被 `endpoint()` 读取的 `endpoint` 字段。
+- 配置保存去掉 `exists()+remove_file` 前置删除：`std::fs::rename` 在 Windows 使用 `MOVEFILE_REPLACE_EXISTING`，直接覆盖，替换回归单步原子操作。
+- `Config::save` 收敛为 `save(&self)`；删除前端 `ipc::dispatch` 透传包装，改为直接调用 `frontend.on_message`。
+- 热键的 `named()` 解析表与 `key_name()` 显示表合并为单一 `NAMED_KEYS` 常量表（键码、显示名、解析别名），新增全表键码唯一性与解析/显示往返的单元测试。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voime-core/CORE.html` | §4.8 vad/firered.rs；§4.12；§4.15 | 改 | 删除 `min_speech_ms` / `min_silence_ms` 与两个 `new` 构造器及 `find_*_from_session`。 |
+| `crates/voimed/CORE.html` | §4.6 ipc_server.rs | 改 | 删除 `try_event` / `client_count` / `endpoint` 与 `endpoint` 字段。 |
+| `frontends/windows/CORE.html` | §4.2；§4.3；§4.4 | 改 | `save(&self)` 与 rename 覆盖说明；删除 `dispatch`；补 `NAMED_KEYS` 单表说明。 |
+
+### 5.2 运行日志 `voime-log`
+
+**问题描述**
+daemon 与托盘都以无控制台方式运行，`eprintln!` 不可见；出现“浮层滞留、会话不结束、启动即退出”一类状态异常时没有现场可查。需要一种可常驻、默认零开销的取证手段。
+
+**解决方法**
+- 新增 `crates/voime-log`：零第三方依赖。`VOIME_LOG` 未设置时完全静默；`1|true|on` 写默认目录（Windows `%LOCALAPPDATA%\voime\logs`，Unix `$XDG_STATE_HOME/voime/logs`）；其他非空值为目录路径。
+- 每组件一个追加文件（`voimed.log` / `voime-tray.log` / `voime-settings.log`），行格式 `UTC时间戳 [组件] 消息`；超过 10 MiB 启动时轮转为 `.log.1`。
+- daemon 记录状态机迁移、IPC 生命周期、`pending_stop` 锁存/命中、段事件与音频启停；托盘记录消息分发、热键分支、浮层显隐、设置子进程与 daemon 子进程生命周期。识别文本只记长度、不记内容。
+- `voime doctor` 增加 `log:` 检查项，报告启用状态与位置。
+- 宏 `vlog!` 未启用时不做任何格式化；初始化与写入路径有单元测试（日期换算、目录解析、轮转、行格式）。
+
+**修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voime-log/*` | 全部 | 增 | README / USER / CORE / BUILD 四篇，环境变量契约与实现归 voime-log 拥有。 |
+| `CORE.html` | §1 根文件树；§2 依赖方向；§4.8 | 改 | 增加 `voime-log` crate 与签名摘要。 |
+| `PLATFORM.html` | §2；§3.1；§3.2；§6.1；§6.2；§6.3 | 改 | crate 清单由五个变六个；构建矩阵 / cfg 规则 / workspace 片段同步。 |
+| `BUILD.html` | §2 构建根与命令 | 改 | 测试命令与构建根说明加入 `voime-log`。 |
+| `crates/voimed/*` | USER §4.1；CORE §2 / §3 / §5.1；BUILD §3 | 改 | `VOIME_LOG` 选项、SBOM、启动调用栈、运行表格。 |
+| `frontends/windows/*` | USER §4.4；CORE §3 / §5.1；BUILD §3 | 改 | 诊断表日志行、SBOM、启动调用栈（同时修正已删除的 `ipc::dispatch`）、安装表日志行。 |
+| `crates/voime/USER.html` | §4.4 doctor 检查 | 改 | 增加 `log:` 检查项与示例输出。 |

@@ -7,11 +7,17 @@ use voime_core::infer::session::SessionFactory;
 use voime_core::pipeline;
 use voime_transport::{default_endpoint, Endpoint};
 
+use voime_log::vlog;
 use voimed::cli;
 use voimed::daemon::Daemon;
 use voimed::ipc_server::{self, IpcServer};
 
 fn main() -> ExitCode {
+    if voime_log::init("voimed") {
+        if let Some(path) = voime_log::log_path() {
+            eprintln!("voimed: 日志写入 {}", path.display());
+        }
+    }
     let cli = cli::parse();
     let endpoint = match cli
         .endpoint
@@ -51,6 +57,11 @@ fn main() -> ExitCode {
 fn run(args: Args, endpoint: Endpoint) -> anyhow::Result<()> {
     let verbose = args.verbose;
     let config = config::resolve(args).context("初始化配置失败")?;
+    vlog!(
+        "voimed 启动 endpoint={endpoint} model={} threads={}",
+        config.model_dir.display(),
+        config.threads
+    );
     if verbose {
         eprintln!(
             "voimed: 模型 {}，端点 {}，线程 {}",

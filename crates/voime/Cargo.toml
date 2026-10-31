@@ -16,6 +16,7 @@ serde_json.workspace = true
 unicode-width.workspace = true
 voime-core = { path = "../voime-core" }
 voime-ipc = { path = "../voime-ipc" }
+voime-log = { path = "../voime-log" }
 voime-transport = { path = "../voime-transport" }
 
 [target.'cfg(windows)'.dependencies]

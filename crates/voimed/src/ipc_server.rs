@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use voime_ipc::{ClientMessage, Role, ServerMessage, MAX_MESSAGE_BYTES};
+use voime_log::vlog;
 use voime_transport::{Endpoint, Listener, Stream};
 
 #[derive(Debug)]
@@ -47,6 +48,7 @@ impl IpcServer {
         let listener: Arc<dyn Listener> = Arc::from(
             voime_transport::bind(endpoint).with_context(|| format!("绑定端点失败 {endpoint}"))?,
         );
+        vlog!("IPC 监听 {endpoint}");
         let (events_tx, events_rx) = crossbeam_channel::unbounded();
         let clients = Arc::new(Mutex::new(HashMap::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -63,6 +65,7 @@ impl IpcServer {
                         match listener.accept() {
                             Ok(stream) => {
                                 let id = next_id.fetch_add(1, Ordering::Relaxed);
+                                vlog!("客户端已接受 id={id}");
                                 if let Err(error) = spawn_client(stream, id, &clients, &events_tx) {
                                     let _ = events_tx.send(ServerEvent::BadMessage {
                                         client_id: id,
@@ -79,6 +82,7 @@ impl IpcServer {
                                 {
                                     break;
                                 }
+                                vlog!("accept 失败：{error}");
                                 std::thread::sleep(Duration::from_millis(100));
                             }
                         }
@@ -178,6 +182,7 @@ impl IpcServer {
     }
 
     pub fn shutdown(&mut self) {
+        vlog!("IPC 服务关闭");
         self.shutdown.store(true, Ordering::Relaxed);
         if let Some(listener) = self.listener.as_ref() {
             let _ = listener.shutdown();

@@ -20,6 +20,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::Frontend;
+use voime_log::vlog;
 
 const WINDOW_CLASS: PCWSTR = w!("VoimeTrayWindow");
 const ICON_ID: u32 = 1;
@@ -157,14 +158,15 @@ impl Tray {
     pub fn poll_events(&mut self, frontend: &mut Frontend) {
         loop {
             let event = self.queue.lock().expect("tray queue poisoned").pop_front();
+            let Some(event) = event else {
+                break;
+            };
+            vlog!("托盘事件 {event:?}");
             match event {
-                Some(TrayEvent::ShowMenu) => self.show_menu(frontend),
-                Some(TrayEvent::ShowSettings { focus_hotkey }) => {
-                    frontend.open_settings(focus_hotkey)
-                }
-                Some(TrayEvent::Command(TrayCommand::StartDaemon)) => frontend.start_daemon(),
-                Some(TrayEvent::Command(TrayCommand::StopDaemon)) => unsafe { PostQuitMessage(0) },
-                None => break,
+                TrayEvent::ShowMenu => self.show_menu(frontend),
+                TrayEvent::ShowSettings { focus_hotkey } => frontend.open_settings(focus_hotkey),
+                TrayEvent::Command(TrayCommand::StartDaemon) => frontend.start_daemon(),
+                TrayEvent::Command(TrayCommand::StopDaemon) => unsafe { PostQuitMessage(0) },
             }
         }
     }

@@ -140,6 +140,8 @@ model: /home/user/.local/share/voime/models
   OK   manifest 与 SHA-256 校验通过
 audio:
   OK   2 个输入设备，默认 ...
+log:
+  OK   VOIME_LOG 已设置，daemon 与托盘将写入 ~/.local/state/voime/logs
 fcitx:
   OK   fcitx5 进程运行中
   OK   addon 描述 /usr/share/fcitx5/addon/voime.conf
@@ -154,6 +156,7 @@ fcitx:
   <tr><td>daemon</td><td>以 <code>control</code> 角色连接并读取 Snapshot。</td></tr>
   <tr><td>模型</td><td>固定检查默认模型目录；不读取 <code>--model-dir</code>。</td></tr>
   <tr><td>音频</td><td>枚举输入设备并显示默认设备名；不打开流。</td></tr>
+  <tr><td>日志</td><td>报告 <code>VOIME_LOG</code> 启用状态与日志文件位置；未启用时给出默认目录，不计为 FAIL。</td></tr>
   <tr><td>平台前端</td><td>当前 Linux 检查 fcitx5 进程、addon 描述、<code>voime.so</code>、旧 inputmethod 条目与用户配置。</td></tr>
   <tr><td>输出</td><td>每项 <code>OK</code> / <code>WARN</code> / <code>FAIL</code>；存在 FAIL 时退出码 1。</td></tr>
 </table>

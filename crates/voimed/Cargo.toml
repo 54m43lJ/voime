@@ -13,6 +13,7 @@ crossbeam-channel.workspace = true
 serde_json.workspace = true
 voime-core = { path = "../voime-core" }
 voime-ipc = { path = "../voime-ipc" }
+voime-log = { path = "../voime-log" }
 voime-transport = { path = "../voime-transport" }
 
 [dev-dependencies]

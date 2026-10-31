@@ -55,6 +55,7 @@
   <tr><td>前端断开</td><td>前端状态置 disconnected；Continuous 退 PTT；结束当前段；广播 Snapshot。</td></tr>
   <tr><td>退出顺序</td><td>广播 Bye → IPC shutdown → pipeline shutdown → audio stop → 删除端点。</td></tr>
   <tr><td>传输边界</td><td><code>ipc_server.rs</code> 只使用 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Listener</code> / <code>Stream</code>；daemon 不 import <code>std::os::unix</code> 或 Win32。</td></tr>
+  <tr><td>运行日志</td><td>状态机、IPC 生命周期与段事件经 <code>voime_log::vlog!</code> 记录；机制见 <a href="../voime-log/CORE.html">voime-log CORE</a>，隐私约定见 <a href="../voime-log/USER.html#u2">voime-log USER §2</a>。</td></tr>
 </table>
 <ul class="note">
   <li>仓库级进程 / 线程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>
@@ -67,6 +68,7 @@
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
   <tr><td><code>voime-core</code></td><td>配置、音频、模型、pipeline。</td></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
+  <tr><td><code>voime-log</code></td><td>运行日志（<code>VOIME_LOG</code> 启用）。</td></tr>
   <tr><td><code>voime-transport</code></td><td>本机端点与字节流。</td></tr>
   <tr><td><code>clap</code></td><td>命令行参数。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>IPC 事件、pipeline 事件与客户端发送队列。</td></tr>
@@ -179,9 +181,8 @@ struct ClientEntry {
 }
 
 pub struct IpcServer {
-    endpoint: Endpoint,
     events_rx: Receiver&lt;ServerEvent&gt;,
-    clients: Arc&lt;Mutex&lt;HashMap&lt;u64, ClientEntry&gt;&gt;,
+    clients: Arc&lt;Mutex&lt;HashMap&lt;u64, ClientEntry&gt;&gt;&gt;,
     shutdown: Arc&lt;AtomicBool&gt;,
     listener: Option&lt;Arc&lt;dyn Listener&gt;&gt;,
     accept_thread: Option&lt;JoinHandle&lt;()&gt;&gt;,
@@ -191,14 +192,11 @@ impl IpcServer {
     pub fn bind(endpoint: &amp;Endpoint) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn events(&amp;self) -&gt; &amp;Receiver&lt;ServerEvent&gt;;
     pub fn next_event(&amp;self) -&gt; anyhow::Result&lt;ServerEvent&gt;;
-    pub fn try_event(&amp;self) -&gt; Option&lt;ServerEvent&gt;;
     pub fn broadcast(&amp;self, message: &amp;ServerMessage);
     pub fn disconnect(&amp;self, client_id: u64);
     pub fn send_to(&amp;self, client_id: u64, message: &amp;ServerMessage);
     pub fn set_role(&amp;self, client_id: u64, role: Role) -&gt; bool;
     pub fn role(&amp;self, client_id: u64) -&gt; Option&lt;Role&gt;;
-    pub fn client_count(&amp;self) -&gt; usize;
-    pub fn endpoint(&amp;self) -&gt; &amp;Endpoint;
     pub fn shutdown(&amp;mut self);
 }
 impl Drop for IpcServer { /* shutdown + remove endpoint */ }
@@ -214,6 +212,7 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
 <h3 id="c5-1">5.1 启动</h3>
 <pre><code>systemd --user
 └── voimed::main()
+    ├── voime_log::init("voimed")
     ├── voimed::cli::parse()
     ├── ipc_server::daemon_running(&amp;endpoint)
     │   └── 判断已运行 → ExitCode::SUCCESS

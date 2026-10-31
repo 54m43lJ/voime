@@ -82,6 +82,7 @@
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
   <tr><td><code>voime-transport</code></td><td>命名管道客户端。</td></tr>
+  <tr><td><code>voime-log</code></td><td>运行日志（<code>VOIME_LOG</code> 启用）。</td></tr>
   <tr><td><code>windows</code> crate</td><td>RegisterHotKey、UIA、SendInput、托盘、窗口 API。</td></tr>
   <tr><td><code>eframe</code> / <code>egui</code> / <code>winit</code></td><td>设置窗口：窗口、输入、字体与绘制；glow 渲染后端，不使用 WebView。</td></tr>
   <tr><td><code>serde</code> / <code>serde_json</code></td><td>设置文件。</td></tr>
@@ -112,8 +113,11 @@ fn ensure_single_instance() -&gt; bool;</code></pre>
 }
 
 pub fn load() -&gt; anyhow::Result&lt;Config&gt;;
-pub fn save(&amp;self, config: &amp;Config) -&gt; anyhow::Result&lt;()&gt;;
+pub fn save(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
 pub fn to_ipc_config(&amp;self) -&gt; IpcConfig;</code></pre>
+<ul class="note">
+  <li>保存先写 <code>config.json.tmp</code> 再 <code>rename</code> 覆盖目标；Windows 上 <code>std::fs::rename</code> 使用 <code>MOVEFILE_REPLACE_EXISTING</code>，替换一步完成。</li>
+</ul>
 
 <h3 id="c4-3">4.3 ipc.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct IpcClient { /* stream + reader thread */ }
@@ -123,9 +127,7 @@ impl IpcClient {
     pub fn send(&amp;mut self, message: &amp;ClientMessage) -&gt; anyhow::Result&lt;()&gt;;
     pub fn next_event(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
     pub fn snapshot(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
-}
-
-pub fn dispatch(message: ServerMessage, frontend: &amp;mut Frontend);</code></pre>
+}</code></pre>
 
 <h3 id="c4-4">4.4 hotkey.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Hotkey { /* modifiers + virtual key */ }
@@ -143,6 +145,7 @@ pub fn unregister(handle: HotkeyHandle);</code></pre>
 <ul class="note">
   <li>热键录制由设置窗口的 egui / winit 键盘事件完成，不安装低级键盘钩子；<code>modifier_state</code> / <code>win_down</code> 只用于读取实时修饰键。</li>
   <li><code>check_available</code> 用消息窗口试注册热键，避免把被占用的组合写入配置。</li>
+  <li>按键名解析与显示共用单一 <code>NAMED_KEYS</code> 常量表（键码、显示名、解析别名），全表往返一致性由单元测试保证。</li>
 </ul>
 
 <h3 id="c4-5">4.5 target.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -222,6 +225,7 @@ fn run_window(config: Config, status: FrontendStatus,
 <h3 id="c5-1">5.1 启动与连接</h3>
 <pre><code>Windows 登录启动 / 用户双击
 └── frontends_windows::main()
+    ├── voime_log::init("voime-settings" | "voime-tray")
     ├── ensure_single_instance()
     ├── config::load()
     └── run(Frontend::new(config))
@@ -233,7 +237,7 @@ fn run_window(config: Config, status: FrontendStatus,
         │   ├── IpcClient::send(Hello { role: Frontend, config })
         │   ├── IpcClient::snapshot()
         │   ├── frontend.sync_hotkey()
-        │   └── ipc::dispatch(Snapshot)
+        │   └── frontend.on_message(snapshot)
         ├── frontend.start_daemon()（连接失败时）
         └── Windows 消息循环</code></pre>
 
