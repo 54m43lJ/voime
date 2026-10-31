@@ -12,8 +12,6 @@ pub const FRAME_SHIFT_MS: u32 = 10;
 #[derive(Clone, Copy, Debug)]
 pub struct VadConfig {
     pub speech_threshold: f32,
-    pub min_speech_ms: u32,
-    pub min_silence_ms: u32,
     pub fbank: FbankConfig,
 }
 
@@ -21,8 +19,6 @@ impl Default for VadConfig {
     fn default() -> Self {
         Self {
             speech_threshold: 0.5,
-            min_speech_ms: 80,
-            min_silence_ms: 200,
             fbank: FbankConfig::default(),
         }
     }
@@ -209,13 +205,6 @@ impl FireRedVad {
         }
     }
 
-    pub fn min_speech_ms(&self) -> u32 {
-        self.config.min_speech_ms
-    }
-
-    pub fn min_silence_ms(&self) -> u32 {
-        self.config.min_silence_ms
-    }
 }
 
 fn zero_state(spec: &TensorSpec) -> anyhow::Result<StateTensor> {

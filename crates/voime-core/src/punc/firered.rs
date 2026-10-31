@@ -34,17 +34,6 @@ pub struct FireRedPunc {
 }
 
 impl FireRedPunc {
-    pub fn new(
-        model: &std::path::Path,
-        vocab: &std::path::Path,
-        labels: &std::path::Path,
-        threads: usize,
-    ) -> anyhow::Result<Self> {
-        let factory = SessionFactory::new(threads)?;
-        let session = factory.create(model)?;
-        Self::from_session(session, vocab, labels, PuncConfig::default())
-    }
-
     pub fn new_with_factory(
         artifact: &PuncArtifact,
         factory: &SessionFactory,

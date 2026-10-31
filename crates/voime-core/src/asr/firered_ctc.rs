@@ -1,8 +1,6 @@
-use std::path::Path;
-
 use anyhow::{bail, Context};
 use ort::session::{Session, SessionInputValue};
-use ort::value::{Tensor, TensorElementType, ValueType};
+use ort::value::Tensor;
 
 use crate::asr::tokenizer::CtcTokenizer;
 use crate::infer::session::{dtype_is_f32, dtype_is_i64, SessionFactory};
@@ -26,26 +24,6 @@ pub struct FireRedCtc {
 }
 
 impl FireRedCtc {
-    /// Loads the CTC model directly from a file pair.
-    pub fn new(model: &Path, tokens: &Path, threads: usize) -> anyhow::Result<Self> {
-        let factory = SessionFactory::new(threads)?;
-        let session = factory.create(model)?;
-        let (x_name, x_lens_name) = find_inputs_from_session(&session)?;
-        let (log_probs_name, log_probs_len_name) = find_outputs_from_session(&session)?;
-        let tokens = CtcTokenizer::load(tokens)?;
-        let (cmvn_mean, cmvn_inv_stddev) = read_cmvn(&session)?;
-        Ok(Self {
-            session,
-            tokens,
-            cmvn_mean,
-            cmvn_inv_stddev,
-            x_name,
-            x_lens_name,
-            log_probs_name,
-            log_probs_len_name,
-        })
-    }
-
     /// Loads the CTC model using the manifest-declared tensor names.
     pub fn new_with_factory(
         artifact: &CtcArtifact,
@@ -227,45 +205,6 @@ pub fn parse_cmvn(text: &str) -> anyhow::Result<Vec<f32>> {
         bail!("CMVN 数据为空");
     }
     Ok(values)
-}
-
-fn find_inputs_from_session(session: &Session) -> anyhow::Result<(String, String)> {
-    let mut x = None;
-    let mut x_lens = None;
-    for input in session.inputs() {
-        if let ValueType::Tensor { ty, shape, .. } = input.dtype() {
-            if *ty == TensorElementType::Float32
-                && shape.len() == 3
-                && shape.last().copied().unwrap_or(0) > 0
-            {
-                x = Some(input.name().to_string());
-            } else if *ty == TensorElementType::Int64 && shape.len() == 1 {
-                x_lens = Some(input.name().to_string());
-            }
-        }
-    }
-    Ok((
-        x.context("CTC 模型缺少 fbank 输入 x")?,
-        x_lens.context("CTC 模型缺少 x_lens 输入")?,
-    ))
-}
-
-fn find_outputs_from_session(session: &Session) -> anyhow::Result<(String, String)> {
-    let mut log_probs = None;
-    let mut log_probs_len = None;
-    for output in session.outputs() {
-        if let ValueType::Tensor { ty, shape, .. } = output.dtype() {
-            if *ty == TensorElementType::Float32 && shape.len() == 3 {
-                log_probs = Some(output.name().to_string());
-            } else if *ty == TensorElementType::Int64 && shape.len() == 1 {
-                log_probs_len = Some(output.name().to_string());
-            }
-        }
-    }
-    Ok((
-        log_probs.context("CTC 模型缺少 log_probs 输出")?,
-        log_probs_len.context("CTC 模型缺少 log_probs_len 输出")?,
-    ))
 }
 
 #[cfg(test)]

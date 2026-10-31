@@ -35,7 +35,6 @@ struct ClientEntry {
 }
 
 pub struct IpcServer {
-    endpoint: Endpoint,
     events_rx: Receiver<ServerEvent>,
     clients: Arc<Mutex<HashMap<u64, ClientEntry>>>,
     shutdown: Arc<AtomicBool>,
@@ -89,7 +88,6 @@ impl IpcServer {
         };
 
         Ok(Self {
-            endpoint: endpoint.clone(),
             events_rx,
             clients,
             shutdown,
@@ -104,10 +102,6 @@ impl IpcServer {
 
     pub fn next_event(&self) -> Result<ServerEvent> {
         self.events_rx.recv().context("IPC 事件通道已关闭")
-    }
-
-    pub fn try_event(&self) -> Option<ServerEvent> {
-        self.events_rx.try_recv().ok()
     }
 
     pub fn broadcast(&self, message: &ServerMessage) {
@@ -181,14 +175,6 @@ impl IpcServer {
             .expect("clients mutex poisoned")
             .get(&client_id)
             .and_then(|entry| entry.role)
-    }
-
-    pub fn client_count(&self) -> usize {
-        self.clients.lock().expect("clients mutex poisoned").len()
-    }
-
-    pub fn endpoint(&self) -> &Endpoint {
-        &self.endpoint
     }
 
     pub fn shutdown(&mut self) {

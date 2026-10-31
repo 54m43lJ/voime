@@ -50,11 +50,6 @@ pub fn focused(target: &Target) -> bool {
     }
 }
 
-#[allow(dead_code)]
-pub fn same(a: &Target, b: &Target) -> bool {
-    a.window == b.window && a.element == b.element
-}
-
 fn current_runtime_id() -> Option<UiElementId> {
     unsafe {
         let automation: IUIAutomation =
@@ -79,27 +74,3 @@ fn current_runtime_id() -> Option<UiElementId> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn same_compares_window_and_element() {
-        let window = HWND::default();
-        let first = Target {
-            window,
-            element: Some(UiElementId(vec![1, 2])),
-            segment_id: 3,
-        };
-        let second = Target {
-            segment_id: 9,
-            ..first.clone()
-        };
-        assert!(same(&first, &second));
-        let third = Target {
-            element: Some(UiElementId(vec![1, 3])),
-            ..second
-        };
-        assert!(!same(&first, &third));
-    }
-}

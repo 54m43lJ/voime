@@ -54,10 +54,7 @@ impl Config {
         let temporary = path.with_extension("json.tmp");
         fs::write(&temporary, bytes)
             .with_context(|| format!("写入配置文件失败 {}", temporary.display()))?;
-        if path.exists() {
-            fs::remove_file(&path)
-                .with_context(|| format!("替换配置文件失败 {}", path.display()))?;
-        }
+        // std::fs::rename 在 Windows 上使用 MOVEFILE_REPLACE_EXISTING，可直接覆盖旧文件。
         fs::rename(&temporary, &path)
             .with_context(|| format!("替换配置文件失败 {}", path.display()))?;
         Ok(())
