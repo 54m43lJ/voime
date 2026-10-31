@@ -2,13 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>提案 — SenseVoice 可选后端与包级 ASR 切换</title>
+<title>提案 — SenseVoice 可选后端、包级切换与重启后端</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <a id="top"></a>
-<h1>提案 — SenseVoice 可选后端与包级 ASR 切换</h1>
+<h1>提案 — SenseVoice 可选后端、包级切换与重启后端</h1>
 
 <p class="doc-links">
 <a href="README.html">README</a>
@@ -28,8 +28,9 @@ SenseVoice 的定位是速度、多语种与内置 ITN，不是中文精度；20
 
 <p>
 <strong>决策更新（2026-10-31）：</strong>已确认<strong>不做运行时热切换</strong>，采用<strong>模型包级切换</strong>。
-二进制一次构建同时支持 FireRed CTC 与 SenseVoice；之后切换只改模型目录 / <code>models/active</code> 指针并重启 daemon，
+二进制一次构建同时支持 FireRed CTC 与 SenseVoice；之后切换只改模型目录 / <code>models/active</code> 指针并重启后端，
 <strong>不重新安装、替换或重新编译任何二进制</strong>。首次获得 SenseVoice 支持仍需要一次正常的版本升级。
+配置界面可以选择已安装模型：Windows 设置窗口提供模型下拉与“重启后端”按钮；Linux Fcitx 配置页提供模型下拉，保存配置即触发重启后端。
 </p>
 
 <h2 id="s1">1. 摘要</h2>
@@ -47,7 +48,19 @@ SenseVoice 的定位是速度、多语种与内置 ITN，不是中文精度；20
   </tr>
   <tr>
     <td>切换方式</td>
-    <td>模型包级切换：固定模型根目录 + <code>models/active</code> 指针（或 <code>--model-dir</code> 显式覆盖）；切换 = 改指针 + 重启 daemon。不重装二进制，不做双模型常驻热切换。</td>
+    <td>模型包级切换：固定模型根目录 + <code>models/active</code> 指针（或 <code>--model-dir</code> 显式覆盖）；切换 = 改指针 + 重启后端。不重装二进制，不做双模型常驻热切换。</td>
+  </tr>
+  <tr>
+    <td>配置入口</td>
+    <td>Windows 设置窗口：模型下拉 + “重启后端”按钮；Linux Fcitx 配置页：模型下拉，保存 / Apply 等同“重启后端”。另提供 <code>voime ctl restart-backend</code> 作为跨平台命令入口。</td>
+  </tr>
+  <tr>
+    <td>重启语义</td>
+    <td>只重建 ASR pipeline（停采集 / 卸载旧后端 / 加载 active / 重建 pipeline），不重启 daemon、不换二进制；要求空闲，录音中拒绝。</td>
+  </tr>
+  <tr>
+    <td>IPC</td>
+    <td>新增 <code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code> 与对应状态消息；<code>PROTOCOL_VERSION</code> 提升到 2，两个前端一起升级。</td>
   </tr>
   <tr>
     <td>精度升级路径</td>
@@ -55,7 +68,7 @@ SenseVoice 的定位是速度、多语种与内置 ITN，不是中文精度；20
   </tr>
   <tr>
     <td>自由切换成本</td>
-    <td>包级切换包含在 SenseVoice 接入成本内；运行时热切换已确认不做，不纳入成本。</td>
+    <td>包级切换 + 配置界面 + 重启后端包含在接入成本内；运行时热切换已确认不做，不纳入成本。</td>
   </tr>
   <tr>
     <td>质量门禁</td>
@@ -63,7 +76,7 @@ SenseVoice 的定位是速度、多语种与内置 ITN，不是中文精度；20
   </tr>
   <tr>
     <td>初步成本</td>
-    <td>SenseVoice 可选后端 + 包级切换约 8–12 人日；FireRed AED 另计 5–8 人日；均不含语料标注与模型下载时间。</td>
+    <td>SenseVoice 可选后端 + 包级切换 + 配置界面 / 重启后端约 14–22 人日；FireRed AED 另计 5–8 人日；均不含语料标注与模型下载时间。</td>
   </tr>
 </table>
 
@@ -87,6 +100,7 @@ SenseVoice 的定位是速度、多语种与内置 ITN，不是中文精度；20
   <li>验证 SenseVoice 是否能降低目标场景的错别字，而不是只改变错误分布。</li>
   <li>在不破坏现有 FireRedASR2-CTC 行为的前提下，引入可选的 SenseVoice 后端。</li>
   <li>支持模型包级切换：同一份代码可以加载 FireRed CTC 或 SenseVoice，不需要改代码、不需要重编译。</li>
+  <li>Windows 与 Linux 配置界面可以列出已安装模型并选择；选择后通过“重启后端”生效。</li>
   <li>复用现有 VAD、分段、音频采集、IPC、前端提交与 ONNX Runtime 边界。</li>
   <li>失败可回滚：SenseVoice 包缺失、校验失败或推理失败时，不影响 FireRed 包继续使用。</li>
   <li>为后续 FireRedASR2-AED、上下文偏置或重打分留出同一接缝。</li>
@@ -95,7 +109,8 @@ SenseVoice 的定位是速度、多语种与内置 ITN，不是中文精度；20
 <h3 id="s2-2">2.2 非目标</h3>
 <ul>
   <li>不承诺 SenseVoice 一定提升精度；不以“换模型”替代评测。</li>
-  <li>不实现运行时双模型热切换，也不在录音过程中切换后端；切换通过包级指针 + 重启完成。</li>
+  <li>不实现运行时双模型热切换，也不在录音 / 识别过程中切换后端；切换通过包级指针 + 重启后端完成。</li>
+  <li>不在重启后端时静默丢弃当前录音；录音中请求重启必须被拒绝并提示用户。</li>
   <li>不引入第二个推理框架、GPU / NPU、Python 运行时或云端 API。</li>
   <li>不改变 IPC 消息、<code>Final</code> 语义、前端提交规则或目标绑定规则。</li>
   <li>不做模型微调、领域自适应训练或通用文本润色；如需领域适配，另立提案。</li>
@@ -150,6 +165,22 @@ SenseVoice 的定位是速度、多语种与内置 ITN，不是中文精度；20
   <tr>
     <td>运行期不联网、不使用 GPU / Python；模型只读</td>
     <td>模型下载与 SHA 写入仍然只在安装脚本中完成；运行期只读本地文件。</td>
+  </tr>
+  <tr>
+    <td>Fcitx 配置页由 <code>FCITX_CONFIGURATION</code> 自动生成</td>
+    <td>不能随意加按钮；模型下拉可用 <code>EnumAnnotation</code> 动态枚举，保存 / Apply 触发 <code>setConfig</code>，可在此时发送 <code>SetModel</code> + <code>RestartBackend</code>。</td>
+  </tr>
+  <tr>
+    <td>Windows 设置窗口是独立 egui 进程，托盘持有 daemon 子进程</td>
+    <td>下拉与按钮容易实现；重启请求应由托盘或设置进程通过 IPC 发给 daemon，不能直接杀进程。</td>
+  </tr>
+  <tr>
+    <td>Fcitx 是 C++ IPC，Windows 是 Rust IPC</td>
+    <td>新消息必须同时改两端与协议版本；不能只改 Rust 侧。</td>
+  </tr>
+  <tr>
+    <td>Linux 用 systemd，Windows 用托盘托管 daemon</td>
+    <td>“重启后端”做成 daemon 内部重建 pipeline，避免依赖 systemd / 托盘各自重启进程。</td>
   </tr>
 </table>
 
@@ -464,6 +495,8 @@ pub struct AsrArtifact {
 
 pub struct ModelManifest {
     /* ... 现有字段 ... */
+    #[serde(default)]
+    pub display_name: Option&lt;String&gt;,
     pub asr: AsrArtifact,
     #[serde(default)]
     pub punc: Option&lt;PuncArtifact&gt;,
@@ -597,7 +630,8 @@ pub struct SenseVoice {
 
 <p>
 目标：<strong>二进制一次构建同时支持 FireRed CTC 与 SenseVoice；之后切换只操作模型目录，不重新安装、替换或重新编译二进制。</strong>
-切换通过固定模型根目录下的 <code>active</code> 指针完成；daemon 启动时读取指针并加载对应模型包，重启后生效。
+切换通过固定模型根目录下的 <code>active</code> 指针完成；配置界面只负责选择包并请求“重启后端”，
+daemon 在空闲时重建 pipeline 并加载新包。重启后端不重启 daemon 进程，也不影响前端连接。
 </p>
 
 <pre><code>~/.local/share/voime/models/
@@ -634,13 +668,18 @@ pub struct SenseVoice {
     <td>否</td>
   </tr>
   <tr>
+    <td>配置界面选择</td>
+    <td>Windows 设置窗口 / Fcitx 配置页列出已安装包；选择后写 <code>active</code>，界面标记“待重启”。</td>
+    <td>否</td>
+  </tr>
+  <tr>
     <td>切换</td>
-    <td>把 <code>active</code> 写成目标包目录名，重启 daemon。</td>
+    <td>点击“重启后端”（Windows）或保存 / Apply（Fcitx）；daemon 重建 pipeline 并加载 <code>active</code>。也可用 <code>voime ctl restart-backend</code>。</td>
     <td>否</td>
   </tr>
   <tr>
     <td>回滚</td>
-    <td>把 <code>active</code> 写回旧包目录名，重启 daemon。</td>
+    <td>把 <code>active</code> 写回旧包目录名，再次重启后端。</td>
     <td>否</td>
   </tr>
   <tr>
@@ -650,7 +689,7 @@ pub struct SenseVoice {
   </tr>
   <tr>
     <td>便捷命令（可选）</td>
-    <td><code>voime model use sense-voice-2024</code> 只写 <code>active</code>，不切换运行中进程；重启 daemon 后生效。</td>
+    <td><code>voime ctl use sense-voice-2024</code> 只写 <code>active</code>，不切换运行中进程；重启后端后生效。</td>
     <td>否；首次升级到带该命令的二进制除外</td>
   </tr>
 </table>
@@ -666,12 +705,12 @@ Set-Content -Encoding Ascii "$env:LOCALAPPDATA\voime\models\active" "sense-voice
 <ul class="note">
   <li>两个后端都编译进同一个 <code>voimed</code>；不使用 Cargo feature、动态插件或按后端拆分的可执行文件，避免切换时换二进制。</li>
   <li>“不重装二进制”指切换阶段；首次获得 SenseVoice 支持仍然需要一次正常的版本升级。升级后所有切换都只操作模型目录与 <code>active</code> 文件。</li>
-  <li>不做运行时热切换：daemon 启动时加载 <code>active</code> 指向的包，录音中不改变后端；切换后重启 daemon 生效。</li>
+  <li>不做录音中热切换：daemon 启动时加载 <code>active</code> 指向的包；运行中只能通过“重启后端”在空闲时重建 pipeline。</li>
   <li><code>active</code> 只允许单行包目录名，禁止绝对路径与 <code>..</code>；解析时走 <code>resolve_inside</code>，避免指向模型根目录之外。读取时去掉首尾空白与 UTF-8 BOM；保留值 <code>legacy</code> 表示模型根目录本身就是旧布局包，仅用于升级兼容。</li>
   <li>如果 <code>active</code> 缺失且旧布局存在，继续使用旧布局；升级不强制迁移，避免破坏现有安装。切回旧布局时写 <code>legacy</code>。</li>
   <li><code>voime doctor</code> 报告 <code>active</code> 包名、解析后的目录、<code>manifest.kind</code>、SHA 前缀与标点策略；解析逻辑与 <code>Config::resolve</code> 共用，不重复实现。</li>
   <li>不把 <code>--model-dir</code> 作为日常切换入口：systemd / 托盘启动参数固定，改参数比改 <code>active</code> 更容易出错；<code>--model-dir</code> 保留给开发与排障。</li>
-  <li>切换后端需要重启 daemon；录音过程中不改变模型，避免延迟与文本风格突变。</li>
+  <li>切换后端需要“重启后端”；录音 / 识别过程中不改变模型，避免延迟与文本风格突变。</li>
 </ul>
 
 <h3 id="s6-6">6.6 安装与打包</h3>
@@ -701,7 +740,223 @@ scripts/install_models.sh --asr sense-voice --activate                     # 安
   <tr><td>模型金样测试</td><td>固定短音频 + 期望文本；模型存在时运行，缺失时跳过；不进入默认 CI 的慢测试。</td></tr>
   <tr><td>性能测试</td><td>目标 CPU 上的 RTF、p95 收尾延迟、峰值 RSS、模型加载时间；SenseVoice 与 FireRed 分开记录。</td></tr>
   <tr><td>回归测试</td><td>FireRed 包在未改清单 / 未改默认参数时，输出与当前版本一致。</td></tr>
-  <tr><td>切换测试</td><td>安装两个包，写 <code>active</code>，重启 daemon；doctor 报告正确；全程不执行 <code>cargo build</code> / 不替换二进制。</td></tr>
+  <tr><td>切换测试</td><td>安装两个包，写 <code>active</code>，重启后端；doctor 报告正确；全程不执行 <code>cargo build</code> / 不替换二进制。</td></tr>
+  <tr><td>IPC 测试</td><td><code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code> 的角色、空闲检查、无效包、协议版本不匹配。</td></tr>
+  <tr><td>重启测试</td><td>空闲重启成功、录音中拒绝、加载失败回滚旧 <code>active</code> 与旧 pipeline、连续重启。</td></tr>
+  <tr><td>前端测试</td><td>Fcitx 配置页动态枚举；Windows 下拉与按钮；daemon 离线时写 <code>active</code>；重启中按钮禁用。</td></tr>
+</table>
+
+<h3 id="s6-8">6.8 配置界面与重启后端</h3>
+
+<p>
+配置界面不直接加载模型；它只做三件事：列出已安装包、把选择写入 <code>active</code>、请求 daemon 重启后端。
+模型校验、pipeline 生命周期与失败回滚全部由 daemon 负责，前端不需要理解 <code>manifest.kind</code> 的细节。
+</p>
+
+<h4 id="s6-8-1">6.8.1 交互契约</h4>
+
+<table>
+  <tr><th>界面</th><th>交互</th><th>重启触发</th><th>失败反馈</th></tr>
+  <tr>
+    <td>Windows 设置窗口</td>
+    <td>“模型”下拉列出已安装包；显示“当前运行 / 已选择”；“重启后端”按钮。<code>--model-dir</code> 固定时下拉禁用。</td>
+    <td>点击“重启后端”；若选择已变化，先 <code>SetModel</code> 再 <code>RestartBackend</code>。</td>
+    <td>设置窗口内显示进度 / 错误；失败时保留旧模型与旧选择。</td>
+  </tr>
+  <tr>
+    <td>Linux Fcitx 配置页</td>
+    <td>“模型”下拉由 <code>EnumAnnotation</code> 动态枚举已安装包；没有额外按钮。</td>
+    <td>点击配置页的“保存 / Apply”触发 <code>setConfig</code>；模型变化时发送 <code>SetModel</code> + <code>RestartBackend</code>。</td>
+    <td>写入 <code>voimed</code> 日志；<code>voime doctor</code> / <code>voime ctl restart-backend</code> 显示错误；配置页保留旧选择。</td>
+  </tr>
+  <tr>
+    <td>跨平台命令</td>
+    <td><code>voime ctl models</code> 列出包；<code>voime ctl use &lt;id&gt;</code> 写选择；<code>voime ctl restart-backend</code> 重载。</td>
+    <td>显式命令；适合脚本、排障和无 GUI 环境。</td>
+    <td>命令返回非零并打印错误；不改变旧 pipeline。</td>
+  </tr>
+</table>
+
+<ul class="note">
+  <li>Fcitx 配置页由 <code>FCITX_CONFIGURATION</code> 自动生成，不能任意加按钮；“保存 / Apply”就是原生重启入口。若必须有一个独立按钮，应加到 <code>voime</code> TUI 或独立设置程序，而不是修改 Fcitx 配置页。</li>
+  <li>Windows 设置窗口是独立进程；模型操作通过 <code>voime-ipc</code> 连接 daemon，不直接杀进程。托盘仍负责 daemon 子进程生命周期。建议新增 <code>SettingsAction::RestartBackend</code>，在现有动作线程中建立 Control 连接，避免阻塞 egui UI。</li>
+  <li>选择写入后到重启完成前，界面必须显示“待重启”；不要显示为已生效，也不要在录音中自动重启。</li>
+  <li>Fcitx <code>setConfig</code> 要把“模型变化”和“模式 / 热键变化”分开：模型为空或等于当前 <code>active</code> 时只发 <code>Configure</code>，只有非空且变化时才发 <code>SetModel</code> + <code>RestartBackend</code>。</li>
+  <li>重启后端不改变历史、不改变目标窗口；只影响之后的 Partial / Final 使用哪个模型。</li>
+</ul>
+
+<h4 id="s6-8-2">6.8.2 IPC 契约</h4>
+
+<pre><code>pub const PROTOCOL_VERSION: u32 = 2;
+
+pub enum ClientMessage {
+    /* ... 现有消息 ... */
+    ListModels,
+    SetModel { package_id: String },
+    RestartBackend,
+}
+
+pub struct ModelInfo {
+    pub id: String,           // 包目录名，例如 sense-voice-2024
+    pub display_name: String, // manifest.display_name，缺省用 id
+    pub kind: String,         // fire-red-ctc / sense-voice / fire-red-aed
+    pub active: bool,         // 与 active 指针一致
+    pub running: bool,        // 与 daemon 当前 Config 一致
+}
+
+pub enum BackendPhase {
+    Restarting,
+    Ready,
+    Failed,
+}
+
+pub enum ServerMessage {
+    /* ... 现有消息 ... */
+    Models { models: Vec&lt;ModelInfo&gt; },
+    ModelSelected { package_id: String },
+    BackendState {
+        phase: BackendPhase,
+        model: Option&lt;ModelInfo&gt;,
+        message: Option&lt;String&gt;,
+    },
+}</code></pre>
+
+<table>
+  <tr><th>消息</th><th>允许角色</th><th>行为</th></tr>
+  <tr><td><code>ListModels</code></td><td>Frontend / Tui / Control</td><td>扫描模型根目录；跳过无 <code>manifest.json</code> 或无法解析的目录；返回 active / running 标记。</td></tr>
+  <tr><td><code>SetModel</code></td><td>Frontend / Control</td><td>校验 package id 与目录；写 <code>active</code>；不加载模型；返回 <code>ModelSelected</code>。显式 <code>--model-dir</code> 时拒绝。</td></tr>
+  <tr><td><code>RestartBackend</code></td><td>Frontend / Control</td><td>仅空闲时执行；加载 <code>active</code>，重建 pipeline；返回 <code>BackendState</code>。</td></tr>
+</table>
+
+<ul class="note">
+  <li>新增消息变体需要提升 <code>PROTOCOL_VERSION</code>；旧前端会收到 <code>VersionMismatch</code>。Fcitx 与 Windows 前端必须同版本发布。</li>
+  <li><code>SetModel</code> 只做结构校验（目录、manifest、kind、路径安全），不做全量 SHA；全量校验在 <code>RestartBackend</code> 加载时完成。</li>
+  <li><code>active</code> 写入必须原子：同目录临时文件 + rename；失败时保留旧值。</li>
+  <li><code>RestartBackend</code> 在录音 / 识别中返回 <code>ErrorCode::Busy</code>；前端按钮应在此之前禁用。</li>
+  <li>显式 <code>--model-dir</code> 时，<code>ListModels</code> 只返回当前包（<code>running=true</code>，<code>active=false</code>）；前端禁用模型下拉，<code>SetModel</code> 返回错误。</li>
+</ul>
+
+<h4 id="s6-8-3">6.8.3 重启后端流程</h4>
+
+<div class="diagram"><img src="diagram/backend-restart.svg" alt="配置界面选择模型并重启后端"></div>
+<ul class="note">
+  <li>重启后端只重建 pipeline，不重启 daemon，也不替换二进制；IPC 连接保持不变。</li>
+  <li>录音 / 识别中拒绝重启；不会静默丢弃当前段。</li>
+  <li>加载失败时回滚 <code>active</code> 并恢复旧 pipeline；旧 pipeline 也无法恢复时 daemon 退出，由 systemd / 托盘重启。</li>
+</ul>
+
+<pre><code>Daemon::restart_backend()
+├── 判断 phase != Idle || current_segment.is_some() → Error(Busy)
+├── 保存 old_config / old_model_id
+├── config::resolve(args.clone()) → new_config
+│   ├── 读取 active
+│   ├── 校验 manifest / SHA / 张量 / 词表
+│   └── 失败 → 回滚 active + 返回 BackendFailed
+├── 广播 BackendState { phase: Restarting }
+├── pipeline.shutdown()
+├── audio.stop()
+├── 创建新的 audio channel / pipeline / capture
+├── 判断 新 pipeline 启动失败
+│   ├── 回滚 active 为 old_model_id
+│   ├── 尝试用 old_config 重建旧 pipeline
+│   └── 旧 pipeline 也失败 → daemon 退出
+├── 替换 self.config / self.pipeline / self.audio
+└── 广播 BackendState { phase: Ready, model }</code></pre>
+
+<p>
+`Daemon` 需要保存启动参数（至少 `model_dir` 覆盖、输入设备、线程数），才能在重启时重新解析 `active`；
+`Config` 需要保存 `model_root`、`model_id` 与 `model_dir_override`，供 `ListModels` / `SetModel` / 回滚使用。
+</p>
+
+<ul class="note">
+  <li><code>RestartBackend</code> 是同步操作：daemon 主循环会阻塞到新模型加载完成；期间前端应显示“重启中”，不要发送 Start。</li>
+  <li>模型加载可能耗时数秒；前端等待超时不应误判失败，应以 <code>BackendState</code> 或重连后的 <code>ListModels</code> 为准。</li>
+  <li>如果用户在重启中关闭设置窗口，daemon 仍应完成重启；不要依赖前端连接存活。</li>
+  <li>实现上建议把 <code>Daemon</code> 的 <code>pipeline</code> / <code>audio</code> 改为可替换的 <code>Option</code> 或提供 <code>take/stop</code> 辅助，避免在 <code>Drop</code> 中隐式停止导致重启路径不可控。</li>
+</ul>
+
+<h4 id="s6-8-4">6.8.4 Windows / Linux 兼容</h4>
+
+<table>
+  <tr><th>项目</th><th>Linux Fcitx</th><th>Windows</th></tr>
+  <tr>
+    <td>模型发现</td>
+    <td>C++ 扫描 <code>$XDG_DATA_HOME/voime/models</code>（回退 <code>~/.local/share/voime/models</code>）；<code>EnumAnnotation</code> 动态写 <code>Enum/n</code> 与 <code>EnumI18n/n</code>。</td>
+    <td>Rust 扫描 <code>%LOCALAPPDATA%\voime\models</code>；egui <code>ComboBox</code>；也可用 <code>ListModels</code> 从 daemon 获取。</td>
+  </tr>
+  <tr>
+    <td>选择持久化</td>
+    <td>Fcitx <code>Model</code> 选项保存包 id；<code>active</code> 仍是权威，<code>reloadConfig</code> 时与 <code>active</code> 对账。</td>
+    <td>不写入 <code>Config</code>；设置窗口打开时读取 <code>active</code>，选择直接写 <code>active</code>。</td>
+  </tr>
+  <tr>
+    <td>重启入口</td>
+    <td>配置页“保存 / Apply”；另外提供 <code>voime ctl restart-backend</code>。</td>
+    <td>设置窗口“重启后端”按钮；托盘菜单可加同一动作。</td>
+  </tr>
+  <tr>
+    <td>daemon 离线</td>
+    <td>写 <code>active</code>；systemd 下次启动使用新选择；<code>voime doctor</code> 可确认。</td>
+    <td>写 <code>active</code>；托盘下次启动 daemon 使用新选择；设置窗口提示“服务未运行”。</td>
+  </tr>
+  <tr>
+    <td>错误展示</td>
+    <td>Fcitx 配置页无法弹通用错误框；写日志，<code>doctor</code> / <code>ctl</code> 显示。</td>
+    <td>设置窗口内联错误 / MessageBox。</td>
+  </tr>
+  <tr>
+    <td>进程生命周期</td>
+    <td>systemd user service；重启后端不调用 systemctl。</td>
+    <td>托盘持有 daemon 子进程；重启后端不杀子进程。</td>
+  </tr>
+  <tr>
+    <td>协议实现</td>
+    <td>C++ / nlohmann JSON；需同步 <code>PROTOCOL_VERSION=2</code>。</td>
+    <td>Rust / serde；需同步 <code>PROTOCOL_VERSION=2</code>。</td>
+  </tr>
+</table>
+
+<p>Fcitx 配置页的动态下拉可以用 <code>EnumAnnotation</code> 子类实现，示意：</p>
+
+<pre><code>struct ModelEnumAnnotation : fcitx::EnumAnnotation {
+    void dumpDescription(fcitx::RawConfig &amp;config) const override {
+        fcitx::EnumAnnotation::dumpDescription(config);
+        size_t i = 0;
+        for (const auto &amp;m : scanInstalledModels(modelRootPath())) {
+            config.setValueByPath("Enum/" + std::to_string(i), m.id);
+            config.setValueByPath("EnumI18n/" + std::to_string(i), m.label);
+            ++i;
+        }
+    }
+};
+
+fcitx::Option&lt;std::string, fcitx::NoConstrain&lt;std::string&gt;,
+              fcitx::DefaultMarshaller&lt;std::string&gt;, ModelEnumAnnotation&gt;
+    model{this, "Model", _("Model"), ""};</code></pre>
+
+<ul class="note">
+  <li>Fcitx 的动态下拉依赖 <code>EnumAnnotation</code> 的 <code>IsEnum</code> 机制；实现时用一个扫描模型根目录的 annotation 子类，写入 <code>Enum/n</code> 与 <code>EnumI18n/n</code>，不要把模型列表硬编码成固定 enum。</li>
+  <li>Windows 与 Linux 的模型根目录规则必须一致地写在 <code>voime-core</code> 的配置模块与前端路径模块中；不要把 <code>~/.local/share</code> 写死在 Windows，也不要用 <code>%LOCALAPPDATA%</code> 写死在 Linux。</li>
+  <li>两端都要处理 UTF-8 BOM、空行、非法 package id 与不存在目录；<code>active</code> 只接受单行目录名。</li>
+  <li>如果 Fcitx 配置页的动态枚举在目标 Fcitx 版本不可用，退化方案是固定 enum（当前已知包）+ <code>voime ctl use</code>；不能退化成自由文本而不校验。</li>
+  <li>旧布局兼容：模型列表应在模型根目录本身有 <code>manifest.json</code> 时额外提供保留值 <code>legacy</code>（显示“旧布局”）；选择后写 <code>active=legacy</code>。</li>
+  <li>安装新模型包后，Fcitx 配置页 / Windows 设置窗口需要重新打开才能刷新下拉；运行中的 daemon 不需要重启来刷新列表。</li>
+</ul>
+
+<h4 id="s6-8-5">6.8.5 边界情况</h4>
+
+<table>
+  <tr><th>情况</th><th>行为</th></tr>
+  <tr><td>daemon 未运行</td><td>选择写 <code>active</code>；下次启动生效；不报“重启失败”。若 daemon 由 <code>--model-dir</code> 固定，界面应提示“以启动参数为准”。</td></tr>
+  <tr><td>录音 / 识别中</td><td><code>RestartBackend</code> 返回 Busy；按钮禁用；当前段正常完成。</td></tr>
+  <tr><td>包不存在 / manifest 损坏</td><td><code>SetModel</code> 拒绝；<code>active</code> 不变；界面保留旧选择。</td></tr>
+  <tr><td>加载失败（SHA / 张量 / 会话）</td><td>回滚 <code>active</code> 与旧 pipeline；返回 Failed；当前模型继续可用。</td></tr>
+  <tr><td>显式 <code>--model-dir</code></td><td>下拉禁用；<code>SetModel</code> 拒绝；只允许重启当前包。</td></tr>
+  <tr><td>没有任何可用包</td><td>下拉为空；保持当前运行模型；提示安装模型包。</td></tr>
+  <tr><td>协议版本不匹配</td><td>旧前端收到 <code>VersionMismatch</code>；必须同版本升级前端与 daemon。</td></tr>
+  <tr><td>连续点击重启</td><td>第二次返回 Busy 或忽略；按钮在重启中禁用。</td></tr>
+  <tr><td><code>active</code> 写入失败</td><td>保留旧值；返回错误；不重启。</td></tr>
+  <tr><td>设置窗口关闭 / 前端断开</td><td>daemon 继续完成重启；不依赖请求方连接。</td></tr>
 </table>
 
 <h2 id="s7">7. 模型包契约</h2>
@@ -711,6 +966,7 @@ scripts/install_models.sh --asr sense-voice --activate                     # 安
 
 <pre><code>{
   "schema": 2,
+  "display_name": "FireRedASR2-CTC",
   "sample_rate": 16000,
   "fbank": {
     "num_bins": 80,
@@ -734,6 +990,7 @@ scripts/install_models.sh --asr sense-voice --activate                     # 安
 
 <pre><code>{
   "schema": 2,
+  "display_name": "SenseVoice 2024-07-17",
   "sample_rate": 16000,
   "fbank": {
     "num_bins": 80,
@@ -773,6 +1030,7 @@ scripts/install_models.sh --asr sense-voice --activate                     # 安
   <li><code>tokens.txt</code> SHA-256 为 <code>f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc</code>，两个 SenseVoice 包共用同一词表。</li>
   <li><code>2025-09-09</code> 包的模型 SHA-256 为 <code>12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d</code>，仅作为粤语候选，不写进普通话默认清单。</li>
   <li>清单中的 <code>window_type</code> 与 ONNX metadata 的 <code>normalize_samples</code> 必须一起校验；SenseVoice metadata 为 <code>normalize_samples=0</code>，表示输入需要乘 32768。</li>
+  <li>可选顶层字段 <code>display_name</code> 用于配置界面显示；缺省用目录名。只允许单行 UTF-8，不得包含控制字符。</li>
 </ul>
 
 <h3 id="s7-3">7.3 ONNX metadata 契约</h3>
@@ -895,12 +1153,18 @@ scripts/install_models.sh --asr sense-voice --activate                     # 安
   </tr>
   <tr>
     <td>Phase 3：打包与切换</td>
-    <td>安装脚本 <code>--asr</code> / <code>--activate</code>；模型根目录与 <code>active</code> 解析；可选的 <code>voime model use</code>；doctor；BUILD / PROVIDER 文档；回滚演练。</td>
-    <td>改 <code>active</code> + 重启即可切换；不重装二进制；SHA 校验；回滚不丢数据。</td>
-    <td>2–3 人日</td>
+    <td>安装脚本 <code>--asr</code> / <code>--activate</code>；模型根目录与 <code>active</code> 解析；<code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code> 的 daemon 实现；doctor；BUILD / PROVIDER 文档；回滚演练。</td>
+    <td>改 <code>active</code> 或调用 IPC 即可切换；不重装二进制；SHA 校验；回滚不丢数据。</td>
+    <td>3–4 人日</td>
   </tr>
   <tr>
-    <td>Phase 4：默认与发布</td>
+    <td>Phase 4：配置界面与重启按钮</td>
+    <td>Windows 设置下拉 + “重启后端”；Fcitx 动态枚举 + Apply 触发；<code>voime ctl</code> 命令；协议 v2；跨平台联调。</td>
+    <td>两端都能列出 / 选择 / 重启；录音中拒绝；失败回滚；不重启 daemon、不换二进制。</td>
+    <td>3–5 人日</td>
+  </tr>
+  <tr>
+    <td>Phase 5：默认与发布</td>
     <td>仅当 Phase 0/2 门禁通过；决定默认后端、模型分发、许可证与发布说明。</td>
     <td>质量、延迟、内存、许可证全部通过。</td>
     <td>1–2 人日</td>
@@ -908,7 +1172,7 @@ scripts/install_models.sh --asr sense-voice --activate                     # 安
 </table>
 
 <ul class="note">
-  <li>SenseVoice 可选后端 + 包级切换合计约 8–12 人日；不含语料标注、模型下载与跨平台打包验证。</li>
+  <li>SenseVoice 可选后端 + 包级切换 + 配置界面 / 重启后端合计约 14–22 人日；不含语料标注、模型下载与跨平台打包验证。</li>
   <li>运行时热切换已确认不做，不纳入成本；FireRed AED 另加 5–8 人日（自回归 decoder / beam search / 性能调优）。</li>
   <li>如果 Phase 0 显示 SenseVoice 不达标，应该停在 Phase 0，而不是“先把后端做完再看效果”。</li>
 </ul>
@@ -927,6 +1191,11 @@ scripts/install_models.sh --asr sense-voice --activate                     # 安
   <tr><td>长段稳定性</td><td>SenseVoice 在 20–30 s 段上可能退化。</td><td>默认 20 s；用 20 / 30 s 样本评测；必要时在 VAD 段长上做后端区分。</td></tr>
   <tr><td>模型包 SHA 变化</td><td>官方重新上传导致校验失败。</td><td>安装脚本重新计算并写入；运行期只信任本地清单。</td></tr>
   <tr><td><code>active</code> 指向错误 / 缺失</td><td>启动失败或加载错误包。</td><td>启动时校验目标 <code>manifest.json</code> / SHA / kind；<code>doctor</code> 显示 <code>active</code> 与解析目录；回滚只改指针；旧布局兼容。</td></tr>
+  <tr><td>重启后端加载失败</td><td>新模型不可用，用户当前无法听写。</td><td>先校验再停旧 pipeline；失败时回滚 <code>active</code> 并恢复旧 pipeline；旧 pipeline 也失败才退出 daemon。</td></tr>
+  <tr><td>协议 v2 不兼容</td><td>旧 Fcitx / 旧托盘无法连接。</td><td>daemon 与两个前端同版本发布；旧前端收到 <code>VersionMismatch</code> 并提示升级；不静默降级。</td></tr>
+  <tr><td>Fcitx 动态枚举不可用</td><td>配置页无法列出模型。</td><td>退化到固定 enum（当前已知包）+ <code>voime ctl use</code>；不退回自由文本不校验。</td></tr>
+  <tr><td>UI 选择与 <code>active</code> 不一致</td><td>用户以为已切换但仍在旧模型。</td><td>打开界面时读取 <code>active</code>；选择后显示“待重启”；<code>ListModels</code> 同时返回 active / running。</td></tr>
+  <tr><td>Windows 设置进程无权限 / daemon 未启动</td><td>点击重启失败。</td><td>只写 <code>active</code> 并提示“下次启动生效”；由托盘启动 daemon；不直接杀进程。</td></tr>
   <tr><td>与 README 非目标冲突</td><td>产品文档自相矛盾。</td><td>接受提案时同步修改 README §1.3，明确“默认单后端，可选包不并行加载”。</td></tr>
 </table>
 
@@ -935,7 +1204,8 @@ scripts/install_models.sh --asr sense-voice --activate                     # 安
   <li>目标场景是纯普通话听写，还是中英混合 / 多语种 / 粤语？这决定 SenseVoice 是否有价值。</li>
   <li>是否接受 FireRed AED 带来的 3–6× 收尾延迟？如果接受，AED 应优先评测。</li>
   <li>SenseVoice 权重的许可证是否允许随安装包分发？</li>
-  <li>已确认只要包级切换、不做运行时热切换；剩余要确认的是切换入口用 <code>active</code> 文件即可，还是再加一个可选的 <code>voime model use</code> 便捷命令。</li>
+  <li>已确认只要包级切换、不做运行时热切换；配置界面选择 + “重启后端”已纳入设计。剩余要确认：Fcitx 是否接受“保存 / Apply 即重启”，还是必须在 <code>voime</code> TUI 里再做一个独立按钮。</li>
+  <li>是否接受 <code>PROTOCOL_VERSION</code> 提升到 2、两个前端必须同版本升级？如果不接受，需要另设兼容层。</li>
   <li>是否愿意长期维护两个 ASR 后端？如果只是实验，建议 Phase 0 后删除失败方案。</li>
 </ol>
 
@@ -949,17 +1219,18 @@ scripts/install_models.sh --asr sense-voice --activate                     # 安
 <table>
   <tr><th>文档</th><th>计划变更</th></tr>
   <tr><td>根 <a href="README.html">README</a></td><td>GOAL 说明“默认单 ASR 后端，可选模型包”；非目标从“不引入第二个 ASR 模型”改为“不并行加载多个 ASR 模型”；Credits 增加 SenseVoice / FireRedASR2-AED。</td></tr>
-  <tr><td>根 <a href="USER.html">USER</a></td><td><code>Final</code> 术语补充“标点可能由 ASR 内置或 FireRedPunc 生成”；不新增前端配置。</td></tr>
-  <tr><td>根 <a href="CORE.html">CORE</a></td><td>最终提交调用栈增加 <code>AsrBackend</code> 选择；不改变依赖方向。</td></tr>
+  <tr><td>根 <a href="USER.html">USER</a></td><td><code>Final</code> 术语补充“标点可能由 ASR 内置或 FireRedPunc 生成”；配置界面增加模型选择与“重启后端”交互。</td></tr>
+  <tr><td>根 <a href="CORE.html">CORE</a></td><td>最终提交调用栈增加 <code>AsrBackend</code> 选择与 <code>RestartBackend</code> 重建路径；不改变依赖方向。</td></tr>
   <tr><td>根 <a href="PROVIDER.html">PROVIDER</a></td><td>模型包条目增加 SenseVoice / AED；仍由 <code>voime-core</code> 消费。</td></tr>
   <tr><td><a href="crates/voime-core/README.html">voime-core README</a></td><td>“拥有 / 不拥有”表增加可选 ASR 后端；说明仍不接触前端与 IPC。</td></tr>
-  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td><code>AsrBackend</code>、<code>PuncPolicy</code>、错误文案、<code>Final</code> 定义；<code>Config</code> 是否新增 <code>asr</code> 字段。</td></tr>
-  <tr><td><a href="crates/voime-core/CORE.html">voime-core CORE</a></td><td>文件树增加 <code>asr/sense_voice.rs</code>；签名与调用栈；SBOM 不新增依赖（复用 <code>ort</code> / <code>serde</code>）。</td></tr>
+  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td><code>AsrBackend</code>、<code>PuncPolicy</code>、错误文案、<code>Final</code> 定义；<code>Config</code> 增加 <code>model_root</code> / <code>model_id</code>。</td></tr>
+  <tr><td><a href="crates/voime-core/CORE.html">voime-core CORE</a></td><td>文件树增加 <code>asr/sense_voice.rs</code>；签名、调用栈、<code>restart_backend</code>；SBOM 不新增依赖（复用 <code>ort</code> / <code>serde</code>）。</td></tr>
   <tr><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>唯一模型契约：FireRed CTC / SenseVoice 清单、张量、metadata、SHA、标点策略、大小 / 延迟 / 失败映射。</td></tr>
-  <tr><td><a href="crates/voimed/USER.html">voimed USER</a> / <a href="crates/voimed/CORE.html">CORE</a></td><td><code>--model-dir</code>、<code>models/active</code> 解析顺序、启动策略；IPC 不变。</td></tr>
-  <tr><td><a href="crates/voime/USER.html">voime USER</a></td><td><code>doctor</code> 报告 <code>active</code> 包名、解析目录、当前后端、SHA 前缀与标点策略。</td></tr>
+  <tr><td><a href="crates/voimed/USER.html">voimed USER</a> / <a href="crates/voimed/CORE.html">CORE</a></td><td><code>--model-dir</code>、<code>models/active</code> 解析、<code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>、协议 v2、启动策略。</td></tr>
+  <tr><td><a href="crates/voime/USER.html">voime USER</a></td><td><code>doctor</code> 报告 <code>active</code> / running 模型；<code>ctl models</code>、<code>ctl use</code>、<code>ctl restart-backend</code>。</td></tr>
   <tr><td><a href="BUILD.html">BUILD</a></td><td>模型安装、<code>--activate</code>、SHA 校验、可选 SenseVoice / AED 包、许可证与体积记录。</td></tr>
-  <tr><td>平台前端 USER / CORE</td><td>只说明 <code>Final</code> 的标点来源可能变化；协议与提交流程不变，不新增代码。</td></tr>
+  <tr><td><a href="frontends/fcitx/USER.html">fcitx USER</a> / <a href="frontends/fcitx/CORE.html">CORE</a></td><td>配置页模型下拉、<code>EnumAnnotation</code> 动态枚举、Apply 触发 <code>SetModel</code> + <code>RestartBackend</code>、失败日志。</td></tr>
+  <tr><td><a href="frontends/windows/USER.html">windows USER</a> / <a href="frontends/windows/CORE.html">CORE</a></td><td>设置窗口模型下拉、重启按钮、进度 / 错误、daemon 未运行时的降级。</td></tr>
 </table>
 
 <ul class="note">

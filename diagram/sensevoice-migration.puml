@@ -23,7 +23,7 @@ Pipeline --> Daemon : PipelineEvent::Final(text)
 Daemon --> Frontend : Final { segment_id, text }
 note over Asr
   后端由 models/active 指向的模型包决定；
-  切换 = 改 active + 重启 daemon；
+  切换 = 配置界面选择 + 重启后端；
   不重新安装 / 编译二进制。
 end note
 note over Punc
