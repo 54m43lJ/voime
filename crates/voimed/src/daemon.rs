@@ -21,6 +21,7 @@ pub struct Daemon {
     next_segment: u64,
     pending_mode: Option<Mode>,
     pending_stop: bool,
+    session_active: bool,
     shutdown: bool,
     fatal: Option<anyhow::Error>,
 }
@@ -37,6 +38,7 @@ impl Daemon {
             next_segment: 1,
             pending_mode: None,
             pending_stop: false,
+            session_active: false,
             shutdown: false,
             fatal: None,
         }
@@ -89,12 +91,14 @@ impl Daemon {
                 let _ = client_id;
                 if role == Some(Role::Frontend) {
                     self.state.addon = FrontendState::Disconnected;
+                    self.session_active = false;
                     if self.state.mode == Some(Mode::Continuous) {
                         let _ = self.pipeline.set_mode(Mode::Ptt);
                     }
                     if self.current_segment.is_some() {
                         let _ = self.pipeline.finish_segment();
                     }
+                    self.sync_audio();
                     self.broadcast_snapshot();
                 }
             }
@@ -141,6 +145,13 @@ impl Daemon {
                         self.state.hotkey = Some(config.hotkey);
                     }
                     self.apply_pipeline_mode();
+                    if let Err(error) = self.sync_audio_result() {
+                        self.send_error(
+                            client_id,
+                            ErrorCode::Internal,
+                            &format!("打开录音设备失败：{error:#}"),
+                        );
+                    }
                     self.broadcast_snapshot();
                 } else {
                     self.ipc.send_to(client_id, &self.state.snapshot());
@@ -158,8 +169,18 @@ impl Daemon {
                 }
                 if self.state.phase == Phase::Idle {
                     self.apply_pipeline_mode();
+                    if mode != Mode::Continuous {
+                        self.session_active = false;
+                    }
                 } else {
                     self.pending_mode = Some(mode);
+                }
+                if let Err(error) = self.sync_audio_result() {
+                    self.send_error(
+                        client_id,
+                        ErrorCode::Internal,
+                        &format!("切换录音设备状态失败：{error:#}"),
+                    );
                 }
                 self.broadcast_snapshot();
             }
@@ -209,6 +230,15 @@ impl Daemon {
             self.send_error(client_id, ErrorCode::Busy, "已有语音段");
             return;
         }
+        self.session_active = false;
+        if let Err(error) = self.audio.play() {
+            self.send_error(
+                client_id,
+                ErrorCode::Internal,
+                &format!("打开录音设备失败：{error:#}"),
+            );
+            return;
+        }
         let _ = segment_id;
         self.pending_stop = false;
         let id = self.allocate_segment();
@@ -218,9 +248,11 @@ impl Daemon {
         if let Err(error) = self.pipeline.start_segment() {
             self.current_segment = None;
             self.state.phase = Phase::Idle;
+            self.sync_audio();
             self.send_error(client_id, ErrorCode::Internal, &format!("{error:#}"));
             return;
         }
+        self.session_active = true;
         self.ipc.broadcast(&ServerMessage::SegmentStarted {
             segment_id: id,
             source,
@@ -235,6 +267,10 @@ impl Daemon {
             if self.state.mode == Some(Mode::Toggle) {
                 self.pending_stop = true;
             }
+            if self.effective_mode() != Mode::Continuous {
+                self.session_active = false;
+            }
+            self.sync_audio();
             return;
         }
         let Some(current) = self.current_segment else {
@@ -244,9 +280,13 @@ impl Daemon {
             self.send_error(client_id, ErrorCode::Busy, "segment_id 不匹配");
             return;
         }
+        if self.effective_mode() != Mode::Continuous {
+            self.session_active = false;
+        }
         if let Err(error) = self.pipeline.finish_segment() {
             self.send_error(client_id, ErrorCode::Internal, &format!("{error:#}"));
         }
+        self.sync_audio();
     }
 
     fn on_pipeline(&mut self, event: PipelineEvent) {
@@ -334,6 +374,7 @@ impl Daemon {
 
     fn apply_pending_mode(&mut self) {
         if let Some(mode) = self.pending_mode.take() {
+            self.session_active = false;
             let _ = self
                 .pipeline
                 .set_mode(if self.state.addon == FrontendState::Connected {
@@ -342,6 +383,7 @@ impl Daemon {
                     Mode::Ptt
                 });
         }
+        self.sync_audio();
     }
 
     fn effective_mode(&self) -> Mode {
@@ -350,6 +392,25 @@ impl Daemon {
         } else {
             Mode::Ptt
         }
+    }
+
+    fn audio_should_play(&self) -> bool {
+        listens(self.effective_mode(), self.session_active)
+    }
+
+    fn sync_audio(&mut self) {
+        if let Err(error) = self.sync_audio_result() {
+            eprintln!("voimed: 切换录音流状态失败：{error:#}");
+        }
+    }
+
+    fn sync_audio_result(&mut self) -> anyhow::Result<()> {
+        if self.audio_should_play() {
+            self.audio.play()?;
+        } else {
+            self.audio.pause()?;
+        }
+        Ok(())
     }
 
     fn send_error(&self, client_id: u64, code: ErrorCode, message: &str) {
@@ -366,6 +427,10 @@ impl Daemon {
 /// Source used when the pipeline starts a segment without a matching
 /// client-initiated Start. PTT max-duration splits keep Hold, toggle sessions
 /// continue as Toggle, and continuous mode uses Continuous.
+fn listens(mode: Mode, session_active: bool) -> bool {
+    mode == Mode::Continuous || session_active
+}
+
 fn continuation_source(mode: Option<Mode>) -> TriggerSource {
     match mode {
         Some(Mode::Ptt) => TriggerSource::Hold,
@@ -377,6 +442,16 @@ fn continuation_source(mode: Option<Mode>) -> TriggerSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_plays_only_for_continuous_or_active_session() {
+        assert!(listens(Mode::Continuous, false));
+        assert!(listens(Mode::Continuous, true));
+        assert!(!listens(Mode::Ptt, false));
+        assert!(listens(Mode::Ptt, true));
+        assert!(!listens(Mode::Toggle, false));
+        assert!(listens(Mode::Toggle, true));
+    }
 
     #[test]
     fn toggle_continuation_keeps_toggle_source() {

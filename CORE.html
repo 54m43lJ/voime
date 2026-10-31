@@ -229,6 +229,7 @@ fcitx5 / Windows 前端
     ├── voime_ipc::write_message(Start)
     └── voimed::ipc_server（接收）
         └── voimed::daemon::Daemon::on_client(Start)
+            ├── voime_core::audio::capture::CaptureHandle::play()
             ├── voime_core::pipeline::Pipeline::start_segment()
             └── voime_ipc::encode_message(SegmentStarted)
 

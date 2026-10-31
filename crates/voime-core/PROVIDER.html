@@ -94,7 +94,7 @@
   <tr><td>设备名</td><td><code>DeviceTrait::name() -&gt; Result&lt;String, DeviceNameError&gt;</code></td><td>精确匹配命令行参数。</td></tr>
   <tr><td>默认配置</td><td><code>DeviceTrait::default_input_config() -&gt; Result&lt;SupportedStreamConfig, DefaultStreamConfigError&gt;</code></td><td>读取采样率、声道数与样本格式。</td></tr>
   <tr><td>建立输入流</td><td><code>DeviceTrait::build_input_stream&lt;T, D, E&gt;(...)</code></td><td>注册数据 / 错误回调。</td></tr>
-  <tr><td>播放 / 暂停</td><td><code>StreamTrait::play()</code> / <code>pause()</code></td><td>启动后保持播放；退出时暂停并丢弃流。</td></tr>
+  <tr><td>播放 / 暂停</td><td><code>StreamTrait::play()</code> / <code>pause()</code></td><td>按录音会话播放 / 暂停；退出时暂停并丢弃流。</td></tr>
 </table>
 
 <h3 id="p4-2">4.2 模型包</h3>

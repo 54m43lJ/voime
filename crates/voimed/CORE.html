@@ -116,6 +116,7 @@ fn parse_positive_usize(value: &amp;str) -&gt; Result&lt;usize, String&gt;;</cod
     next_segment: u64,
     pending_mode: Option&lt;Mode&gt;,
     pending_stop: bool,
+    session_active: bool,
     shutdown: bool,
     fatal: Option&lt;anyhow::Error&gt;,
 }
@@ -136,9 +137,13 @@ impl Daemon {
     fn apply_pipeline_mode(&amp;self);
     fn apply_pending_mode(&amp;mut self);
     fn effective_mode(&amp;self) -&gt; Mode;
+    fn audio_should_play(&amp;self) -&gt; bool;
+    fn sync_audio(&amp;mut self);
+    fn sync_audio_result(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
     fn send_error(&amp;self, client_id: u64, code: ErrorCode, message: &amp;str);
 }
 
+fn listens(mode: Mode, session_active: bool) -&gt; bool;
 fn continuation_source(mode: Option&lt;Mode&gt;) -&gt; TriggerSource;</code></pre>
 
 <h3 id="c4-5">4.5 state.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -217,6 +222,7 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
     │   ├── voime_core::infer::session::SessionFactory::new(config.threads)
     │   ├── voime_core::pipeline::spawn(&amp;config, factory, audio_rx)
     │   ├── voime_core::audio::capture::start(config.input_device, audio_tx)
+    │   │   └── 构建输入流并保持暂停，等待 Daemon::sync_audio_result()
     │   ├── ipc_server::IpcServer::bind(&amp;endpoint)
     │   └── daemon::Daemon::new(config, pipeline, audio, ipc).run()
     └── 判断 Err → eprintln! + ExitCode::from(1)</code></pre>
@@ -240,14 +246,17 @@ Daemon::run()
         ├── 判断 role == Fcitx → state.addon = Connected
         ├── State::apply_mode(config.mode)
         ├── Daemon::apply_pipeline_mode()
+        ├── Daemon::sync_audio_result()
         └── IpcServer::broadcast(Snapshot)</code></pre>
 
 <h3 id="c5-3">5.3 Start 与 SegmentStarted</h3>
 <pre><code>Daemon::on_client(client_id, Start { segment_id, source })
 └── Daemon::request_start(client_id, segment_id, source)
     ├── 判断 state.phase != Idle → send Error(busy)
+    ├── CaptureHandle::play()
     ├── Daemon::allocate_segment()
     ├── Pipeline::start_segment()
+    ├── session_active = true
     ├── IpcServer::broadcast(SegmentStarted { segment_id, source })
     └── Daemon::broadcast_state()</code></pre>
 
@@ -255,10 +264,14 @@ Daemon::run()
 <pre><code>Daemon::on_client(client_id, Stop { segment_id, source })
 └── Daemon::request_stop(client_id, segment_id)
     ├── 判断 phase != Recording
-    │   └── 判断 mode == Toggle → pending_stop = true
+    │   ├── 判断 mode == Toggle → pending_stop = true
+    │   ├── 判断 mode != Continuous → session_active = false
+    │   └── Daemon::sync_audio()
     ├── 判断 segment_id != 0 &amp;&amp; segment_id != current
     │   └── 判断 mode != Toggle → send Error(busy)
-    └── Pipeline::finish_segment()
+    ├── 判断 mode != Continuous → session_active = false
+    ├── Pipeline::finish_segment()
+    └── Daemon::sync_audio()
 
 Daemon::on_client(client_id, Toggle { segment_id, source })
 ├── 判断 phase == Idle → Daemon::request_start(...)
@@ -277,8 +290,8 @@ pipeline::PipelineEvent::Recording(true)
     ├── Recording(true) → phase=Recording + broadcast_state
     ├── Recording(false) → phase=Finalizing + broadcast_state
     ├── Partial(text) → state.partial=Some + broadcast Partial
-    ├── Final(text) → transcript.push + phase=Idle + broadcast Final + broadcast_state
-    ├── SegmentDropped(reason) → phase=Idle + current_segment=None + broadcast Error(inference)
+    ├── Final(text) → transcript.push + phase=Idle + broadcast Final + broadcast_state + Daemon::apply_pending_mode()
+    ├── SegmentDropped(reason) → phase=Idle + current_segment=None + broadcast Error(inference) + Daemon::apply_pending_mode()
     └── Fatal(error) → fatal=Some + shutdown=true</code></pre>
 
 <h3 id="c5-6">5.6 前端断开与模式回退</h3>
@@ -286,8 +299,10 @@ pipeline::PipelineEvent::Recording(true)
 └── events.send(ServerEvent::Disconnected { client_id, role })
     └── Daemon::on_server_event(Disconnected)
         ├── 判断 role == Fcitx → state.addon = Disconnected
+        ├── session_active = false
         ├── 判断 state.mode == Continuous → Pipeline::set_mode(Ptt)
         ├── 判断 current_segment.is_some() → Pipeline::finish_segment()
+        ├── Daemon::sync_audio()
         └── Daemon::broadcast_snapshot()</code></pre>
 
 <h3 id="c5-7">5.7 退出</h3>

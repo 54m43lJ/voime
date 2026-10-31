@@ -153,15 +153,17 @@ impl AudioChunk {
 
 pub enum AudioError { /* 见 USER §4.5 */ }
 
-pub struct CaptureHandle { /* stream: Option&lt;cpal::Stream&gt; */ }
+pub struct CaptureHandle { /* stream: Option&lt;cpal::Stream&gt;, playing: bool */ }
 pub fn start(device_name: Option&lt;&amp;str&gt;, tx: Sender&lt;AudioChunk&gt;)
-    -&gt; anyhow::Result&lt;CaptureHandle&gt;;                       // 见 USER §4.2
+    -&gt; anyhow::Result&lt;CaptureHandle&gt;;                       // 构建流并保持暂停；见 USER §4.2
 pub fn list_input_devices() -&gt; anyhow::Result&lt;Vec&lt;String&gt;&gt;; // 见 USER §4.2
 pub fn default_input_device_name() -&gt; anyhow::Result&lt;Option&lt;String&gt;&gt;; // 见 USER §4.2
 
 fn send(tx: &amp;Sender&lt;AudioChunk&gt;, sample_rate: u32,
         channels: u16, samples: Vec&lt;f32&gt;);                  // try_send，满则丢弃
 impl CaptureHandle {
+    pub fn play(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;            // 见 USER §4.2
+    pub fn pause(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;           // 见 USER §4.2
     pub fn stop(self);                                      // 见 USER §4.2
 }
 impl Drop for CaptureHandle { /* pause stream */ }</code></pre>

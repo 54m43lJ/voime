@@ -127,12 +127,16 @@ pub fn list_input_devices() -&gt; anyhow::Result&lt;Vec&lt;String&gt;&gt;;
 pub fn default_input_device_name() -&gt; anyhow::Result&lt;Option&lt;String&gt;&gt;;
 
 impl CaptureHandle {
+    pub fn play(&mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn pause(&mut self) -&gt; anyhow::Result&lt;()&gt;;
     pub fn stop(self);
 }</code></pre>
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
-  <tr><td><code>start</code></td><td>打开设备、注册数据 / 错误回调并启动流；返回的句柄停止时关闭流。</td></tr>
+  <tr><td><code>start</code></td><td>打开设备、注册数据 / 错误回调并构建流，句柄初始为暂停；调用 <code>play</code> 后才开始采集。</td></tr>
+  <tr><td><code>play</code></td><td>启动或恢复采集；已播放时幂等。</td></tr>
+  <tr><td><code>pause</code></td><td>暂停采集但保留设备与流；已暂停时幂等。</td></tr>
   <tr><td>数据回调</td><td>把 I16 / U16 / F32 设备样本转换为 <code>f32</code> 并入队；队列满时丢弃当前块，不阻塞音频线程。</td></tr>
   <tr><td>错误回调</td><td>向同一通道写入流错误哨兵；上层据此丢弃当前段。</td></tr>
   <tr><td><code>list_input_devices</code></td><td>按宿主报告顺序返回设备名；只读，不影响当前流。</td></tr>
@@ -242,6 +246,7 @@ impl Pipeline {
     UnsupportedSampleFormat(cpal::SampleFormat),
     BuildStream(cpal::BuildStreamError),
     PlayStream(cpal::PlayStreamError),
+    PauseStream(cpal::PauseStreamError),
     StreamLost(String),
 }</code></pre>
 
@@ -250,6 +255,7 @@ impl Pipeline {
   <tr><td><code>NoInputDevice</code></td><td>系统没有默认输入设备。</td><td>启动失败；doctor 提示连接麦克风。</td></tr>
   <tr><td><code>DeviceNotFound</code></td><td><code>--input-device</code> 名称不存在。</td><td>启动失败；列出设备名后重试。</td></tr>
   <tr><td><code>UnsupportedSampleFormat</code></td><td>设备只提供 I16 / U16 / F32 之外的格式。</td><td>启动失败；更换设备或补充格式支持。</td></tr>
+  <tr><td><code>PlayStream</code> / <code>PauseStream</code></td><td>启动或暂停输入流失败。</td><td>启动失败；重试后仍失败则提示设备不可用。</td></tr>
   <tr><td><code>StreamLost</code> / 流错误哨兵</td><td>运行期音频流错误。</td><td>丢弃当前段；连续失败达到上限后 daemon 退出。</td></tr>
   <tr><td>模型加载错误</td><td>清单缺失、SHA 不匹配、张量不符、词表格式错误。</td><td>启动失败；重新安装模型。</td></tr>
   <tr><td><code>SegmentDropped</code></td><td>单段识别失败或结果为空。</td><td>丢弃该段；继续监听。</td></tr>

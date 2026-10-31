@@ -240,9 +240,9 @@
   </tr>
   <tr>
     <td>音频生命周期</td>
-    <td>daemon 启动即打开麦克风流并保持播放；没有按段开关。</td>
-    <td>Windows 会常亮麦克风指示；蓝牙耳机会被拉入 HFP；隐私设置拒绝时 daemon 直接启动失败。</td>
-    <td>增加按需开流/关流或至少可配置；启动失败时给出 Windows 隐私诊断。</td>
+    <td>daemon 启动时构建输入流但保持暂停；仅 Continuous 或录音会话期间播放，结束后暂停；设备句柄与 IAudioClient 仍常驻。</td>
+    <td>麦克风指示随会话出现；常驻句柄仍可能让蓝牙停留在 HFP；隐私设置拒绝时 daemon 直接启动失败。</td>
+    <td>彻底释放设备需改为按需开流/关流；启动失败时给出 Windows 隐私诊断。</td>
   </tr>
   <tr>
     <td>采样格式</td>
@@ -316,8 +316,8 @@
     <td><code>crates/voime-core/src/audio/capture.rs</code> 只匹配 I16 / U16 / F32，其它格式返回 <code>UnsupportedSampleFormat</code>。</td>
   </tr>
   <tr>
-    <td>daemon 启动即常开麦克风</td>
-    <td><code>crates/voimed/src/main.rs</code> 在 <code>run()</code> 中先 <code>capture::start</code>，随后才绑定 IPC。</td>
+    <td>daemon 常驻麦克风设备句柄</td>
+    <td><code>crates/voimed/src/main.rs</code> 在 <code>run()</code> 中先 <code>capture::start</code> 构建流，<code>crates/voimed/src/daemon.rs</code> 再按会话 play / pause；设备与 IAudioClient 不会释放。</td>
   </tr>
   <tr>
     <td>XDG / HOME 路径</td>
@@ -595,7 +595,7 @@
   </tr>
   <tr>
     <td>4</td>
-    <td><strong>音频适配</strong>：补 I32/U32；设备按 endpoint ID/索引选择；评估按段开流与常开流的取舍；隐私拒绝给出明确错误。</td>
+    <td><strong>音频适配</strong>：补 I32/U32；设备按 endpoint ID/索引选择；按需开流/关流彻底释放设备（当前为按会话 play / pause）；隐私拒绝给出明确错误。</td>
     <td><code>voime-core::audio::capture</code>、<code>config</code>、<code>voimed</code> 启动流程、doctor。</td>
     <td>Windows 上内置麦克风、USB、蓝牙至少各一台可用；设备切换/拔出有可读错误。</td>
   </tr>

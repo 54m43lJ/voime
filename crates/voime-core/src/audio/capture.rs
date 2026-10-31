@@ -36,12 +36,15 @@ pub enum AudioError {
     BuildStream(#[source] cpal::BuildStreamError),
     #[error("启动输入流失败：{0}")]
     PlayStream(#[source] cpal::PlayStreamError),
+    #[error("暂停输入流失败：{0}")]
+    PauseStream(#[source] cpal::PauseStreamError),
     #[error("音频流错误：{0}")]
     StreamLost(String),
 }
 
 pub struct CaptureHandle {
     stream: Option<cpal::Stream>,
+    playing: bool,
 }
 
 pub fn start(
@@ -140,9 +143,9 @@ pub fn start(
     .map_err(AudioError::BuildStream)
     .context("构建 cpal 输入流失败")?;
 
-    stream.play().map_err(AudioError::PlayStream)?;
     Ok(CaptureHandle {
         stream: Some(stream),
+        playing: false,
     })
 }
 
@@ -174,18 +177,35 @@ fn send(
 }
 
 impl CaptureHandle {
-    pub fn stop(mut self) {
-        if let Some(stream) = self.stream.take() {
-            let _ = stream.pause();
-            drop(stream);
+    pub fn play(&mut self) -> anyhow::Result<()> {
+        if self.playing {
+            return Ok(());
         }
+        if let Some(stream) = &self.stream {
+            stream.play().map_err(AudioError::PlayStream)?;
+            self.playing = true;
+        }
+        Ok(())
+    }
+
+    pub fn pause(&mut self) -> anyhow::Result<()> {
+        if !self.playing {
+            return Ok(());
+        }
+        if let Some(stream) = &self.stream {
+            stream.pause().map_err(AudioError::PauseStream)?;
+            self.playing = false;
+        }
+        Ok(())
+    }
+
+    pub fn stop(mut self) {
+        let _ = self.pause();
     }
 }
 
 impl Drop for CaptureHandle {
     fn drop(&mut self) {
-        if let Some(stream) = self.stream.take() {
-            let _ = stream.pause();
-        }
+        let _ = self.pause();
     }
 }
