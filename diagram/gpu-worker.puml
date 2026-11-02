@@ -3,24 +3,28 @@ skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
 hide footbox
 
-participant "voimed\nCPU pipeline" as Daemon
-participant "voime-asr-worker\nGPU optional" as Worker
+participant "voimed\nSenseVoice Preview + Final" as Daemon
+participant "voime-gpu\nFinal optional" as Worker
 participant "模型包" as Package
 
 Daemon -> Package : 读取 manifest / 校验 SHA
-alt active 是 CPU 模型
+note right of Daemon
+  Partial 始终由 SenseVoice 处理，
+  不进入 voime-gpu
+end note
+alt Final 是 CPU SenseVoice
   Daemon -> Daemon : 不启动 worker
-else active 是 GPU 模型
+else Final 是 GPU FireRed
   Daemon -> Worker : spawn + Hello(manifest, device)
   Worker -> Worker : 加载 FireRed AED FP16
   Worker --> Daemon : Ready(capabilities)
-  Daemon -> Worker : Transcribe(segment, PCM f32)
-  Worker --> Daemon : raw text
-  Daemon -> Daemon : CPU VAD / Punc 继续
+  Daemon -> Worker : Transcribe(final segment, PCM f32)
+  Worker --> Daemon : Final raw text
+  Daemon -> Daemon : SenseVoice Preview / VAD / Punc 继续
 end
 alt worker 崩溃 / 超时 / 显存不足
   Daemon -> Daemon : 退避重启 worker
-  Daemon -> Daemon : 失败则回退 CPU SenseVoice 或报错
+  Daemon -> Daemon : 失败则 Final 回退 CPU SenseVoice 或报错
 end
 Daemon -> Worker : Shutdown（如已启动）
 @enduml

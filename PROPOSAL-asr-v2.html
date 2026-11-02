@@ -2,13 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>提案 — ASR v2：SenseVoice 收敛、GPU 后端与 VAD 选型</title>
+<title>提案 — ASR v2：SenseVoice 收敛与 GPU 后端</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <a id="top"></a>
-<h1>提案 — ASR v2：SenseVoice 收敛、GPU 后端与 VAD 选型</h1>
+<h1>提案 — ASR v2：SenseVoice 收敛与 GPU 后端</h1>
 
 <p class="doc-links">
 <a href="README.html">README</a>
@@ -21,22 +21,22 @@
 
 <p>
 本文给出 ASR 的单一决策：<strong>删除 CTC、保留 SenseVoice ITN、删除 SenseVoice + Punc 变体、
-删除 AED CPU 推理、否决文本后处理、增加可选 GPU worker、保留 FireRedVAD 并评测替代品。</strong>
-文档同时定义 SenseVoice 框架对齐、CPU / GPU 推理契约、模型包切换、配置界面与验收门禁。
+删除 AED CPU 推理、否决文本后处理、增加可选 voime-gpu；VAD 保持现状，不纳入本提案。</strong>
+文档同时定义 SenseVoice Preview / Final 分工、音频预卷、CPU / GPU 推理契约、安装档位、模型包切换与验收门禁。
 </p>
 
 <p>
-本文按 <strong>clean break</strong> 设计：不承诺旧 schema、旧模型包、旧 <code>active</code> / legacy 布局、
-旧前端协议兼容，也不提供迁移步骤或兼容层。升级按“重新安装新版本 + 新模型包”处理；
+本文按 <strong>clean break</strong> 设计：运行期不承诺旧 schema、旧模型包、旧 <code>active</code> / legacy 布局、
+旧前端协议兼容，也不建立兼容层。升级默认按“重新安装新版本 + 新模型包”处理；
+另提供一个<strong>独立、可选、一次性</strong>的迁移脚本，由用户自行决定是否运行，它不属于安装脚本。
 运行期失败回滚仍然保留，但它只回滚到本次运行已经加载的新 pipeline，不涉及旧版本迁移。
 </p>
 
 <p>
-结论先行：SenseVoice 的少量错别字<strong>已经复现出框架侧原因</strong>，不是全部来自模型。
-在当前 POC 与 sherpa-onnx 1.12.27 的对照中，7 条中文 / 中英混合样本有 2 条出现字符级差异，
-另有 1 条标点差异；同一组 fbank 特征在 Python ORT 与 Rust ORT 下得到不同文本，
-说明差异主要来自 ORT 版本 / 会话配置，LFR 边缘处理与分段缺少预卷是另外两个风险。
-因此，本文把“先做推理框架对齐，再谈换模型”列为 Phase 0 的硬门槛。
+结论先行：实际使用中没有观察到 SenseVoice 的明显错别字；此前少量字符差异更可能来自已删除的 CTC 路径，
+而不是 SenseVoice 模型。本文不再展开 LFR 边缘处理、量化精度与语言参数的归因，
+确定保留的改进只有<strong>分段音频预卷</strong>；另做一个受控的 Rust <code>ort</code> 版本实验，有实际收益才采纳。
+SenseVoice 保持当前推理路径，不换模型、不改前端。
 </p>
 
 <h2 id="s1">1. 决策摘要</h2>
@@ -47,12 +47,32 @@
   <tr>
     <td>FireRed CTC</td>
     <td><strong>删除。</strong>不再作为可选后端、不再进入新模型包、不再做默认或回滚候选。</td>
-    <td>测试结论是“完全用不了、可被 SenseVoice 替代”；继续保留只会增加测试与文档成本。旧 CTC 包直接拒绝，不提供回退或迁移。</td>
+    <td>测试结论是“完全用不了、可被 SenseVoice 替代”；继续保留只会增加测试与文档成本。旧 CTC 包直接拒绝，不提供回退；迁移脚本只清理 / 替换，不保留 CTC 路径。</td>
   </tr>
   <tr>
     <td>SenseVoice</td>
-    <td><strong>保留唯一变体：</strong><code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code> + <code>use_itn=1</code> + 内置标点。作为 CPU 默认后端。</td>
-    <td>不再维护 <code>use_itn=0</code> + FireRedPunc 的对照包；SenseVoice 的标点与 ITN 由模型自身完成。</td>
+    <td><strong>保留唯一变体：</strong><code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code> + <code>use_itn=1</code> + 内置标点。作为常驻 Preview 后端与 CPU Final 默认。</td>
+    <td>所有 Partial 都由 SenseVoice 产生；CPU 档 Final 也用它。不再维护 <code>use_itn=0</code> + FireRedPunc 的对照包。</td>
+  </tr>
+  <tr>
+    <td>安装档位</td>
+    <td><strong>两选一：</strong><code>sensevoice</code> 只装 SenseVoice；<code>firered</code> 装 SenseVoice + FireRed 两个包。</td>
+    <td>SenseVoice 始终安装并常驻；只有 <code>firered</code> 档需要 GPU runtime，Final 才走 GPU。</td>
+  </tr>
+  <tr>
+    <td>Preview / Final</td>
+    <td><strong>Preview 固定 SenseVoice；Final 可选 SenseVoice CPU 或 FireRed GPU。</strong>GPU 只影响 Final，不参与 Preview。</td>
+    <td>Final 直接输入，不做呈现变化；Preview 只是临时候选，文本差异接受。GPU 不可用时 Final 回退 CPU SenseVoice。</td>
+  </tr>
+  <tr>
+    <td>SenseVoice 错别字 / 框架对齐</td>
+    <td><strong>不再展开。</strong>实际使用未观察到明显错字；此前少量差异更可能来自 CTC 路径。SenseVoice 保持当前推理路径，只增加音频预卷。</td>
+    <td>避免把 CTC 的问题误判为 SenseVoice 框架问题；不引入 LFR / 量化 / 语言参数改动。</td>
+  </tr>
+  <tr>
+    <td>Rust ORT 版本</td>
+    <td><strong>只做条件实验。</strong>当前 <code>ort 2.0.0-rc.12</code> / ORT 1.24.2 对比 <code>rc.13</code> / ORT 1.28、<code>rc.15</code> / ORT 1.31；目标语料有实际收益且延迟 / 内存不退化才升级，否则保持当前版本。</td>
+    <td>Rust 侧版本可选但有限；实验只升级 <code>ort</code> 依赖，不做运行时替换或多版本长期矩阵。</td>
   </tr>
   <tr>
     <td>SenseVoice + Punc 方案</td>
@@ -61,7 +81,7 @@
   </tr>
   <tr>
     <td>AED CPU 推理</td>
-    <td><strong>删除。</strong>AED 只允许通过 GPU worker 运行；daemon 上没有 AED 路径。</td>
+    <td><strong>删除。</strong>AED 只允许通过 voime-gpu 运行；daemon 上没有 AED 路径。</td>
     <td>避免用户选到“精度更高但收尾延迟不可接受”的 CPU 包；GPU 不可用时回退 SenseVoice CPU，而不是回退 AED CPU。</td>
   </tr>
   <tr>
@@ -71,30 +91,30 @@
   </tr>
   <tr>
     <td>GPU 推理</td>
-    <td><strong>新增可选 GPU worker 进程与独立二进制包。</strong>CPU 推理继续留在 <code>voimed</code> / <code>voime-core</code>；GPU 只在 active 模型要求时拉起 <code>voime-asr-worker</code>。</td>
-    <td>第一批目标：FireRedASR2-AED（1.1B），<strong>AMD 为第一目标、GPU 只走 FP16</strong>（Windows DirectML / Linux MIGraphX）；int8 只用于 CPU SenseVoice，不作为 GPU 产品路径。LLM 只有在精度高于 AED 且显存足够时才评估；低于 AED 的 FunASR-Nano / Qwen3-ASR 不测试。</td>
+    <td><strong>新增可选 voime-gpu 进程与独立二进制包。</strong>SenseVoice 始终在 <code>voimed</code> 内；GPU 只在 Final 选择 FireRed 时拉起 <code>voime-gpu</code>，Preview 仍由 SenseVoice 处理。</td>
+    <td>第一批目标：FireRedASR2-AED（1.1B），<strong>Linux 为第一平台、AMD MIGraphX 先做、GPU 只走 FP16</strong>；Windows DirectML 与 NVIDIA 使用各自的独立 runtime 包。int8 只用于 CPU SenseVoice。GPU 档需要 SenseVoice + FireRed 两个包；LLM 暂不进入。</td>
   </tr>
   <tr>
     <td>推理运行时</td>
     <td><strong>统一 ONNX Runtime。</strong>CPU SenseVoice 走 ORT CPU；AMD GPU 走 ORT DirectML（Windows）/ MIGraphX（Linux）；NVIDIA 预留 CUDA / TensorRT，不作为当前实现。</td>
-    <td>不引入第二推理引擎。CPU daemon 只加载 CPU ORT；GPU ORT / EP 只在独立 GPU worker 中加载。固定 ORT 版本、build info 与 EP，用黄金文本测试防止版本漂移。</td>
+    <td>不引入第二推理引擎。CPU daemon 只加载 CPU ORT；GPU ORT / EP 只在独立 voime-gpu 中加载。固定经实验选定的 CPU ORT 版本、build info 与 EP，用黄金文本测试防止版本漂移。</td>
   </tr>
   <tr>
     <td>VAD</td>
-    <td><strong>保留 FireRedVAD 作为默认。</strong>新增预卷、平滑与可配置阈值；同时评测 Silero VAD v6、TEN VAD 等替代品。</td>
-    <td>FireRedVAD 目前是公开基准上的 SOTA，且已是 Apache-2.0；没有足够证据替换。替代品作为回退 / 低延迟选项保留。</td>
+    <td><strong>保持现状。</strong>继续使用 FireRedVAD 与现有判定；不替换、不调整 VAD 模型 / 阈值、不评测替代品。分段预卷只修复交给 ASR 的音频窗口，不改变 VAD 判定。</td>
+    <td>VAD 不属于本轮 ASR 收敛范围；保持现状可以避免把 VAD 差异混入 ASR 质量归因。</td>
   </tr>
   <tr>
     <td>向后兼容 / 迁移</td>
-    <td><strong>不提供。</strong>旧 schema、旧模型包、旧 <code>active</code> / legacy 布局、旧前端协议一律拒绝；没有兼容层、没有迁移代码。</td>
-    <td>升级按 clean install 处理；发布说明必须明确“不兼容旧版本 / 旧包”。</td>
+    <td><strong>运行期不兼容；另提供独立的一次性迁移脚本。</strong>旧 schema、旧模型包、旧 <code>active</code> / legacy 布局、旧前端协议一律拒绝，没有兼容层。迁移脚本单独发布，不进入安装器，由用户自行决定是否运行。</td>
+    <td>默认仍按 clean install；迁移脚本只处理旧版本到本版本的一次性升级，不作为长期兼容承诺。</td>
   </tr>
 </table>
 
 <ul class="note">
   <li>“删除”指新方向中不再保留该后端 / 变体 / 方案；旧模型包不再被运行时接受。</li>
-  <li>CPU 默认只有一个 ASR：SenseVoice ITN。GPU 是可选档位，不改变“默认单后端、不并行加载”的原则。</li>
-  <li>质量门禁分两段：先证明推理框架与参考实现对齐，再证明模型在目标语料上更好；两步不能合并。</li>
+  <li>SenseVoice 常驻：既提供所有 Partial，也作为 CPU 档的 Final。Final 仍是“单后端”，同一时刻只选择一个 Final 模型。</li>
+  <li>质量门禁分两段：先确认 SenseVoice Preview / CPU Final 与预卷不回归，再比较 GPU Final 在目标语料上的收益；两步不能合并。</li>
 </ul>
 
 <h2 id="s2">2. 目标、非目标与设计边界</h2>
@@ -103,24 +123,27 @@
 <h3 id="s2-1">2.1 目标</h3>
 
 <ul>
-  <li>把 CPU 默认后端收敛为唯一的 SenseVoice ITN；删除 CTC、SenseVoice-punc 与 AED CPU 路径。</li>
-  <li>先完成推理框架对齐：固定 ORT 版本 / 会话、fbank 黄金回归、LFR 边缘处理与分段预卷，再评价模型。</li>
-  <li>增加可选 GPU worker：只有 active 模型要求 GPU 时才启动，CPU 路径不加载任何 GPU 库。</li>
-  <li>保留包级切换：<code>models/active</code> 指针 + 重启后端；切换不需要重新安装或替换二进制。</li>
+  <li>保留 SenseVoice 作为常驻 Preview 后端与 CPU Final 默认；删除 CTC、SenseVoice-punc 与 AED CPU 路径。</li>
+  <li>确定保留的 SenseVoice 改进是分段音频预卷，用于修复段首缺字；另做一次受控的 Rust <code>ort</code> 版本实验，有实际收益才采纳。</li>
+  <li>增加可选 voime-gpu：只用于 Final；Preview 始终由 SenseVoice 处理，CPU 路径不加载任何 GPU 库。</li>
+  <li>保留包级切换：<code>models/active</code> 只选择 Final 模型；切换不需要重装 SenseVoice 或替换二进制。</li>
+  <li>安装档位两选一：<code>sensevoice</code> 只装一个模型；<code>firered</code> 安装 SenseVoice + FireRed 两个模型。</li>
   <li>复用现有 VAD、分段、音频采集、IPC、前端提交与 ONNX Runtime 边界。</li>
-  <li>失败可回滚：新包加载或推理失败时恢复本次运行中已经加载的 pipeline；GPU 不可用时回退 CPU SenseVoice。</li>
-  <li>保留 FireRedVAD 作为默认，并用目标语料评测 Silero v6 / TEN VAD 等替代品。</li>
+  <li>失败可回滚：新 Final 加载或推理失败时恢复旧 Final；GPU 不可用时 Final 回退 CPU SenseVoice，Preview 不受影响。</li>
 </ul>
 
 <h3 id="s2-2">2.2 非目标</h3>
 
 <ul>
-  <li>不做运行时双模型热切换，也不在录音 / 识别过程中切换后端。</li>
+  <li>不做运行时双模型热切换，也不在录音 / 识别过程中切换 Final 后端。</li>
   <li>不做 CPU AED；GPU 失败不自动加载 AED CPU。</li>
+  <li>不做 GPU Partial：Preview 固定由常驻 SenseVoice 产生，voime-gpu 只接收完整语音段做 Final。</li>
+  <li>除受控的 Rust <code>ort</code> 版本实验外，不改 CPU SenseVoice 的 LFR / fbank / CMVN / 量化 / 语言参数；预卷是唯一确定改动。</li>
+  <li>不更换、不调优、不评测 VAD：继续使用现有 FireRedVAD、模型与阈值；分段预卷只改变 ASR 输入窗口。</li>
   <li>不实现文本后处理：不增加规则层、文本纠错模型、<code>--rewrite</code>、清单字段或 IPC 消息。</li>
   <li>不引入第二推理引擎、Python 运行时、云端 API 或 GPU 依赖到 CPU daemon。</li>
   <li>第一批不接 LLM；低于 FireRed AED 精度的 LLM 不测试。</li>
-  <li>不承诺旧 schema、旧模型包、旧目录布局或旧前端协议兼容，也不提供迁移步骤。</li>
+  <li>运行期不承诺旧 schema、旧模型包、旧目录布局或旧前端协议兼容；只提供一个独立、可选的一次性迁移脚本，不把迁移纳入安装流程。</li>
   <li>不做模型微调、领域自适应训练或通用文本润色。</li>
   <li>不把 SenseVoice 的语言 / 情感 / 事件标签暴露给前端；一期只消费文本。</li>
 </ul>
@@ -135,7 +158,7 @@
   </tr>
   <tr>
     <td>音频通道与完成段队列有界，满时丢弃</td>
-    <td>GPU worker 超时、模型加载失败与后端重启都必须有背压与回退策略，不能拖垮 Continuous。</td>
+    <td>voime-gpu 超时、模型加载失败与后端重启都必须有背压与回退策略，不能拖垮 Continuous。</td>
   </tr>
   <tr>
     <td>模型清单是唯一契约；SHA-256、张量、词表都在启动时校验</td>
@@ -143,7 +166,7 @@
   </tr>
   <tr>
     <td>运行期不联网、模型只读、日志不记录识别文本</td>
-    <td>GPU worker 协议只回传结果；daemon 只记录长度、耗时与错误码。</td>
+    <td>voime-gpu 协议只回传结果；daemon 只记录长度、耗时与错误码。</td>
   </tr>
   <tr>
     <td>CPU 直接使用 <code>ort</code>，不链接 sherpa-onnx 运行时</td>
@@ -158,186 +181,38 @@
     <td>模型下拉与重启入口必须同时适配两端；新 IPC 消息提升协议版本，两个前端同版本发布。</td>
   </tr>
   <tr>
-    <td>默认只运行一个 ASR 后端</td>
-    <td>CPU 与 GPU 模型不并行加载；切换时先停旧 pipeline / worker，再加载新包。</td>
+    <td>SenseVoice 常驻；GPU Final 可选</td>
+    <td>SenseVoice 始终加载，负责全部 Preview 与 CPU Final；只有 Final 选择 FireRed 时才加载 voime-gpu。同一时刻只有一个 Final 后端，但 Preview 与 GPU Final 可以并存。</td>
   </tr>
 </table>
 
 <ul class="note">
   <li>这些边界是后续设计的前提；违反其中任何一条，都会把 CPU 路径、GPU 隔离或切换语义重新打开。</li>
-  <li>“默认单后端”不等于“单实现”：同一版本可以包含 CPU SenseVoice 与 GPU worker 两条路径，但同一时刻只加载一条。</li>
+  <li>“单后端”现在指“单 Final 后端”；SenseVoice Preview 是常驻基础路径，不计入 Final 的并行加载。</li>
 </ul>
 
-<h2 id="s3">3. 任务一：SenseVoice 错别字归因</h2>
+<h2 id="s3">3. 任务一：音频预卷与 ORT 版本实验</h2>
 <p><a href="#top">↑</a></p>
 
-<h3 id="s3-1">3.1 结论</h3>
+<h3 id="s3-1">3.1 结论与范围</h3>
 
 <p>
-<strong>部分是框架导致的，不能全部归因于 SenseVoice 模型。</strong>
-在相同模型、相同音频、相同 <code>use_itn=1</code> 的条件下，当前 Rust POC 与 sherpa-onnx 1.12.27
-的参考输出并不完全一致：
+实际使用中没有观察到 SenseVoice 的明显错别字；此前少量字符差异更可能来自已删除的 CTC 路径，
+而不是 SenseVoice 模型。因此本提案不再展开 LFR 边缘处理、量化精度与语言参数的归因或改动，
+SenseVoice 保持当前推理路径。
 </p>
-
-<ul>
-  <li>7 条 16 kHz 中文 / 中英混合样本中，2 条出现<strong>字符级差异</strong>，且都是 POC 输出错字、参考输出正确。</li>
-  <li>1 条出现标点差异（POC 少一个逗号）；多语种样例中粤语也出现标点差异。</li>
-  <li>其余 4 条字符与标点一致。</li>
-  <li>POC 的 Hamming fbank 与 C++ 参考<strong>基本一致</strong>：最大绝对差约 3–5 × 10<sup>-4</sup>，均值约 10<sup>-6</sup>；<code>2.wav</code> 的差异不是 fbank 造成，但 <code>3.wav</code> 处于低置信边界，微小 fbank 差异也能翻转，不能完全排除。</li>
-  <li>把同一组 POC fbank 特征送入 Python ORT 1.31.1，在 <code>2.wav</code> / <code>3.wav</code> 上输出与 sherpa 参考一致；只有 Rust ORT 1.24.2 路径出现错字。这说明<strong>运行时版本 / 会话配置</strong>是已确认的框架侧原因之一。</li>
-</ul>
 
 <p>
-因此，当前“少量错别字”至少有一部分是<strong>推理框架侧的可复现问题</strong>，而不是 SenseVoice 模型的上限。
-但在修复框架之前，不能用它来判断 SenseVoice 是否值得替换，也不能把剩余错误全部归因于模型。
+确定保留的改进是<strong>分段音频预卷</strong>：它不改变模型、不改变 VAD 判定，只修复交给 ASR 的音频窗口，
+用于减少段首辅音 / 爆破音被切掉造成的缺字或近音替换。它的收益直接、风险最低，且与 CTC / SenseVoice 的模型选择无关。
 </p>
-
-<h3 id="s3-2">3.2 验证环境</h3>
-
-<table>
-  <tr><th>项目</th><th>取值</th></tr>
-  <tr><td>参考实现</td><td>sherpa-onnx 1.12.27 Python API（<code>OfflineRecognizer.from_sense_voice</code>），CPU 2 线程</td></tr>
-  <tr><td>POC 实现</td><td>Rust <code>voime-core</code>，<code>kaldi-native-fbank 0.1.0</code>（Rust port）+ 自实现 LFR / CMVN + <code>ort</code> 2.0.0-rc.12</td></tr>
-  <tr><td>模型</td><td><code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>；SHA-256 <code>c71f0ce0…</code></td></tr>
-  <tr><td>参数</td><td><code>language=auto</code>，<code>use_itn=true</code>，<code>punc=builtin</code>，贪心 CTC 解码</td></tr>
-  <tr><td>音频</td><td>FireRedASR2-CTC 包 <code>test_wavs</code> 中 7 条 16 kHz 单声道样本；另用 SenseVoice 包 5 条多语种样例复核</td></tr>
-  <tr><td>日期</td><td>2026-11-01</td></tr>
-</table>
-
-<ul class="note">
-  <li>这不是正式基准：样本少、没有目标语料、没有统计显著性；只用于定位“框架是否会造成差异”。</li>
-  <li>参考实现与 POC 使用同一份权重、同一份词表；差异不能归因于模型文件不同。</li>
-</ul>
-
-<h3 id="s3-3">3.3 对照结果</h3>
-
-<table>
-  <tr><th>音频</th><th>sherpa-onnx 1.12.27 参考</th><th>Rust POC</th><th>差异</th></tr>
-  <tr>
-    <td><code>2.wav</code></td>
-    <td>就是<strong>平凡</strong>的啊，不然是接下来frent平繁的。</td>
-    <td>就是<strong>平繁</strong>的啊，不然是接下来frent平繁的。</td>
-    <td><strong>字符错误：</strong>POC 把“平凡”识别成“平繁”。</td>
-  </tr>
-  <tr>
-    <td><code>3.wav</code></td>
-    <td>第一句是个什么时态，加了ES是一般现代时，对后把它<strong>时态</strong>写上去。</td>
-    <td>第一句是个什么时态，加了ES是一般现代时，对后把它<strong>时材</strong>写上去。</td>
-    <td><strong>字符错误：</strong>POC 把“时态”识别成“时材”。</td>
-  </tr>
-  <tr>
-    <td><code>0.wav</code></td>
-    <td>昨天是monday，today is礼拜2<strong>，</strong>the day after tomorrow是星期三。</td>
-    <td>昨天是monday，today is礼拜2the day after tomorrow是星期三。</td>
-    <td>标点差异：POC 少一个逗号。</td>
-  </tr>
-  <tr>
-    <td><code>1.wav</code> / <code>3-sichuan.wav</code> / <code>4-tianjin.wav</code> / <code>5-henan.wav</code></td>
-    <td>—</td>
-    <td>—</td>
-    <td>字符与标点一致。</td>
-  </tr>
-  <tr>
-    <td><code>yue.wav</code>（多语种样例）</td>
-    <td>呢几个字都表达唔到我想讲嘅意思。</td>
-    <td>呢几个字都表达唔到<strong>，</strong>我想讲嘅意思。</td>
-    <td>标点差异；不影响字符。</td>
-  </tr>
-  <tr>
-    <td><code>en.wav</code> / <code>ja.wav</code> / <code>ko.wav</code> / <code>zh.wav</code></td>
-    <td>—</td>
-    <td>—</td>
-    <td>字符一致。</td>
-  </tr>
-</table>
-
-<ul class="note">
-  <li>上表只摘录有差异的样本；“一致”不代表逐位一致，只代表最终文本相同。</li>
-  <li><code>2.wav</code> 的后一处“平繁”在参考中同样存在，差异只在第一处；<code>3.wav</code> 的前一处“时态”一致，差异只在最后一处。</li>
-  <li>2 条字符错误发生在同一模型、同一音频、同一解码参数下，因此可以作为“框架侧原因”的直接证据。</li>
-</ul>
-
-<h3 id="s3-4">3.4 已定位的框架差异</h3>
-
-<h4 id="s3-4-1">3.4.1 ORT 版本 / 会话差异（已确认）</h4>
 
 <p>
-POC 使用 Rust <code>ort 2.0.0-rc.12</code>，随包 ONNX Runtime 为 <strong>1.24.2</strong>；
-sherpa-onnx 1.12.27 自带 ONNX Runtime <strong>1.23.2</strong>；
-对照脚本使用 Python <code>onnxruntime 1.31.1</code>。
-三者加载同一份 int8 模型、同一套完整窗口 LFR / CMVN / 贪心解码；其中第二、三行使用同一组 POC fbank 特征，第一行使用参考自身 fbank。文本仍不一致：
+另外保留一个<strong>受控的 ORT 版本实验</strong>：只比较当前 CPU ORT 与候选稳定版本；在目标语料上看到实际收益才采纳，
+看不到收益就保持当前版本并关闭实验。它不是“框架对齐”工程，不扩展到 LFR、fbank、量化或语言参数。
 </p>
 
-<table>
-  <tr><th>路径</th><th>ONNX Runtime</th><th><code>2.wav</code></th><th><code>3.wav</code></th></tr>
-  <tr>
-    <td>sherpa-onnx 1.12.27（参考）</td>
-    <td>1.23.2</td>
-    <td>就是<strong>平凡</strong>的啊…</td>
-    <td>…把它<strong>时态</strong>写上去。</td>
-  </tr>
-  <tr>
-    <td>Python ORT + POC 的 Hamming fbank + 完整窗口 LFR</td>
-    <td>1.31.1</td>
-    <td>就是<strong>平凡</strong>的啊…</td>
-    <td>…把它<strong>时态</strong>写上去。</td>
-  </tr>
-  <tr>
-    <td>Rust POC</td>
-    <td>1.24.2</td>
-    <td>就是<strong>平繁</strong>的啊…</td>
-    <td>…把它<strong>时材</strong>写上去。</td>
-  </tr>
-</table>
-
-<ul class="note">
-  <li>同一组 POC fbank 特征在 Python ORT 1.31.1 下输出正确，说明运行时路径<strong>足以单独造成</strong>这两处差异；但 C++ fbank + Python ORT 在 <code>3.wav</code> 上又得到“时材”，说明该字符处于低置信边界，fbank 的微小差异也能翻转。</li>
-  <li>Rust POC 在 1 / 2 / 4 / 8 线程下输出稳定，说明不是线程数抖动；差异更可能来自 ORT 1.24.2 的 int8 kernel / 图优化行为。</li>
-  <li>不要用“换个 ORT 版本”作为唯一修复：先固定版本、记录 build info，再用黄金文本测试验证；升级 ORT 也必须重跑黄金样本。</li>
-  <li>Hamming fbank 与 C++ 参考仍不是逐位一致：实测最大绝对差约 3–5 × 10<sup>-4</sup>，均值约 10<sup>-6</sup>；这属于可接受的浮点差异，但不能宣称逐位一致。Rust port 缺少 C++ 的 <code>eps</code> / <code>use_log_floor</code> 语义，属于低风险改进项，不是本次差异的唯一原因。</li>
-</ul>
-
-<h4 id="s3-4-2">3.4.2 LFR 边缘处理不一致</h4>
-
-<p>
-FunASR 原始前端与 sherpa-onnx 新版本都对 LFR 做<strong>左 / 右边缘复制</strong>，
-输出帧数为 <code>1 + (T - 1) / shift</code>；当前 POC 复刻的是 sherpa-onnx 1.12.27 的完整窗口行为：
-只输出完整窗口，帧数为 <code>(T - window) / shift + 1</code>，短于一帧的音频直接返回空。
-这会让段首 / 段尾的特征与训练前端不一致。
-</p>
-
-<table>
-  <tr><th>音频</th><th>完整窗口 LFR</th><th>边缘复制 LFR（FunASR / 新 sherpa）</th></tr>
-  <tr>
-    <td><code>2.wav</code></td>
-    <td>就是<strong>平凡</strong>的啊，不然是接下来frent平繁的。</td>
-    <td>这个是<strong>平繁</strong>的啊，主然是接下来frequently平凡的。</td>
-  </tr>
-  <tr>
-    <td><code>3.wav</code></td>
-    <td>…对后把它<strong>时材</strong>写上去。</td>
-    <td>…对后把它<strong>时态</strong>写上去。</td>
-  </tr>
-  <tr>
-    <td><code>zh.wav</code></td>
-    <td><strong>开放</strong>时间早上9点至下午5点。</td>
-    <td><strong>开饭</strong>时间早上9点至下午5点。</td>
-  </tr>
-  <tr>
-    <td><code>en.wav</code></td>
-    <td>…fifty pieces of <strong>gold</strong>.</td>
-    <td>…fifty pieces of <strong>code</strong>.</td>
-  </tr>
-</table>
-
-<ul class="note">
-  <li>上表使用同一 C++ fbank + Python ORT，只改变 LFR，避免把 ORT 1.24.2 的差异混进 LFR 对比。</li>
-  <li>新 LFR 不是“免费变好”：它修正了 <code>3.wav</code>，却让 <code>2.wav</code> / <code>zh.wav</code> / <code>en.wav</code> 退化；必须在目标语料上做 A/B，而不是凭单条样本切换。</li>
-  <li>训练前端一致性优先：FunASR 的 LFR 是带边缘复制的；当前 POC 的完整窗口行为只是复刻了 sherpa 1.12.27 的历史实现，不代表训练口径。</li>
-  <li>修复时应同时保留完整窗口 / 边缘复制两种模式的黄金测试，确保切换可回滚，不要在代码里悄悄改变帧数。</li>
-</ul>
-
-<h4 id="s3-4-3">3.4.3 分段缺少预卷（高概率原因）</h4>
+<h3 id="s3-2">3.2 当前行为与问题</h3>
 
 <p>
 当前 <code>Segmenter</code> 从“第一个被 VAD 判为语音的帧”开始收集音频，没有保留语音起点之前的音频。
@@ -354,190 +229,104 @@ VAD 判定 speech ──► 从这里开始收集
 保留环形缓冲 ──► VAD 判定 speech ──► 从缓冲中回取 200–300 ms
 </code></pre>
 
-<ul class="note">
-  <li>预卷不改变 VAD 的判定，只改变交给 ASR 的音频范围；它是最低风险、最可能直接减少“段首错字”的改动。</li>
-  <li>PTT / Toggle 模式可以在按键按下时就开始缓冲，预卷成本更低；Continuous 模式需要常驻环形缓冲。</li>
-  <li>预卷长度不是越长越好：过长会把前一段的尾音带进来，建议从 200 ms 起测，按目标语料调整。</li>
+<h3 id="s3-3">3.3 改进方案</h3>
+
+<ul>
+  <li><code>Segmenter</code> 维护一个短环形缓冲，默认回取 200–300 ms；VAD 判定与端点参数保持不变。</li>
+  <li>PTT / Toggle：按键按下即开始缓冲，预卷成本最低。</li>
+  <li>Continuous：常驻环形缓冲，按帧回取；只改变交给 ASR 的音频范围。</li>
+  <li>预卷长度按目标语料调整；过长会把前一段尾音带进来，建议从 200 ms 起测。</li>
+  <li>不引入后卷、平滑、阈值调整或 VAD 替换；这些不在本提案范围内。</li>
 </ul>
 
-<h4 id="s3-4-4">3.4.4 量化精度与语言参数</h4>
+<h3 id="s3-4">3.4 参数与验收</h3>
 
 <table>
-  <tr><th>变量</th><th>观察</th><th>结论</th></tr>
-  <tr>
-    <td>int8 vs fp32（参考实现）</td>
-    <td><code>2.wav</code>：两者都输出“平凡”；<code>3.wav</code>：fp32 输出“时材”，int8 输出“时态”。</td>
-    <td>量化不是单调变好或变差；fp32 可以作为质量对照，但不建议直接替代 CPU 默认（体积 895 MiB、速度更慢）。</td>
-  </tr>
-  <tr>
-    <td><code>language=auto</code> vs <code>zh</code></td>
-    <td><code>3.wav</code>：auto 输出“时态”，固定 <code>zh</code> 输出“时材”。</td>
-    <td>不要为了中文场景硬编码 <code>zh</code>；中英混合与短段语言判定需要 A/B。</td>
-  </tr>
-  <tr>
-    <td>贪心 CTC</td>
-    <td>参考与 POC 都使用贪心；差异不是 beam search 造成的。</td>
-    <td>先把前端对齐，再考虑 beam search / 重打分；否则会在错误特征上做解码优化。</td>
-  </tr>
+  <tr><th>项目</th><th>建议</th></tr>
+  <tr><td><code>pre_roll_ms</code></td><td>默认 200–300 ms；按模式与目标语料调整。</td></tr>
+  <tr><td>PTT / Toggle</td><td>按键按下开始缓冲；不需要常驻环形缓冲。</td></tr>
+  <tr><td>Continuous</td><td>常驻环形缓冲；回取长度与 <code>min_speech_ms</code> 分开配置。</td></tr>
+  <tr><td>验收</td><td>段首辅音样本 CER 不劣化且有改善；端点延迟不退化；VAD 判定不变。</td></tr>
 </table>
 
-<h3 id="s3-5">3.5 其他可选项</h3>
+<h3 id="s3-5">3.5 Rust <code>ort</code> / ONNX Runtime 版本实验（条件项）</h3>
+
+<p>
+Rust 侧默认构建下，<code>ort</code> crate 版本决定绑定的 ONNX Runtime 版本；不通过 <code>load-dynamic</code> 混搭任意 runtime。
+当前 POC 使用 <code>ort 2.0.0-rc.12</code> / ONNX Runtime 1.24.2；可选的稳定路径有限：
+<code>ort 2.0.0-rc.13</code>（ONNX Runtime 1.28）与 <code>ort 2.0.0-rc.15</code>（ONNX Runtime 1.31；
+<code>rc.14</code> 同为 1.31，不单独测）。
+实验实际是一次 <code>ort</code> 依赖升级，只比较这几个版本；如果项目 MSRV 或 API 约束导致无法升级，
+就直接关闭实验，不做其它运行时替换。
+</p>
 
 <table>
-  <tr><th>选项</th><th>收益</th><th>代价 / 风险</th><th>建议</th></tr>
-  <tr>
-    <td>固定 ORT 版本 / 会话，和 LFR、预卷一起与参考实现对齐</td>
-    <td>直接消除已复现的框架侧字符错误；不换模型、不增加运行时。</td>
-    <td>优先固定 ORT 版本 / 会话；fbank 做黄金回归，必要时修 <code>eps</code> / <code>use_log_floor</code>；需要黄金特征 / 黄金文本测试。</td>
-    <td><strong>第一优先级。</strong>Phase 0 不做完，不评价任何新模型。</td>
-  </tr>
-  <tr>
-    <td>用 sherpa-onnx 运行时作为参考 / 兜底</td>
-    <td>与模型包同源，前端、LFR、解码都已验证；可作为黄金输出生成器。</td>
-    <td>引入第二套推理运行时，体积与依赖增加；与“直接使用 ORT”的现有边界冲突。</td>
-    <td>只用于离线对照与 CI 黄金生成，不进入产品运行时。</td>
-  </tr>
-  <tr>
-    <td>SenseVoice fp32 / 不同量化</td>
-    <td>可能减少低置信字符翻转；适合做质量上限对照。</td>
-    <td>895 MiB、CPU 更慢；fp32 也会引入新的错误，不保证更好。</td>
-    <td>作为 Phase 0 对照，不作为 CPU 默认；若目标语料证明显著更好，再考虑“质量档”包。</td>
-  </tr>
-  <tr>
-    <td>Paraformer-large（CPU）</td>
-    <td>0.2B、中文强、支持热词；可作为中文-only 的 CPU 备选。</td>
-    <td>非流式、标点外挂、英文 / 多语种弱；模型许可证需核对；CPU 速度低于 SenseVoice。</td>
-    <td>如果 SenseVoice 修复后仍不达标，再做目标语料 A/B；不现在替换。</td>
-  </tr>
-  <tr>
-    <td>FireRedASR2-AED（GPU）</td>
-    <td>1.1B，普通话 4 集平均 CER 3.05%，明显高于 SenseVoice；Apache-2.0；需要 FP16 ONNX 导出。</td>
-    <td>4–6 GB 显存；GPU 依赖；CPU 收尾延迟不可接受（已实测）；int8 不作为 GPU 产品路径。</td>
-    <td><strong>GPU 第一目标。</strong>只通过 GPU worker 运行，不做 CPU 路径；FP16 优先，FP32 兜底。</td>
-  </tr>
-  <tr>
-    <td>FunASR-Nano（GPU / LLM）</td>
-    <td>0.8B，31 语言，原生标点，2–4 GB 显存。</td>
-    <td>中文 4 集平均约 4.55%，<strong>低于 FireRed AED 的 3.05%</strong>；LLM 解码有重复 / 幻觉风险。</td>
-    <td><strong>不测试。</strong>精度低于 AED，只有明确的多语种 / 标点需求时才另立评估。</td>
-  </tr>
-  <tr>
-    <td>Qwen3-ASR-1.7B（GPU / LLM）</td>
-    <td>1.7B，52 语言 + 22 种中文方言，普通话 4 集平均约 3.76%。</td>
-    <td><strong>低于 FireRed AED 的 3.05%</strong>；VRAM 与运行时待实测。</td>
-    <td><strong>不测试。</strong>不作为中英文听写候选；只有多语种 / 方言需求时才另立评估。</td>
-  </tr>
-  <tr>
-    <td>FireRedASR2-LLM（GPU / LLM）</td>
-    <td>8.3B，普通话 4 集平均 2.89%，<strong>高于 AED</strong>，当前开源中文精度上限之一。</td>
-    <td>约 32 GB VRAM、21 GB 磁盘；AMD 消费卡通常不够。</td>
-    <td><strong>条件评估。</strong>只有显存 ≥ 32 GB 且精度目标明确时才测试；不进入默认产品路径。</td>
-  </tr>
-  <tr>
-    <td>Whisper large-v3</td>
-    <td>生态成熟、多语种。</td>
-    <td>中文公开基准明显弱于上述模型；不适合作为中文听写主候选。</td>
-    <td>不推荐。</td>
-  </tr>
-</table>
-
-<p>建议按以下矩阵做受控 A/B；一次只改变一个变量，避免把运行时、前端、分段和模型的差异混在一起：</p>
-
-<table>
-  <tr><th>组</th><th>模型 / 精度</th><th>运行时 / 前端 / 分段</th><th>目的</th></tr>
-  <tr><td>A0</td><td>SenseVoice int8</td><td>Rust ORT 1.24.2 + 完整窗口 LFR + 无预卷（现状）</td><td>复现当前错误，作为基线。</td></tr>
-  <tr><td>A1</td><td>SenseVoice int8</td><td>固定 ORT 版本 + 完整窗口 LFR + 无预卷</td><td>隔离运行时版本 / 会话的影响。</td></tr>
-  <tr><td>A2</td><td>SenseVoice int8</td><td>A1 + 预卷 200–300 ms</td><td>验证段首缺字 / 近音替换。</td></tr>
-  <tr><td>A3</td><td>SenseVoice int8</td><td>A2 + 新 LFR（边缘复制）</td><td>验证训练前端一致性。</td></tr>
-  <tr><td>A4</td><td>SenseVoice fp32</td><td>与胜出的 A1–A3 相同</td><td>量化误差上限对照；不作为默认。</td></tr>
-  <tr><td>B1</td><td>FireRedASR2-AED</td><td>voime-asr-worker + DirectML（Windows）/ MIGraphX（Linux）</td><td>质量档收益与延迟 / 显存预算；AMD 显卡为第一目标。</td></tr>
-  <tr><td>C1</td><td>FireRedASR2-LLM（条件）</td><td>GPU worker，需 ≥ 32 GB VRAM</td><td>只有精度目标明确且显存足够时才测；低于 AED 的 LLM 不测。</td></tr>
+  <tr><th>项目</th><th>约定</th></tr>
+  <tr><td>对照</td><td><code>ort 2.0.0-rc.12</code> / ORT 1.24.2（当前） vs <code>rc.13</code> / ORT 1.28 vs <code>rc.15</code> / ORT 1.31；以实际可编译、MSRV 允许的版本为准。</td></tr>
+  <tr><td>变量</td><td>只改 <code>ort</code> crate 版本及其 API 适配；模型、fbank、LFR、CMVN、量化、语言参数、解码与分段策略全部保持一致。</td></tr>
+  <tr><td>指标</td><td>目标语料 CER / 替换错误率；p95 收尾延迟；峰值 RSS；加载时间；失败率。</td></tr>
+  <tr><td>采纳门槛</td><td>CER 或替换错误率有统计显著改善，且延迟 / 内存不退化；否则保持 <code>rc.12</code> / ORT 1.24.2。</td></tr>
+  <tr><td>不做什么</td><td>不做多版本长期矩阵；不引入第二推理引擎；不用 <code>load-dynamic</code> 混搭任意 runtime；不为 ORT 版本改模型、前端或分段策略；没有可选版本就不做。</td></tr>
 </table>
 
 <ul class="note">
-  <li>“其他可选项”不等于“现在就换”。当前最高收益是修复框架对齐；换模型是下一步。</li>
-  <li>LLM 的进入门槛是<strong>精度高于 FireRed AED</strong>；FunASR-Nano 4.55%、Qwen3-ASR 3.76% 都低于 AED 3.05%，按当前决策不测试。</li>
-  <li>公开 CER 的测试集、VAD、文本归一化口径不同，不能直接横比；最终以目标中英文语料为准。</li>
-  <li>SenseVoice 仍是 CPU 档的最优解：234M、RTF 约 0.005、229 MiB；GPU 档才考虑 AED / LLM。</li>
-  <li><strong>运行时结论：统一 ONNX Runtime。</strong>FunASR GGUF、SenseVoice.cpp、OpenVINO、Vulkan 等方案评估后不引入：它们要么增加第二套模型格式 / 运行时依赖，要么只覆盖 SenseVoice 而无法覆盖 FireRed AED，收益不足以抵消维护成本。它们只保留为离线对照。</li>
-  <li>A0–A4 必须在同一目标语料、同一分段策略、同一参考文本上比较；B1 / C1 只改变模型与运行时。</li>
+  <li>这是条件实验，不是必须落地的改进；没有收益或没有可选版本就记录结论并关闭，不进入后续阶段。</li>
+  <li>如果采纳，固定新版本、build info 与 API 适配，并重跑 SenseVoice 回归；如果不采纳，保留当前版本与现有构建配置。</li>
 </ul>
 
-<h3 id="s3-6">3.6 建议的归因顺序</h3>
+<h3 id="s3-6">3.6 不在本提案中的改动</h3>
 
-<pre><code>1. ORT 版本 / 会话对齐
-   ├── 固定 ONNX Runtime 版本，记录 build info
-   ├── 固定图优化级别、线程数、EP
-   └── 同一组特征 + 同一模型 + 同一 LFR 的黄金文本
-
-2. fbank 黄金回归
-   ├── Hamming fbank 与 C++ 参考逐元素比较
-   ├── 当前差距约 3–5 × 10⁻⁴，先冻结基线
-   └── 若要求逐位一致，改用 C++ 绑定
-
-3. LFR 对齐
-   ├── 完整窗口模式与边缘复制模式同时保留
-   ├── 目标语料 A/B
-   └── 与 FunASR / sherpa 参考输出对比
-
-4. 分段预卷
-   ├── Continuous：常驻 200–300 ms 环形缓冲
-   ├── PTT / Toggle：按键即开始缓冲
-   └── 段首 / 段尾黄金测试
-
-5. 模型与参数
-   ├── int8 vs fp32
-   ├── language auto vs zh
-   └── 目标语料 CER / 替换错误率
-</code></pre>
-
-<ul class="note">
-  <li>顺序不能颠倒：在错误特征上比较模型，会把框架误差误判为模型差距。</li>
-  <li>每一层都要有“参考输出 + POC 输出 + 差异原因”的记录；不要只报最终 CER。</li>
+<ul>
+  <li>除 §3.5 的 ORT 版本实验外，不调整 CPU SenseVoice 的会话配置、图优化级别或执行提供者；voime-gpu 的 ORT / EP 属于第 5 节。</li>
+  <li>不切换 LFR 边缘处理，不改 fbank / CMVN 数值。</li>
+  <li>不做 int8 / fp32、<code>language=auto</code> / <code>zh</code> 的对照或调参。</li>
+  <li>不评估 Paraformer / Whisper 等 CPU 替代模型；SenseVoice 继续作为唯一 CPU 默认后端。</li>
+  <li>不把 CTC 的识别问题归因到 SenseVoice；CTC 按 §6.2 删除。</li>
 </ul>
 
-<h2 id="s4">4. 目标架构：CPU daemon + 可选 GPU worker</h2>
+<h2 id="s4">4. 目标架构：CPU daemon + 可选 voime-gpu</h2>
 <p><a href="#top">↑</a></p>
 
 <p>
-CPU 推理（VAD、SenseVoice、FireRedPunc）本来就一直需要，继续留在 <code>voimed</code> / <code>voime-core</code> 内，使用 CPU-only ORT。
-GPU 只作为可选能力：只有 active 模型要求 GPU 时，才拉起独立的 <code>voime-asr-worker</code> 进程。
-这样 CPU 路径不增加额外进程，GPU 也不污染 CPU 路径。
+SenseVoice、VAD 与 Preview 路径始终留在 <code>voimed</code> / <code>voime-core</code> 内，使用 CPU-only ORT。
+GPU 只作为可选 Final 能力：只有 <code>active</code> 选择 FireRed 时才拉起独立的 <code>voime-gpu</code> 进程；
+所有 Partial 仍由常驻 SenseVoice 处理。这样 CPU 路径不增加额外进程，GPU 也不污染 Preview 与 CPU 路径。
 </p>
 
-<div class="diagram"><img src="diagram/asr-v2-architecture.svg" alt="CPU daemon 与可选 GPU worker"></div>
+<div class="diagram"><img src="diagram/asr-v2-architecture.svg" alt="CPU daemon 与可选 voime-gpu"></div>
 <ul class="note">
   <li><code>voimed</code> / <code>voime-core</code> 使用 CPU-only ORT；不加载 GPU 库。</li>
-  <li><code>voime-asr-worker</code> 是唯一加载 DirectML / MIGraphX / CUDA 的进程，只在 GPU 模型时启动。</li>
-  <li>VAD 与 FireRedPunc 始终在 daemon 的 CPU ORT 上；GPU 模式下也不搬进 worker。</li>
-  <li>选择 CPU 模型时 worker 不启动；切换回 CPU 时停掉 worker 并释放显存。</li>
+  <li>SenseVoice 始终加载：所有 Partial 与 CPU Final 都由它处理。</li>
+  <li><code>voime-gpu</code> 是唯一加载 DirectML / MIGraphX / CUDA 的进程，只在 Final 选择 FireRed 时启动；它不处理 Partial。</li>
+  <li>VAD 与 FireRedPunc 始终在 daemon 的 CPU ORT 上；GPU Final 模式下也不搬进 worker。</li>
+  <li>Final 选择 CPU SenseVoice 时 worker 不启动；切换回 CPU Final 时停掉 worker 并释放显存，SenseVoice Preview 不中断。</li>
 </ul>
 
 <table>
   <tr><th>组件</th><th>职责</th><th>不负责</th></tr>
   <tr>
     <td><code>voimed</code></td>
-    <td>音频采集 / 重采样、环形缓冲、分段、前端 IPC、目标注入、模型选择、GPU worker 生命周期。</td>
+    <td>音频采集 / 重采样、环形缓冲、分段、前端 IPC、目标注入、Final 模型选择、voime-gpu 生命周期。</td>
     <td>GPU 库、GPU 会话、具体 GPU 模型解码。</td>
   </tr>
   <tr>
     <td><code>voime-core</code></td>
-    <td>CPU-only ORT；FireRedVAD、SenseVoice、FireRedPunc；fbank / LFR / CMVN；Final 文本。</td>
+    <td>CPU-only ORT；FireRedVAD、常驻 SenseVoice（Preview + CPU Final）、FireRedPunc（GPU Final）；fbank / LFR / CMVN；Partial / Final 文本。</td>
     <td>GPU 模型、GPU EP、前端 IPC、目标注入。</td>
   </tr>
   <tr>
-    <td><code>voime-asr-worker</code></td>
-    <td>GPU-only ORT；FireRed AED FP16；返回原始文本与耗时。</td>
-    <td>VAD、分段、标点、CPU ASR、前端 IPC。</td>
+    <td><code>voime-gpu</code></td>
+    <td>GPU-only ORT；FireRed AED FP16 Final；返回原始文本与耗时。</td>
+    <td>VAD、分段、Preview、标点、CPU ASR、前端 IPC。</td>
   </tr>
   <tr>
     <td>模型包</td>
-    <td>权重、清单、SHA、VAD / Punc、可选 GPU 模型。</td>
+    <td>SenseVoice 基础包 + 可选 FireRed Final 包；权重、清单、SHA、VAD / Punc。</td>
     <td>不包含运行时库、不写日志、不联网。</td>
   </tr>
   <tr>
     <td>GPU runtime 包</td>
-    <td><code>voime-asr-worker</code> + GPU ORT + EP 库；可选安装。</td>
+    <td>按 OS + EP 拆分的 <code>voime-gpu</code> runtime 包；可选安装。</td>
     <td>不进入模型目录，不被 <code>active</code> 直接选择。</td>
   </tr>
 </table>
@@ -556,13 +345,12 @@ pub enum PuncPolicy {
 }
 
 pub enum Precision {
-    Fp32,
     Fp16,       // GPU 产品路径；int8 只用于 CPU SenseVoice
 }
 
 pub enum BackendKind {
     Builtin,    // 进程内 CPU 后端
-    Worker,     // 可选 GPU worker
+    Worker,     // 可选 voime-gpu
 }
 
 pub struct AsrOptions {
@@ -570,7 +358,7 @@ pub struct AsrOptions {
     #[serde(default)]
     pub use_itn: bool,             // SenseVoice 固定 true；其他后端忽略
     pub punc: PuncPolicy,
-    pub partial: bool,
+    pub partial: bool,             // Final 包原生 Partial；GPU AED=false；Preview 另由 preview.enabled 控制
 }
 
 pub struct AsrArtifact {
@@ -601,7 +389,7 @@ pub struct BackendManifest {
     pub runtime: Option&lt;String&gt;,    // onnx-directml / onnx-migraphx；NVIDIA 预留 onnx-cuda / onnx-tensorrt
     pub device: Option&lt;String&gt;,
     pub min_vram_mb: Option&lt;u32&gt;,
-    pub supports_partial: bool,
+    pub supports_partial: bool,    // 仅描述 Final 后端；不控制 SenseVoice Preview
     pub load_timeout_ms: u64,
     pub request_timeout_ms: u64,
 }
@@ -609,6 +397,8 @@ pub struct BackendManifest {
 pub struct ModelManifest {
     pub schema: u32,                 // 只接受 3
     /* ... */
+    #[serde(default)]
+    pub requires: Vec&lt;String&gt;,       // GPU 包必需：["sense-voice-2024-int8"]
     pub fbank: FbankManifest,
     pub backend: BackendManifest,    // 必需，无缺省
     pub asr: AsrArtifact,
@@ -624,53 +414,68 @@ pub struct ModelManifest {
 
 <ul class="note">
   <li>CPU SenseVoice 包写 <code>backend.kind = builtin</code>；GPU 包写 <code>backend.kind = worker</code>，并声明 <code>runtime</code>。</li>
-  <li>GPU 包必须声明 <code>asr.precision = fp16</code>；不提供 int8 GPU 包。FP16 加载失败时只允许回退 FP32，不回到 int8。</li>
+  <li>SenseVoice 包是常驻基础包；GPU 包必须通过 <code>requires</code> 声明依赖 <code>sense-voice-2024-int8</code>，安装脚本保证两个包同时存在。</li>
+  <li>GPU 包必须声明 <code>asr.precision = fp16</code>；不提供 int8 GPU 包。FP16 加载失败即失败，不回退 FP32 或 int8。</li>
   <li><code>schema</code> 提升到 3；<code>schema=2</code> 及更旧清单直接拒绝，不做字段推断、默认值补齐或版本转换。</li>
   <li><code>kind</code> 与必填字段绑定：<code>sense-voice</code> 要求 <code>model</code>；<code>fire-red-aed</code> 要求 <code>encoder</code> + <code>decoder</code>；错误组合在加载时失败。</li>
   <li><code>punc</code> 是可选的：<code>Builtin</code> 包省略该段；<code>External</code> 包必须提供。加载时按 <code>kind</code> + <code>options</code> 校验，不允许混用。</li>
   <li>SenseVoice 固定 <code>use_itn=true</code> + <code>punc=builtin</code>；FireRed AED 固定 <code>punc=external</code>。不再提供 noITN + FireRedPunc 变体。</li>
   <li><code>FbankManifest.window_type</code> 默认 <code>povey</code>；SenseVoice 包显式写 <code>hamming</code>，AED 包写 <code>povey</code>。</li>
-  <li><code>backend.supports_partial</code> 是能力声明；<code>asr.options.partial</code> 是包是否启用预览。实际是否发 Partial 取两者的逻辑与：任一为 <code>false</code> 就不发。</li>
+  <li>Preview 固定由常驻 SenseVoice 提供，由 daemon 的 <code>preview.enabled</code> 控制（默认 true）；<code>asr.options.partial</code> 只描述该 Final 包原生是否支持 Partial。</li>
+  <li>GPU 包的 <code>asr.options.partial=false</code> 表示 FireRed 不产生 Partial；<code>backend.supports_partial=false</code> 只描述 Final 能力，两者都不影响 SenseVoice Preview。</li>
   <li>daemon / <code>voime-core</code> 不创建 GPU 会话；GPU 包的文件、SHA、张量由 worker 在加载时校验。</li>
 </ul>
 
 <h3 id="s4-2">4.2 识别路径</h3>
 
-<pre><code>Worker::finalize(segment)
+<p>
+识别分成两条独立路径：Preview 始终走常驻 SenseVoice；Final 根据 <code>active</code> 选择走 CPU SenseVoice 或 GPU FireRed。
+</p>
+
+<pre><code>Preview::partial(prefix)
+├── 固定 SenseVoice (CPU) + 同一 fbank / LFR / CMVN
+├── 内置标点 / ITN
+└── PipelineEvent::Partial
+
+Finalize::finalize(segment)
 ├── 判断 segment.samples.is_empty() → SegmentDropped("空语音段")
-├── match backend.kind
-│   ├── Builtin
+├── match final_backend
+│   ├── SenseVoice (CPU)
 │   │   ├── Fbank::compute(segment.samples)
 │   │   └── SenseVoice::transcribe(features)
-│   └── Worker → WorkerBackend::transcribe(segment.samples)
+│   └── FireRed (GPU)
+│       └── WorkerBackend::transcribe(segment.samples)
 ├── 判断 text.trim().is_empty() → SegmentDropped("空识别结果")
-├── match punc
-│   ├── Builtin  → text
-│   └── External → FireRedPunc::punctuate(&amp;text)
-├── 判断 外部标点失败 → SegmentDropped("标点推理失败")
+├── match final punc
+│   ├── SenseVoice → text（内置标点）
+│   └── FireRed → FireRedPunc::punctuate(&amp;text)
 ├── reset_after_segment()
 └── 判断 final 非空 → PipelineEvent::Final(final)</code></pre>
 
 <ul class="note">
-  <li>CPU 路径完全在 daemon 内；GPU 路径只把“完整语音段”发给 worker，VAD / 分段仍在 daemon。</li>
-  <li>Worker 接收原始 PCM，而不是 daemon 算好的 fbank；GPU 模型可以有自己的前端。</li>
-  <li>GPU 模式下 VAD 与 Punc 仍使用 daemon 的 CPU ORT；这条路径不加载任何 GPU 库。</li>
-  <li>错误文案统一为 <code>ASR 推理失败</code>，不要把后端名称写死在前端或日志里。</li>
+  <li>Preview 由 daemon 的全局配置 <code>preview.enabled</code> 控制，默认 true；它不依赖 Final 包的 <code>asr.options.partial</code>。</li>
+  <li>Preview 永远不发往 voime-gpu；GPU worker 只接收完整语音段做 Final。</li>
+  <li>Final 选择 SenseVoice 时，Preview 与 Final 使用同一模型；Final 选择 FireRed 时，Preview 仍是 SenseVoice。</li>
+  <li>GPU Final 的标点由 daemon 的 FireRedPunc 处理；SenseVoice Final 使用内置标点。</li>
+  <li>Final 直接输入，不改变现有呈现；Preview 只是临时候选，文本差异接受。</li>
+  <li>GPU Final 失败时回退 CPU SenseVoice Final；Preview 不中断。</li>
+  <li>错误文案统一为 <code>ASR 推理失败</code>，不要把 Final 后端名称写死在前端或日志里。</li>
 </ul>
 
 <h3 id="s4-3">4.3 SenseVoice CPU 推理契约</h3>
 
 <p>
-SenseVoice 是唯一 CPU 默认后端。包固定为
+SenseVoice 是常驻后端：所有 Preview 都由它处理，CPU 档的 Final 也用它。包固定为
 <code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>，
 <code>use_itn=1</code>，<code>punc=builtin</code>；不再维护 noITN + FireRedPunc 变体。
+GPU 档仍然加载它做 Preview，FireRed 只负责 Final。
 </p>
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>模型</td><td>234M 参数，int8 ONNX 约 229 MiB；输出 25055 类；固定 2024-07-17 权重。</td></tr>
   <tr><td>fbank</td><td>80 bin、25 / 10 ms、<code>hamming</code> 窗、<code>snip_edges=true</code>、<code>normalize_samples=0</code>（输入乘 32768）。</td></tr>
-  <tr><td>LFR</td><td>窗口 7、帧移 6；Phase 0 同时保留完整窗口与边缘复制，目标语料 A/B 后冻结；默认优先 FunASR 训练口径（首尾边缘复制），但以 A/B 结果为准。</td></tr>
+  <tr><td>LFR</td><td>窗口 7、帧移 6；保持当前完整窗口实现，不在本提案中切换边缘策略。</td></tr>
   <tr><td>CMVN</td><td>560 维；<code>(x + neg_mean) * inv_stddev</code>；长度必须等于 <code>80 × 7</code>。</td></tr>
   <tr><td>输入</td><td><code>x[1,T,560]</code> f32、<code>x_length[1]</code> i32、<code>language[1]</code> i32、<code>text_norm[1]</code> i32。</td></tr>
   <tr><td>输出</td><td><code>logits[1,T',25055]</code> f32。</td></tr>
@@ -678,7 +483,7 @@ SenseVoice 是唯一 CPU 默认后端。包固定为
   <tr><td>语言</td><td><code>auto=0</code>、<code>zh=3</code>、<code>en=4</code>、<code>yue=7</code>、<code>ja=11</code>、<code>ko=12</code>；默认 <code>auto</code>，不硬编码 <code>zh</code>。</td></tr>
   <tr><td>ITN</td><td>固定 <code>use_itn=true</code>；<code>with_itn=14</code>、<code>without_itn=15</code>；Partial 与 Final 使用同一模式。</td></tr>
   <tr><td>标点</td><td>模型内置；不加载 FireRedPunc。</td></tr>
-  <tr><td>Partial</td><td>支持；沿用同一后端与同一 <code>text_norm</code>，不额外加标点。</td></tr>
+  <tr><td>Partial</td><td>支持；所有 Preview 固定用它，CPU Final 也用它；沿用同一 <code>text_norm</code>，不额外加标点。</td></tr>
   <tr><td>最大段长</td><td>建议 20 s；用 20 / 30 s 样本验证后再冻结。</td></tr>
 </table>
 
@@ -746,50 +551,58 @@ SenseVoice 是唯一 CPU 默认后端。包固定为
   <li>ONNX metadata 必须提供 <code>lfr_window_size</code>、<code>lfr_window_shift</code>、<code>normalize_samples</code>、<code>vocab_size</code>、<code>blank_id</code>、<code>with_itn</code> / <code>without_itn</code>、语言 id、<code>neg_mean</code> / <code>inv_stddev</code>；清单只声明期望值，启动时交叉校验。</li>
   <li>不要从 <code>tokens.txt</code> 推断语言 / ITN id；模型升级后容易错位。</li>
   <li><code>tokens.txt</code> 的 SHA-256 为 <code>f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc</code>；安装脚本以实际文件重新计算并写入清单。</li>
-  <li>LFR 的完整窗口模式与边缘复制模式都要有黄金测试；切换必须可回滚，不能在代码里悄悄改变帧数。</li>
+  <li>LFR 保持当前完整窗口实现；本提案不改变帧数或边缘策略，若未来调整需另立提案并保留回滚测试。</li>
   <li>SenseVoice 的 <code>text_norm</code> 不能只当格式开关：<code>zh.wav</code> 的 noITN 输出“开饭”、ITN 输出“开放”，两种模式必须分别评测。</li>
   <li>如果 <code>ids</code> 少于 4 个，说明模型没有输出完整前缀；返回错误或空文本，不要把剩余 token 当正文。</li>
+  <li>SenseVoice 是常驻基础包：<code>sensevoice</code> 档只装它；<code>firered</code> 档也必须安装它，GPU 只替换 Final。</li>
 </ul>
 
 <h3 id="s4-4">4.4 包级切换与 <code>active</code></h3>
 
 <p>
-同一版本同时提供 CPU SenseVoice 与可选 GPU worker；切换只操作模型目录与 <code>active</code> 指针，
-再通过“重启后端”生效。不重新安装、替换或重新编译二进制，也不做运行时热切换。
+SenseVoice 是常驻基础模型；<code>active</code> 只选择 Final 模型，不控制 Preview。
+安装档位只有两个：<code>sensevoice</code> 只装 SenseVoice（Final 走 CPU）；<code>firered</code> 同时安装 SenseVoice + FireRed（Final 走 GPU）。
+切换只操作 <code>active</code> 指针，再通过“重启后端”生效；不重新安装、替换或重新编译二进制，也不做运行时热切换。
 </p>
 
 <pre><code>~/.local/share/voime/models/
-├── active                      # 单行文本：当前包目录名
-├── sense-voice-2024-int8/
+├── active                      # 单行文本：当前 Final 包目录名
+├── sense-voice-2024-int8/      # 常驻基础包；两个档位都必须存在
 │   ├── manifest.json
 │   ├── vad/stream-vad.onnx
 │   └── asr/model.int8.onnx + tokens.txt
-└── fire-red-aed-gpu/
+└── fire-red-aed-gpu/           # 可选 Final 包；仅 firered 档安装
     ├── manifest.json
     ├── vad/stream-vad.onnx
     ├── punc/model.onnx
     └── asr/encoder.fp16.onnx + decoder.fp16.onnx + tokens.txt</code></pre>
 
 <pre><code>Config::resolve(args)
-├── 判断 args.model_dir.is_some() → 使用显式目录（开发 / 排障）
-├── 读取 &lt;model_root&gt;/active
-│   ├── 文件存在 → &lt;model_root&gt;/&lt;package_id&gt;
-│   └── 文件缺失 / 为空 → daemon 启动失败，doctor 提示安装模型包
-├── 校验 manifest.json / SHA-256 / 张量 / 词表
-└── 失败 → daemon 启动失败，日志说明 active 与目标目录</code></pre>
+├── 判断 args.model_dir.is_some() → 使用显式 Final 目录（开发 / 排障）
+├── 读取 &lt;model_root&gt;/active → Final 包
+├── 加载固定 SenseVoice 基础包（Preview；Final 为 SenseVoice 时复用）
+├── 判断 Final 是 FireRed
+│   └── 校验 requires 包含 sense-voice-2024-int8，并检查 GPU runtime
+├── 校验 Final manifest.json / SHA-256 / 张量 / 词表
+└── 失败 → daemon 启动失败，日志说明 active、SenseVoice 基础包与目标目录</code></pre>
 
 <table>
   <tr><th>操作</th><th>命令 / 行为</th><th>是否重装二进制</th></tr>
-  <tr><td>安装包</td><td><code>scripts/install_models.sh --asr sense-voice --activate</code>；首次安装且 <code>active</code> 缺失时写入该包。</td><td>否</td></tr>
-  <tr><td>配置界面选择</td><td>列出已安装包；选择后写 <code>active</code>，界面标记“待重启”。</td><td>否</td></tr>
-  <tr><td>切换</td><td>点击“重启后端”或 <code>voime ctl restart-backend</code>；daemon 重建 pipeline。</td><td>否</td></tr>
-  <tr><td>回滚</td><td>把 <code>active</code> 写回旧包目录名，再次重启后端。</td><td>否</td></tr>
-  <tr><td>显式覆盖</td><td><code>voimed --model-dir &lt;dir&gt;</code> 直接指定包目录；优先级高于 <code>active</code>。</td><td>否</td></tr>
-  <tr><td>便捷命令</td><td><code>voime ctl use &lt;id&gt;</code> 只写 <code>active</code>，不切换运行中进程。</td><td>否</td></tr>
+  <tr><td>安装 <code>sensevoice</code> 档</td><td><code>scripts/install_models.sh --profile sensevoice --activate</code>；只安装 SenseVoice，Final 走 CPU。</td><td>否</td></tr>
+  <tr><td>安装 <code>firered</code> 档</td><td><code>scripts/install_models.sh --profile firered --activate</code>；安装 SenseVoice + FireRed，Final 走 GPU。</td><td>否</td></tr>
+  <tr><td>配置界面选择</td><td>只列出 Final 候选；选择后写 <code>active</code>，界面标记“待重启”。</td><td>否</td></tr>
+  <tr><td>切换</td><td>点击“重启后端”或 <code>voime ctl restart-backend</code>；只重建 Final 路径，Preview 仍由 SenseVoice 处理。</td><td>否</td></tr>
+  <tr><td>回滚</td><td>把 <code>active</code> 写回旧 Final 包目录名，再次重启后端。</td><td>否</td></tr>
+  <tr><td>显式覆盖</td><td><code>voimed --model-dir &lt;dir&gt;</code> 直接指定 Final 包目录；优先级高于 <code>active</code>；SenseVoice 基础包仍按固定路径加载。</td><td>否</td></tr>
+  <tr><td>便捷命令</td><td><code>voime ctl use &lt;id&gt;</code> 只写 Final 选择，不切换运行中进程。</td><td>否</td></tr>
 </table>
 
-<pre><code># Linux
+<pre><code># Linux：CPU Final
 printf '%s\n' sense-voice-2024-int8 &gt; ~/.local/share/voime/models/active
+voime ctl restart-backend
+
+# Linux：GPU Final（需先安装 firered 档）
+printf '%s\n' fire-red-aed-gpu &gt; ~/.local/share/voime/models/active
 voime ctl restart-backend
 
 # Windows（当前用户）
@@ -797,40 +610,40 @@ Set-Content -Encoding Ascii "$env:LOCALAPPDATA\voime\models\active" "sense-voice
 voime ctl restart-backend</code></pre>
 
 <ul class="note">
-  <li><code>active</code> 只允许单行包目录名，禁止绝对路径与 <code>..</code>；解析时走 <code>resolve_inside</code>，避免指向模型根目录之外。</li>
+  <li><code>active</code> 只允许单行 Final 包目录名，禁止绝对路径与 <code>..</code>；解析时走 <code>resolve_inside</code>，避免指向模型根目录之外。</li>
   <li>读取时去掉首尾空白与 UTF-8 BOM；写入使用同目录临时文件 + rename，失败时保留旧值。</li>
-  <li>不做录音中热切换：daemon 启动时加载 <code>active</code> 指向的包；运行中只能通过“重启后端”在空闲时重建 pipeline。</li>
-  <li>不提供 <code>legacy</code> 兼容或旧目录回退；<code>active</code> 缺失、旧包或不存在目录都按启动失败处理。</li>
+  <li>不做录音中热切换：daemon 启动时加载 SenseVoice 与 Final；运行中只能通过“重启后端”在空闲时重建 Final 路径。</li>
+  <li>不提供 <code>legacy</code> 兼容或旧目录回退；<code>active</code> 缺失、SenseVoice 基础包缺失、旧包或不存在目录都按启动失败处理。</li>
   <li><code>--model-dir</code> 保留给开发与排障，不作为日常切换入口；固定时配置界面的模型下拉禁用。</li>
-  <li><code>voime doctor</code> 报告 <code>active</code> 包名、解析后的目录、<code>manifest.kind</code>、SHA 前缀、标点策略与 GPU 可用性。</li>
+  <li><code>voime doctor</code> 报告 Final 包名、SenseVoice 基础包、解析后的目录、<code>manifest.kind</code>、SHA 前缀、标点策略与 GPU 可用性。</li>
 </ul>
 
 <h3 id="s4-5">4.5 配置界面、IPC 与重启后端</h3>
 
 <p>
-配置界面不直接加载模型；它只列出已安装包、把选择写入 <code>active</code>、请求 daemon 重启后端。
-模型校验、pipeline 生命周期与失败回滚全部由 daemon 负责。
+配置界面不直接加载模型；它只列出 Final 候选、把选择写入 <code>active</code>、请求 daemon 重启 Final 后端。
+SenseVoice Preview 始终常驻，不由配置界面选择。模型校验、Final 生命周期与失败回滚全部由 daemon 负责。
 </p>
 
 <table>
   <tr><th>界面</th><th>交互</th><th>重启触发</th><th>失败反馈</th></tr>
   <tr>
     <td>Windows 设置窗口</td>
-    <td>模型下拉列出已安装包；显示“当前运行 / 已选择”与 CPU / GPU 可用性；“重启后端”按钮。<code>--model-dir</code> 固定时下拉禁用。</td>
-    <td>点击“重启后端”；若选择已变化，先 <code>SetModel</code> 再 <code>RestartBackend</code>。</td>
-    <td>窗口内显示进度 / 错误；失败时保留旧模型与旧选择。</td>
+    <td>模型下拉列出 Final 候选；显示“当前运行 / 已选择”与 CPU / GPU 可用性；“重启后端”按钮。<code>--model-dir</code> 固定时下拉禁用。</td>
+    <td>点击“重启后端”；若 Final 选择已变化，先 <code>SetModel</code> 再 <code>RestartBackend</code>。</td>
+    <td>窗口内显示进度 / 错误；失败时保留旧 Final 与旧选择，Preview 继续可用。</td>
   </tr>
   <tr>
     <td>Linux Fcitx 配置页</td>
-    <td>模型下拉由 <code>EnumAnnotation</code> 动态枚举；显示 CPU / GPU 与不可用原因；没有额外按钮。</td>
-    <td>点击“保存 / Apply”触发 <code>setConfig</code>；模型变化时发送 <code>SetModel</code> + <code>RestartBackend</code>。</td>
-    <td>写入 <code>voimed</code> 日志；<code>voime doctor</code> / <code>ctl</code> 显示错误；配置页保留旧选择。</td>
+    <td>Final 下拉由 <code>EnumAnnotation</code> 动态枚举；显示 CPU / GPU 与不可用原因；没有额外按钮。</td>
+    <td>点击“保存 / Apply”触发 <code>setConfig</code>；Final 变化时发送 <code>SetModel</code> + <code>RestartBackend</code>。</td>
+    <td>写入 <code>voimed</code> 日志；<code>voime doctor</code> / <code>ctl</code> 显示错误；配置页保留旧 Final 选择。</td>
   </tr>
   <tr>
     <td>跨平台命令</td>
-    <td><code>voime ctl models</code> 列出包；<code>voime ctl use &lt;id&gt;</code> 写选择；<code>voime ctl restart-backend</code> 重载。</td>
+    <td><code>voime ctl models</code> 列出 Final 候选；<code>voime ctl use &lt;id&gt;</code> 写 Final 选择；<code>voime ctl restart-backend</code> 重载 Final。</td>
     <td>显式命令；适合脚本、排障和无 GUI 环境。</td>
-    <td>命令返回非零并打印错误；不改变旧 pipeline。</td>
+    <td>命令返回非零并打印错误；不改变旧 Final。</td>
   </tr>
 </table>
 
@@ -844,14 +657,14 @@ pub enum ClientMessage {
 }
 
 pub struct ModelInfo {
-    pub id: String,                // 包目录名
+    pub id: String,                // Final 包目录名
     pub display_name: String,      // manifest.display_name，缺省用 id
     pub kind: String,              // sense-voice / fire-red-aed / external
     pub runtime: Option&lt;String&gt;,   // onnx-directml / onnx-migraphx / builtin
     pub device: Option&lt;String&gt;,
-    pub available: bool,           // runtime / 驱动 / 显存预检通过
+    pub available: bool,           // GPU runtime / 驱动 / 显存 / 依赖预检通过
     pub active: bool,              // 与 active 指针一致
-    pub running: bool,             // 与 daemon 当前 Config 一致
+    pub running: bool,             // 与 daemon 当前 Final 一致
 }
 
 pub enum BackendPhase {
@@ -873,42 +686,77 @@ pub enum ServerMessage {
 
 <table>
   <tr><th>消息</th><th>允许角色</th><th>行为</th></tr>
-  <tr><td><code>ListModels</code></td><td>Frontend / Tui / Control</td><td>扫描模型根目录；跳过无 <code>manifest.json</code> 或无法解析的目录；返回 active / running / available。</td></tr>
-  <tr><td><code>SetModel</code></td><td>Frontend / Control</td><td>校验 package id 与目录；写 <code>active</code>；不加载模型；返回 <code>ModelSelected</code>。显式 <code>--model-dir</code> 时拒绝。</td></tr>
-  <tr><td><code>RestartBackend</code></td><td>Frontend / Control</td><td>仅空闲时执行；加载 <code>active</code>，重建 pipeline；返回 <code>BackendState</code>。</td></tr>
+  <tr><td><code>ListModels</code></td><td>Frontend / Tui / Control</td><td>只返回 Final 候选；跳过无 <code>manifest.json</code> 或无法解析的目录；返回 active / running / available。</td></tr>
+  <tr><td><code>SetModel</code></td><td>Frontend / Control</td><td>校验 Final package id 与依赖；写 <code>active</code>；不加载模型；返回 <code>ModelSelected</code>。显式 <code>--model-dir</code> 时拒绝。</td></tr>
+  <tr><td><code>RestartBackend</code></td><td>Frontend / Control</td><td>仅空闲时执行；只重建 Final 路径，SenseVoice Preview 保持常驻；返回 <code>BackendState</code>。</td></tr>
 </table>
 
 <div class="diagram"><img src="diagram/backend-restart.svg" alt="配置界面选择模型并重启后端"></div>
 <ul class="note">
-  <li>重启后端只重建 pipeline，不重启 daemon，也不替换二进制；IPC 连接保持不变。</li>
+  <li>重启后端只重建 Final 路径，不重启 daemon，也不替换二进制；SenseVoice Preview 常驻，IPC 连接保持不变。</li>
   <li>录音 / 识别中拒绝重启，返回 <code>Busy</code>；不会静默丢弃当前段。</li>
-  <li>加载失败时回滚 <code>active</code> 并恢复旧 pipeline；旧 pipeline 也无法恢复时 daemon 退出，由 systemd / 托盘重启。</li>
+  <li>Final 加载失败时回滚 <code>active</code> 并恢复旧 Final；Preview 不受影响；旧 Final 也无法恢复时 daemon 退出，由 systemd / 托盘重启。</li>
+
 </ul>
 
 <pre><code>Daemon::restart_backend()
 ├── 判断 recording / recognizing → Error(Busy)
-├── 保存 old_config / old_model_id
-├── config::resolve(args.clone()) → new_config
+├── 保存 old_final_config / old_final_id
+├── config::resolve_final(args.clone()) → new_final
 │   ├── 读取 active
-│   ├── 校验 manifest / SHA / 张量 / 词表
+│   ├── 校验 Final + SenseVoice 基础包 / SHA / 张量 / 词表
 │   └── 失败 → 回滚 active + 返回 BackendFailed
 ├── 广播 BackendState { phase: Restarting }
-├── pipeline.shutdown()
-├── audio.stop()
-├── 判断 new_config 是 GPU 模型 → 停止旧 worker / spawn 新 worker / handshake
-├── 创建新的 audio channel / pipeline / capture
-├── 判断新 pipeline 启动失败
-│   ├── 回滚 active 为 old_model_id
-│   ├── 尝试用 old_config 重建旧 pipeline
-│   └── 旧 pipeline 也失败 → daemon 退出
-├── 替换 self.config / self.pipeline / self.audio
+├── 保留 SenseVoice Preview session
+├── 判断 new_final 是 GPU 模型 → 停止旧 worker / spawn 新 worker / handshake
+├── 重建 Final 路径（CPU SenseVoice 或 GPU FireRed）
+├── 判断新 Final 启动失败
+│   ├── 回滚 active 为 old_final_id
+│   ├── 尝试恢复 old_final
+│   └── old_final 也失败 → daemon 退出
+├── 替换 self.final_config / final backend
 └── 广播 BackendState { phase: Ready, model }</code></pre>
 
 <ul class="note">
-  <li><code>RestartBackend</code> 是同步操作：daemon 主循环阻塞到新模型加载完成；期间前端显示“重启中”，不要发送 Start。</li>
-  <li>模型加载可能耗时数秒；前端等待超时不应误判失败，应以 <code>BackendState</code> 或重连后的 <code>ListModels</code> 为准。</li>
+  <li><code>RestartBackend</code> 是同步操作：daemon 主循环阻塞到新 Final 加载完成；期间前端显示“重启中”，不要发送 Start。</li>
+  <li>Final 加载可能耗时数秒；前端等待超时不应误判失败，应以 <code>BackendState</code> 或重连后的 <code>ListModels</code> 为准。</li>
   <li>如果用户在重启中关闭设置窗口，daemon 仍应完成重启；不要依赖前端连接存活。</li>
   <li>建议把 <code>Daemon</code> 的 <code>pipeline</code> / <code>audio</code> 改为可替换的 <code>Option</code> 或提供 <code>take/stop</code> 辅助，避免 <code>Drop</code> 隐式停止导致重启路径不可控。</li>
+</ul>
+
+<h4 id="s4-5-1">4.5.1 为什么重启后端而不是重启进程</h4>
+
+<p>
+“重启后端”只替换 daemon 内的 Final 配置 / Final 后端 / voime-gpu；SenseVoice Preview 常驻，
+既不退出 <code>voimed</code>，也不经过 systemd / 托盘。这个边界来自变更范围：Final 切换只改变最终识别模型，
+不改变 Preview、IPC 端点、前端连接、会话历史、日志、权限与进程生命周期。
+把进程一起重启，会把一次“换 Final”扩大成“重启整个服务”，带来不必要的状态丢失、重连与失败恢复问题。
+</p>
+
+<table>
+  <tr><th>维度</th><th>重启后端（本提案）</th><th>重启 daemon / 服务</th></tr>
+  <tr><td>触发方式</td><td><code>RestartBackend</code> IPC；daemon 空闲时执行</td><td>systemd <code>restart</code> / 托盘杀子进程后拉起 / <code>ctl quit</code> 后重启</td></tr>
+  <tr><td>重建范围</td><td>Final 路径、voime-gpu；SenseVoice Preview 常驻；保留 daemon 进程与 IPC server</td><td>整个进程：IPC、音频、pipeline、worker 与内存状态全部重建</td></tr>
+  <tr><td>前端连接</td><td>保持；前端只收到 <code>BackendState</code></td><td>断开；Fcitx / 托盘 / TUI 需要重连，可能触发断线提示</td></tr>
+  <tr><td>持有状态</td><td>保留 daemon 会话历史，以及前端持有的目标窗口 / 模式 / 热键状态</td><td>daemon 内存历史丢失；前端与目标状态需要重新建立</td></tr>
+  <tr><td>失败恢复</td><td>校验或加载失败时回滚 <code>active</code> 并恢复旧 Final；SenseVoice Preview 与 IPC 仍可用</td><td>新进程启动失败会进入 crash loop；前端离线，用户难以在界面回滚</td></tr>
+  <tr><td>切换延迟</td><td>Final 模型加载 + Final 路径重建；SenseVoice Preview 不重载；无进程启动、socket 重绑与前端重连开销</td><td>额外进程启动、socket 重绑、音频重开、前端重连、systemd / 托盘重启间隔</td></tr>
+  <tr><td>重启窗口内可用性</td><td>IPC 连接仍在；daemon 主循环阻塞，<code>Start</code> 被拒绝或等待</td><td>IPC 完全不可用；前端只能断线重连</td></tr>
+  <tr><td>平台差异</td><td>Linux / Windows 共用同一 IPC 语义</td><td>Linux 走 systemd，Windows 走托盘；需要维护两套进程控制</td></tr>
+  <tr><td>权限边界</td><td>前端只发 IPC；不需要控制 systemd 或杀进程</td><td>前端 / 设置进程需要服务控制权限，扩大攻击面</td></tr>
+  <tr><td>适用场景</td><td>仅 Final 模型 / 路径变化；Preview 不变</td><td>二进制升级、ORT / GPU runtime 变化、协议变化或进程级故障恢复</td></tr>
+</table>
+
+<p>
+整进程重启并没有被禁止：二进制、ORT / GPU runtime 或 IPC 协议变化，以及 daemon 自身状态不可恢复时，
+仍应由 systemd / 托盘重启整个服务。本提案只是把“换模型”留在最小作用域内；如果内部重建失败且旧 pipeline
+也无法恢复，daemon 会主动退出，交回 systemd / 托盘，保留进程级兜底。
+</p>
+
+<ul class="note">
+  <li>判断标准不是“哪种重启更简单”，而是“变更影响到哪一层”：只影响 pipeline 就只重建 pipeline。</li>
+  <li>内部重启把复杂度留在 daemon（可替换字段、显式 shutdown、回滚），避免把复杂度推给两个平台前端与进程管理器。</li>
+  <li>保留进程级重启作为兜底，不把它作为日常模型切换路径。</li>
 </ul>
 
 <table>
@@ -926,11 +774,11 @@ pub enum ServerMessage {
   <tr><th>情况</th><th>行为</th></tr>
   <tr><td>daemon 未运行</td><td>选择写 <code>active</code>；下次启动生效；不报“重启失败”。</td></tr>
   <tr><td>录音 / 识别中</td><td><code>RestartBackend</code> 返回 <code>Busy</code>；按钮禁用；当前段正常完成。</td></tr>
-  <tr><td>包不存在 / manifest 损坏</td><td><code>SetModel</code> 拒绝；<code>active</code> 不变；界面保留旧选择。</td></tr>
-  <tr><td>加载失败（SHA / 张量 / 会话）</td><td>回滚 <code>active</code> 与旧 pipeline；返回 <code>Failed</code>；当前模型继续可用。</td></tr>
-  <tr><td>GPU runtime 未安装 / 显存不足</td><td><code>available=false</code> 并给出原因；选择 GPU 包时拒绝或回退 CPU；不加载 AED CPU。</td></tr>
-  <tr><td>显式 <code>--model-dir</code></td><td>下拉禁用；<code>SetModel</code> 拒绝；只允许重启当前包。</td></tr>
-  <tr><td>没有任何可用包</td><td>下拉为空；保持当前运行模型；提示安装模型包。</td></tr>
+  <tr><td>Final 包或 SenseVoice 基础包缺失 / manifest 损坏</td><td><code>SetModel</code> 拒绝；<code>active</code> 不变；界面保留旧 Final 选择。</td></tr>
+  <tr><td>加载失败（SHA / 张量 / 会话 / 依赖）</td><td>回滚 <code>active</code> 与旧 Final；返回 <code>Failed</code>；Preview 继续可用。</td></tr>
+  <tr><td>GPU runtime 未安装 / 显存不足</td><td><code>available=false</code> 并给出原因；Final 回退 CPU SenseVoice；Preview 继续；不加载 AED CPU。</td></tr>
+  <tr><td>显式 <code>--model-dir</code></td><td>下拉禁用；<code>SetModel</code> 拒绝；只允许重启当前 Final。</td></tr>
+  <tr><td>没有任何 Final 候选</td><td>下拉为空；SenseVoice Preview 仍可用（若基础包存在）；提示安装模型包。</td></tr>
   <tr><td>协议版本不匹配</td><td>旧前端收到 <code>VersionMismatch</code>；必须同版本升级前端与 daemon。</td></tr>
   <tr><td>连续点击重启</td><td>第二次返回 <code>Busy</code> 或忽略；按钮在重启中禁用。</td></tr>
   <tr><td><code>active</code> 写入失败</td><td>保留旧值；返回错误；不重启。</td></tr>
@@ -939,14 +787,14 @@ pub enum ServerMessage {
 
 <ul class="note">
   <li>Fcitx 配置页由 <code>FCITX_CONFIGURATION</code> 自动生成，不能任意加按钮；“保存 / Apply”就是原生重启入口。</li>
-  <li>如果动态枚举在目标 Fcitx 版本不可用，退化方案是固定 enum（当前已知包）+ <code>voime ctl use</code>；不能退化成自由文本而不校验。</li>
+  <li>如果动态枚举在目标 Fcitx 版本不可用，模型列表留空即可；不做固定 enum、自由文本或其他补偿动作。</li>
   <li>Windows 设置窗口是独立进程；模型操作通过 <code>voime-ipc</code> 连接 daemon，不直接杀进程；托盘仍负责 daemon 子进程生命周期。</li>
   <li>选择写入后到重启完成前，界面必须显示“待重启”；不要显示为已生效，也不要在录音中自动重启。</li>
   <li>Fcitx <code>setConfig</code> 要把“模型变化”和“模式 / 热键变化”分开：模型为空或等于当前 <code>active</code> 时只发 <code>Configure</code>。</li>
-  <li>重启后端不改变历史、不改变目标窗口；只影响之后的 Partial / Final 使用哪个模型。</li>
+  <li>重启后端不改变历史、不改变目标窗口；Preview 始终 SenseVoice，只影响之后的 Final 使用哪个模型。</li>
 </ul>
 
-<h2 id="s5">5. 任务二：可选 GPU worker 后端</h2>
+<h2 id="s5">5. 任务二：可选 voime-gpu 后端</h2>
 <p><a href="#top">↑</a></p>
 
 <h3 id="s5-1">5.1 目标与非目标</h3>
@@ -954,20 +802,24 @@ pub enum ServerMessage {
 <table>
   <tr><th>目标</th><th>非目标</th></tr>
   <tr>
-    <td>CPU 推理留在 daemon；GPU 推理放进可选 worker；CPU 模型不启动 worker。</td>
-    <td>不做 CPU runtime 独立进程；CPU 本来就是常驻路径，再拆一个进程只增加 IPC 与生命周期成本。</td>
+    <td>SenseVoice Preview 与 CPU Final 留在 daemon；GPU Final 放进可选 worker；CPU Final 不启动 worker。</td>
+    <td>不做 CPU runtime 独立进程；SenseVoice 本来就是常驻路径，再拆一个进程只增加 IPC 与生命周期成本。</td>
   </tr>
   <tr>
-    <td>GPU worker 与 daemon 库隔离；GPU 崩溃不能带崩 CPU 路径。</td>
+    <td>voime-gpu 与 daemon 库隔离；GPU 崩溃不能带崩 CPU 路径。</td>
     <td>不在 daemon 内直接加载 GPU EP；不做线程级“伪隔离”。</td>
   </tr>
   <tr>
-    <td>GPU worker 是独立二进制包；可单独安装 / 升级 / 卸载。</td>
+    <td>voime-gpu 是独立二进制包；可单独安装 / 升级 / 卸载。</td>
     <td>不引入第二推理引擎；worker 仍使用 ONNX Runtime。</td>
   </tr>
   <tr>
-    <td>CPU 路径无 GPU 依赖；GPU 不可用时 CPU SenseVoice 继续工作。</td>
+    <td>CPU 路径无 GPU 依赖；GPU Final 不可用时 Final 回退 CPU SenseVoice，Preview 不中断。</td>
     <td>不做 CPU AED；GPU 失败不自动加载 AED CPU。</td>
+  </tr>
+  <tr>
+    <td>GPU 只做 Final；Preview 固定由 CPU SenseVoice 提供。</td>
+    <td>不通过重复重跑非流式 AED 伪造 Partial；不把 voime-gpu 作为 Preview 后端。</td>
   </tr>
 </table>
 
@@ -982,8 +834,8 @@ pub enum ServerMessage {
     <td><strong>不采用。</strong></td>
   </tr>
   <tr>
-    <td>B. 可选 GPU worker 进程</td>
-    <td>CPU daemon 只带 CPU ORT；GPU 库只在 worker；崩溃隔离；可按需启动 / 停止。</td>
+    <td>B. 可选 voime-gpu 进程（仅 Final）</td>
+    <td>CPU daemon 只带 CPU ORT；SenseVoice Preview 常驻；GPU 库只在 worker；崩溃隔离；可按需启动 / 停止。</td>
     <td>需要协议、生命周期、超时与安全校验；多一个进程（仅 GPU 模式）。</td>
     <td><strong>采用。</strong></td>
   </tr>
@@ -1007,12 +859,12 @@ pub enum ServerMessage {
   </tr>
 </table>
 
-<h3 id="s5-3">5.3 GPU worker 生命周期</h3>
+<h3 id="s5-3">5.3 voime-gpu 生命周期</h3>
 
-<div class="diagram"><img src="diagram/gpu-worker.svg" alt="voimed 与可选 GPU worker 生命周期"></div>
+<div class="diagram"><img src="diagram/gpu-worker.svg" alt="voimed 与可选 voime-gpu 生命周期"></div>
 <ul class="note">
-  <li>daemon 启动时只创建 CPU pipeline；GPU worker 仅在 active 模型 <code>backend.kind = worker</code> 时启动。</li>
-  <li>选择 CPU 模型时 worker 不启动；切换到 CPU 模型时先停 worker，释放显存。</li>
+  <li>daemon 启动时加载 SenseVoice Preview；Final 按 <code>active</code> 选择 CPU SenseVoice 或 GPU FireRed；voime-gpu 仅在 Final 模型 <code>backend.kind = worker</code> 时启动。</li>
+  <li>Final 选择 CPU SenseVoice 时 worker 不启动；切换到 CPU Final 时先停 worker，释放显存，Preview 继续。</li>
   <li>worker 退出即释放 GPU 内存；daemon 不持有 GPU 会话，也不初始化 GPU。</li>
 </ul>
 
@@ -1026,12 +878,12 @@ pub enum ServerMessage {
 </table>
 
 <ul class="note">
-  <li>CPU 模型时不启动 worker；GPU 模型时才付出进程与显存成本。</li>
-  <li>worker 崩溃退避 1 s / 2 s / 5 s，最多 3 次；仍失败则回退 CPU SenseVoice 或报错。</li>
-  <li>GPU worker 失败不会影响 daemon 的 VAD / Punc；CPU 路径继续可用。</li>
+  <li>CPU Final 时不启动 worker；GPU Final 时才付出进程与显存成本。</li>
+  <li>worker 崩溃退避 1 s / 2 s / 5 s，最多 3 次；仍失败则 Final 回退 CPU SenseVoice 或报错，Preview 继续。</li>
+  <li>voime-gpu 失败不会影响 daemon 的 SenseVoice Preview、VAD / Punc；CPU Final 继续可用。</li>
 </ul>
 
-<h3 id="s5-4">5.4 GPU worker 协议</h3>
+<h3 id="s5-4">5.4 voime-gpu 协议</h3>
 
 <p>
 协议独立于前端 IPC，版本单独管理。控制消息用 JSON，音频用原始 little-endian <code>f32</code> PCM；
@@ -1058,9 +910,9 @@ Response
 
 <table>
   <tr><th>错误码</th><th>含义</th><th>daemon 动作</th></tr>
-  <tr><td><code>RuntimeMissing</code></td><td>GPU runtime 未安装 / 版本不匹配。</td><td>标记模型不可用；CPU 路径继续；提示安装 runtime。</td></tr>
-  <tr><td><code>DeviceUnavailable</code></td><td>无 GPU、驱动不匹配、显存不足。</td><td>GPU worker 不可用；CPU 路径继续；不加载 AED CPU。</td></tr>
-  <tr><td><code>LoadFailed</code></td><td>模型 / EP / 张量校验失败。</td><td>回滚 <code>active</code>；CPU 路径继续。</td></tr>
+  <tr><td><code>RuntimeMissing</code></td><td>GPU runtime 未安装 / 版本不匹配。</td><td>标记 GPU Final 不可用；SenseVoice Preview / CPU Final 继续；提示安装 runtime。</td></tr>
+  <tr><td><code>DeviceUnavailable</code></td><td>无 GPU、驱动不匹配、显存不足。</td><td>voime-gpu 不可用；Final 回退 CPU SenseVoice；不加载 AED CPU。</td></tr>
+  <tr><td><code>LoadFailed</code></td><td>模型 / EP / 张量校验失败。</td><td>回滚 <code>active</code>；Preview / CPU Final 继续。</td></tr>
   <tr><td><code>InferenceFailed</code></td><td>运行期推理失败。</td><td>当前段丢弃；重启 worker；连续失败标记不可用。</td></tr>
   <tr><td><code>Timeout</code></td><td>超过请求预算。</td><td>杀 worker；按崩溃路径处理。</td></tr>
   <tr><td><code>ProtocolMismatch</code></td><td>worker / daemon 协议版本不一致。</td><td>拒绝加载；提示升级 runtime 或 daemon。</td></tr>
@@ -1068,7 +920,8 @@ Response
 
 <ul class="note">
   <li>协议里不传识别文本到日志；worker 只回传结果，daemon 记录长度、耗时、错误码，不记录文本。</li>
-  <li>音频帧上限建议 64 MiB；只发送完整段，不发逐帧音频。</li>
+  <li>音频帧上限建议 64 MiB；只发送完整段，不发逐帧音频；Preview 永远不进入 voime-gpu。</li>
+  <li>worker 的 <code>supports_partial=false</code> 只描述 FireRed Final；Preview 由 daemon 的 SenseVoice 处理，不受该字段影响。</li>
   <li>worker 的 stdout 只用于协议；日志走 stderr，由 daemon 转发到 <code>voime-log</code>。</li>
   <li>worker 协议独立，不因 worker 提升 <code>voime-ipc</code> 的 <code>PROTOCOL_VERSION</code>；前端 <code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code> 另按 §4.5 升到 3。</li>
 </ul>
@@ -1087,6 +940,7 @@ Response
 <pre><code>{
   "schema": 3,
   "display_name": "FireRedASR2-AED (GPU, FP16)",
+  "requires": ["sense-voice-2024-int8"],
   "sample_rate": 16000,
   "fbank": { "num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "povey" },
   "max_segment_ms": 30000,
@@ -1103,7 +957,7 @@ Response
   "punc": { /* ... */ },
   "backend": {
     "kind": "worker",
-    "runtime": "onnx-directml",
+    "runtime": "onnx-migraphx",
     "device": "auto",
     "min_vram_mb": 6144,
     "supports_partial": false,
@@ -1122,39 +976,46 @@ Response
 }</code></pre>
 
 <ul class="note">
-  <li>CPU 包不需要 GPU runtime；GPU 包必须声明 <code>backend.kind=worker</code> 与 <code>runtime</code>。</li>
-  <li>GPU runtime 包是独立可选包：<code>voime-asr-worker</code> + GPU ORT + EP 库；不进入模型目录。</li>
-  <li>模型包仍然包含 VAD / Punc，但 GPU 模式下由 daemon 的 CPU ORT 使用；worker 只加载 AED。</li>
-  <li>GPU 包必须 FP16；int8 只用于 CPU SenseVoice。FP16 不可用时回退 FP32，不回到 int8。</li>
+  <li>CPU 包不需要 GPU runtime；GPU 包必须声明 <code>backend.kind=worker</code>、<code>runtime</code> 与 <code>requires: ["sense-voice-2024-int8"]</code>。</li>
+  <li>安装 <code>firered</code> 档时同时安装 SenseVoice 与 FireRed；安装脚本校验依赖，缺失 SenseVoice 时拒绝启用 GPU Final。</li>
+  <li>GPU runtime 包按 OS + EP 拆分（Linux MIGraphX、Windows DirectML、Linux/Windows CUDA）；每个包只带本环境 ORT / EP，不进入模型目录。</li>
+  <li>运行期只加载一份 VAD，来自 SenseVoice 基础包；FireRed 包的 VAD 仅用于包完整性校验。FireRedPunc 由 daemon 为 GPU Final 加载；worker 只加载 AED，Preview 仍用 SenseVoice。</li>
+  <li>GPU 包必须 FP16；int8 只用于 CPU SenseVoice。FP16 不可用即失败，不回退 FP32 或 int8。</li>
 </ul>
 
 <h3 id="s5-6">5.6 运行时与打包</h3>
 
 <table>
-  <tr><th>平台 / 硬件</th><th>首选</th><th>备选</th><th>说明</th></tr>
+  <tr><th>平台 / 硬件</th><th>优先级</th><th>runtime 包</th><th>说明</th></tr>
   <tr>
-    <td>Windows + AMD（P0）</td>
-    <td><strong>DirectML worker</strong></td>
-    <td>—</td>
-    <td>DirectML 走 DX12，覆盖 RX 9070 XT；不需要 ROCm；GPU 只走 FP16。</td>
+    <td>Linux + AMD</td>
+    <td><strong>P0</strong></td>
+    <td><code>voime-gpu-linux-migraphx</code></td>
+    <td>MIGraphX worker；ROCm 7.2.1 + ORT 1.23.2；第一实现平台。</td>
   </tr>
   <tr>
-    <td>Linux + AMD（P0）</td>
-    <td><strong>MIGraphX worker</strong></td>
-    <td>ROCm EP（旧版 ORT，仅兼容排查）</td>
-    <td>ROCm 7.2.1 + ORT 1.23.2 + <code>onnxruntime-migraphx</code> 官方支持 RX 9070 XT。</td>
+    <td>Windows + AMD</td>
+    <td>P1</td>
+    <td><code>voime-gpu-windows-directml</code></td>
+    <td>DirectML worker；Linux 之后再补；GPU 只走 FP16。</td>
   </tr>
   <tr>
-    <td>Windows / Linux + NVIDIA（P1）</td>
-    <td>CUDA / TensorRT worker</td>
-    <td>—</td>
-    <td>RTX 3080 未来兼容性目标；当前不实现、不验收。</td>
+    <td>Linux + NVIDIA</td>
+    <td>P1</td>
+    <td><code>voime-gpu-linux-cuda</code></td>
+    <td>CUDA / TensorRT worker；独立 runtime 包，不带 AMD 依赖。</td>
+  </tr>
+  <tr>
+    <td>Windows + NVIDIA</td>
+    <td>P2</td>
+    <td><code>voime-gpu-windows-cuda</code></td>
+    <td>CUDA / TensorRT worker；独立 runtime 包。</td>
   </tr>
   <tr>
     <td>无 GPU / 驱动不匹配</td>
-    <td>CPU SenseVoice</td>
     <td>—</td>
-    <td>不启动 worker；CPU 路径继续。</td>
+    <td>—</td>
+    <td>不启动 worker；Final 走 CPU SenseVoice。</td>
   </tr>
 </table>
 
@@ -1167,27 +1028,36 @@ Response
     <td>AMD Radeon RX 9070 XT</td>
     <td>16 GB</td>
     <td>当前唯一实测目标</td>
-    <td>Linux：ROCm 7.2.1 + ORT 1.23.2 + MIGraphX；Windows：DirectML</td>
+    <td>Linux：ROCm 7.2.1 + ORT 1.23.2 + MIGraphX</td>
   </tr>
   <tr>
     <td>P1</td>
-    <td>NVIDIA RTX 3080</td>
+    <td>AMD Radeon RX 9070 XT（Windows）</td>
+    <td>16 GB</td>
+    <td>Linux 稳定后补 Windows</td>
+    <td>DirectML</td>
+  </tr>
+  <tr>
+    <td>P1</td>
+    <td>NVIDIA RTX 3080 / 其他 NVIDIA</td>
     <td>10 GB</td>
-    <td>未来 NVIDIA 兼容性测试；当前不实现</td>
-    <td>CUDA / TensorRT（仅预留 worker runtime 包）</td>
+    <td>独立 CUDA runtime 包；当前不验收</td>
+    <td>CUDA / TensorRT</td>
   </tr>
 </table>
 
 <ul class="note">
+  <li><strong>平台顺序：Linux 第一</strong>；Windows 与 NVIDIA 后续按同一 worker 契约补齐。</li>
   <li>RX 9070 XT 在 Linux 上已进入 AMD 官方 ROCm 7.2.1 / ONNX Runtime 1.23.2 支持列表；这是 P0 最可靠的路径。</li>
-  <li>Windows DirectML 可用，但已进入 sustained engineering，新功能转向 WinML；必须用 FP16 实测性能与算子覆盖。</li>
+  <li>runtime 包按 OS + EP 拆分，每个包只带本环境的 ORT / EP 库；NVIDIA 与 AMD 不共用 runtime 包。</li>
+  <li>Windows DirectML 可用，但已进入 sustained engineering，新功能转向 WinML；作为后续目标。</li>
   <li>16 GB / 10 GB 都够 FireRed AED FP16（4–6 GB 预算）；都不够 8.3B LLM 的 FP16 权重（约 16.6 GB，尚不含激活 / KV cache）。</li>
 </ul>
 
 <h4 id="s5-6-1">5.6.1 CPU / GPU 运行时隔离</h4>
 
 <p>
-硬规则：<strong>CPU daemon（<code>voimed</code> / <code>voime-core</code>）只加载 CPU ORT；<code>voime-asr-worker</code> 是唯一允许加载 GPU ORT / EP 库的进程。</strong>
+硬规则：<strong>CPU daemon（<code>voimed</code> / <code>voime-core</code>）只加载 CPU ORT；<code>voime-gpu</code> 是唯一允许加载 GPU ORT / EP 库的进程。</strong>
 只要把 GPU EP 编进 daemon，就无法保证 CPU 推理不碰 ROCm / CUDA / DirectML。
 </p>
 
@@ -1197,12 +1067,12 @@ Response
     <td>SenseVoice CPU</td>
     <td><code>voimed</code> / <code>voime-core</code></td>
     <td>ORT CPU only</td>
-    <td>SenseVoice int8 + VAD + Punc</td>
+    <td>SenseVoice int8（Preview + CPU Final）+ VAD</td>
     <td><strong>否</strong></td>
   </tr>
   <tr>
     <td>FireRed AED GPU</td>
-    <td><code>voime-asr-worker</code></td>
+    <td><code>voime-gpu</code></td>
     <td>DirectML / MIGraphX</td>
     <td>FireRed AED FP16</td>
     <td><strong>是，仅 worker</strong></td>
@@ -1217,10 +1087,10 @@ Response
 </table>
 
 <ul class="note">
-  <li>基础安装只带 CPU ORT 与 SenseVoice；GPU runtime 是独立可选包，单独目录、单独版本、单独 SHA。</li>
+  <li>基础安装只带 CPU ORT 与 SenseVoice；GPU runtime 按 OS + EP 拆成独立可选包（Linux MIGraphX、Windows DirectML、Linux/Windows CUDA），各自单独目录、版本与 SHA。</li>
   <li><code>voimed</code> / <code>voime-core</code> 不依赖 worker crate；Rust workspace 的 feature unification 不能把 <code>directml</code> / <code>migraphx</code> / <code>cuda</code> 带进 daemon。必要时拆 workspace 或独立构建单元。</li>
   <li>daemon 的 <code>ORT_DYLIB_PATH</code> / 动态库搜索路径只包含 CPU ORT；worker 在自己进程内设置 GPU ORT 路径，不继承 daemon 的 GPU 库路径。</li>
-  <li>选择 CPU 模型时 worker 不启动；选择 GPU 模型时只启动 worker，daemon 仍然只映射 CPU ORT。</li>
+  <li>Final 选择 CPU SenseVoice 时 worker 不启动；Final 选择 GPU 时只启动 worker，daemon 仍然只映射 CPU ORT，Preview 继续由 SenseVoice 处理。</li>
   <li>验收时必须在没有 ROCm / CUDA / DirectML 的机器上启动 CPU SenseVoice，并用 <code>ldd</code> / Process Explorer / <code>/proc/&lt;pid&gt;/maps</code> 确认 daemon 没有加载任何 GPU 库。</li>
 </ul>
 
@@ -1235,7 +1105,7 @@ Response
     <td>长音频 7.81% / AISHELL-1 约 3.0%（口径不同）</td>
     <td>0</td>
     <td>builtin（CPU ORT）</td>
-    <td>默认、低延迟、离线；唯一 CPU ASR。</td>
+    <td>常驻 Preview + CPU Final；默认、低延迟、离线。</td>
   </tr>
   <tr>
     <td>GPU 均衡</td>
@@ -1243,8 +1113,8 @@ Response
     <td>1.1B</td>
     <td>普通话 4 集平均 3.05%；AISHELL-1 0.57%</td>
     <td>4–6 GB（FP16）</td>
-    <td>worker（DirectML / MIGraphX）</td>
-    <td><strong>第一批也是唯一必须做的 GPU 目标；</strong>FP16，Apache-2.0。</td>
+    <td>worker（Linux MIGraphX 优先；Windows DirectML 后续；NVIDIA 独立包）</td>
+    <td><strong>只做 Final；</strong>Preview 仍由常驻 SenseVoice 提供；需安装 SenseVoice + FireRed 两个包。</td>
   </tr>
 </table>
 
@@ -1252,6 +1122,7 @@ Response
   <li>FunASR-Nano（4.55%）与 Qwen3-ASR（3.76%）公开中文精度低于 AED（3.05%），按当前决策<strong>不测试</strong>。</li>
   <li>FireRedASR2-LLM（2.89% &gt; AED）FP16 权重约 16.6 GB，RX 9070 XT 16 GB 与 RTX 3080 10 GB 都不够（还要加激活 / KV cache），当前不测试。</li>
   <li>GPU 产品路径只接受 FP16；int8 只用于 CPU SenseVoice。</li>
+  <li>GPU 档不是“只装 FireRed”：必须同时安装 SenseVoice 基础包；Preview 与 CPU Final 都依赖它。</li>
 </ul>
 
 <h3 id="s5-8">5.8 成本与阶段</h3>
@@ -1260,25 +1131,25 @@ Response
   <tr><th>阶段</th><th>范围</th><th>退出条件</th><th>估算</th></tr>
   <tr>
     <td>G0：运行时验证</td>
-    <td>在 RX 9070 XT 上跑 FireRed AED FP16：Linux MIGraphX / Windows DirectML；记录 VRAM、RTF、首次加载、稳定性。int8 不测。</td>
-    <td>FP16 可加载且可重复；显存与延迟满足预算；确定 P0 平台。</td>
+    <td>在 RX 9070 XT 上跑 FireRed AED FP16：优先 Linux MIGraphX；记录 VRAM、RTF、首次加载、稳定性。int8 不测。</td>
+    <td>FP16 可加载且可重复；显存与延迟满足预算；Linux MIGraphX 达标。</td>
     <td>1–2 人日</td>
   </tr>
   <tr>
-    <td>G1：GPU worker 骨架</td>
-    <td><code>voime-asr-worker</code>；协议、spawn / handshake / shutdown、超时、崩溃重启、日志、<code>doctor</code>。</td>
-    <td>CPU 模型不启动 worker；GPU 模型可切换；worker 崩溃不影响 CPU 路径。</td>
+    <td>G1：voime-gpu 骨架</td>
+    <td><code>voime-gpu</code>；协议、spawn / handshake / shutdown、超时、崩溃重启、日志、<code>doctor</code>。</td>
+    <td>CPU Final 不启动 worker；GPU Final 可切换；worker 崩溃不影响 SenseVoice Preview 与 CPU Final。</td>
     <td>3–5 人日</td>
   </tr>
   <tr>
     <td>G2：FireRed AED GPU</td>
-    <td>把 encoder / decoder 贪心解码搬入 worker；加载 FP16 ONNX；DirectML / MIGraphX；模型包；质量与延迟评测。</td>
-    <td>目标语料 CER 下降 ≥ 10%；p95 ≤ 2 s；失败可回滚。</td>
+    <td>把 encoder / decoder 贪心解码搬入 worker；加载 FP16 ONNX；Linux MIGraphX 优先，Windows DirectML 后续；FireRed 模型包与 SenseVoice 依赖；只替换 Final，Preview 保持 SenseVoice；质量与延迟评测。</td>
+    <td>目标语料 CER 下降 ≥ 10%；p95 ≤ 2 s；Preview 不受影响；失败可回滚。</td>
     <td>3–5 人日</td>
   </tr>
   <tr>
     <td>G3：打包与界面</td>
-    <td>GPU runtime 包、安装脚本、<code>ListModels</code> 可用性、Windows / Linux 配置界面、回滚演练。</td>
+    <td>按环境拆分的 GPU runtime 包、安装脚本、<code>ListModels</code> 可用性、Linux / Windows 配置界面、回滚演练。</td>
     <td>用户可安装 / 选择 / 回滚；GPU 不可用有提示；CPU 路径无 GPU 依赖。</td>
     <td>3–5 人日</td>
   </tr>
@@ -1286,15 +1157,15 @@ Response
 
 <ul class="note">
   <li>G0 之前不要写 worker；先证明 FP16 AED 在 9070 XT 上可接受。</li>
-  <li>GPU worker 是可选项；CPU 路径保持原样，不因 GPU 方案改动。</li>
+  <li>voime-gpu 是可选项；CPU 路径保持原样，不因 GPU 方案改动。</li>
   <li>合计约 10–17 人日，不含模型下载与目标语料标注；LLM 当前不进入。</li>
 </ul>
 
 <h3 id="s5-9">5.9 FireRed AED 推理契约</h3>
 
 <p>
-GPU worker 只加载 FireRedASR2-AED 的 encoder / decoder 两个 FP16 ONNX 会话；
-fbank / CMVN 在 worker 内完成，VAD 与标点仍在 daemon。
+voime-gpu 只加载 FireRedASR2-AED 的 encoder / decoder 两个 FP16 ONNX 会话，只处理 Final；
+fbank / CMVN 在 worker 内完成，Preview、VAD 与标点仍在 daemon。
 </p>
 
 <table>
@@ -1306,9 +1177,9 @@ fbank / CMVN 在 worker 内完成，VAD 与标点仍在 daemon。
   <tr><td>Decoder</td><td><code>tokens</code>、self KV cache、cross K/V、<code>offset</code> → <code>logits</code> + 更新后的 self KV cache。</td></tr>
   <tr><td>解码</td><td>自回归贪心；<code>sos</code> 起步，<code>eos</code> / <code>max_len</code> / <code>max_token_per_second=8</code> 停止。</td></tr>
   <tr><td>Metadata</td><td><code>num_decoder_layers</code>、<code>num_head</code>、<code>head_dim</code>、<code>sos</code>、<code>eos</code>、<code>max_len</code>、CMVN；KV cache 形状必须来自 metadata，不能硬编码。</td></tr>
-  <tr><td>Partial</td><td><code>supports_partial=false</code>；GPU 包不做实时预览。</td></tr>
+  <tr><td>Partial</td><td><code>supports_partial=false</code>。FireRed AED 是非流式 encoder-decoder，只为 Final 服务；全部 Preview 由常驻 SenseVoice 提供，不要求 AED 产生 Partial。</td></tr>
   <tr><td>标点</td><td><code>punc=external</code>；daemon 的 FireRedPunc 处理。</td></tr>
-  <tr><td>精度</td><td>产品路径 FP16；加载失败只回退 FP32，不回退 int8。</td></tr>
+  <tr><td>精度</td><td>产品路径只有 FP16；加载失败直接报错，不回退 FP32 或 int8。</td></tr>
 </table>
 
 <pre><code>FireRedAed::transcribe(features)
@@ -1325,28 +1196,32 @@ fbank / CMVN 在 worker 内完成，VAD 与标点仍在 daemon。
 <ul class="note">
   <li>AED 的 fbank / CMVN 与 FireRed 家族一致；不做 LFR。</li>
   <li>sherpa-onnx 当前对 FireRed AED 只实现 <code>greedy_search</code>；beam search 不进入一期验收。</li>
-  <li>AED 默认 <code>partial=false</code>；如果后续证明预览可接受，再通过 <code>AsrOptions.partial</code> 打开。</li>
+  <li>GPU Final 不承担 Partial：AED 没有增量编码状态，重复跑完整前缀会拖高延迟并挤占 Final；Preview 固定由 SenseVoice 提供，Final 仍由 AED 完成。</li>
+  <li>GPU 档的 <code>supports_partial=false</code> 只描述 Final 后端；整体 Preview 能力由 SenseVoice 决定，不受该字段影响。</li>
   <li>worker 接收原始 PCM，不接收 daemon 算好的 fbank；GPU 模型可以有自己的前端。</li>
 </ul>
 
 <h3 id="s5-10">5.10 安装、许可证与体积</h3>
 
-<pre><code>scripts/install_models.sh --asr sense-voice --activate
-scripts/install_models.sh --asr fire-red-aed-gpu
-scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
+<pre><code>scripts/install_models.sh --profile sensevoice --activate
+scripts/install_models.sh --profile firered --activate
+scripts/install_runtime.sh --runtime linux-migraphx   # Linux 首选
+# 后续：windows-directml / linux-cuda / windows-cuda</code></pre>
 
 <table>
   <tr><th>项目</th><th>要求</th></tr>
-  <tr><td>包目录</td><td>每个包目录完整；CPU 包不包含 <code>punc/</code>，GPU 包包含 <code>punc/</code>；不共享权重。</td></tr>
-  <tr><td>校验</td><td>安装脚本校验 SHA-256、张量、词表与 ONNX metadata；运行期只读。</td></tr>
-  <tr><td>runtime 包</td><td><code>voime-asr-worker</code> + GPU ORT + EP 库；单独目录、单独版本、单独 SHA；不进入模型目录。</td></tr>
+  <tr><td>安装档位</td><td><code>sensevoice</code> 只安装 SenseVoice；<code>firered</code> 安装 SenseVoice + FireRed 两个包，并校验 <code>requires</code> 依赖。</td></tr>
+  <tr><td>包目录</td><td>每个包目录完整；SenseVoice 包不包含 <code>punc/</code>，FireRed 包包含 <code>punc/</code>；不共享权重。</td></tr>
+  <tr><td>校验</td><td>安装脚本校验 SHA-256、张量、词表、ONNX metadata 与包依赖；运行期只读。</td></tr>
+  <tr><td>runtime 包</td><td>按 OS + EP 拆分：<code>voime-gpu-linux-migraphx</code> / <code>voime-gpu-windows-directml</code> / <code>voime-gpu-linux-cuda</code> / <code>voime-gpu-windows-cuda</code>；每个包只带本环境 ORT / EP，单独目录、版本与 SHA。</td></tr>
   <tr><td>许可证</td><td>SenseVoice 按 FunASR Model License 随权重分发；FireRed AED / FireRedVAD 为 Apache-2.0；每个包保留 LICENSE、模型卡与 attribution。</td></tr>
-  <tr><td>体积</td><td>CPU 基础包约 229 MiB；GPU 模型按 FP16 权重记录，显存预算 4–6 GB；runtime 包单独计量。</td></tr>
-  <tr><td>平台脚本</td><td>Windows <code>install_models.ps1</code> 提供同样的 <code>-Asr</code> / <code>-Activate</code> / <code>-Gpu</code> 开关，不能只改 Linux 脚本。</td></tr>
+  <tr><td>体积</td><td>SenseVoice 基础包约 229 MiB；FireRed 模型按 FP16 权重记录，显存预算 4–6 GB；runtime 包单独计量。</td></tr>
+  <tr><td>平台脚本</td><td>Windows <code>install_models.ps1</code> 提供同样的 <code>-Profile</code> / <code>-Activate</code> / <code>-Runtime</code> 开关，不能只改 Linux 脚本。</td></tr>
 </table>
 
 <ul class="note">
-  <li>安装脚本默认只安装，不改变 <code>active</code>；显式 <code>--activate</code> 或首次安装且 <code>active</code> 缺失时才写入。</li>
+  <li>安装脚本默认只安装，不改变 <code>active</code>；显式 <code>--activate</code> 或首次安装且 <code>active</code> 缺失时才写入 Final 选择。</li>
+  <li><code>firered</code> 档必须同时安装 SenseVoice；缺少基础包时安装脚本拒绝启用 GPU Final。</li>
   <li>只信任签名 runtime；模型包不允许自带可执行文件；GPU runtime 安装需要显式 opt-in。</li>
   <li>不下载第二推理引擎，也不把 GPU 库打进基础安装包。</li>
 </ul>
@@ -1358,53 +1233,68 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
 
 <table>
   <tr><th>保留项</th><th>说明</th></tr>
-  <tr><td>SenseVoice 2024-07-17 int8 + ITN + 内置标点</td><td>唯一 CPU 默认 ASR；模型包级切换、重启后端语义沿用。</td></tr>
-  <tr><td>FireRedVAD</td><td>默认 VAD；增加预卷 / 平滑 / 可配置阈值；替代品只做评测。</td></tr>
-  <tr><td>FireRedPunc</td><td>只服务外部 ASR（GPU AED 等）；SenseVoice 不再使用。</td></tr>
-  <tr><td>包级切换 / <code>models/active</code> / 重启后端</td><td>GPU worker 继续使用同一套选择与回滚机制；按需启动 / 停止。</td></tr>
-  <tr><td>Windows / Linux 配置入口</td><td>模型下拉、重启后端、失败回滚；新增 GPU 可用性提示。</td></tr>
+  <tr><td>SenseVoice 2024-07-17 int8 + ITN + 内置标点</td><td>常驻 Preview + CPU Final 默认；GPU 档仍然加载它做 Preview。模型包级切换、重启 Final 语义沿用。</td></tr>
+  <tr><td>FireRedVAD</td><td>保持现状；不替换、不调整 VAD 模型 / 阈值、不评测替代品。分段预卷只在 ASR 输入侧，不改变 VAD 判定。</td></tr>
+  <tr><td>FireRedPunc</td><td>只服务 FireRed GPU Final；SenseVoice Preview / CPU Final 不使用。</td></tr>
+  <tr><td>包级切换 / <code>models/active</code> / 重启后端</td><td><code>active</code> 只选择 Final；SenseVoice 常驻；voime-gpu 按 Final 选择启动 / 停止。</td></tr>
+  <tr><td>Windows / Linux 配置入口</td><td>Final 下拉、重启后端、失败回滚；显示 GPU 可用性；不改变 Preview / Final 的呈现。</td></tr>
 </table>
 
 <h3 id="s6-2">6.2 删除</h3>
 
 <table>
   <tr><th>删除项</th><th>处理</th></tr>
-  <tr><td>FireRed CTC 后端</td><td><code>AsrKind::FireRedCtc</code> 删除；旧包直接拒绝；不提供迁移、回退或过渡版本；不再下载 / 打包 / 测试。</td></tr>
+  <tr><td>FireRed CTC 后端</td><td><code>AsrKind::FireRedCtc</code> 删除；旧包直接拒绝；不保留 CTC 路径、不回退；迁移脚本只清理 / 替换，不做后端转换；不再下载 / 打包 / 测试。</td></tr>
   <tr><td><code>sense-voice-2024-punc</code></td><td>不再提供；SenseVoice 固定 <code>use_itn=true</code> + <code>punc=builtin</code>。</td></tr>
-  <tr><td>AED CPU 推理</td><td>daemon 不保留 CPU AED；AED 只存在于 GPU worker。</td></tr>
+  <tr><td>AED CPU 推理</td><td>daemon 不保留 CPU AED；AED 只存在于 voime-gpu。</td></tr>
   <tr><td>文本后处理</td><td>不实现规则层、不引入文本模型、不增加 CLI / 清单字段 / IPC 消息。</td></tr>
   <tr><td>SenseVoice 双变体 A/B</td><td>不再维护 <code>itn</code> 与 <code>punc</code> 两个包；只保留 ITN。</td></tr>
 </table>
 
-<h3 id="s6-3">6.3 不兼容策略（无迁移）</h3>
+<h3 id="s6-3">6.3 不兼容策略与一次性迁移</h3>
 
 <p>
-本文按 clean break 设计：不读取旧 schema、不识别旧包、不保留 <code>active=legacy</code>、
-不兼容旧前端协议，也不提供迁移代码或迁移文档。升级按“重新安装新版本 + 新模型包”处理。
+运行期仍是 clean break：daemon 不读取旧 schema、不识别旧包、不保留 <code>active=legacy</code>，
+也不兼容旧前端协议。升级默认是“重新安装新版本 + 新模型包”。
+另提供一个<strong>独立、可选、一次性</strong>的迁移脚本，只用于把上一版本迁移到本版本；
+它不是安装脚本的一部分，安装脚本不会检测、调用或提示运行它。
+脚本只考虑当前开发机环境，不追求通用发行版、源码构建或其他机器的兼容性。
 </p>
+
+<table>
+  <tr><th>项目</th><th>约定</th></tr>
+  <tr><td>脚本形态</td><td><code>scripts/migrate-asr-v2.sh</code>；单独发布，不进入安装包或运行期。</td></tr>
+  <tr><td>支持范围</td><td>只支持上一版本 + 当前开发机环境；不覆盖源码构建、其他发行版或其他机器；其他情况 clean install。</td></tr>
+  <tr><td>用户选择</td><td>默认不运行；用户阅读发布说明后自行执行。安装脚本不检测、不调用、不提示。</td></tr>
+  <tr><td>前置条件</td><td>先安装新版本；脚本只迁移模型 / <code>active</code> / 白名单配置，不安装或替换二进制。</td></tr>
+  <tr><td>迁移范围</td><td>备份旧模型目录与配置；清理旧包 / 旧 <code>active</code> 布局；按 <code>sensevoice</code> / <code>firered</code> 档安装 schema 3 新模型包；写新 Final <code>active</code>；按白名单迁移已知配置，未知字段保留在备份中。</td></tr>
+  <tr><td>不做什么</td><td>不把旧 CTC / SenseVoice-punc / AED CPU 包转换为可用后端；不建立运行期兼容层；除模型目录与配置备份外，不改动其他用户数据。</td></tr>
+  <tr><td>安全</td><td>默认 <code>--dry-run</code> 输出计划，确认后加 <code>--apply</code> 执行；执行前要求 daemon 已停止；带时间戳备份；失败自动恢复；重复运行时检测迁移标记并退出（<code>--force</code> 除外）。</td></tr>
+  <tr><td>生命周期</td><td>临时脚本，只随 ASR v2 首次发布提供；下一个大版本移除，不长期维护。</td></tr>
+</table>
 
 <table>
   <tr><th>旧状态</th><th>新行为</th></tr>
   <tr><td>旧 schema / 旧 manifest</td><td>拒绝加载；不解析、不转换、不补齐默认值。</td></tr>
-  <tr><td>CTC / SenseVoice-punc / AED CPU 包</td><td>拒绝；不回退到 SenseVoice，不自动改写 <code>active</code>。</td></tr>
+  <tr><td>CTC / SenseVoice-punc / AED CPU 包</td><td>拒绝；不回退到 SenseVoice，不自动改写 <code>active</code>；迁移脚本只清理 / 替换，不把这些包转换为可加载格式。</td></tr>
   <tr><td><code>active</code> 指向旧包 / 不存在的包</td><td>拒绝；不猜测、不自动改写；<code>doctor</code> 报错并提示重新安装。</td></tr>
   <tr><td><code>active=legacy</code> / 旧目录布局</td><td>不支持；只接受 <code>models/&lt;package&gt;</code> + 新 <code>active</code>。</td></tr>
   <tr><td>旧前端 / 旧协议</td><td>拒绝连接；daemon 与两个前端必须同版本。</td></tr>
-  <tr><td>旧配置 / 启动参数</td><td>不迁移；按新版本重新配置。</td></tr>
-  <tr><td>升级方式</td><td>clean install：安装新版本 + 新模型包；不提供原地升级脚本。</td></tr>
+  <tr><td>旧配置 / 启动参数</td><td>运行期不兼容；迁移脚本只按白名单迁移已知字段，其余保留在备份中并由用户重新配置。</td></tr>
+  <tr><td>升级方式</td><td>默认 clean install；也可由用户手动运行一次性迁移脚本。安装脚本不包含迁移，也不会自动调用它。</td></tr>
 </table>
 
 <ul class="note">
-  <li>没有兼容层、没有 legacy parser、没有过渡版本、没有 fallback；旧包直接报错。</li>
+  <li>没有运行期兼容层、没有 legacy parser、没有过渡版本、没有 fallback；旧包直接报错。</li>
   <li>运行期“失败回滚到旧 pipeline”仍然保留，但它只回滚到本次运行中已经加载的新版本 pipeline，不是旧版本迁移。</li>
-  <li>不要在产品文档里写迁移步骤；发布说明只描述 clean install。</li>
+  <li>安装文档仍以 clean install 为主；迁移脚本单独发布、单独说明，必须写明手动运行、备份与回滚方式，不写进安装步骤。</li>
 </ul>
 
 <h3 id="s6-4">6.4 为什么否决文本后处理</h3>
 
 <table>
   <tr><th>问题</th><th>结论</th></tr>
-  <tr><td>质量</td><td>规则层覆盖有限；文本模型存在过度纠正、幻觉与语义改变风险。错别字不一定是文本层问题，先修框架更可靠。</td></tr>
+  <tr><td>质量</td><td>规则层覆盖有限；文本模型存在过度纠正、幻觉与语义改变风险。错别字更可能来自 ASR 模型或已删除的 CTC 路径，不应由文本后处理兜底。</td></tr>
   <tr><td>延迟</td><td>pipeline 单线程串行；增加一次文本推理会直接抬高收尾延迟，Continuous 还可能因队列满丢音频。</td></tr>
   <tr><td>维护</td><td>需要额外模型、分词器、词表、清单字段、守卫、回退、测试与许可证；收益不足以抵消长期成本。</td></tr>
   <tr><td>定位</td><td>产品链路只需要 ASR 文本；不做通用润色、改写、摘要或翻译，也不保存原文 / 候选对。</td></tr>
@@ -1418,7 +1308,7 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
 <h3 id="s6-5">6.5 长期维护边界</h3>
 
 <p>
-收敛后只有两条 ASR 路径：CPU SenseVoice 与 GPU FireRed AED worker。两者共享 VAD、分段、pipeline、IPC、
+收敛后是“常驻 SenseVoice Preview + 可选 Final”：Final 走 CPU SenseVoice 或 GPU FireRed AED。两者共享 VAD、分段、pipeline、IPC、
 <code>active</code> 与重启后端机制；需要单独维护的只有 ASR 模块、模型契约、金样测试与文档。
 </p>
 
@@ -1426,8 +1316,8 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
   <tr><th>维护项</th><th>频率</th><th>估算</th></tr>
   <tr><td>新增一个 ASR 后端</td><td>一次性</td><td>3–5 人日（贪心解码；不含模型训练）。</td></tr>
   <tr><td>上游模型包更新</td><td>每次模型升级</td><td>0.5–1 人日 / 后端：SHA、张量、metadata、金样输出。</td></tr>
-  <tr><td>发布回归</td><td>每个发布周期</td><td>0.5–1 人日：CPU / GPU 金样、切换、回滚、VAD。</td></tr>
-  <tr><td>文档 / doctor</td><td>每个发布周期</td><td>0.25–0.5 人日（两条路径共享大部分内容）。</td></tr>
+  <tr><td>发布回归</td><td>每个发布周期</td><td>0.5–1 人日：CPU / GPU 金样、切换、回滚。</td></tr>
+  <tr><td>文档 / doctor</td><td>每个发布周期</td><td>0.25–0.5 人日（Preview / Final 路径共享大部分内容）。</td></tr>
   <tr><td>默认 CI</td><td>每次提交</td><td>只跑模型无关的单元 / 清单测试；金样测试用环境变量启用，不把大模型放进默认 CI。</td></tr>
 </table>
 
@@ -1436,167 +1326,26 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
   <li>如果 GPU 路径长期没有质量收益，应删除 worker 与 runtime 包，而不是保留“永远实验”的第三条路径。</li>
 </ul>
 
-<h2 id="s7">7. 任务四：VAD 选型</h2>
+<h2 id="s7">7. 质量评测与验收</h2>
 <p><a href="#top">↑</a></p>
 
-<h3 id="s7-1">7.1 现状</h3>
-
-<p>
-当前使用 FireRedVAD 的流式 ONNX 模型（<code>stream-vad.onnx</code>，约 2.2 MB），10 ms 帧移，
-默认阈值 0.5；VAD 与 ASR 共用同一套 Rust fbank。现有实现没有预卷、没有概率平滑、
-阈值与静音时长硬编码在 <code>Segmenter</code> / <code>VadConfig</code> 中。
-</p>
-
-<table>
-  <tr><th>现有行为</th><th>影响</th></tr>
-  <tr><td>语音起点从第一个 VAD 语音帧开始，无预卷</td><td>段首辅音 / 爆破音可能被切掉，造成缺字或近音替换。</td></tr>
-  <tr><td>原始概率直接过阈值，无平滑</td><td>噪声中的单帧抖动可能造成提前开始 / 延迟结束。</td></tr>
-  <tr><td>阈值 0.5、min speech 80 ms、min silence 200 ms 固定</td><td>无法按麦克风、场景、语言调整；默认值未必适合近场听写。</td></tr>
-  <tr><td>VAD fbank 与 ASR 共用 Rust port</td><td>如果 fbank 黄金回归未完成或数值偏差扩大，VAD 概率也会偏；替代品比较会被污染。</td></tr>
-</table>
-
-<h3 id="s7-2">7.2 行业候选</h3>
-
-<table>
-  <tr><th>VAD</th><th>形态 / 体积</th><th>许可证</th><th>优点</th><th>局限</th><th>本项目定位</th></tr>
-  <tr>
-    <td><strong>FireRedVAD</strong></td>
-    <td>流式 / 非流式 ONNX，约 2.2 MB</td>
-    <td>Apache-2.0</td>
-    <td>公开 FLEURS-VAD-102 上 F1 97.57、AUC 99.60、FAR 2.69；支持 100+ 语言；已有流式模型；中文团队维护。</td>
-    <td>基准为作者自报，测试集尚未完全公开；流式模型仍需按目标场景调阈值。</td>
-    <td><strong>默认。</strong>没有足够证据替换。</td>
-  </tr>
-  <tr>
-    <td><strong>Silero VAD v6</strong></td>
-    <td>ONNX / JIT，约 2 MB；约 30 ms / 512 samples</td>
-    <td>MIT</td>
-    <td>生态最成熟；v6（2025-08）在噪声场景错误率进一步下降；8 / 16 kHz；文档与绑定齐全。</td>
-    <td>公开对比中 F1 95.95、FAR 9.41；端点延迟与短停顿处理不如专用流式模型。</td>
-    <td><strong>首选回退。</strong>FireRedVAD 在目标机器 / 场景异常时使用。</td>
-  </tr>
-  <tr>
-    <td><strong>TEN VAD</strong></td>
-    <td>ONNX / C 库，约 306 KB；10 / 16 ms hop</td>
-    <td>Apache-2.0 + 附加条件</td>
-    <td>极轻；低延迟；对话端点切换快；已集成 sherpa-onnx；适合资源受限设备。</td>
-    <td>公开对比中 F1 95.19、FAR 15.47；许可证有附加条件，需法务确认。</td>
-    <td><strong>低延迟 / 低内存备选。</strong>先做许可与目标语料评估。</td>
-  </tr>
-  <tr>
-    <td>FunASR FSMN VAD</td>
-    <td>ONNX，体积中等</td>
-    <td>Apache-2.0（需核对模型）</td>
-    <td>中文生态熟悉；漏检率低。</td>
-    <td>公开对比中 FAR 44.03，过度预测语音；端点不干净，容易把噪声送进 ASR。</td>
-    <td>不推荐用于端点检测。</td>
-  </tr>
-  <tr>
-    <td>WebRTC VAD</td>
-    <td>极小 C 库</td>
-    <td>BSD</td>
-    <td>无模型、极低开销；适合作为最后兜底。</td>
-    <td>公开对比中 F1 52.30、漏检 64.15；对噪声与远场很差。</td>
-    <td>只在极端资源 / 兼容场景使用。</td>
-  </tr>
-  <tr>
-    <td>pyannote / NVIDIA Sortformer</td>
-    <td>离线 / GPU diarization</td>
-    <td>各自许可证</td>
-    <td>说话人分离、重叠语音处理强。</td>
-    <td>不是低延迟流式 VAD；GPU 成本高；本项目当前不需要说话人分离。</td>
-    <td>不作为 VAD 替代；未来说话人场景另立提案。</td>
-  </tr>
-</table>
-
-<ul class="note">
-  <li>表中的 F1 / AUC / FAR / 漏检率来自 FireRedVAD 论文 / README 的同一张对比表，属于同一测试集口径；不是本项目目标语料的结果。</li>
-  <li>Silero 是通用 VAD，TEN 是对话式低延迟 VAD，FireRedVAD 是工业级多语种 VAD；三者优化目标不同，不能只看一个数字。</li>
-  <li>FireRedVAD 的基准是作者自报，且 FLEURS-VAD-102 尚未完全开源；必须用本项目语料复核，不能直接当验收数据。</li>
-</ul>
-
-<h3 id="s7-3">7.3 目标语料评测</h3>
-
-<table>
-  <tr><th>项目</th><th>要求</th></tr>
-  <tr><td>语料</td><td>2–5 小时目标场景语音：近场麦克风、桌面噪声、短停顿、连续说话、中英混合、轻声 / 快语速；另含 20 / 30 s 长段。</td></tr>
-  <tr><td>标注</td><td>人工标注语音起点 / 终点；至少双人复核一部分，记录标注口径。</td></tr>
-  <tr><td>指标</td><td>帧级 F1 / AUC、误报率、漏检率、语音起点延迟 p50 / p95、端点延迟 p50 / p95、RTF、峰值 RSS。</td></tr>
-  <tr><td>对照</td><td>FireRedVAD（现状）、Silero VAD v6、TEN VAD；FunASR FSMN / WebRTC 只作边界参考。</td></tr>
-  <tr><td>替换门槛</td><td>F1 提升 ≥ 1 个点且端点延迟不退化；或在同等漏检率下误报率下降 ≥ 30%；许可证与打包可接受。</td></tr>
-  <tr><td>不替换门槛</td><td>F1 持平但延迟更差；或只在噪声集更好、在近场听写退化；或引入新的运行时 / 许可负担。</td></tr>
-</table>
-
-<ul class="note">
-  <li>VAD 的目标不是“检出所有语音”，而是“给 ASR 干净、完整的段”；端点延迟与误报率通常比帧级 F1 更影响体验。</li>
-  <li>评测必须使用与 ASR 相同的预卷 / 后卷策略；否则 VAD 分数与最终 CER 对不上。</li>
-</ul>
-
-<h3 id="s7-4">7.4 当前实现的具体改进</h3>
-
-<pre><code>Segmenter::push(frame, samples, mode)
-├── 维护 pre_roll 环形缓冲（默认 300 ms）
-├── 维护 post_roll 尾部（默认 200 ms）
-├── VAD 概率做 smooth_window（默认 5 帧）
-├── 判断 speech_run_ms ≥ min_speech_ms（默认 80 ms）
-│   └── 从 pre_roll 回取音频 → 开始段
-├── 判断 silence_run_ms ≥ min_silence_ms（Continuous 默认 200 ms）
-│   └── 结束段，保留 post_roll
-└── 判断 duration ≥ max_segment_ms → 强制结束</code></pre>
-
-<table>
-  <tr><th>参数</th><th>建议起点</th><th>说明</th></tr>
-  <tr><td><code>pre_roll_ms</code></td><td>300</td><td>覆盖段首辅音；PTT 可在按键时开始缓冲，成本更低。</td></tr>
-  <tr><td><code>post_roll_ms</code></td><td>200</td><td>避免切掉尾音；与 <code>min_silence_ms</code> 一起决定端点延迟。</td></tr>
-  <tr><td><code>speech_threshold</code></td><td>0.3–0.5</td><td>按麦克风与噪声调整；不要直接沿用 0.5。</td></tr>
-  <tr><td><code>smooth_window_size</code></td><td>5</td><td>与 FireRedVAD 参考一致；减少单帧抖动。</td></tr>
-  <tr><td><code>min_speech_ms</code></td><td>80</td><td>太大会漏掉短词；太小会增加噪声段。</td></tr>
-  <tr><td><code>min_silence_ms</code></td><td>200（Continuous）</td><td>PTT / Toggle 继续使用 1.2 s 自动结束。</td></tr>
-</table>
-
-<ul class="note">
-  <li>这些参数应进入 VAD 模型清单的 <code>options</code>，不要继续硬编码在 <code>Segmenter</code> / <code>VadConfig</code>。</li>
-  <li>预卷 / 后卷只改变交给 ASR 的音频，不改变 VAD 概率与端点判定；测试要分别覆盖两者。</li>
-  <li>如果 fbank 黄金回归尚未完成，先不要用 VAD 分数比较替代品；否则会把前端差异误判为 VAD 差异。</li>
-</ul>
-
-<h3 id="s7-5">7.5 结论</h3>
-
-<p>
-<strong>保留 FireRedVAD，不替换。</strong>
-它在公开多语种 VAD 基准上领先 Silero / TEN / FunASR / WebRTC，且已经是 Apache-2.0、已有流式 ONNX，
-与项目当前“CPU 低延迟、离线、单模型包”的边界一致。当前的问题主要是<strong>预卷、平滑、阈值与 fbank 回归</strong>，
-不是 VAD 模型本身。
-</p>
-
-<ul>
-  <li>Silero VAD v6 作为首选回退：生态成熟、MIT、目标机器上若 FireRedVAD 出现兼容性问题可直接替换。</li>
-  <li>TEN VAD 作为低延迟 / 低内存备选：需要先确认附加许可条款，再做目标语料 A/B。</li>
-  <li>不采用 FunASR FSMN / WebRTC 作为默认：前者误报高，后者漏检高。</li>
-  <li>如果目标语料证明 FireRedVAD 的端点延迟不达标，再按 §7.3 的门槛替换，而不是凭公开榜单切换。</li>
-</ul>
-
-<h2 id="s8">8. 质量评测与验收</h2>
-<p><a href="#top">↑</a></p>
-
-<h3 id="s8-1">8.1 框架对齐门禁</h3>
+<h3 id="s7-1">7.1 SenseVoice 回归、预卷与 ORT 实验门禁</h3>
 
 <table>
   <tr><th>测试</th><th>方法</th><th>门禁</th></tr>
-  <tr><td>ORT 版本 / 会话</td><td>固定模型、特征、LFR 与解码；记录 ORT build info、优化级别、线程数、EP。</td><td>同一输入输出一致；升级 ORT 必须重跑黄金文本。</td></tr>
-  <tr><td>fbank 黄金特征</td><td>固定 10–20 条音频，C++ 参考 vs Rust 实现逐元素比较。</td><td>最大绝对差 ≤ 1e-3；当前实测约 5 × 10<sup>-4</sup>。</td></tr>
-  <tr><td>LFR 黄金帧</td><td>固定帧数、短音频、空音频、非 6 倍数帧；比较帧数与内容。</td><td>帧数一致；边缘复制内容一致。</td></tr>
-  <tr><td>SenseVoice 黄金文本</td><td>固定音频 + 参考实现输出；POC 输出逐字比较。</td><td>目标样本 100% 一致；新增差异必须解释。</td></tr>
-  <tr><td>分段预卷</td><td>人工构造段首辅音样本；比较有 / 无预卷的 CER。</td><td>预卷不劣化；目标样本改善。</td></tr>
-  <tr><td>VAD 特征</td><td>FireRedVAD 参考特征 vs 项目 StreamingFbank。</td><td>最大绝对差 ≤ 1e-3；概率曲线一致。</td></tr>
+  <tr><td>SenseVoice 回归文本</td><td>固定音频 + 期望文本；比较改动前后的输出。</td><td>目标样本不回归；新增差异必须解释。</td></tr>
+  <tr><td>分段预卷</td><td>人工构造段首辅音样本；比较有 / 无预卷的 CER。</td><td>预卷不劣化；目标样本改善；端点延迟不退化。</td></tr>
+  <tr><td>Rust <code>ort</code> 版本实验（条件项）</td><td>同一模型、特征、解码与目标语料；只改 <code>ort</code> crate 版本及其 API 适配。</td><td>CER / 替换错误率显著改善且延迟、内存不退化才采纳；否则保持 <code>rc.12</code>。</td></tr>
+  <tr><td>Preview 固定 SenseVoice</td><td>Final 分别选 SenseVoice / FireRed；记录 Partial 来源与 GPU worker 请求。</td><td>两种 Final 下 Partial 都可用；voime-gpu 不接收 Partial。</td></tr>
+  <tr><td>Preview / Final 行为</td><td>同一段音频记录 Partial 与 Final；Final 直接输入，不依赖也不呈现 Preview。</td><td>Final 成功注入目标；Preview 不进入提交路径。</td></tr>
 </table>
 
 <ul class="note">
-  <li>黄金测试是“框架正确性”门禁，不是模型质量门禁；两者分开报告。</li>
-  <li>参考输出可以用 sherpa-onnx / FunASR 离线生成；运行时不需要引入它们。</li>
+  <li>回归测试用于确认 SenseVoice Preview / CPU Final 行为不变；预卷与 ORT 实验分别验收。</li>
+  <li>LFR、fbank、量化与语言参数不在本提案的实施范围内；ORT 只做条件实验，无收益就关闭。</li>
 </ul>
 
-<h3 id="s8-2">8.2 ASR 质量门禁</h3>
+<h3 id="s7-2">7.2 ASR 质量门禁</h3>
 
 <table>
   <tr><th>指标</th><th>定义</th><th>建议门禁</th></tr>
@@ -1615,29 +1364,28 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
 
 <ul class="note">
   <li>门禁数值是建议起点；Phase 0 先测基线再冻结，不要用公开榜单代替目标语料。</li>
+  <li>Preview 只做交互反馈，不参与 CER / WER 门禁；只有 Final 计分。</li>
   <li>“CER 下降”与“错别字下降”不是同一指标；必须单列替换错误率。</li>
   <li>GPU AED 的收益必须同时满足质量与延迟；只快不准或只准太慢都不进入默认。</li>
   <li>GPU AED 以 <strong>FP16</strong> 验收；int8 不作为 GPU 产品路径，也不参与“是否达标”的判断。</li>
 </ul>
 
-<h3 id="s8-3">8.3 GPU 与 VAD 验收</h3>
+<h3 id="s7-3">7.3 GPU 验收</h3>
 
 <table>
   <tr><th>项目</th><th>验收</th></tr>
   <tr><td>GPU 加载</td><td>首次加载、二次加载、重复重启均成功；失败有明确错误码。</td></tr>
   <tr><td>GPU EP 分配</td><td>DirectML / MIGraphX 实际接管关键算子；记录 CPU 回退节点；若大部分计算回退 CPU，不能宣称 GPU 达标。</td></tr>
   <tr><td>CPU 运行时隔离</td><td><code>voimed</code> / <code>voime-core</code> 只加载 CPU ORT，不加载 ROCm / CUDA / DirectML / MIGraphX 库；<code>ldd</code> / Process Explorer / <code>/proc/&lt;pid&gt;/maps</code> 无 GPU 依赖。</td></tr>
-  <tr><td>CPU 包不启动 worker</td><td><code>active</code> 指向 SenseVoice 时没有 <code>voime-asr-worker</code> 进程。</td></tr>
-  <tr><td>移除 GPU 运行时</td><td>删除 / 重命名 GPU runtime 目录后，CPU SenseVoice 仍可启动与识别。</td></tr>
-  <tr><td>GPU 库仅 worker</td><td>GPU AED 运行时，daemon 仍只有 CPU ORT；GPU 库只出现在 worker 的映射中。</td></tr>
-  <tr><td>GPU 回滚</td><td>worker 崩溃 / 超时 / 显存不足时 CPU 路径保留；GPU 模型回滚或回退 CPU SenseVoice。</td></tr>
-  <tr><td>GPU 隔离</td><td>worker 被杀不影响 daemon 的 VAD / Punc 与前端连接。</td></tr>
-  <tr><td>GPU 资源</td><td>切换到 CPU 模型时 worker 退出并释放显存；无孤儿进程。</td></tr>
-  <tr><td>VAD 替换</td><td>按 §7.3 的门槛；未达标不替换。</td></tr>
-  <tr><td>VAD 预卷</td><td>段首样本 CER 改善；端点延迟不退化。</td></tr>
+  <tr><td>CPU Final 不启动 worker</td><td><code>active</code> 指向 SenseVoice 时没有 <code>voime-gpu</code> 进程。</td></tr>
+  <tr><td>移除 GPU 运行时</td><td>删除 / 重命名 GPU runtime 目录后，SenseVoice Preview 与 CPU Final 仍可启动与识别。</td></tr>
+  <tr><td>GPU 库仅 worker</td><td>GPU Final 运行时，daemon 仍只有 CPU ORT；GPU 库只出现在 worker 的映射中。</td></tr>
+  <tr><td>GPU 回滚</td><td>worker 崩溃 / 超时 / 显存不足时 Final 回退 CPU SenseVoice；SenseVoice Preview 不中断。</td></tr>
+  <tr><td>GPU 隔离</td><td>worker 被杀不影响 daemon 的 SenseVoice Preview、VAD / Punc 与前端连接。</td></tr>
+  <tr><td>GPU 资源</td><td>Final 切换到 CPU 时 worker 退出并释放显存；Preview 不受影响；无孤儿进程。</td></tr>
 </table>
 
-<h3 id="s8-4">8.4 评测集设计</h3>
+<h3 id="s7-4">7.4 评测集设计</h3>
 
 <ul>
   <li>300–500 条目标场景语音，覆盖 3–15 秒短句与 15–30 秒长句；与产品输入方式一致（近场麦克风、桌面环境）。</li>
@@ -1649,11 +1397,11 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
 </ul>
 
 <ul class="note">
-  <li>评测集必须与 VAD / 分段策略一起冻结；只换模型、不换前端，否则差异无法归因。</li>
+  <li>评测集必须与分段策略一起冻结（VAD 保持现状）；只换模型、不换前端，否则差异无法归因。</li>
   <li>长段样本单独统计，不要用短句平均值掩盖截断 / 重复问题。</li>
 </ul>
 
-<h3 id="s8-5">8.5 统计与决策规则</h3>
+<h3 id="s7-5">7.5 统计与决策规则</h3>
 
 <p>
 门禁数值在 Phase 0 测完基线后冻结；比较使用配对 bootstrap 95% 置信区间，不只报平均值。
@@ -1661,30 +1409,30 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
 
 <table>
   <tr><th>结果</th><th>决策</th></tr>
-  <tr><td>Phase 0 黄金测试未通过</td><td>停止模型比较；先修 ORT / 前端 / 预卷，不得用模型结论掩盖框架误差。</td></tr>
-  <tr><td>SenseVoice 修复后相对当前基线不回归，且满足延迟 / 内存预算</td><td>保留为 CPU 默认；不引入 Paraformer 等替代品。</td></tr>
-  <tr><td>SenseVoice 修复后仍不达标</td><td>按目标语料 A/B 评估 Paraformer-large 等 CPU 备选；不直接跳到 GPU。</td></tr>
-  <tr><td>GPU AED：CER 下降 ≥ 10%、p95 ≤ 2 s、显存 / 稳定性达标</td><td>作为可选 GPU 档位；CPU SenseVoice 仍是默认。</td></tr>
+  <tr><td>预卷测试未通过</td><td>先修分段预卷；不得用模型比较掩盖分段误差。</td></tr>
+  <tr><td>预卷后相对当前基线不回归，且满足延迟 / 内存预算</td><td>保留为 CPU 默认；不引入 Paraformer 等替代品。</td></tr>
+  <tr><td>预卷后仍不达标</td><td>不自动换 CPU 模型；另立提案评估替代方案，不把模型问题转成框架改造。</td></tr>
+  <tr><td>GPU AED：CER 下降 ≥ 10%、p95 ≤ 2 s、显存 / 稳定性达标</td><td>作为可选 GPU Final 档位；CPU SenseVoice 仍是默认 Final，Preview 始终 SenseVoice。</td></tr>
   <tr><td>GPU AED：质量达标但延迟 / 显存不达标</td><td>不进入产品路径；保留离线评测结论。</td></tr>
   <tr><td>LLM 精度不高于 AED</td><td>不测试；只有多语种 / 方言或更高精度目标时才另立评估。</td></tr>
-  <tr><td>VAD 替代品未达到 §7.3 门槛</td><td>保留 FireRedVAD；不因公开榜单替换。</td></tr>
 </table>
 
-<h3 id="s8-6">8.6 测试分层</h3>
+<h3 id="s7-6">7.6 测试分层</h3>
 
 <table>
   <tr><th>层级</th><th>覆盖内容</th></tr>
-  <tr><td>单元测试</td><td>LFR 帧数 / 边缘复制；560 维 CMVN；特殊 token 跳过；<code>ids.len() &lt; 4</code>；token_count 校验；窗函数参数；fbank 黄金特征。</td></tr>
-  <tr><td>清单测试</td><td>schema 3；CPU / GPU 包；<code>punc</code> 缺省；未知 <code>kind</code>；<code>Builtin</code> + <code>use_itn=false</code> 非法；<code>External</code> + 缺少 <code>punc</code> 启动失败；GPU 包非 FP16 拒绝。</td></tr>
-  <tr><td>pipeline 集成测试</td><td>用测试桩替换 <code>AsrBackend</code>：成功、空结果、推理失败、外部标点失败、内置标点跳过、<code>supports_partial=false</code>。</td></tr>
-  <tr><td>模型金样测试</td><td>固定短音频 + 期望文本；模型存在时运行，缺失时跳过；不进入默认 CI 的慢测试。</td></tr>
+  <tr><td>单元测试</td><td>LFR 帧数；560 维 CMVN；特殊 token 跳过；<code>ids.len() &lt; 4</code>；token_count 校验；窗函数参数。</td></tr>
+  <tr><td>清单测试</td><td>schema 3；CPU / GPU 包；<code>requires</code> 依赖缺失拒绝；<code>punc</code> 缺省；未知 <code>kind</code>；<code>Builtin</code> + <code>use_itn=false</code> 非法；<code>External</code> + 缺少 <code>punc</code> 启动失败；GPU 包非 FP16 拒绝。</td></tr>
+  <tr><td>pipeline 集成测试</td><td>用测试桩替换 Final backend：成功、空结果、推理失败、外部标点失败、内置标点跳过；GPU Final <code>supports_partial=false</code> 时 SenseVoice Preview 仍正常发出。</td></tr>
+  <tr><td>模型金样测试</td><td>固定短音频 + 期望文本；SenseVoice Preview / CPU Final 与 FireRed Final 分开记录；模型存在时运行，缺失时跳过；不进入默认 CI 的慢测试。</td></tr>
   <tr><td>性能测试</td><td>目标 CPU / GPU 上的 RTF、p95 收尾延迟、峰值 RSS / VRAM、模型加载时间；SenseVoice 与 AED 分开记录。</td></tr>
-  <tr><td>切换测试</td><td>安装两个包，写 <code>active</code>，重启后端；doctor 报告正确；全程不执行 <code>cargo build</code> / 不替换二进制。</td></tr>
+  <tr><td>切换测试</td><td>分别安装 <code>sensevoice</code> / <code>firered</code> 档；写 <code>active</code>，重启 Final；SenseVoice Preview 不断；doctor 报告正确；全程不执行 <code>cargo build</code> / 不替换二进制。</td></tr>
   <tr><td>IPC 测试</td><td><code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code> 的角色、空闲检查、无效包、协议版本不匹配。</td></tr>
-  <tr><td>重启测试</td><td>空闲重启成功、录音中拒绝、加载失败回滚旧 <code>active</code> 与旧 pipeline、连续重启。</td></tr>
+  <tr><td>重启测试</td><td>空闲切换 Final 成功、录音中拒绝、加载失败回滚旧 <code>active</code> 与旧 Final、Preview 不断、连续重启。</td></tr>
   <tr><td>前端测试</td><td>Fcitx 动态枚举；Windows 下拉与按钮；daemon 离线时写 <code>active</code>；重启中按钮禁用。</td></tr>
-  <tr><td>GPU 测试</td><td>worker spawn / handshake / 超时 / 崩溃重启；CPU daemon 不加载 GPU 库；移除 runtime 后 CPU 仍可用。</td></tr>
-  <tr><td>VAD 测试</td><td>预卷 / 后卷、平滑、阈值、端点延迟；替代品按 §7.3 门槛。</td></tr>
+  <tr><td>GPU 测试</td><td>worker spawn / handshake / 超时 / 崩溃重启；Preview 不进 worker；CPU daemon 不加载 GPU 库；移除 runtime 后 CPU Final 仍可用。</td></tr>
+  <tr><td>迁移测试</td><td>旧安装 <code>--dry-run</code>；备份 / 恢复；重复运行；安装脚本不调用迁移脚本；迁移后 <code>active</code> 与模型包正确。</td></tr>
+  <tr><td>分段测试</td><td>预卷与段首切分；不改变 VAD 判定。</td></tr>
 </table>
 
 <ul class="note">
@@ -1692,94 +1440,81 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
   <li>切换 / 重启 / 回滚测试必须覆盖“GPU runtime 缺失”和“worker 崩溃”两条失败路径。</li>
 </ul>
 
-<h2 id="s9">9. 分阶段落地与成本</h2>
+<h2 id="s8">8. 分阶段落地与成本</h2>
 <p><a href="#top">↑</a></p>
 
 <table>
   <tr><th>阶段</th><th>范围</th><th>退出条件</th><th>估算</th></tr>
   <tr>
-    <td>Phase 0：框架对齐与基线</td>
-    <td>ORT 版本 / 会话对齐、fbank 黄金回归、LFR A/B、预卷；目标语料基线；SenseVoice int8 / fp32 / auto / zh 对照。</td>
-    <td>黄金测试通过；明确错别字来源比例；冻结基线。</td>
-    <td>3–5 人日 + 语料标注</td>
+    <td>Phase 0：音频预卷、ORT 实验与基线</td>
+    <td>分段预卷（200–300 ms）；Rust <code>ort</code> 版本实验（rc.12 vs rc.13 / rc.15，条件项）；目标语料基线；记录 SenseVoice 当前输出。</td>
+    <td>预卷样本不劣化且有改善；端点延迟不退化；ORT 实验有明确结论（采纳或关闭）；基线冻结。</td>
+    <td>2–4 人日 + 语料标注</td>
   </tr>
   <tr>
     <td>Phase 1：删除旧后端（不兼容）</td>
-    <td>删除 CTC、SenseVoice-punc、AED CPU；旧包直接拒绝；切换到 schema 3；只保留 SenseVoice ITN。</td>
-    <td>旧包明确拒绝（固定错误码）；SenseVoice 行为不变；测试矩阵收敛。</td>
-    <td>2–3 人日</td>
+    <td>删除 CTC、SenseVoice-punc、AED CPU；旧包直接拒绝；切换到 schema 3；SenseVoice 常驻 Preview + CPU Final；提供独立一次性迁移脚本（不纳入安装器）。</td>
+    <td>旧包明确拒绝（固定错误码）；SenseVoice Preview / CPU Final 行为不变；测试矩阵收敛；迁移脚本覆盖上一版本 + 当前开发机。</td>
+    <td>2–4 人日</td>
   </tr>
   <tr>
-    <td>Phase 2：GPU worker 骨架</td>
-    <td><code>voime-asr-worker</code>；协议、spawn / handshake / shutdown、超时、崩溃重启、日志、<code>doctor</code>。</td>
-    <td>CPU 模型不启动 worker；GPU 模型可切换；worker 崩溃不影响 CPU 路径。</td>
+    <td>Phase 2：voime-gpu 骨架</td>
+    <td><code>voime-gpu</code>；协议、spawn / handshake / shutdown、超时、崩溃重启、日志、<code>doctor</code>。</td>
+    <td>CPU Final 不启动 worker；GPU Final 可切换；worker 崩溃不影响 SenseVoice Preview 与 CPU Final。</td>
     <td>3–5 人日</td>
   </tr>
   <tr>
     <td>Phase 3：FireRed AED GPU</td>
-    <td>把 encoder / decoder 贪心解码搬入 worker；加载 FP16 ONNX；DirectML / MIGraphX；模型包；质量与延迟评测。</td>
-    <td>目标语料 CER 下降 ≥ 10%；p95 ≤ 2 s；失败可回滚。</td>
+    <td>把 encoder / decoder 贪心解码搬入 worker；加载 FP16 ONNX；Linux MIGraphX 优先，Windows DirectML 后续；FireRed 模型包与 SenseVoice 依赖；只替换 Final，Preview 保持 SenseVoice；质量与延迟评测。</td>
+    <td>目标语料 CER 下降 ≥ 10%；p95 ≤ 2 s；Preview 不受影响；失败可回滚。</td>
     <td>3–5 人日</td>
   </tr>
   <tr>
     <td>Phase 4：打包与界面</td>
-    <td>GPU runtime 包、安装脚本、<code>ListModels</code> 可用性、Windows / Linux 配置界面、回滚演练。</td>
-    <td>用户可安装 / 选择 / 回滚；GPU 不可用有提示；CPU 路径无 GPU 依赖。</td>
-    <td>3–5 人日</td>
-  </tr>
-  <tr>
-    <td>Phase 5：VAD A/B 与调参</td>
-    <td>FireRedVAD / Silero v6 / TEN VAD 目标语料评测；预卷、平滑、阈值调参。</td>
-    <td>按 §7.3 决策；不达标保留 FireRedVAD。</td>
-    <td>2–4 人日</td>
+    <td>按 OS + EP 拆分的 GPU runtime 包、<code>sensevoice</code> / <code>firered</code> 安装档位、迁移脚本单独发布、<code>ListModels</code> 可用性、Linux Final 下拉（Windows 后续）、回滚演练。</td>
+    <td>用户可按档位安装 / 选择 Final / 回滚；GPU 不可用有提示；Preview 始终 SenseVoice；CPU 路径无 GPU 依赖。</td>
+    <td>3–6 人日</td>
   </tr>
 </table>
 
 <ul class="note">
-  <li>Phase 0 是硬门槛；不通过就不进入 Phase 2，否则 GPU 模型比较会被前端误差污染。</li>
-  <li>合计约 16–27 人日（不含语料标注 / 模型下载 / 跨平台打包验证）；LLM 当前不进入。</li>
-  <li>如果只想先落地最小收益：Phase 0 + Phase 1 就能消除已复现的框架侧错字并收敛模型矩阵。</li>
+  <li>Phase 0 只验证预卷、ORT 条件实验与基线；预卷不通过先修分段；ORT 无收益或没有可选版本就关闭实验。</li>
+  <li>合计约 13–24 人日（不含语料标注 / 模型下载 / 跨平台打包验证）；LLM 当前不进入。</li>
+  <li>如果只想先落地最小收益：Phase 0 + Phase 1 就能完成预卷改进（以及有收益时的 ORT 切换）并收敛模型矩阵。</li>
 </ul>
 
-<h2 id="s10">10. 风险与待决策</h2>
+<h2 id="s9">9. 风险</h2>
 <p><a href="#top">↑</a></p>
+
+<p>
+<strong>已接受的取舍：</strong>SenseVoice 常驻带来的 CPU / 内存开销可接受；Preview 与 Final 文本不一致可接受，
+Final 直接输入、不做呈现变化；Fcitx 动态枚举不可用时模型列表留空，不做补偿动作。
+</p>
 
 <table>
   <tr><th>风险</th><th>影响</th><th>缓解</th></tr>
-  <tr><td>ORT / 前端对齐工作量超预期</td><td>Phase 0 拖延，后续模型比较无法可信。</td><td>固定 ORT 版本与 build info；fbank 黄金回归；LFR / 预卷测试；必要时用 sherpa 参考生成器。</td></tr>
-  <tr><td>ORT 版本 / EP 漂移</td><td>CPU int8 与 GPU FP16 的输出 / 延迟发生不可控变化。</td><td>每个发布锁定一个 ORT 版本与 build info；CI 黄金文本；升级 ORT 必须重跑 SenseVoice / AED 金样。</td></tr>
-  <tr><td>GPU 运行时泄漏进 daemon</td><td>CPU SenseVoice 启动时被迫加载 ROCm / CUDA / DirectML，违背“CPU 不依赖 GPU”的目标。</td><td><code>voimed</code> / <code>voime-core</code> 只链接 CPU ORT；不依赖 worker crate；GPU 分进程、分 runtime 目录；CI 检查动态依赖与 <code>/proc/&lt;pid&gt;/maps</code>。</td></tr>
-  <tr><td>框架修复后仍有错别字</td><td>说明模型本身有上限，需要 GPU / 更大模型。</td><td>Phase 0 分清框架误差与模型误差；再用目标语料决定 GPU 档位。</td></tr>
-  <tr><td>DirectML / MIGraphX / CUDA 版本矩阵</td><td>安装失败、驱动不兼容、用户环境差异；AMD 上 CUDA / TensorRT 不可用。</td><td>AMD 第一目标：Windows DirectML、Linux MIGraphX；CUDA / TensorRT 仅 NVIDIA 可选；<code>doctor</code> 预检；GPU 不可用回退 SenseVoice。</td></tr>
-  <tr><td>FP16 显存不足 / 热降频</td><td>加载失败或延迟抖动；1.1B FP16 约 2.2 GB 权重，加激活 / KV cache 后仍需 4–6 GB。</td><td>声明 <code>min_vram_mb</code>；加载前检查；失败保留旧 pipeline；不自动降级到 int8，必要时回退 FP32 或 CPU。</td></tr>
+  <tr><td>预卷把前一段尾音带入</td><td>段首重复、串音或 CER 退化。</td><td>从 200 ms 起测；按 PTT / Continuous 分别验证；端点延迟不退化；过长时回退。</td></tr>
+  <tr><td>ORT / <code>ort</code> 版本漂移或升级回归</td><td>CPU int8 与 GPU FP16 的输出 / 延迟发生不可控变化；<code>ort</code> 升级可能编译失败或输出退化。</td><td>每个发布锁定 ORT 版本与 build info；<code>ort</code> 实验每次只升一个版本；目标语料 + 黄金文本双门槛；保留 <code>rc.12</code> 回退；无收益不合并。</td></tr>
+  <tr><td>GPU 运行时泄漏进 daemon</td><td>SenseVoice Preview / CPU Final 启动时被迫加载 ROCm / CUDA / DirectML，违背“CPU 不依赖 GPU”的目标。</td><td><code>voimed</code> / <code>voime-core</code> 只链接 CPU ORT；不依赖 worker crate；GPU 分进程、分 runtime 目录；CI 检查动态依赖与 <code>/proc/&lt;pid&gt;/maps</code>。</td></tr>
+  <tr><td>预卷收益不及预期</td><td>段首缺字仍存在；不应扩大为 LFR / 量化改造。</td><td>以目标语料结果决定是否保留；ORT 只按 §3.5 的条件实验处理，不把模型问题转成框架改造。</td></tr>
+  <tr><td>DirectML / MIGraphX / CUDA 版本矩阵</td><td>安装失败、驱动不兼容、用户环境差异；AMD 上 CUDA / TensorRT 不可用。</td><td>Linux MIGraphX 第一；Windows DirectML 与 NVIDIA CUDA / TensorRT 使用各自独立 runtime 包；<code>doctor</code> 预检；GPU Final 不可用时回退 CPU SenseVoice，Preview 继续。</td></tr>
+  <tr><td>FP16 显存不足 / 热降频</td><td>加载失败或延迟抖动；1.1B FP16 约 2.2 GB 权重，加激活 / KV cache 后仍需 4–6 GB。</td><td>声明 <code>min_vram_mb</code>；加载前检查；失败保留旧 Final 或回退 CPU SenseVoice；Preview 继续；不回退 FP32 / int8。</td></tr>
   <tr><td>运行时包可执行文件安全</td><td>runtime 包携带任意代码。</td><td>只信任签名运行时；禁止第三方包自带可执行文件；安装需显式 opt-in。</td></tr>
-  <tr><td>LLM 重复 / 幻觉</td><td>识别文本被改写或无限生成。</td><td>第一批不接 LLM；只有 FireRedASR2-LLM 条件项才验收重复 / 不终止；设置 max tokens / 超时。</td></tr>
-  <tr><td>GPU 无 Partial</td><td>用户看不到实时预览，体验下降。</td><td>GPU 包声明 <code>supports_partial=false</code>；前端明确提示；不在 GPU 上强行跑自回归预览。</td></tr>
-  <tr><td>VAD 公开基准自报</td><td>目标场景表现可能不同。</td><td>目标语料复核；Silero v6 作为回退；不因榜单直接替换。</td></tr>
+  <tr><td><code>firered</code> 档缺少 SenseVoice 依赖</td><td>GPU Final 能装但 Preview / CPU Final 不可用，启动失败。</td><td>安装脚本强制安装并校验 <code>requires</code>；<code>ListModels</code> / <code>doctor</code> 报错；不允许只装 FireRed。</td></tr>
   <tr><td>SenseVoice 许可证 / 署名</td><td>权重按 FunASR Model License 分发；遗漏 LICENSE、模型名或 attribution 会造成合规问题。</td><td>安装包保留 LICENSE / 模型卡；README Credits 标注来源；发布前核对模型卡条款。</td></tr>
   <tr><td>模型包 SHA 变化</td><td>官方重新上传导致校验失败。</td><td>安装脚本重新计算并写入；运行期只信任本地清单。</td></tr>
-  <tr><td><code>active</code> 指向错误 / 缺失</td><td>启动失败或加载错误包。</td><td>启动时校验目标 <code>manifest.json</code> / SHA / kind；<code>doctor</code> 显示 <code>active</code> 与解析目录；回滚只改指针；不提供 legacy 兼容。</td></tr>
-  <tr><td>重启后端加载失败</td><td>新模型不可用，用户当前无法听写。</td><td>先校验再停旧 pipeline；失败时回滚 <code>active</code> 并恢复旧 pipeline；旧 pipeline 也失败才退出 daemon。</td></tr>
+  <tr><td><code>active</code> 或 SenseVoice 基础包缺失 / 错误</td><td>启动失败、Final 加载错误，或 GPU 档缺少 Preview。</td><td>启动时校验 Final + SenseVoice 基础包 / <code>manifest.json</code> / SHA / kind / <code>requires</code>；<code>doctor</code> 显示两者与解析目录；回滚只改 Final 指针；不提供 legacy 兼容。</td></tr>
+  <tr><td>重启 Final 加载失败</td><td>新 Final 不可用，用户当前无法得到最终文本。</td><td>先校验再停旧 Final；失败时回滚 <code>active</code> 并恢复旧 Final；Preview 不受影响；旧 Final 也失败才退出 daemon。</td></tr>
   <tr><td>前端协议不匹配</td><td>旧 Fcitx / 旧托盘无法连接。</td><td>daemon 与两个前端同版本发布；旧前端收到 <code>VersionMismatch</code> 并提示升级；不静默降级。</td></tr>
-  <tr><td>Fcitx 动态枚举不可用</td><td>配置页无法列出模型。</td><td>退化到固定 enum（当前已知包）+ <code>voime ctl use</code>；不退回自由文本不校验。</td></tr>
   <tr><td>UI 选择与 <code>active</code> 不一致</td><td>用户以为已切换但仍在旧模型。</td><td>打开界面时读取 <code>active</code>；选择后显示“待重启”；<code>ListModels</code> 同时返回 active / running。</td></tr>
   <tr><td>Windows 设置进程无权限 / daemon 未启动</td><td>点击重启失败。</td><td>只写 <code>active</code> 并提示“下次启动生效”；由托盘启动 daemon；不直接杀进程。</td></tr>
   <tr><td>长段稳定性</td><td>20 / 30 s 段可能截断、重复或 CER 上升。</td><td>Phase 0 纳入长段评测；SenseVoice 默认 20 s；GPU AED 30 s；不达标记为不可默认。</td></tr>
-  <tr><td>模型包体积 / 安装时间</td><td>GPU 权重与 runtime 包较大，首次安装慢。</td><td>CPU / GPU / runtime 分包；安装脚本按需下载；记录体积；不提交权重。</td></tr>
-  <tr><td>旧安装 / 旧包混淆</td><td>用户按旧说明安装 CTC / punc / AED CPU。</td><td>旧包直接拒绝；安装脚本只提供新包；产品文档只保留本文的决策；不写迁移步骤。</td></tr>
-  <tr><td>clean break 升级</td><td>旧安装不能原地升级，必须重新安装 + 新模型包。</td><td>发布说明明确“不兼容旧版本 / 旧包”；不提供迁移向导；安装脚本只支持新装。</td></tr>
+  <tr><td>模型包体积 / 安装时间</td><td>SenseVoice 基础包 + FireRed 权重 + runtime 包较大，首次安装慢。</td><td>按档位安装；<code>firered</code> 才下载 FireRed；runtime 独立；记录体积；不提交权重。</td></tr>
+  <tr><td>旧版本升级 / 旧包混淆</td><td>旧包被拒绝；用户可能误装 CTC / punc / AED CPU，或不知道要 clean install / 运行迁移脚本。</td><td>旧包明确拒绝；安装脚本只提供新包；迁移脚本只覆盖上一版本 + 当前开发机；其他环境发布说明写清 clean install。</td></tr>
+  <tr><td>迁移脚本误操作</td><td>旧模型或配置丢失，升级后无法回退。</td><td>默认 <code>--dry-run</code>；执行前要求 daemon 停止；时间戳备份；失败自动恢复；不碰音频等与升级无关的用户数据。</td></tr>
 </table>
 
-<p>待决策问题：</p>
-<ul>
-  <li>AMD 硬件下先做哪个平台？建议优先用户实际使用的平台：Windows 用 DirectML，Linux 用 MIGraphX；不把 CUDA 作为前提。</li>
-  <li>AMD 运行时如何打包？Windows DirectML 依赖系统组件，安装包较小；Linux MIGraphX / ROCm 依赖较重，建议运行时包自带并做版本校验。</li>
-  <li>GPU runtime 包是否允许模型包自带可执行文件？建议第一阶段不允许，只允许项目签名的 <code>voime-asr-worker</code> runtime。</li>
-  <li>VAD 替代品是否进入产品包，还是只做离线评测？建议先只做评测，FireRedVAD 继续默认。</li>
-  <li>本文明确不保留过渡版本、不做兼容 / 迁移；如果未来要改变这一点，需另立提案。</li>
-</ul>
-
-<h2 id="s11">11. 文档落点</h2>
+<h2 id="s10">10. 文档落点</h2>
 <p><a href="#top">↑</a></p>
 
 <p>
@@ -1789,43 +1524,39 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
 
 <table>
   <tr><th>文档</th><th>计划变更</th></tr>
-  <tr><td>根 <a href="README.html">README</a></td><td>GOAL 改为“默认单 ASR 后端（SenseVoice CPU），可选 GPU worker”；非目标从“不引入第二个 ASR 模型”改为“不并行加载多个 ASR 模型”；Credits 增加 FireRedASR2-AED / FireRedVAD / Silero / TEN。</td></tr>
-  <tr><td>根 <a href="USER.html">USER</a></td><td><code>Final</code> 语义补充“标点可能由 SenseVoice 内置或 FireRedPunc 生成”；配置界面增加 GPU 可用性提示与模型档位。</td></tr>
-  <tr><td>根 <a href="CORE.html">CORE</a></td><td>最终提交调用栈增加 <code>AsrBackend</code> 的 CPU / worker 分支；增加 GPU worker 生命周期与重启路径。</td></tr>
-  <tr><td>根 <a href="PROVIDER.html">PROVIDER</a></td><td>模型包条目增加 GPU worker / runtime 契约；VAD 仍由 daemon 消费。</td></tr>
-  <tr><td><a href="crates/voime-core/README.html">voime-core README</a></td><td>“拥有 / 不拥有”表：拥有 VAD、分段、SenseVoice CPU；不拥有 GPU 运行时与 worker。</td></tr>
-  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td><code>AsrBackend</code> 收敛为 SenseVoice / Worker；删除 CTC / AED CPU；<code>BackendManifest</code>、<code>PuncPolicy</code>、错误文案。</td></tr>
-  <tr><td><a href="crates/voime-core/CORE.html">voime-core CORE</a></td><td>文件树删除 <code>asr/firered_ctc.rs</code> / <code>asr/firered_aed.rs</code>；保留 <code>sense_voice.rs</code>；新增 GPU worker 协议客户端。</td></tr>
-  <tr><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>唯一模型契约：SenseVoice ITN、GPU AED / 外部模型、VAD；补全 fbank / LFR / CMVN、ONNX metadata、<code>punc</code> 策略与 SHA；删除 CTC / SenseVoice-punc / AED CPU。</td></tr>
-  <tr><td>新增 <code>crates/voime-asr-worker/</code> 文档</td><td>GPU worker 的 README / USER / CORE / PROVIDER / BUILD：协议、生命周期、EP、错误码、打包、许可证。</td></tr>
-  <tr><td><a href="crates/voimed/USER.html">voimed USER</a> / <a href="crates/voimed/CORE.html">CORE</a></td><td><code>models/active</code> 解析、<code>--model-dir</code>、<code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>、协议 3、<code>doctor</code> 的 GPU 预检与回滚路径。</td></tr>
-  <tr><td><a href="crates/voime/USER.html">voime USER</a></td><td><code>doctor</code> 报告 <code>active</code> / running 模型、GPU 运行时（DirectML / MIGraphX）、驱动、显存、当前 worker；<code>ctl models</code>、<code>ctl use</code>、<code>ctl restart-backend</code>。</td></tr>
-  <tr><td><a href="BUILD.html">BUILD</a></td><td>模型安装、<code>--activate</code>、GPU 运行时安装、SHA 校验、许可证 / attribution、体积记录；基础安装只带 CPU ORT，GPU runtime 独立打包；只写 clean install，不写迁移 / 原地升级；不引入第二推理引擎；CI 必须检查 daemon 不加载 GPU 库。</td></tr>
-  <tr><td>平台前端 USER / CORE</td><td>模型下拉增加“GPU / CPU”标识、<code>available</code> 与不可用原因；Fcitx 用 <code>EnumAnnotation</code> 动态枚举；选择后显示“待重启”；新版本内 <code>Final</code> 形状保持不变，但不承诺兼容旧前端。</td></tr>
+  <tr><td>根 <a href="README.html">README</a></td><td>GOAL 改为“SenseVoice 常驻 Preview + 可选 GPU Final（voime-gpu）”；非目标改为“不把 GPU 用于 Preview，不并行运行多个 Final”；Credits 增加 FireRedASR2-AED / FireRedVAD。</td></tr>
+  <tr><td>根 <a href="USER.html">USER</a></td><td><code>Final</code> 语义补充“Preview 固定 SenseVoice；Final 由 SenseVoice 或 FireRed AED 生成，标点由内置或 FireRedPunc 处理”；配置界面增加 GPU Final 可用性提示与安装档位。</td></tr>
+  <tr><td>根 <a href="CORE.html">CORE</a></td><td>最终提交调用栈增加 <code>FinalBackend</code> 的 CPU / worker 分支；Preview 固定 SenseVoice；增加 voime-gpu 生命周期与 Final 重启路径。</td></tr>
+  <tr><td>根 <a href="PROVIDER.html">PROVIDER</a></td><td>模型包条目增加 <code>requires</code> / voime-gpu runtime 契约；SenseVoice 为常驻基础包。</td></tr>
+  <tr><td><a href="crates/voime-core/README.html">voime-core README</a></td><td>“拥有 / 不拥有”表：拥有 VAD、分段、SenseVoice Preview / CPU Final；不拥有 GPU 运行时与 worker。</td></tr>
+  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td><code>AsrBackend</code> 拆为常驻 Preview + 可选 Final；删除 CTC / AED CPU；<code>BackendManifest</code>、<code>PuncPolicy</code>、错误文案。</td></tr>
+  <tr><td><a href="crates/voime-core/CORE.html">voime-core CORE</a></td><td>文件树删除 <code>asr/firered_ctc.rs</code> / <code>asr/firered_aed.rs</code>；保留 <code>sense_voice.rs</code>；新增 Preview 路径与 voime-gpu Final 协议客户端。</td></tr>
+  <tr><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>模型契约：SenseVoice 常驻 Preview / CPU Final、GPU Final / 外部模型、<code>requires</code> 依赖、VAD；记录当前 fbank / LFR / CMVN、ONNX metadata、<code>punc</code> 策略与 SHA；删除 CTC / SenseVoice-punc / AED CPU。</td></tr>
+  <tr><td>新增 <code>crates/voime-gpu/</code> 文档</td><td>voime-gpu 的 README / USER / CORE / PROVIDER / BUILD：协议、生命周期、EP、错误码、打包、许可证。</td></tr>
+  <tr><td><a href="crates/voimed/USER.html">voimed USER</a> / <a href="crates/voimed/CORE.html">CORE</a></td><td><code>models/active</code>（Final）解析、SenseVoice 基础包加载、<code>--model-dir</code>、<code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>、协议 3、<code>doctor</code> 的 Final + Preview 预检与回滚路径。</td></tr>
+  <tr><td><a href="crates/voime/USER.html">voime USER</a></td><td><code>doctor</code> 报告 Final / running、常驻 Preview SenseVoice、GPU 运行时（DirectML / MIGraphX）、驱动、显存、当前 worker；<code>ctl models</code>、<code>ctl use</code>、<code>ctl restart-backend</code>。</td></tr>
+  <tr><td><a href="BUILD.html">BUILD</a></td><td><code>sensevoice</code> / <code>firered</code> 安装档位、<code>--activate</code>、GPU 运行时安装、<code>requires</code> 校验、SHA 校验、许可证 / attribution、体积记录；基础安装只带 CPU ORT（版本按 §3.5 实验结论固定），GPU runtime 按 OS + EP 拆成独立包（含 NVIDIA）；安装流程只写 clean install；独立的一次性迁移脚本单独说明，不纳入安装器；不引入第二推理引擎；CI 必须检查 daemon 不加载 GPU 库。</td></tr>
+  <tr><td>平台前端 USER / CORE</td><td>Final 下拉增加“GPU / CPU”标识、<code>available</code> 与不可用原因；不改变 Preview / Final 的呈现方式；Fcitx 用 <code>EnumAnnotation</code> 动态枚举，不可用时留空；选择后显示“待重启”；新版本内 <code>Final</code> 形状保持不变，但不承诺兼容旧前端。</td></tr>
 </table>
 
 <ul class="note">
-  <li>模型契约写在 <code>voime-core PROVIDER</code>；GPU worker 协议与能力写在 <code>voime-asr-worker PROVIDER</code>；其他文档链接，不复制张量定义。</li>
-  <li>不写迁移指南、不写旧包兼容说明、不保留过渡版本；BUILD 只描述新装流程。</li>
+  <li>模型契约写在 <code>voime-core PROVIDER</code>；voime-gpu 协议与能力写在 <code>voime-gpu PROVIDER</code>；其他文档链接，不复制张量定义。</li>
+  <li>不写旧包兼容说明、不保留过渡版本；BUILD 的安装流程只描述 clean install，一次性迁移脚本单独成文并明确其可选性与风险。</li>
   <li>实现完成后，本文可归档；不要在产品文档中保留“提案 / 现状”双份描述。</li>
 </ul>
 
-<h2 id="s12">12. 参考</h2>
+<h2 id="s11">11. 参考</h2>
 <p><a href="#top">↑</a></p>
 
 <ul>
   <li><a href="https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html">sherpa-onnx SenseVoice 预训练模型</a>：2024-07-17 包、语言、ITN、ONNX 输入输出。</li>
+  <li><a href="https://crates.io/crates/ort">Rust <code>ort</code> crate</a> / <a href="https://docs.rs/ort">docs.rs</a>：crate 版本与绑定的 ONNX Runtime 版本、API feature 与 MSRV。</li>
   <li><a href="https://github.com/FunAudioLLM/SenseVoice">FunAudioLLM/SenseVoice</a> / <a href="https://huggingface.co/FunAudioLLM/SenseVoiceSmall">SenseVoiceSmall 模型卡</a> / <a href="https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE">FunASR Model License</a>：模型结构、训练数据、公开指标、权重分发与署名条款。</li>
-  <li><a href="https://github.com/modelscope/FunASR/blob/master/funasr/frontends/wav_frontend.py">FunASR WavFrontend</a>：LFR 左 / 右边缘复制、CMVN、fbank 参数。</li>
   <li><a href="https://github.com/modelscope/FunASR/blob/main/runtime/llama.cpp/BENCHMARKS.md">FunASR 中文长音频基准</a>：SenseVoiceSmall 7.81% / 8.17% CER 的来源。</li>
   <li><a href="https://k2-fsa.github.io/sherpa/onnx/FireRedAsr/pretrained.html">sherpa-onnx FireRedASR 预训练模型</a>：FireRedASR2-AED 的文件、张量与示例输出。</li>
-  <li><a href="https://github.com/k2-fsa/sherpa-onnx/blob/master/sherpa-onnx/csrc/lfr.cc">sherpa-onnx ApplyLfr</a>：当前 LFR 实现与帧数计算。</li>
-  <li><a href="https://github.com/csukuangfj/kaldi-native-fbank">kaldi-native-fbank (C++)</a>：参考 fbank 实现；项目 Rust port 需与其做黄金对齐。</li>
   <li><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam/FireRedASR2S</a>：FireRedASR2-AED / LLM、FireRedVAD、FireRedPunc、公开 CER 与 VRAM / RTF。</li>
   <li><a href="https://arxiv.org/abs/2603.10420">FireRedASR2S 技术报告</a>：24 个公开测试集、VAD 基准、方言与英文结果。</li>
-  <li><a href="https://github.com/FireRedTeam/FireRedVAD">FireRedVAD</a>：流式 / 非流式 VAD、FLEURS-VAD-102 对比、Apache-2.0。</li>
-  <li><a href="https://github.com/snakers4/silero-vad">Silero VAD</a>：v6（2025-08）、MIT、ONNX / JIT、30 ms 窗口。</li>
-  <li><a href="https://github.com/TEN-framework/ten-vad">TEN VAD</a>：306 KB、10 / 16 ms hop、Apache-2.0 + 附加条件。</li>
+  <li><a href="https://github.com/FireRedTeam/FireRedVAD">FireRedVAD</a>：当前使用的流式 VAD，Apache-2.0。</li>
   <li><a href="https://github.com/QwenAudio/Fun-ASR">Fun-ASR</a>：Fun-ASR-Nano 0.8B、31 语言、原生标点、GPU 需求；公开中文精度低于 AED，本文不测试。</li>
   <li><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B</a> / <a href="https://arxiv.org/abs/2601.21337">技术报告</a>：52 语言 + 22 种中文方言、0.6B / 1.7B；公开中文精度低于 AED，本文不测试。</li>
   <li><a href="https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html">ONNX Runtime DirectML EP</a>：Windows 上的 AMD / NVIDIA / Intel GPU 路径；注意 DirectML 已进入 sustained engineering，新功能转向 WinML。</li>
@@ -1841,9 +1572,8 @@ scripts/install_runtime.sh --gpu directml|migraphx</code></pre>
 </ul>
 
 <ul class="note">
-  <li>公开基准的测试集、VAD、文本归一化口径不同；本文只用于选型方向，不替代目标语料 A/B。</li>
+  <li>公开基准的测试集、文本归一化口径不同；本文只用于选型方向，不替代目标语料 A/B。</li>
   <li>本机对照使用 sherpa-onnx 1.12.27、SenseVoice int8 2024-07-17、CPU 2 线程；复现时应固定版本、线程数与音频文件。</li>
-  <li>VAD 对比表中的 F1 / AUC / FAR / 漏检率来自同一张公开对比表；不是本项目实测。</li>
   <li>FunASR GGUF / SenseVoice.cpp / OpenVINO / Vulkan 等运行时仅作为离线对照参考，不进入产品运行时；当前只保留 ONNX Runtime。</li>
 </ul>
 

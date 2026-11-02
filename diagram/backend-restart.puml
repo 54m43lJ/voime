@@ -6,27 +6,29 @@ hide footbox
 participant "配置界面" as UI
 participant "前端\n(Fcitx / 托盘)" as Frontend
 participant "voimed" as Daemon
-participant "pipeline / worker" as Pipeline
+participant "Final 路径 / voime-gpu" as Pipeline
 
-UI -> Frontend : 选择模型 / 点击重启后端
+UI -> Frontend : 选择 Final / 点击重启后端
 Frontend -> Daemon : SetModel(package_id)
-Daemon -> Daemon : 校验包 / 写 active
+Daemon -> Daemon : 校验 Final + SenseVoice 基础包 / 写 active
 Daemon --> Frontend : ModelSelected
 Frontend -> Daemon : RestartBackend
 alt 空闲
-  Daemon -> Pipeline : shutdown
+  Daemon -> Daemon : 保留 SenseVoice Preview
+  Daemon -> Pipeline : shutdown Final
   Daemon -> Daemon : resolve + verify active
-  Daemon -> Daemon : GPU 模型时 spawn worker / handshake
-  Daemon -> Pipeline : spawn(new config)
+  Daemon -> Daemon : Final 是 GPU 时 spawn voime-gpu / handshake
+  Daemon -> Pipeline : 重建 Final（CPU / GPU）
   Daemon --> Frontend : BackendState(Ready)
 else 录音 / 识别中
   Daemon --> Frontend : Error(Busy)
 else 加载失败
-  Daemon -> Daemon : 回滚 active + 旧 pipeline
+  Daemon -> Daemon : 回滚 active + 旧 Final
   Daemon --> Frontend : BackendState(Failed)
 end
 note over Daemon
-  重启后端 = 重建 pipeline；
+  重启后端 = 只重建 Final；
+  Preview 始终 SenseVoice；
   不重启 daemon、不换二进制。
 end note
 @enduml
