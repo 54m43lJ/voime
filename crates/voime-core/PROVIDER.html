@@ -59,7 +59,7 @@
   <tr><td>模型不可变</td><td>模型包运行期只读；启动时校验 SHA-256 与张量签名，失败不进入运行态。</td></tr>
   <tr><td>清单权威</td><td>ONNX 输入输出、fbank 参数、帧移、词表与标签由 <code>manifest.json</code> 声明；代码不硬编码形状。</td></tr>
   <tr><td>CPU 推理</td><td>只启用 CPU Execution Provider；线程数由命令行决定。GPU ORT / EP 只属于 <code>voime-gpu</code>。</td></tr>
-  <tr><td>量化</td><td>SenseVoice 使用 int8 ONNX；FireRed AED 使用 FP16，但不在本组件加载。</td></tr>
+  <tr><td>量化</td><td>SenseVoice 使用 int8 ONNX；FireRed AED v2 使用 FP16，临时 v1 兼容官方 FP16 包；均不在本组件加载。</td></tr>
   <tr><td>SenseVoice 模式</td><td>单 ONNX；CMVN / LFR / ITN 从 metadata 读取；greedy 解码在项目侧完成。</td></tr>
   <tr><td>VAD 模式</td><td>流式状态张量；状态由清单声明为固定形状，项目侧保存与更新；VAD 保持现状。</td></tr>
   <tr><td>Final 包</td><td>核心只消费 daemon 传入的 Final manifest；GPU 包的 <code>requires</code> / <code>backend</code> 由核心校验，张量由 worker 校验。</td></tr>
@@ -159,6 +159,7 @@
 </table>
 <ul class="note">
   <li>官方 SenseVoice 包为 <code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>；<code>use_itn=true</code>、内置标点，不再提供 noITN + FireRedPunc 变体。</li>
+  <li>临时兼容：FireRedASR v1 官方导出包为 <code>encoder.int8.onnx</code> / <code>decoder.int8.onnx</code>、<code>token_count=7832</code>；识别链路与 v2 相同，仅 decoder 的 self KV cache 固定为 1024，详见 voime-gpu PROVIDER §4.2。</li>
   <li>FireRed AED 的 encoder / decoder、FP16、fbank / CMVN 与 GPU runtime 契约写在 <a href="../voime-gpu/PROVIDER.html#p4-2">voime-gpu PROVIDER §4.2</a>，不在本文件重复。</li>
   <li>Punc 输入：<code>input_ids</code> 为词表 id；<code>attention_mask</code> 固定 1；<code>token_type_ids</code> 固定 0。Punc 输出为逐 token 类别 logits，类别数不得小于标签表。</li>
 </ul>

@@ -1,0 +1,87 @@
+{
+  "schema": 3,
+  "display_name": "FireRedASR v1 (GPU, FP16, temporary)",
+  "sample_rate": 16000,
+  "fbank": {
+    "num_bins": 80,
+    "frame_ms": 25,
+    "shift_ms": 10,
+    "window_type": "povey"
+  },
+  "max_segment_ms": 30000,
+  "requires": ["sense-voice-2024-int8"],
+  "vad": {
+    "model": "vad/stream-vad.onnx",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inputs": [
+      { "name": "feat", "dtype": "float32", "shape": [1, -1, 80] },
+      { "name": "caches_in", "dtype": "float32", "shape": [8, 1, 128, 19] }
+    ],
+    "outputs": [
+      { "name": "probs", "dtype": "float32", "shape": [1, -1, 1] },
+      { "name": "caches_out", "dtype": "float32", "shape": [8, 1, 128, -1] }
+    ]
+  },
+  "backend": {
+    "kind": "worker",
+    "runtime": "onnx-migraphx",
+    "device": "auto",
+    "min_vram_mb": 6144,
+    "supports_partial": false,
+    "load_timeout_ms": 120000,
+    "request_timeout_ms": 60000
+  },
+  "asr": {
+    "kind": "fire-red-aed",
+    "encoder": {
+      "model": "asr/encoder.fp16.onnx",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "inputs": [
+        { "name": "x", "dtype": "float32", "shape": [1, -1, 80] },
+        { "name": "x_lens", "dtype": "int64", "shape": [1] }
+      ],
+      "outputs": [
+        { "name": "cross_k", "dtype": "float32", "shape": [-1, -1, -1, -1] },
+        { "name": "cross_v", "dtype": "float32", "shape": [-1, -1, -1, -1] }
+      ]
+    },
+    "decoder": {
+      "model": "asr/decoder.fp16.onnx",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "inputs": [
+        { "name": "tokens", "dtype": "int64", "shape": [1, 1] },
+        { "name": "self_k", "dtype": "float32", "shape": [-1, -1, -1, -1, -1] },
+        { "name": "self_v", "dtype": "float32", "shape": [-1, -1, -1, -1, -1] },
+        { "name": "cross_k", "dtype": "float32", "shape": [-1, -1, -1, -1] },
+        { "name": "cross_v", "dtype": "float32", "shape": [-1, -1, -1, -1] },
+        { "name": "offset", "dtype": "int64", "shape": [1] }
+      ],
+      "outputs": [
+        { "name": "logits", "dtype": "float32", "shape": [1, 1, 7832] },
+        { "name": "self_k", "dtype": "float32", "shape": [-1, -1, -1, -1, -1] },
+        { "name": "self_v", "dtype": "float32", "shape": [-1, -1, -1, -1, -1] }
+      ]
+    },
+    "precision": "fp16",
+    "tokens": "asr/tokens.txt",
+    "token_count": 7832,
+    "options": { "punc": "external", "partial": false }
+  },
+  "punc": {
+    "model": {
+      "model": "punc/model.onnx",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "inputs": [
+        { "name": "input_ids", "dtype": "int64", "shape": [1, -1] },
+        { "name": "attention_mask", "dtype": "int64", "shape": [1, -1] },
+        { "name": "token_type_ids", "dtype": "int64", "shape": [1, -1] }
+      ],
+      "outputs": [
+        { "name": "logits", "dtype": "float32", "shape": [1, -1, -1] }
+      ]
+    },
+    "vocab": "punc/vocab.txt",
+    "labels": "punc/labels.json",
+    "max_tokens": 400
+  }
+}

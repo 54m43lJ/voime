@@ -66,6 +66,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
     parser.add_argument("--source-dir", type=Path)
+    parser.add_argument("--support-dir", type=Path)
+    parser.add_argument(
+        "--aed-version",
+        choices=["v1", "v2", "auto"],
+        default="v1",
+        help="v1 = official FP16 package (temporary default), v2 = local fp16 export",
+    )
     parser.add_argument(
         "--activate",
         action="store_true",
@@ -107,10 +114,10 @@ def main(argv: list[str] | None = None) -> int:
                 (root / "active").unlink()
             except FileNotFoundError:
                 pass
-    if args.source_dir is None:
+    if args.source_dir is None and args.aed_version == "v2":
         fail(
-            "FireRed 档需要 --source-dir 提供导出的 FP16 encoder / decoder "
-            "与 FireRedPunc ONNX；见 BUILD §4"
+            "FireRed v2 需要 --source-dir 提供导出的 FP16 encoder / decoder；"
+            "临时 v1 可省略 --source-dir 自动下载官方 FP16 包"
         )
     from install_aed import install as install_aed
 
@@ -118,6 +125,9 @@ def main(argv: list[str] | None = None) -> int:
         model_root=root,
         target=None,
         source_dir=args.source_dir,
+        support_dir=args.support_dir,
+        cache_dir=args.cache_dir,
+        variant=args.aed_version,
         activate=args.activate,
     )
     log("FireRed 安装完成；选择 GPU Final 后执行 voime ctl restart-backend")

@@ -28,7 +28,6 @@ impl GpuRuntime {
             providers.push(
                 ort::ep::MIGraphX::default()
                     .with_device_id(device_id)
-                    .with_fp16(true)
                     .build()
                     .error_on_failure(),
             );

@@ -61,12 +61,16 @@ pub enum PuncPolicy {
 #[serde(rename_all = "lowercase")]
 pub enum Precision {
     Fp16,
+    /// Temporary compatibility for the officially exported FireRedASR v1
+    /// package. The GPU worker still follows the model's metadata.
+    Int8,
 }
 
 impl Precision {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Fp16 => "fp16",
+            Self::Int8 => "int8",
         }
     }
 }
@@ -368,8 +372,30 @@ impl ModelManifest {
                 if self.asr.encoder.is_none() || self.asr.decoder.is_none() {
                     bail!("fire-red-aed 包必须同时声明 asr.encoder 与 asr.decoder");
                 }
-                if self.asr.precision != Some(Precision::Fp16) {
-                    bail!("fire-red-aed 包必须声明 precision = fp16");
+                match self.asr.precision {
+                    Some(Precision::Fp16) => {
+                        // v2 packages use 8667 tokens; the official v1 FP16
+                        // package uses 7832 tokens. Both share the same AED
+                        // decode chain; the worker detects the v1 fixed cache.
+                        if !matches!(self.asr.token_count, 7_832 | 8_667) {
+                            bail!(
+                                "fire-red-aed FP16 token_count 必须为 8667（v2）或 7832（v1），实际 {}",
+                                self.asr.token_count
+                            );
+                        }
+                    }
+                    // FireRedASR v1 is only distributed as an official int8
+                    // ONNX package. It is a temporary Final option while the
+                    // v2 FP16 export is being stabilized.
+                    Some(Precision::Int8) => {
+                        if self.asr.token_count != 7_832 {
+                            bail!(
+                                "fire-red-aed int8（v1）token_count 必须为 7832（实际 {}）",
+                                self.asr.token_count
+                            );
+                        }
+                    }
+                    None => bail!("fire-red-aed 包必须声明 asr.precision"),
                 }
                 if options.punc != PuncPolicy::External {
                     bail!("fire-red-aed 包必须使用 punc = external");
@@ -382,12 +408,6 @@ impl ModelManifest {
                 }
                 if options.partial {
                     bail!("fire-red-aed 包不能请求 partial");
-                }
-                if self.asr.token_count != 8_667 {
-                    bail!(
-                        "fire-red-aed token_count 必须为 8667（实际 {}）",
-                        self.asr.token_count
-                    );
                 }
             }
             AsrKind::External => {
@@ -647,9 +667,31 @@ mod tests {
     }
 
     #[test]
-    fn aed_rejects_non_fp16_precision() {
+    fn aed_rejects_int8_with_v2_token_count() {
         let mut value = aed_manifest("onnx-migraphx");
         value["asr"]["precision"] = serde_json::json!("int8");
-        assert!(serde_json::from_value::<ModelManifest>(value).is_err());
+        let manifest: ModelManifest = serde_json::from_value(value).unwrap();
+        assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_temporary_fireredasr_v1_fp16_package() {
+        let mut value = aed_manifest("onnx-migraphx");
+        value["display_name"] = serde_json::json!("FireRedASR v1 (GPU, FP16)");
+        value["asr"]["token_count"] = serde_json::json!(7832);
+        let manifest: ModelManifest = serde_json::from_value(value).unwrap();
+        manifest.validate().unwrap();
+    }
+
+    #[test]
+    fn accepts_temporary_fireredasr_v1_int8_package() {
+        let mut value = aed_manifest("onnx-migraphx");
+        value["display_name"] = serde_json::json!("FireRedASR v1 (GPU, INT8)");
+        value["asr"]["precision"] = serde_json::json!("int8");
+        value["asr"]["token_count"] = serde_json::json!(7832);
+        value["asr"]["encoder"]["model"] = serde_json::json!("asr/encoder.int8.onnx");
+        value["asr"]["decoder"]["model"] = serde_json::json!("asr/decoder.int8.onnx");
+        let manifest: ModelManifest = serde_json::from_value(value).unwrap();
+        manifest.validate().unwrap();
     }
 }

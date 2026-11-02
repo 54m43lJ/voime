@@ -190,7 +190,7 @@ pub type VadArtifact = Artifact;
 
 pub enum AsrKind { SenseVoice, FireRedAed, External }
 pub enum PuncPolicy { Builtin, External }
-pub enum Precision { Fp16 }
+pub enum Precision { Fp16, Int8 }
 pub enum BackendKind { Builtin, Worker }
 
 pub struct AsrOptions {
@@ -239,7 +239,7 @@ pub fn resolve_inside(dir: &amp;Path, relative: &amp;Path) -&gt; anyhow::Result&
   <tr><td><code>vad</code> / <code>asr</code> / <code>punc</code></td><td>ONNX 文件、SHA-256 与张量声明；<code>verify</code> 校验文件存在、非空且摘要匹配。</td></tr>
   <tr><td><code>requires</code></td><td>GPU 包必须声明 <code>["sense-voice-2024-int8"]</code>；缺失基础包时加载失败。</td></tr>
   <tr><td><code>backend.kind</code></td><td><code>builtin</code> 为进程内 CPU；<code>worker</code> 为 voime-gpu。GPU 包必须声明 <code>runtime</code>、<code>device</code>、<code>min_vram_mb</code> 与超时。</td></tr>
-  <tr><td><code>asr</code></td><td><code>sense-voice</code> 要求 <code>model</code> + <code>punc=builtin</code>；<code>fire-red-aed</code> 要求 <code>encoder</code> + <code>decoder</code> + <code>precision=fp16</code> + <code>punc=external</code>；错误组合在加载时失败。</td></tr>
+  <tr><td><code>asr</code></td><td><code>sense-voice</code> 要求 <code>model</code> + <code>punc=builtin</code>；<code>fire-red-aed</code> 要求 <code>encoder</code> + <code>decoder</code> + <code>punc=external</code>，v2 为 <code>precision=fp16</code> + <code>token_count=8667</code>；临时 v1 官方 FP16 包为 <code>precision=fp16</code> + <code>token_count=7832</code>；错误组合在加载时失败。</td></tr>
   <tr><td><code>punc</code></td><td>可选；<code>Builtin</code> 包省略，<code>External</code> 包必须提供。不允许混用。</td></tr>
   <tr><td><code>resolve_inside</code></td><td>拒绝绝对路径、<code>..</code> 与空路径，防止模型包逃逸目录。</td></tr>
 </table>

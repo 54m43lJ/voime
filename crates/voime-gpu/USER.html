@@ -38,7 +38,7 @@ ONNX Runtime EP 的契约见 <a href="PROVIDER.html">PROVIDER</a>；进程监督
   <tr><td>frame</td><td><code>u32 header_len</code> + UTF-8 JSON 头 + <code>u32 audio_len</code> + little-endian <code>f32</code> PCM。</td></tr>
   <tr><td>handshake</td><td>daemon 启动 worker 后发送 <code>Hello</code>，worker 加载模型并返回 <code>Ready</code>。</td></tr>
   <tr><td>Final 段</td><td>daemon 已切分完成的完整语音段；worker 不接收逐帧音频。</td></tr>
-  <tr><td>FP16</td><td>GPU 产品路径唯一精度；int8 只用于 CPU SenseVoice。</td></tr>
+  <tr><td>FP16</td><td>GPU 产品路径默认精度；临时兼容 FireRedASR v1 官方 FP16 ONNX 包。</td></tr>
   <tr><td>runtime 包</td><td>按 OS + EP 拆分的 ORT / EP 动态库包；不进入模型目录。</td></tr>
 </table>
 
@@ -50,7 +50,7 @@ ONNX Runtime EP 的契约见 <a href="PROVIDER.html">PROVIDER</a>；进程监督
   <tr><td>GPU-only</td><td>worker 只创建 GPU ORT 会话；不加载 SenseVoice、VAD、FireRedPunc 或 CPU 模型。</td></tr>
   <tr><td>Final-only</td><td>只接收完整语音段；不产生 Partial，不缓存跨段状态。</td></tr>
   <tr><td>单请求</td><td>同一时刻只处理一个 <code>Transcribe</code>；新请求在忙时返回 <code>Error{InferenceFailed}</code>。</td></tr>
-  <tr><td>FP16</td><td>encoder / decoder 只接受 <code>fp16</code>；加载失败不回退 FP32 / int8。</td></tr>
+  <tr><td>精度</td><td>v2 只接受 <code>fp16</code>；临时 v1 接受官方 <code>fp16</code>；加载失败不回退其他精度。</td></tr>
   <tr><td>无持久化</td><td>不写音频、识别文本、模型缓存或日志到磁盘；日志走 stderr。</td></tr>
   <tr><td>stdout</td><td>只用于协议帧；诊断输出走 stderr，由 daemon 转发到 <code>voime-log</code>。</td></tr>
   <tr><td>隐私</td><td>协议只回传文本与耗时；daemon 记录长度、耗时与错误码，不记录文本。</td></tr>

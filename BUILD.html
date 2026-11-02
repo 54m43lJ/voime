@@ -245,7 +245,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -Runtime win
   <tr><td>默认目录</td><td>Linux：<code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）；Windows：<code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
   <tr><td>Windows 缓存</td><td><code>scripts/install_models.ps1</code> 在 <code>%LOCALAPPDATA%\voime\cache</code> 创建 Python venv，并按 requirements 文件的 SHA-256 哈希复用已安装依赖；<code>-CacheDir</code> 可覆盖。</td></tr>
   <tr><td>SenseVoice</td><td><code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>；<code>asr/model.int8.onnx</code> + <code>asr/tokens.txt</code>；固定 <code>use_itn=true</code>、内置标点；包内不含 <code>punc/</code>。</td></tr>
-  <tr><td>FireRed AED</td><td>FP16 <code>encoder.fp16.onnx</code> / <code>decoder.fp16.onnx</code> + <code>tokens.txt</code> + <code>punc/</code>；只通过 voime-gpu 运行。</td></tr>
+  <tr><td>FireRed AED</td><td>v2：FP16 <code>encoder.fp16.onnx</code> / <code>decoder.fp16.onnx</code> + <code>tokens.txt</code> + <code>punc/</code>；临时 v1：官方 <code>encoder.fp16.onnx</code> / <code>decoder.fp16.onnx</code> + 7832 项 <code>tokens.txt</code> + <code>punc/</code>；都只通过 voime-gpu 运行。</td></tr>
   <tr><td>VAD / Punc</td><td>FireRedVAD 与 FireRedPunc 的 ONNX、词表、标签；VAD 来自 SenseVoice 基础包并保持现状，FireRedPunc 只服务 GPU Final。</td></tr>
   <tr><td>Manifest</td><td>schema 3；<code>kind = sense-voice</code> / <code>fire-red-aed</code>；SenseVoice <code>max_segment_ms = 20000</code>，AED <code>30000</code>；SHA-256 写入清单。</td></tr>
   <tr><td>GPU runtime</td><td>按 OS + EP 拆分：<code>voime-gpu-linux-migraphx</code> / <code>voime-gpu-windows-directml</code> / <code>voime-gpu-linux-cuda</code> / <code>voime-gpu-windows-cuda</code>；独立目录、版本与 SHA，安装需显式 opt-in。</td></tr>
@@ -255,7 +255,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -Runtime win
 <ul class="note">
   <li>模型权重不提交到仓库；安装脚本只写入用户数据目录。</li>
   <li>仓库内 <code>models/manifest.json</code> 是结构模板，SHA-256 为全零且模型目录不完整；必须先运行安装脚本生成真实模型包。</li>
-  <li><code>--source-dir</code> 只覆盖 FireRedPunc 权重、VAD ONNX / CMVN 与 FireRedASR2S 源码；SenseVoice 与 FireRed AED 仍从官方包下载。</li>
+  <li><code>--source-dir</code> 只覆盖 FireRedPunc 权重、VAD ONNX / CMVN 与 FireRedASR2S 源码；SenseVoice 与 FireRed AED v2 仍从官方包下载。临时 v1 可直接使用官方 FP16 ONNX 包。</li>
   <li>安装脚本默认只安装，不改变 <code>active</code>；显式 <code>--activate</code> 或首次安装且 <code>active</code> 缺失时才写入 Final 选择。</li>
   <li>模型包内容与张量契约见 <a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a> 与 <a href="crates/voime-gpu/PROVIDER.html#p4-2">voime-gpu PROVIDER §4.2</a>。</li>
 </ul>
@@ -358,7 +358,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoBuild<
 </table>
 <ul class="note">
   <li>发布包包含 <code>voimed</code>、<code>voime</code>、<code>voime.so</code>、addon 描述文件、systemd unit 与模型安装脚本；不包含 inputmethod 条目。GPU 相关二进制与 runtime 包只随 <code>firered</code> 档发布。</li>
-  <li>模型权重由安装脚本按需下载；发布包不包含模型权重。FireRed AED 按 FP16 分发，int8 只用于 CPU SenseVoice。</li>
+  <li>模型权重由安装脚本按需下载；发布包不包含模型权重。FireRed AED v2 按 FP16 分发；临时 v1 兼容官方 FP16 包，int8 的其他用途仅限 CPU SenseVoice。</li>
   <li>Linux 验收：addon 被 Fcitx 后台加载且不出现在输入法组；Mode 三态与 Hotkey；Model 选择与待重启；Toggle 空白窗口；普通打字不受影响；原生 Wayland / XWayland XIM 提交；目标失焦不误提交；TUI detach；daemon 重启重连；SenseVoice / FireRed Final 文本正常、RTF 达标；CPU 路径不加载 GPU 库。</li>
 </ul>
 

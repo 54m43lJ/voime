@@ -75,8 +75,11 @@ def verify(root: Path) -> dict:
     elif kind == "fire-red-aed":
         verify_artifact(root, asr.get("encoder", {}))
         verify_artifact(root, asr.get("decoder", {}))
-        if asr.get("precision") != "fp16":
-            fail("fire-red-aed 必须使用 precision=fp16")
+        precision = asr.get("precision")
+        expected_counts = {"fp16": (7832, 8667), "int8": (7832,)}
+        expected_count = expected_counts.get(precision)
+        if expected_count is None:
+            fail("fire-red-aed 只接受 precision=fp16（v1 / v2）或 int8（旧包）")
         if manifest.get("backend", {}).get("kind") != "worker":
             fail("fire-red-aed 必须使用 backend.kind=worker")
         if "sense-voice-2024-int8" not in manifest.get("requires", []):
@@ -89,6 +92,10 @@ def verify(root: Path) -> dict:
     found = count_tokens(tokens)
     if found != asr.get("token_count"):
         fail(f"tokens 数量 {found} 与清单 {asr.get('token_count')} 不一致")
+    if kind == "fire-red-aed" and found not in expected_count:
+        fail(
+            f"{precision} 包的 tokens 数量应为 {expected_count}，实际 {found}"
+        )
     punc = manifest.get("punc")
     if asr.get("options", {}).get("punc") == "external":
         if not isinstance(punc, dict):

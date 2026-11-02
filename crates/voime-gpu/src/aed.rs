@@ -23,6 +23,7 @@ pub struct FireRedAed {
     sos_id: i32,
     eos_id: i32,
     max_len: usize,
+    fixed_cache_len: Option<usize>,
     num_decoder_layers: usize,
     num_head: usize,
     head_dim: usize,
@@ -108,8 +109,14 @@ impl FireRedAed {
         {
             bail!("FireRed AED 包必须 requires sense-voice-2024-int8");
         }
-        if !manifest.asr.precision.eq_ignore_ascii_case("fp16") {
-            bail!("FireRed AED 只接受 FP16（清单 {}）", manifest.asr.precision);
+        if !matches!(
+            manifest.asr.precision.to_ascii_lowercase().as_str(),
+            "fp16" | "int8"
+        ) {
+            bail!(
+                "FireRed AED 只接受 fp16 / int8（临时 v1）清单，实际 {}",
+                manifest.asr.precision
+            );
         }
         if manifest.fbank.window_type != "povey" {
             bail!("FireRed AED fbank 必须使用 povey 窗");
@@ -148,6 +155,15 @@ impl FireRedAed {
             .context("AED decoder 缺少 i64 二维输入 tokens")?;
         let self_k_name = find_outlet(decoder.inputs(), &["self_k"], Some(5), true)
             .context("AED decoder 缺少 f32 五维输入 self_k")?;
+        // FireRedASR v1 hard-codes the self-attention cache length (1024) in
+        // the decoder graph; v2 leaves it dynamic. Follow the graph shape.
+        let fixed_cache_len = decoder
+            .inputs()
+            .iter()
+            .find(|outlet| outlet.name() == self_k_name)
+            .and_then(outlet_shape)
+            .filter(|shape| shape.len() >= 3 && shape[2] > 0)
+            .map(|shape| shape[2] as usize);
         let self_v_name = find_outlet(decoder.inputs(), &["self_v"], Some(5), true)
             .context("AED decoder 缺少 f32 五维输入 self_v")?;
         let cross_k_name = find_outlet(decoder.inputs(), &["cross_k"], Some(4), true)
@@ -222,6 +238,7 @@ impl FireRedAed {
             sos_id,
             eos_id,
             max_len,
+            fixed_cache_len,
             num_decoder_layers,
             num_head,
             head_dim,
@@ -308,10 +325,11 @@ impl FireRedAed {
             .with_context(|| format!("AED encoder 输出缺失：{}", self.encoder_v_name))?;
         drop(encoder_outputs);
 
+        let cache_alloc_len = self.fixed_cache_len.unwrap_or(self.max_len);
         let cache_shape = [
             self.num_decoder_layers,
             1,
-            self.max_len,
+            cache_alloc_len,
             self.num_head,
             self.head_dim,
         ];
@@ -435,6 +453,13 @@ fn float_kind(dtype: &str) -> Option<FloatKind> {
         "float16" | "f16" | "tensor(float16)" => Some(FloatKind::F16),
         _ => None,
     }
+}
+
+fn outlet_shape(outlet: &ort::value::Outlet) -> Option<Vec<i64>> {
+    let ValueType::Tensor { shape, .. } = outlet.dtype() else {
+        return None;
+    };
+    Some(shape.to_vec())
 }
 
 fn input_float_kind(outlets: &[ort::value::Outlet], name: &str) -> anyhow::Result<FloatKind> {

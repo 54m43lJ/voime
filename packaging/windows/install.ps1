@@ -9,6 +9,9 @@ param(
     [string]$RuntimeArchive = '',
     [string]$RuntimeUrl = '',
     [string]$SourceDir = '',
+    [string]$SupportDir = '',
+    [ValidateSet('v1', 'v2', 'auto')]
+    [string]$AedVersion = 'v1',
     [switch]$NoBuild,
     [switch]$NoStartup,
     [switch]$NoModels
@@ -117,9 +120,11 @@ else {
         ModelDir = $ModelDir
         CacheDir = $CacheDir
         Profile = $Profile
+        AedVersion = $AedVersion
         Activate = $true
     }
     if ($SourceDir) { $modelArgs.SourceDir = $SourceDir }
+    if ($SupportDir) { $modelArgs.SupportDir = $SupportDir }
     & (Join-Path $Root 'scripts\install_models.ps1') @modelArgs
     Assert-Success 'install_models.ps1'
     if ($Runtime) {

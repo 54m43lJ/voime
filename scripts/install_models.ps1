@@ -5,6 +5,9 @@ param(
     [string]$ModelDir = (Join-Path $env:LOCALAPPDATA 'voime\models'),
     [string]$CacheDir = (Join-Path $env:LOCALAPPDATA 'voime\cache'),
     [string]$SourceDir = '',
+    [string]$SupportDir = '',
+    [ValidateSet('v1', 'v2', 'auto')]
+    [string]$AedVersion = 'v1',
     [string]$Python = '',
     [switch]$Activate
 )
@@ -36,6 +39,10 @@ $arguments = @(
 if ($SourceDir) {
     $arguments += @('--source-dir', $SourceDir)
 }
+if ($SupportDir) {
+    $arguments += @('--support-dir', $SupportDir)
+}
+$arguments += @('--aed-version', $AedVersion)
 if ($Activate) {
     $arguments += '--activate'
 }
