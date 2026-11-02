@@ -38,7 +38,6 @@ const ID_START_DAEMON: usize = 1201;
 const ID_STOP_DAEMON: usize = 1202;
 const ID_DOCTOR: usize = 1203;
 const ID_QUIT: usize = 1204;
-const ID_RESTART_BACKEND: usize = 1205;
 const ID_EDIT_HOTKEY: usize = 1004;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,7 +51,6 @@ pub enum FrontendStatus {
 pub enum TrayCommand {
     StartDaemon,
     StopDaemon,
-    RestartBackend,
 }
 
 impl TrayCommand {
@@ -60,7 +58,6 @@ impl TrayCommand {
         match value {
             0 => Some(Self::StartDaemon),
             1 => Some(Self::StopDaemon),
-            2 => Some(Self::RestartBackend),
             _ => None,
         }
     }
@@ -69,7 +66,6 @@ impl TrayCommand {
         match self {
             Self::StartDaemon => 0,
             Self::StopDaemon => 1,
-            Self::RestartBackend => 2,
         }
     }
 }
@@ -171,9 +167,6 @@ impl Tray {
                 TrayEvent::ShowSettings { focus_hotkey } => frontend.open_settings(focus_hotkey),
                 TrayEvent::Command(TrayCommand::StartDaemon) => frontend.start_daemon(),
                 TrayEvent::Command(TrayCommand::StopDaemon) => unsafe { PostQuitMessage(0) },
-                TrayEvent::Command(TrayCommand::RestartBackend) => {
-                    frontend.restart_backend()
-                }
             }
         }
     }
@@ -238,10 +231,6 @@ impl Tray {
             }
             ID_DOCTOR => {
                 frontend.run_doctor();
-                Ok(())
-            }
-            ID_RESTART_BACKEND => {
-                frontend.restart_backend();
                 Ok(())
             }
             ID_QUIT => {
@@ -330,7 +319,6 @@ impl Tray {
         append(menu, MF_SEPARATOR, 0, PCWSTR::null());
         append(menu, MF_STRING, ID_START_DAEMON, w!("启动服务"));
         append(menu, MF_STRING, ID_STOP_DAEMON, w!("停止服务并退出"));
-        append(menu, MF_STRING, ID_RESTART_BACKEND, w!("重启 ASR 后端"));
         append(menu, MF_STRING, ID_DOCTOR, w!("诊断..."));
         append(menu, MF_SEPARATOR, 0, PCWSTR::null());
         append(menu, MF_STRING, ID_QUIT, w!("退出"));

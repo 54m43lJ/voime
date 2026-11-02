@@ -1,0 +1,65 @@
+{
+  "schema": 3,
+  "kind": "sense-voice",
+  "fbank": {
+    "num_bins": 80,
+    "frame_ms": 25,
+    "shift_ms": 10,
+    "window_type": "hamming"
+  },
+  "max_segment_ms": 20000,
+  "model": {
+    "model": "model.int8.onnx",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inputs": [
+      {
+        "name": "x",
+        "dtype": "float32",
+        "shape": [
+          1,
+          -1,
+          560
+        ]
+      },
+      {
+        "name": "x_length",
+        "dtype": "int32",
+        "shape": [
+          1
+        ]
+      },
+      {
+        "name": "language",
+        "dtype": "int32",
+        "shape": [
+          1
+        ]
+      },
+      {
+        "name": "text_norm",
+        "dtype": "int32",
+        "shape": [
+          1
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "logits",
+        "dtype": "float32",
+        "shape": [
+          1,
+          -1,
+          25055
+        ]
+      }
+    ]
+  },
+  "tokens": "tokens.txt",
+  "token_count": 25055,
+  "options": {
+    "language": "auto",
+    "use_itn": true,
+    "partial": true
+  }
+}

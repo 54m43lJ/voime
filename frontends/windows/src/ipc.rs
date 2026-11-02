@@ -66,7 +66,7 @@ impl IpcClient {
                 ServerMessage::Error { code, message } => {
                     bail!("daemon 拒绝连接（{code:?}）：{message}")
                 }
-                ServerMessage::Bye {} => bail!("daemon 已退出"),
+                ServerMessage::Bye => bail!("daemon 已退出"),
                 _ => {}
             }
         }

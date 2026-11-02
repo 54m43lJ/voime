@@ -180,9 +180,6 @@ impl App {
             ServerMessage::Status { status } => {
                 self.apply_status(status);
             }
-            ServerMessage::Models { .. }
-            | ServerMessage::ModelSelected { .. }
-            | ServerMessage::BackendState { .. } => {}
             ServerMessage::Error { code, message } => {
                 eprintln!("voime: daemon 错误（{code:?}）：{message}");
             }

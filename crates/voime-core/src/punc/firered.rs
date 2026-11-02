@@ -9,7 +9,7 @@ use tokenizers::pre_tokenizers::bert::BertPreTokenizer;
 use tokenizers::Tokenizer as HfTokenizer;
 
 use crate::infer::session::SessionFactory;
-use crate::model::PuncArtifact;
+use crate::model::PuncManifest;
 
 pub const MAX_TOKENS: usize = 400;
 
@@ -35,12 +35,12 @@ pub struct FireRedPunc {
 
 impl FireRedPunc {
     pub fn new_with_factory(
-        artifact: &PuncArtifact,
+        manifest: &PuncManifest,
         factory: &SessionFactory,
         config: PuncConfig,
     ) -> anyhow::Result<Self> {
-        let session = factory.build(&artifact.model)?;
-        Self::from_session(session, &artifact.vocab, &artifact.labels, config)
+        let session = factory.build(&manifest.model)?;
+        Self::from_session(session, &manifest.vocab, &manifest.labels, config)
     }
 
     fn from_session(

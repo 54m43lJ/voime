@@ -1,12 +1,10 @@
 /target
 /build
 /frontends/windows/target
-/models/*.onnx
-/models/*.data
-/models/asr/
-/models/vad/
-/models/punc/
-!models/manifest.json
+/models/**/*.onnx
+/models/**/tokens.txt
+/models/punc/vocab.txt
+/models/punc/labels.json
 *.part
 
 __pycache__/

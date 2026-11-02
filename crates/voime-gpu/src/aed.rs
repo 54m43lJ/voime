@@ -56,12 +56,13 @@ pub struct AedOutput {
 #[derive(Debug, Deserialize)]
 struct Manifest {
     schema: u32,
-    #[allow(dead_code)]
-    display_name: String,
-    #[serde(default)]
-    requires: Vec<String>,
+    kind: String,
     fbank: FbankManifest,
-    asr: AsrManifest,
+    encoder: ArtifactPath,
+    decoder: ArtifactPath,
+    precision: String,
+    tokens: PathBuf,
+    token_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,16 +71,6 @@ struct FbankManifest {
     frame_ms: u32,
     shift_ms: u32,
     window_type: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct AsrManifest {
-    kind: String,
-    encoder: ArtifactPath,
-    decoder: ArtifactPath,
-    precision: String,
-    tokens: PathBuf,
-    token_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,39 +90,32 @@ impl FireRedAed {
         if manifest.schema != 3 {
             bail!("不支持的 AED schema：{}", manifest.schema);
         }
-        if manifest.asr.kind != "fire-red-aed" {
-            bail!("不是 fire-red-aed 包：{}", manifest.asr.kind);
-        }
-        if !manifest
-            .requires
-            .iter()
-            .any(|id| id == "sense-voice-2024-int8")
-        {
-            bail!("FireRed AED 包必须 requires sense-voice-2024-int8");
+        if manifest.kind != "fire-red-aed" {
+            bail!("模型目录不是 fire-red-aed：{}", manifest.kind);
         }
         if !matches!(
-            manifest.asr.precision.to_ascii_lowercase().as_str(),
+            manifest.precision.to_ascii_lowercase().as_str(),
             "fp16" | "int8"
         ) {
             bail!(
                 "FireRed AED 只接受 fp16 / int8（临时 v1）清单，实际 {}",
-                manifest.asr.precision
+                manifest.precision
             );
         }
         if manifest.fbank.window_type != "povey" {
             bail!("FireRed AED fbank 必须使用 povey 窗");
         }
-        let encoder_path = resolve_inside(manifest_dir, &manifest.asr.encoder.model)?;
-        let decoder_path = resolve_inside(manifest_dir, &manifest.asr.decoder.model)?;
-        let tokens_path = resolve_inside(manifest_dir, &manifest.asr.tokens)?;
-        verify_file(&encoder_path, &manifest.asr.encoder.sha256)?;
-        verify_file(&decoder_path, &manifest.asr.decoder.sha256)?;
+        let encoder_path = resolve_inside(manifest_dir, &manifest.encoder.model)?;
+        let decoder_path = resolve_inside(manifest_dir, &manifest.decoder.model)?;
+        let tokens_path = resolve_inside(manifest_dir, &manifest.tokens)?;
+        verify_file(&encoder_path, &manifest.encoder.sha256)?;
+        verify_file(&decoder_path, &manifest.decoder.sha256)?;
         let tokens = load_tokens(&tokens_path)?;
-        if tokens.len() != manifest.asr.token_count {
+        if tokens.len() != manifest.token_count {
             bail!(
                 "AED 词表 {} 与清单 token_count {} 不一致",
                 tokens.len(),
-                manifest.asr.token_count
+                manifest.token_count
             );
         }
 

@@ -38,14 +38,6 @@ pub enum CtlAction {
     Status,
     Clear,
     Quit,
-    /// 列出 Final 候选及其 active / running 状态
-    Models,
-    /// 选择 Final 包（只写 active；restart-backend 才生效）
-    Use {
-        package_id: String,
-    },
-    /// 在空闲时只重建 Final 后端
-    RestartBackend,
 }
 
 pub fn parse() -> Cli {

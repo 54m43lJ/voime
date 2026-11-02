@@ -12,7 +12,7 @@ use crate::audio::capture::AudioChunk;
 use crate::audio::resample::{StreamResampler, TARGET_SAMPLE_RATE};
 use crate::config::Config;
 use crate::infer::session::SessionFactory;
-use crate::model::{FbankManifest, ModelManifest, PuncPolicy};
+use crate::model::{FbankManifest, PuncManifest, PuncPolicy};
 use crate::punc::firered::{FireRedPunc, PuncConfig};
 use crate::vad::firered::{FireRedVad, VadConfig};
 use crate::vad::segmenter::{Segment, SegmentEndReason, Segmenter, SegmenterEvent};
@@ -171,6 +171,7 @@ struct Worker {
     punc_policy: PuncPolicy,
     partial_enabled: bool,
     preview_fbank: FbankConfig,
+    vad_fbank: FbankConfig,
     pre_roll_ms: u32,
     resampler: Option<StreamResampler>,
     events: crossbeam_channel::Sender<PipelineEvent>,
@@ -191,21 +192,25 @@ impl Worker {
         final_backend: Box<dyn FinalBackend>,
         events: crossbeam_channel::Sender<PipelineEvent>,
     ) -> anyhow::Result<Self> {
-        let preview_manifest = &config.preview_manifest;
-        let preview_fbank = fbank_config(&preview_manifest.fbank);
+        let vad_fbank = fbank_config(&config.vad_manifest.fbank);
         let vad = FireRedVad::new(
-            &preview_manifest.vad,
+            &config.vad_manifest.model,
             factory,
             VadConfig {
-                fbank: preview_fbank,
+                fbank: vad_fbank,
                 ..VadConfig::default()
             },
         )?;
-        let preview = SenseVoice::new_with_factory(&preview_manifest.asr, factory)?;
-        let punc_policy = config.manifest.asr.options.punc;
-        let punc = load_punc(&config.manifest, factory)?;
-        let partial_enabled = config.preview_enabled && preview_manifest.asr.options.partial;
-        let segmenter = Segmenter::new(config.manifest.max_segment_ms, config.pre_roll_ms);
+        let preview_fbank = fbank_config(&config.sense_voice_manifest.fbank);
+        let preview = SenseVoice::new_with_factory(&config.sense_voice_manifest, factory)?;
+        let punc_policy = if config.gpu_final() {
+            PuncPolicy::External
+        } else {
+            PuncPolicy::Builtin
+        };
+        let punc = load_punc(config.punc.as_ref().map(|punc| &punc.manifest), factory)?;
+        let partial_enabled = config.preview_enabled && config.sense_voice_manifest.options.partial;
+        let segmenter = Segmenter::new(config.max_segment_ms(), config.pre_roll_ms);
         Ok(Self {
             mode: Mode::Ptt,
             vad,
@@ -216,6 +221,7 @@ impl Worker {
             punc_policy,
             partial_enabled,
             preview_fbank,
+            vad_fbank,
             pre_roll_ms: config.pre_roll_ms,
             resampler: None,
             events,
@@ -689,11 +695,11 @@ impl Worker {
     }
 
     fn frame_samples(&self) -> usize {
-        ((TARGET_SAMPLE_RATE as u64 * self.preview_fbank.shift_ms as u64) / 1000).max(1) as usize
+        ((TARGET_SAMPLE_RATE as u64 * self.vad_fbank.shift_ms as u64) / 1000).max(1) as usize
     }
 
     fn vad_batch_samples(&self) -> usize {
-        let frames = (VAD_BATCH_MS / self.preview_fbank.shift_ms.max(1) as u64).max(1) as usize;
+        let frames = (VAD_BATCH_MS / self.vad_fbank.shift_ms.max(1) as u64).max(1) as usize;
         self.frame_samples().saturating_mul(frames)
     }
 
@@ -716,25 +722,19 @@ pub fn fbank_config(manifest: &FbankManifest) -> FbankConfig {
 }
 
 pub fn load_punc(
-    manifest: &ModelManifest,
+    manifest: Option<&PuncManifest>,
     factory: &SessionFactory,
 ) -> anyhow::Result<Option<FireRedPunc>> {
-    match manifest.asr.options.punc {
-        PuncPolicy::Builtin => Ok(None),
-        PuncPolicy::External => {
-            let artifact = manifest
-                .punc
-                .as_ref()
-                .context("external 标点策略缺少 punc 模型")?;
-            Ok(Some(FireRedPunc::new_with_factory(
-                artifact,
-                factory,
-                PuncConfig {
-                    max_tokens: artifact.max_tokens,
-                },
-            )?))
-        }
-    }
+    let Some(manifest) = manifest else {
+        return Ok(None);
+    };
+    Ok(Some(FireRedPunc::new_with_factory(
+        manifest,
+        factory,
+        PuncConfig {
+            max_tokens: manifest.max_tokens,
+        },
+    )?))
 }
 
 #[cfg(test)]

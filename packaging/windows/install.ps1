@@ -3,13 +3,12 @@ param(
     [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'Programs\Voime'),
     [string]$ModelDir = (Join-Path $env:LOCALAPPDATA 'voime\models'),
     [string]$CacheDir = (Join-Path $env:LOCALAPPDATA 'voime\cache'),
-    [ValidateSet('sensevoice', 'firered')]
-    [string]$Profile = 'sensevoice',
+    [switch]$Gpu,
     [string]$Runtime = '',
     [string]$RuntimeArchive = '',
     [string]$RuntimeUrl = '',
     [string]$SourceDir = '',
-    [string]$SupportDir = '',
+    [string]$PuncSourceDir = '',
     [ValidateSet('v1', 'v2', 'auto')]
     [string]$AedVersion = 'v1',
     [switch]$NoBuild,
@@ -119,12 +118,11 @@ else {
     $modelArgs = @{
         ModelDir = $ModelDir
         CacheDir = $CacheDir
-        Profile = $Profile
+        Gpu = $Gpu
         AedVersion = $AedVersion
-        Activate = $true
     }
     if ($SourceDir) { $modelArgs.SourceDir = $SourceDir }
-    if ($SupportDir) { $modelArgs.SupportDir = $SupportDir }
+    if ($PuncSourceDir) { $modelArgs.PuncSourceDir = $PuncSourceDir }
     & (Join-Path $Root 'scripts\install_models.ps1') @modelArgs
     Assert-Success 'install_models.ps1'
     if ($Runtime) {

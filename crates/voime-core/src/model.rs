@@ -10,8 +10,13 @@ use sha2::{Digest, Sha256};
 pub const MANIFEST_FILE: &str = "manifest.json";
 pub const SCHEMA_VERSION: u32 = 3;
 pub const SAMPLES_PER_SECOND: u32 = 16_000;
-/// The fixed base package that produces Preview and CPU Final.
-pub const PREVIEW_PACKAGE_ID: &str = "sense-voice-2024-int8";
+
+/// Fixed model directories below the model root. The loader and installers
+/// use the same names; there is no package id / active pointer layer.
+pub const VAD_DIR: &str = "vad";
+pub const SENSE_VOICE_DIR: &str = "sense-voice";
+pub const FIRE_RED_AED_DIR: &str = "fire-red-aed";
+pub const PUNC_DIR: &str = "punc";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct TensorSpec {
@@ -30,39 +35,11 @@ pub struct Artifact {
     pub outputs: Vec<TensorSpec>,
 }
 
-pub type VadArtifact = Artifact;
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum AsrKind {
-    SenseVoice,
-    FireRedAed,
-    External,
-}
-
-impl AsrKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SenseVoice => "sense-voice",
-            Self::FireRedAed => "fire-red-aed",
-            Self::External => "external",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum PuncPolicy {
-    Builtin,
-    External,
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Precision {
     Fp16,
-    /// Temporary compatibility for the officially exported FireRedASR v1
-    /// package. The GPU worker still follows the model's metadata.
+    /// Temporary compatibility for older official INT8 packages.
     Int8,
 }
 
@@ -75,116 +52,10 @@ impl Precision {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum BackendKind {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PuncPolicy {
     Builtin,
-    Worker,
-}
-
-impl BackendKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Builtin => "builtin",
-            Self::Worker => "worker",
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct AsrOptions {
-    #[serde(default)]
-    pub language: Option<String>,
-    #[serde(default)]
-    pub use_itn: bool,
-    pub punc: PuncPolicy,
-    #[serde(default = "default_partial")]
-    pub partial: bool,
-}
-
-impl Default for AsrOptions {
-    fn default() -> Self {
-        Self {
-            language: None,
-            use_itn: false,
-            punc: PuncPolicy::Builtin,
-            partial: default_partial(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct AsrArtifact {
-    pub kind: AsrKind,
-    #[serde(default)]
-    pub model: Option<Artifact>,
-    #[serde(default)]
-    pub encoder: Option<Artifact>,
-    #[serde(default)]
-    pub decoder: Option<Artifact>,
-    #[serde(default)]
-    pub precision: Option<Precision>,
-    pub tokens: PathBuf,
-    pub token_count: usize,
-    #[serde(default)]
-    pub options: AsrOptions,
-}
-
-impl AsrArtifact {
-    pub fn artifacts(&self) -> Vec<&Artifact> {
-        let mut artifacts = Vec::with_capacity(3);
-        if let Some(model) = self.model.as_ref() {
-            artifacts.push(model);
-        }
-        if let Some(encoder) = self.encoder.as_ref() {
-            artifacts.push(encoder);
-        }
-        if let Some(decoder) = self.decoder.as_ref() {
-            artifacts.push(decoder);
-        }
-        artifacts
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct PuncArtifact {
-    pub model: Artifact,
-    pub vocab: PathBuf,
-    pub labels: PathBuf,
-    pub max_tokens: usize,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct BackendManifest {
-    pub kind: BackendKind,
-    #[serde(default)]
-    pub runtime: Option<String>,
-    #[serde(default)]
-    pub device: Option<String>,
-    #[serde(default)]
-    pub min_vram_mb: Option<u32>,
-    #[serde(default = "default_supports_partial")]
-    pub supports_partial: bool,
-    #[serde(default = "default_load_timeout_ms")]
-    pub load_timeout_ms: u64,
-    #[serde(default = "default_request_timeout_ms")]
-    pub request_timeout_ms: u64,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct ModelManifest {
-    pub schema: u32,
-    pub display_name: String,
-    pub sample_rate: u32,
-    pub fbank: FbankManifest,
-    pub max_segment_ms: u32,
-    pub vad: VadArtifact,
-    #[serde(default)]
-    pub requires: Vec<String>,
-    pub backend: BackendManifest,
-    pub asr: AsrArtifact,
-    #[serde(default)]
-    pub punc: Option<PuncArtifact>,
+    External,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -195,282 +66,273 @@ pub struct FbankManifest {
     pub window_type: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct AsrOptions {
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub use_itn: bool,
+    #[serde(default = "default_partial")]
+    pub partial: bool,
+}
+
+impl Default for AsrOptions {
+    fn default() -> Self {
+        Self {
+            language: None,
+            use_itn: false,
+            partial: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct VadManifest {
+    pub schema: u32,
+    pub kind: String,
+    pub fbank: FbankManifest,
+    pub model: Artifact,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SenseVoiceManifest {
+    pub schema: u32,
+    pub kind: String,
+    pub fbank: FbankManifest,
+    pub max_segment_ms: u32,
+    pub model: Artifact,
+    pub tokens: PathBuf,
+    pub token_count: usize,
+    #[serde(default)]
+    pub options: AsrOptions,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct FireRedManifest {
+    pub schema: u32,
+    pub kind: String,
+    pub fbank: FbankManifest,
+    pub max_segment_ms: u32,
+    pub encoder: Artifact,
+    pub decoder: Artifact,
+    pub precision: Precision,
+    pub tokens: PathBuf,
+    pub token_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PuncManifest {
+    pub schema: u32,
+    pub kind: String,
+    pub model: Artifact,
+    pub vocab: PathBuf,
+    pub labels: PathBuf,
+    pub max_tokens: usize,
+}
+
 fn default_partial() -> bool {
     true
 }
 
-fn default_supports_partial() -> bool {
-    true
-}
-
-fn default_load_timeout_ms() -> u64 {
-    30_000
-}
-
-fn default_request_timeout_ms() -> u64 {
-    30_000
-}
-
-impl ModelManifest {
+impl VadManifest {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let file =
-            File::open(path).with_context(|| format!("无法读取模型清单 {}", path.display()))?;
-        let manifest: Self = serde_json::from_reader(BufReader::new(file))
-            .with_context(|| format!("模型清单格式错误 {}", path.display()))?;
+        let manifest: Self = load_json(path)?;
         manifest.validate()?;
         Ok(manifest)
     }
 
-    /// Checks that every declared model/asset exists and that every ONNX model
-    /// still matches its SHA-256 digest.
-    pub fn verify(&self, dir: &Path) -> anyhow::Result<()> {
-        for artifact in self.artifacts() {
-            let path = resolve_inside(dir, &artifact.model)?;
-            verify_file(&path, &artifact.sha256)?;
-        }
-        for aux in self.auxiliary_files() {
-            let path = resolve_inside(dir, aux)?;
-            ensure_file(&path)?;
-        }
+    pub fn validate(&self) -> anyhow::Result<()> {
+        validate_common(self.schema, &self.kind, "vad")?;
+        validate_fbank(&self.fbank)?;
+        validate_artifact(&self.model, "vad")?;
         Ok(())
     }
 
-    /// Converts manifest-relative paths into paths under `dir`.
+    pub fn verify(&self, dir: &Path) -> anyhow::Result<()> {
+        verify_artifact(dir, &self.model, "vad")
+    }
+
     pub fn rebase(&mut self, dir: &Path) -> anyhow::Result<()> {
-        self.vad.model = resolve_inside(dir, &self.vad.model)?;
-        for artifact in [
-            self.asr.model.as_mut(),
-            self.asr.encoder.as_mut(),
-            self.asr.decoder.as_mut(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            artifact.model = resolve_inside(dir, &artifact.model)?;
-        }
-        self.asr.tokens = resolve_inside(dir, &self.asr.tokens)?;
-        if let Some(punc) = self.punc.as_mut() {
-            punc.model.model = resolve_inside(dir, &punc.model.model)?;
-            punc.vocab = resolve_inside(dir, &punc.vocab)?;
-            punc.labels = resolve_inside(dir, &punc.labels)?;
-        }
-        Ok(())
+        rebase_artifact(dir, &mut self.model)
+    }
+}
+
+impl SenseVoiceManifest {
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let manifest: Self = load_json(path)?;
+        manifest.validate()?;
+        Ok(manifest)
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.schema != SCHEMA_VERSION {
+        validate_common(self.schema, &self.kind, "sense-voice")?;
+        validate_fbank(&self.fbank)?;
+        validate_artifact(&self.model, "sense-voice")?;
+        if self.token_count != 25_055 {
             bail!(
-                "不支持的模型清单版本 {}（期望 {}）",
-                self.schema,
-                SCHEMA_VERSION
+                "sense-voice token_count 必须为 25055（实际 {}）",
+                self.token_count
             );
-        }
-        if self.sample_rate != SAMPLES_PER_SECOND {
-            bail!(
-                "模型采样率 {} 与内部采样率 {} 不一致",
-                self.sample_rate,
-                SAMPLES_PER_SECOND
-            );
-        }
-        if self.display_name.trim().is_empty() {
-            bail!("display_name 不能为空");
-        }
-        if self.display_name.chars().any(char::is_control) {
-            bail!("display_name 不能包含控制字符");
-        }
-        if self.fbank.num_bins == 0 || self.fbank.frame_ms == 0 || self.fbank.shift_ms == 0 {
-            bail!("fbank 参数必须大于 0");
-        }
-        if !matches!(self.fbank.window_type.as_str(), "povey" | "hamming") {
-            bail!("不支持的 fbank.window_type：{}", self.fbank.window_type);
         }
         if self.max_segment_ms == 0 || self.max_segment_ms > 60_000 {
-            bail!("max_segment_ms 必须在 1..=60000 之间");
+            bail!("sense-voice max_segment_ms 必须在 1..=60000 之间");
         }
-        if self.asr.token_count == 0 {
-            bail!("asr.token_count 必须大于 0");
-        }
-        if self.backend.load_timeout_ms == 0 || self.backend.request_timeout_ms == 0 {
-            bail!("backend 超时必须大于 0");
-        }
-        self.validate_requires()?;
-        self.validate_kind()?;
-        self.validate_punc()?;
-        self.validate_specs()?;
-        Ok(())
-    }
-
-    fn validate_requires(&self) -> anyhow::Result<()> {
-        match self.backend.kind {
-            BackendKind::Builtin => {
-                if !self.requires.is_empty() {
-                    bail!("builtin 包不应声明 requires");
-                }
+        if let Some(language) = self.options.language.as_deref() {
+            if !matches!(language, "auto" | "zh" | "en" | "ja" | "ko" | "yue") {
+                bail!("SenseVoice 不支持语言：{language}");
             }
-            BackendKind::Worker => {
-                if !self.requires.iter().any(|id| id == PREVIEW_PACKAGE_ID) {
-                    bail!("worker 包必须声明 requires: [\"{PREVIEW_PACKAGE_ID}\"]");
-                }
-                if self.backend.runtime.as_deref().unwrap_or("").is_empty() {
-                    bail!("worker 包必须声明 backend.runtime");
-                }
-                if self.backend.device.as_deref().unwrap_or("").is_empty() {
-                    bail!("worker 包必须声明 backend.device");
-                }
-                if self.backend.min_vram_mb.unwrap_or(0) == 0 {
-                    bail!("worker 包必须声明 backend.min_vram_mb");
-                }
-                if self.backend.supports_partial {
-                    bail!("worker Final 不支持 backend.supports_partial = true");
-                }
-            }
+        }
+        if !self.options.use_itn {
+            bail!("SenseVoice 内置标点要求 use_itn = true");
         }
         Ok(())
     }
 
-    fn validate_kind(&self) -> anyhow::Result<()> {
-        let options = &self.asr.options;
-        match self.asr.kind {
-            AsrKind::SenseVoice => {
-                if self.asr.model.is_none() {
-                    bail!("sense-voice 包必须声明 asr.model");
-                }
-                if self.asr.encoder.is_some() || self.asr.decoder.is_some() {
-                    bail!("sense-voice 包不能声明 asr.encoder / asr.decoder");
-                }
-                if self.asr.precision.is_some() {
-                    bail!("sense-voice 包不能声明 asr.precision");
-                }
-                if options.punc != PuncPolicy::Builtin {
-                    bail!("sense-voice 包必须使用 punc = builtin");
-                }
-                if !options.use_itn {
-                    bail!("sense-voice builtin 标点要求 use_itn = true");
-                }
-                if options.partial && !self.backend.supports_partial {
-                    bail!("sense-voice 包声明 partial 但 backend 不支持");
-                }
-                if self.asr.token_count != 25_055 {
+    pub fn verify(&self, dir: &Path) -> anyhow::Result<()> {
+        verify_artifact(dir, &self.model, "sense-voice")?;
+        ensure_file(&resolve_inside(dir, &self.tokens)?)
+    }
+
+    pub fn rebase(&mut self, dir: &Path) -> anyhow::Result<()> {
+        rebase_artifact(dir, &mut self.model)?;
+        self.tokens = resolve_inside(dir, &self.tokens)?;
+        Ok(())
+    }
+}
+
+impl FireRedManifest {
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let manifest: Self = load_json(path)?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        validate_common(self.schema, &self.kind, "fire-red-aed")?;
+        validate_fbank(&self.fbank)?;
+        validate_artifact(&self.encoder, "fire-red-aed.encoder")?;
+        validate_artifact(&self.decoder, "fire-red-aed.decoder")?;
+        if self.max_segment_ms == 0 || self.max_segment_ms > 60_000 {
+            bail!("fire-red-aed max_segment_ms 必须在 1..=60000 之间");
+        }
+        match self.precision {
+            Precision::Fp16 => {
+                if !matches!(self.token_count, 7_832 | 8_667) {
                     bail!(
-                        "sense-voice token_count 必须为 25055（实际 {}）",
-                        self.asr.token_count
+                        "fire-red-aed FP16 token_count 必须为 8667（v2）或 7832（v1），实际 {}",
+                        self.token_count
                     );
                 }
-                if let Some(language) = options.language.as_deref() {
-                    if !matches!(language, "auto" | "zh" | "en" | "ja" | "ko" | "yue") {
-                        bail!("SenseVoice 不支持语言：{language}");
-                    }
-                }
-                if self.backend.kind != BackendKind::Builtin {
-                    bail!("sense-voice 包必须使用 backend.kind = builtin");
-                }
             }
-            AsrKind::FireRedAed => {
-                if self.asr.model.is_some() {
-                    bail!("fire-red-aed 包不能声明 asr.model");
-                }
-                if self.asr.encoder.is_none() || self.asr.decoder.is_none() {
-                    bail!("fire-red-aed 包必须同时声明 asr.encoder 与 asr.decoder");
-                }
-                match self.asr.precision {
-                    Some(Precision::Fp16) => {
-                        // v2 packages use 8667 tokens; the official v1 FP16
-                        // package uses 7832 tokens. Both share the same AED
-                        // decode chain; the worker detects the v1 fixed cache.
-                        if !matches!(self.asr.token_count, 7_832 | 8_667) {
-                            bail!(
-                                "fire-red-aed FP16 token_count 必须为 8667（v2）或 7832（v1），实际 {}",
-                                self.asr.token_count
-                            );
-                        }
-                    }
-                    // FireRedASR v1 is only distributed as an official int8
-                    // ONNX package. It is a temporary Final option while the
-                    // v2 FP16 export is being stabilized.
-                    Some(Precision::Int8) => {
-                        if self.asr.token_count != 7_832 {
-                            bail!(
-                                "fire-red-aed int8（v1）token_count 必须为 7832（实际 {}）",
-                                self.asr.token_count
-                            );
-                        }
-                    }
-                    None => bail!("fire-red-aed 包必须声明 asr.precision"),
-                }
-                if options.punc != PuncPolicy::External {
-                    bail!("fire-red-aed 包必须使用 punc = external");
-                }
-                if options.language.is_some() {
-                    bail!("fire-red-aed 包不支持 asr.options.language");
-                }
-                if self.backend.kind != BackendKind::Worker {
-                    bail!("fire-red-aed 包必须使用 backend.kind = worker");
-                }
-                if options.partial {
-                    bail!("fire-red-aed 包不能请求 partial");
-                }
-            }
-            AsrKind::External => {
-                bail!("external ASR 尚未定义模型包契约");
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_punc(&self) -> anyhow::Result<()> {
-        match self.asr.options.punc {
-            PuncPolicy::Builtin if self.punc.is_some() => {
-                bail!("builtin 标点包不应携带 punc 段");
-            }
-            PuncPolicy::External if self.punc.is_none() => {
-                bail!("external 标点需要顶层 punc 段");
-            }
-            _ => {}
-        }
-        if let Some(punc) = self.punc.as_ref() {
-            if punc.max_tokens == 0 {
-                bail!("punc.max_tokens 必须大于 0");
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_specs(&self) -> anyhow::Result<()> {
-        for artifact in self.artifacts() {
-            let label = artifact.model.display().to_string();
-            if artifact.inputs.is_empty() {
-                bail!("{label} 未声明任何输入张量");
-            }
-            if artifact.outputs.is_empty() {
-                bail!("{label} 未声明任何输出张量");
-            }
-            let mut names = HashSet::new();
-            for spec in artifact.inputs.iter().chain(artifact.outputs.iter()) {
-                if !names.insert(&spec.name) {
-                    bail!("{label} 张量名重复：{}", spec.name);
+            Precision::Int8 => {
+                if self.token_count != 7_832 {
+                    bail!(
+                        "fire-red-aed INT8 token_count 必须为 7832（实际 {}）",
+                        self.token_count
+                    );
                 }
             }
         }
         Ok(())
     }
 
-    fn artifacts(&self) -> Vec<&Artifact> {
-        let mut artifacts = vec![&self.vad];
-        artifacts.extend(self.asr.artifacts());
-        if let Some(punc) = self.punc.as_ref() {
-            artifacts.push(&punc.model);
-        }
-        artifacts
+    pub fn verify(&self, dir: &Path) -> anyhow::Result<()> {
+        verify_artifact(dir, &self.encoder, "fire-red-aed.encoder")?;
+        verify_artifact(dir, &self.decoder, "fire-red-aed.decoder")?;
+        ensure_file(&resolve_inside(dir, &self.tokens)?)
     }
 
-    fn auxiliary_files(&self) -> Vec<&PathBuf> {
-        let mut files = vec![&self.asr.tokens];
-        if let Some(punc) = self.punc.as_ref() {
-            files.push(&punc.vocab);
-            files.push(&punc.labels);
-        }
-        files
+    pub fn rebase(&mut self, dir: &Path) -> anyhow::Result<()> {
+        rebase_artifact(dir, &mut self.encoder)?;
+        rebase_artifact(dir, &mut self.decoder)?;
+        self.tokens = resolve_inside(dir, &self.tokens)?;
+        Ok(())
     }
+}
+
+impl PuncManifest {
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let manifest: Self = load_json(path)?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        validate_common(self.schema, &self.kind, "punc")?;
+        validate_artifact(&self.model, "punc")?;
+        if self.max_tokens == 0 {
+            bail!("punc max_tokens 必须大于 0");
+        }
+        Ok(())
+    }
+
+    pub fn verify(&self, dir: &Path) -> anyhow::Result<()> {
+        verify_artifact(dir, &self.model, "punc")?;
+        for aux in [&self.vocab, &self.labels] {
+            ensure_file(&resolve_inside(dir, aux)?)?;
+        }
+        Ok(())
+    }
+
+    pub fn rebase(&mut self, dir: &Path) -> anyhow::Result<()> {
+        rebase_artifact(dir, &mut self.model)?;
+        self.vocab = resolve_inside(dir, &self.vocab)?;
+        self.labels = resolve_inside(dir, &self.labels)?;
+        Ok(())
+    }
+}
+
+fn load_json<T: for<'de> Deserialize<'de>>(path: &Path) -> anyhow::Result<T> {
+    let file = File::open(path).with_context(|| format!("无法读取模型清单 {}", path.display()))?;
+    serde_json::from_reader(BufReader::new(file))
+        .with_context(|| format!("模型清单格式错误 {}", path.display()))
+}
+
+fn validate_common(schema: u32, kind: &str, expected: &str) -> anyhow::Result<()> {
+    if schema != SCHEMA_VERSION {
+        bail!("不支持的模型清单版本 {schema}（期望 {SCHEMA_VERSION}）");
+    }
+    if kind != expected {
+        bail!("模型清单 kind 必须是 {expected}，实际 {kind}");
+    }
+    Ok(())
+}
+
+fn validate_fbank(fbank: &FbankManifest) -> anyhow::Result<()> {
+    if fbank.num_bins == 0 || fbank.frame_ms == 0 || fbank.shift_ms == 0 {
+        bail!("fbank 参数必须大于 0");
+    }
+    if !matches!(fbank.window_type.as_str(), "povey" | "hamming") {
+        bail!("不支持的 fbank.window_type：{}", fbank.window_type);
+    }
+    Ok(())
+}
+
+fn validate_artifact(artifact: &Artifact, label: &str) -> anyhow::Result<()> {
+    if artifact.inputs.is_empty() {
+        bail!("{label} 未声明任何输入张量");
+    }
+    if artifact.outputs.is_empty() {
+        bail!("{label} 未声明任何输出张量");
+    }
+    let mut names = HashSet::new();
+    for spec in artifact.inputs.iter().chain(artifact.outputs.iter()) {
+        if !names.insert(&spec.name) {
+            bail!("{label} 张量名重复：{}", spec.name);
+        }
+    }
+    Ok(())
+}
+
+fn rebase_artifact(dir: &Path, artifact: &mut Artifact) -> anyhow::Result<()> {
+    artifact.model = resolve_inside(dir, &artifact.model)?;
+    Ok(())
+}
+
+fn verify_artifact(dir: &Path, artifact: &Artifact, label: &str) -> anyhow::Result<()> {
+    let path = resolve_inside(dir, &artifact.model)?;
+    verify_file(&path, &artifact.sha256)
+        .with_context(|| format!("{label} 校验失败 {}", path.display()))
 }
 
 fn ensure_file(path: &Path) -> anyhow::Result<()> {
@@ -517,7 +379,7 @@ fn verify_file(path: &Path, expected: &str) -> anyhow::Result<()> {
 }
 
 /// Resolves a manifest-relative path while refusing absolute paths and `..`
-/// components, so a malicious model package cannot escape its directory.
+/// components, so a malicious model directory cannot escape its directory.
 pub fn resolve_inside(dir: &Path, relative: &Path) -> anyhow::Result<PathBuf> {
     if relative.as_os_str().is_empty() {
         bail!("模型清单包含空路径");
@@ -540,64 +402,74 @@ pub fn resolve_inside(dir: &Path, relative: &Path) -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
 
-    fn sense_voice_manifest() -> serde_json::Value {
+    fn artifact(name: &str) -> serde_json::Value {
         serde_json::json!({
-            "schema": 3,
-            "display_name": "SenseVoice 2024 ITN",
-            "sample_rate": 16000,
-            "fbank": {"num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "hamming"},
-            "max_segment_ms": 20000,
-            "vad": {
-                "model": "vad/stream-vad.onnx",
-                "sha256": "0".repeat(64),
-                "inputs": [{"name": "feat", "dtype": "float32", "shape": [1, -1, 80]}],
-                "outputs": [{"name": "probs", "dtype": "float32", "shape": [1, -1, 1]}]
-            },
-            "backend": {"kind": "builtin", "supports_partial": true,
-                        "load_timeout_ms": 30000, "request_timeout_ms": 30000},
-            "asr": {
-                "kind": "sense-voice",
-                "model": {
-                    "model": "asr/model.int8.onnx",
-                    "sha256": "0".repeat(64),
-                    "inputs": [{"name": "x", "dtype": "float32", "shape": [1, -1, 560]}],
-                    "outputs": [{"name": "logits", "dtype": "float32", "shape": [1, -1, 25055]}]
-                },
-                "tokens": "asr/tokens.txt",
-                "token_count": 25055,
-                "options": {"language": "auto", "use_itn": true, "punc": "builtin", "partial": true}
-            }
+            "model": name,
+            "sha256": "0".repeat(64),
+            "inputs": [{"name": "x", "dtype": "float32", "shape": [1, -1, 80]}],
+            "outputs": [{"name": "y", "dtype": "float32", "shape": [1, -1, 1]}]
         })
     }
 
     #[test]
-    fn accepts_documented_sense_voice_package() {
-        let manifest: ModelManifest =
-            serde_json::from_value(sense_voice_manifest()).expect("parse");
-        manifest.validate().unwrap();
+    fn validates_each_manifest_kind() {
+        let vad: VadManifest = serde_json::from_value(serde_json::json!({
+            "schema": 3, "kind": "vad",
+            "fbank": {"num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "hamming"},
+            "model": artifact("stream-vad.onnx")
+        }))
+        .unwrap();
+        vad.validate().unwrap();
+
+        let sense: SenseVoiceManifest = serde_json::from_value(serde_json::json!({
+            "schema": 3, "kind": "sense-voice",
+            "fbank": {"num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "hamming"},
+            "max_segment_ms": 20000,
+            "model": artifact("model.int8.onnx"),
+            "tokens": "tokens.txt", "token_count": 25055,
+            "options": {"use_itn": true}
+        }))
+        .unwrap();
+        sense.validate().unwrap();
+
+        let red: FireRedManifest = serde_json::from_value(serde_json::json!({
+            "schema": 3, "kind": "fire-red-aed",
+            "fbank": {"num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "povey"},
+            "max_segment_ms": 30000,
+            "encoder": artifact("encoder.fp16.onnx"),
+            "decoder": artifact("decoder.fp16.onnx"),
+            "precision": "fp16",
+            "tokens": "tokens.txt", "token_count": 7832
+        }))
+        .unwrap();
+        red.validate().unwrap();
+
+        let punc: PuncManifest = serde_json::from_value(serde_json::json!({
+            "schema": 3, "kind": "punc",
+            "model": artifact("model.onnx"),
+            "vocab": "vocab.txt", "labels": "labels.json", "max_tokens": 400
+        }))
+        .unwrap();
+        punc.validate().unwrap();
     }
 
     #[test]
-    fn rejects_old_schema() {
-        let mut value = sense_voice_manifest();
-        value["schema"] = serde_json::json!(2);
-        let manifest: ModelManifest = serde_json::from_value(value).unwrap();
-        assert!(manifest.validate().is_err());
-    }
-
-    #[test]
-    fn rejects_builtin_package_with_punc() {
-        let mut value = sense_voice_manifest();
-        value["punc"] = serde_json::json!({
-            "model": {"model": "punc/model.onnx", "sha256": "0".repeat(64),
-                       "inputs": [{"name": "input_ids", "dtype": "int64", "shape": [1, -1]}],
-                       "outputs": [{"name": "logits", "dtype": "float32", "shape": [1, -1, -1]}]},
-            "vocab": "punc/vocab.txt",
-            "labels": "punc/labels.json",
-            "max_tokens": 400
+    fn rejects_wrong_kind_and_old_schema() {
+        let value = serde_json::json!({
+            "schema": 3, "kind": "punc",
+            "fbank": {"num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "hamming"},
+            "model": artifact("stream-vad.onnx")
         });
-        let manifest: ModelManifest = serde_json::from_value(value).unwrap();
-        assert!(manifest.validate().is_err());
+        let vad: VadManifest = serde_json::from_value(value).unwrap();
+        assert!(vad.validate().is_err());
+
+        let value = serde_json::json!({
+            "schema": 2, "kind": "vad",
+            "fbank": {"num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "hamming"},
+            "model": artifact("stream-vad.onnx")
+        });
+        let vad: VadManifest = serde_json::from_value(value).unwrap();
+        assert!(vad.validate().is_err());
     }
 
     #[test]
@@ -605,93 +477,6 @@ mod tests {
         let dir = Path::new("/tmp/models");
         assert!(resolve_inside(dir, Path::new("../secret")).is_err());
         assert!(resolve_inside(dir, Path::new("/etc/passwd")).is_err());
-        assert!(resolve_inside(dir, Path::new("vad/model.onnx")).is_ok());
-    }
-
-    fn aed_manifest(runtime: &str) -> serde_json::Value {
-        serde_json::json!({
-            "schema": 3,
-            "display_name": "FireRedASR2-AED (GPU, FP16)",
-            "requires": ["sense-voice-2024-int8"],
-            "sample_rate": 16000,
-            "fbank": {"num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "povey"},
-            "max_segment_ms": 30000,
-            "vad": {
-                "model": "vad/stream-vad.onnx",
-                "sha256": "0".repeat(64),
-                "inputs": [{"name": "feat", "dtype": "float32", "shape": [1, -1, 80]}],
-                "outputs": [{"name": "probs", "dtype": "float32", "shape": [1, -1, 1]}]
-            },
-            "backend": {"kind": "worker", "runtime": runtime, "device": "auto",
-                         "min_vram_mb": 6144, "supports_partial": false,
-                         "load_timeout_ms": 120000, "request_timeout_ms": 60000},
-            "asr": {
-                "kind": "fire-red-aed",
-                "encoder": {"model": "asr/encoder.fp16.onnx", "sha256": "0".repeat(64),
-                             "inputs": [{"name": "x", "dtype": "float32", "shape": [1, -1, 80]},
-                                        {"name": "x_lens", "dtype": "int64", "shape": [1]}],
-                             "outputs": [{"name": "cross_k", "dtype": "float32", "shape": [-1, -1, -1, -1]},
-                                         {"name": "cross_v", "dtype": "float32", "shape": [-1, -1, -1, -1]}]},
-                "decoder": {"model": "asr/decoder.fp16.onnx", "sha256": "0".repeat(64),
-                             "inputs": [{"name": "tokens", "dtype": "int64", "shape": [1, 1]}],
-                             "outputs": [{"name": "logits", "dtype": "float32", "shape": [1, 1, 8667]}]},
-                "precision": "fp16",
-                "tokens": "asr/tokens.txt",
-                "token_count": 8667,
-                "options": {"punc": "external", "partial": false}
-            },
-            "punc": {
-                "model": {"model": "punc/model.onnx", "sha256": "0".repeat(64),
-                           "inputs": [{"name": "input_ids", "dtype": "int64", "shape": [1, -1]}],
-                           "outputs": [{"name": "logits", "dtype": "float32", "shape": [1, -1, -1]}]},
-                "vocab": "punc/vocab.txt",
-                "labels": "punc/labels.json",
-                "max_tokens": 400
-            }
-        })
-    }
-
-    #[test]
-    fn accepts_documented_aed_worker_package() {
-        let manifest: ModelManifest =
-            serde_json::from_value(aed_manifest("onnx-migraphx")).unwrap();
-        manifest.validate().unwrap();
-    }
-
-    #[test]
-    fn aed_requires_sense_voice_base_package() {
-        let mut value = aed_manifest("onnx-migraphx");
-        value["requires"] = serde_json::json!([]);
-        let manifest: ModelManifest = serde_json::from_value(value).unwrap();
-        assert!(manifest.validate().is_err());
-    }
-
-    #[test]
-    fn aed_rejects_int8_with_v2_token_count() {
-        let mut value = aed_manifest("onnx-migraphx");
-        value["asr"]["precision"] = serde_json::json!("int8");
-        let manifest: ModelManifest = serde_json::from_value(value).unwrap();
-        assert!(manifest.validate().is_err());
-    }
-
-    #[test]
-    fn accepts_temporary_fireredasr_v1_fp16_package() {
-        let mut value = aed_manifest("onnx-migraphx");
-        value["display_name"] = serde_json::json!("FireRedASR v1 (GPU, FP16)");
-        value["asr"]["token_count"] = serde_json::json!(7832);
-        let manifest: ModelManifest = serde_json::from_value(value).unwrap();
-        manifest.validate().unwrap();
-    }
-
-    #[test]
-    fn accepts_temporary_fireredasr_v1_int8_package() {
-        let mut value = aed_manifest("onnx-migraphx");
-        value["display_name"] = serde_json::json!("FireRedASR v1 (GPU, INT8)");
-        value["asr"]["precision"] = serde_json::json!("int8");
-        value["asr"]["token_count"] = serde_json::json!(7832);
-        value["asr"]["encoder"]["model"] = serde_json::json!("asr/encoder.int8.onnx");
-        value["asr"]["decoder"]["model"] = serde_json::json!("asr/decoder.int8.onnx");
-        let manifest: ModelManifest = serde_json::from_value(value).unwrap();
-        manifest.validate().unwrap();
+        assert!(resolve_inside(dir, Path::new("vad/stream-vad.onnx")).is_ok());
     }
 }

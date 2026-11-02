@@ -1,15 +1,13 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('sensevoice', 'firered')]
-    [string]$Profile = 'sensevoice',
+    [switch]$Gpu,
     [string]$ModelDir = (Join-Path $env:LOCALAPPDATA 'voime\models'),
     [string]$CacheDir = (Join-Path $env:LOCALAPPDATA 'voime\cache'),
     [string]$SourceDir = '',
-    [string]$SupportDir = '',
+    [string]$PuncSourceDir = '',
     [ValidateSet('v1', 'v2', 'auto')]
     [string]$AedVersion = 'v1',
-    [string]$Python = '',
-    [switch]$Activate
+    [string]$Python = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,19 +30,18 @@ if ($LASTEXITCODE -ne 0) {
 
 $arguments = @(
     (Join-Path $Root 'tools\install_models.py'),
-    '--profile', $Profile,
     '--model-root', $ModelDir,
-    '--cache-dir', $CacheDir
+    '--cache-dir', $CacheDir,
+    '--aed-version', $AedVersion
 )
+if ($Gpu) {
+    $arguments += '--gpu'
+}
 if ($SourceDir) {
     $arguments += @('--source-dir', $SourceDir)
 }
-if ($SupportDir) {
-    $arguments += @('--support-dir', $SupportDir)
-}
-$arguments += @('--aed-version', $AedVersion)
-if ($Activate) {
-    $arguments += '--activate'
+if ($PuncSourceDir) {
+    $arguments += @('--punc-source-dir', $PuncSourceDir)
 }
 
 & $Python @arguments

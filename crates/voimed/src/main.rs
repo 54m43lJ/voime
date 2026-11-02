@@ -10,7 +10,6 @@ use voime_log::vlog;
 use voimed::cli;
 use voimed::daemon::{self, Daemon, FinalRuntime};
 use voimed::ipc_server::{self, IpcServer};
-use voimed::models::ModelCatalog;
 
 fn main() -> ExitCode {
     if voime_log::init("voimed") {
@@ -40,7 +39,6 @@ fn main() -> ExitCode {
     }
 
     let args = Args {
-        model_dir: cli.model_dir,
         input_device: cli.input_device,
         threads: cli.threads,
         verbose: cli.verbose,
@@ -58,26 +56,29 @@ fn run(args: Args, endpoint: Endpoint) -> anyhow::Result<()> {
     let verbose = args.verbose;
     let config = config::resolve(args.clone()).context("初始化配置失败")?;
     vlog!(
-        "voimed 启动 endpoint={endpoint} model={} active={} threads={}",
-        config.model_dir.display(),
-        config.model_id,
+        "voimed 启动 endpoint={endpoint} models={} gpu_final={} threads={}",
+        config.model_root.display(),
+        config.gpu_final(),
         config.threads
     );
     if verbose {
         eprintln!(
-            "voimed: 模型 {}（{}），端点 {}，线程 {}",
-            config.model_dir.display(),
-            config.model_id,
+            "voimed: 模型根目录 {}，Final={}，端点 {}，线程 {}",
+            config.model_root.display(),
+            if config.gpu_final() {
+                "FireRed AED (GPU)"
+            } else {
+                "SenseVoice (CPU)"
+            },
             endpoint,
             config.threads
         );
     }
 
-    let models = ModelCatalog::scan(&config.model_root).context("扫描模型目录失败")?;
     let factory = SessionFactory::new(config.threads).context("初始化 ONNX Runtime 失败")?;
     let (audio_tx, audio_rx) = crossbeam_channel::bounded(AUDIO_CHANNEL_CAPACITY);
     let (config, final_runtime, worker) =
-        daemon::build_runtime(&config, args, factory, audio_rx).context("加载语音模型失败")?;
+        daemon::build_runtime(&config, factory, audio_rx).context("加载语音模型失败")?;
 
     let audio = match capture::start(config.input_device.as_deref(), audio_tx) {
         Ok(audio) => audio,
@@ -95,7 +96,7 @@ fn run(args: Args, endpoint: Endpoint) -> anyhow::Result<()> {
         }
     };
 
-    Daemon::new(config, final_runtime, models, worker, audio, ipc).run()
+    Daemon::new(config, final_runtime, worker, audio, ipc).run()
 }
 
 fn stop_audio(audio: CaptureHandle) {

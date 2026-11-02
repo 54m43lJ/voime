@@ -5,7 +5,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include <fcitx-utils/event.h>
 
@@ -30,23 +29,9 @@ enum class ServerMessageType {
     Final,
     HistoryCleared,
     Status,
-    Models,
-    ModelSelected,
-    BackendState,
     Error,
     Bye,
     Unknown,
-};
-
-struct ModelInfo {
-    std::string id;
-    std::string displayName;
-    std::string kind;
-    std::optional<std::string> runtime;
-    std::optional<std::string> device;
-    bool available = false;
-    bool active = false;
-    bool running = false;
 };
 
 struct ServerMessage {
@@ -60,11 +45,6 @@ struct ServerMessage {
     std::optional<std::string> hotkey;
     std::string errorCode;
     std::string errorMessage;
-    std::string modelId;
-    std::vector<ModelInfo> models;
-    std::optional<ModelInfo> model;
-    std::string backendPhase;
-    std::optional<std::string> backendMessage;
 };
 
 std::string defaultSocketPath();
@@ -83,9 +63,6 @@ public:
     void start(uint64_t segmentId, TriggerSource source);
     void stop(uint64_t segmentId, TriggerSource source);
     void toggle(uint64_t segmentId, TriggerSource source);
-    void listModels();
-    void setModel(const std::string &packageId);
-    void restartBackend();
     bool connected() const { return fd_ >= 0; }
     void onReadable();
 

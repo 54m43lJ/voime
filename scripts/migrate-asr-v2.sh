@@ -6,14 +6,14 @@ set -euo pipefail
 
 apply=0
 force=0
-profile="sensevoice"
+gpu=0
 model_root="${XDG_DATA_HOME:-$HOME/.local/share}/voime/models"
 config_dir="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 usage() {
   cat >&2 <<'EOF'
 usage: migrate-asr-v2.sh [--dry-run] [--apply] [--force]
-                         [--profile sensevoice|firered]
+                         [--gpu]
                          [--model-root DIR]
 
 Without --apply the script only prints the planned actions.
@@ -26,17 +26,12 @@ while [ $# -gt 0 ]; do
     --dry-run) apply=0; shift ;;
     --apply) apply=1; shift ;;
     --force) force=1; shift ;;
-    --profile) profile="${2:-}"; shift 2 ;;
+    --gpu) gpu=1; shift ;;
     --model-root) model_root="${2:-}"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "migrate-asr-v2: unknown argument: $1" >&2; usage ;;
   esac
 done
-
-case "$profile" in
-  sensevoice|firered) ;;
-  *) echo "migrate-asr-v2: invalid profile $profile" >&2; exit 2 ;;
-esac
 
 marker="$model_root/.migrate-asr-v2"
 if [ -f "$marker" ] && [ "$force" -eq 0 ]; then
@@ -51,14 +46,13 @@ fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup="$model_root.backup-$timestamp"
-echo "profile:    $profile"
+echo "gpu:        $gpu"
 echo "model root: $model_root"
 echo "backup:     $backup"
 echo "config:     $config_dir/fcitx5/conf/voime.conf"
-echo "active:     $model_root/active"
 
 if [ "$apply" -eq 0 ]; then
-  echo "dry-run: 将备份旧模型目录，安装 schema 3 模型包，写入 active 并写迁移标记"
+  echo "dry-run: 将备份旧模型目录，安装 VAD + SenseVoice（可选 GPU），并写迁移标记"
   exit 0
 fi
 
@@ -71,8 +65,11 @@ if [ -f "$config_dir/fcitx5/conf/voime.conf" ]; then
   cp -a "$config_dir/fcitx5/conf/voime.conf" "$backup/config/voime.conf"
 fi
 
-"$(dirname "${BASH_SOURCE[0]}")/install_models.sh" \
-  --profile "$profile" --model-root "$model_root" --activate
+install_args=(--model-root "$model_root")
+if [ "$gpu" -eq 1 ]; then
+  install_args+=(--gpu)
+fi
+"$(dirname "${BASH_SOURCE[0]}")/install_models.sh" "${install_args[@]}"
 
 printf '%s\n' "$timestamp" >"$marker"
 echo "migrate-asr-v2: 完成；备份位于 $backup"

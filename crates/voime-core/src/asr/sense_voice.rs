@@ -5,7 +5,7 @@ use ort::value::Tensor;
 use crate::asr::r#final::AsrOutput;
 use crate::asr::tokenizer::AsrTokenizer;
 use crate::infer::session::{dtype_is_f32, dtype_is_i32, SessionFactory};
-use crate::model::{AsrArtifact, PuncPolicy};
+use crate::model::SenseVoiceManifest;
 
 /// SenseVoice prepends four CTC tokens: language, emotion, event and text
 /// normalization. They are metadata, not transcript text.
@@ -32,13 +32,10 @@ pub struct SenseVoice {
 
 impl SenseVoice {
     pub fn new_with_factory(
-        artifact: &AsrArtifact,
+        manifest: &SenseVoiceManifest,
         factory: &SessionFactory,
     ) -> anyhow::Result<Self> {
-        let model = artifact
-            .model
-            .as_ref()
-            .context("SenseVoice 清单缺少 asr.model")?;
+        let model = &manifest.model;
         let session = factory.build(model)?;
 
         let x = model
@@ -59,12 +56,12 @@ impl SenseVoice {
             .find(|spec| dtype_is_f32(&spec.dtype) && spec.shape.len() == 3)
             .context("SenseVoice 清单缺少 float32[1, T', V] 输出 logits")?;
 
-        let tokens = AsrTokenizer::load(&artifact.tokens)?;
-        if tokens.token_count() != artifact.token_count {
+        let tokens = AsrTokenizer::load(&manifest.tokens)?;
+        if tokens.token_count() != manifest.token_count {
             bail!(
                 "SenseVoice 词表条目 {} 与清单 token_count {} 不一致",
                 tokens.token_count(),
-                artifact.token_count
+                manifest.token_count
             );
         }
 
@@ -77,11 +74,11 @@ impl SenseVoice {
             bail!("SenseVoice LFR 参数必须大于 0");
         }
         let vocab_size = read_usize(&metadata, "vocab_size")?;
-        if vocab_size != artifact.token_count {
+        if vocab_size != manifest.token_count {
             bail!(
                 "SenseVoice vocab_size {} 与 token_count {} 不一致",
                 vocab_size,
-                artifact.token_count
+                manifest.token_count
             );
         }
         if logits.shape.last().copied().unwrap_or(0) >= 0
@@ -125,7 +122,7 @@ impl SenseVoice {
         ] {
             let _ = read_i32(&metadata, key)?;
         }
-        let language_id = language_id(&metadata, artifact.options.language.as_deref())?;
+        let language_id = language_id(&metadata, manifest.options.language.as_deref())?;
 
         let neg_mean = metadata
             .custom("neg_mean")
@@ -144,9 +141,6 @@ impl SenseVoice {
                 expected
             );
         }
-        if artifact.options.punc == PuncPolicy::Builtin && !artifact.options.use_itn {
-            bail!("SenseVoice builtin 标点要求 use_itn = true");
-        }
         drop(metadata);
 
         Ok(Self {
@@ -159,13 +153,13 @@ impl SenseVoice {
             language_id,
             with_itn_id,
             without_itn_id,
-            use_itn: artifact.options.use_itn,
+            use_itn: manifest.options.use_itn,
             x_name: x.name.clone(),
             x_length_name: x_length.name.clone(),
             language_name: language.name.clone(),
             text_norm_name: text_norm.name.clone(),
             logits_name: logits.name.clone(),
-            token_count: artifact.token_count,
+            token_count: manifest.token_count,
         })
     }
 

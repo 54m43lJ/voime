@@ -3,7 +3,7 @@ use anyhow::Context;
 use crate::asr::features::{Fbank, FbankConfig};
 use crate::asr::sense_voice::SenseVoice;
 use crate::infer::session::SessionFactory;
-use crate::model::{AsrArtifact, PuncPolicy};
+use crate::model::{PuncPolicy, SenseVoiceManifest};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AsrOutput {
@@ -25,12 +25,12 @@ pub struct SenseVoiceBackend {
 
 impl SenseVoiceBackend {
     pub fn new_with_factory(
-        artifact: &AsrArtifact,
+        manifest: &SenseVoiceManifest,
         factory: &SessionFactory,
         fbank: FbankConfig,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            sense: SenseVoice::new_with_factory(artifact, factory)?,
+            sense: SenseVoice::new_with_factory(manifest, factory)?,
             fbank,
         })
     }

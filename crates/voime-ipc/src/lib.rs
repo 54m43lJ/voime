@@ -10,7 +10,7 @@ use anyhow::{bail, Context};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 /// Incremented whenever an existing message changes shape.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// One JSON line may not exceed this many bytes.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -64,26 +64,6 @@ pub enum Phase {
 pub enum FrontendState {
     Connected,
     Disconnected,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum BackendPhase {
-    Restarting,
-    Ready,
-    Failed,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ModelInfo {
-    pub id: String,
-    pub display_name: String,
-    pub kind: String,
-    pub runtime: Option<String>,
-    pub device: Option<String>,
-    pub available: bool,
-    pub active: bool,
-    pub running: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -141,11 +121,6 @@ pub enum ClientMessage {
         segment_id: u64,
         source: TriggerSource,
     },
-    ListModels {},
-    SetModel {
-        package_id: String,
-    },
-    RestartBackend {},
     ClearHistory {},
     Status {},
     Quit {},
@@ -177,17 +152,6 @@ pub enum ServerMessage {
     Final {
         segment_id: u64,
         text: String,
-    },
-    Models {
-        models: Vec<ModelInfo>,
-    },
-    ModelSelected {
-        package_id: String,
-    },
-    BackendState {
-        phase: BackendPhase,
-        model: Option<ModelInfo>,
-        message: Option<String>,
     },
     HistoryCleared {},
     Status {
@@ -269,30 +233,8 @@ mod tests {
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.starts_with(r#"{"Hello":"#));
         assert!(text.contains(r#""role":"frontend""#));
-        assert!(text.contains(r#""version":3"#));
+        assert!(text.contains(r#""version":4"#));
         assert!(text.ends_with("}\n"));
-    }
-
-    #[test]
-    fn round_trips_models_and_backend_state() {
-        let message = ServerMessage::BackendState {
-            phase: BackendPhase::Ready,
-            model: Some(ModelInfo {
-                id: "fire-red-aed-gpu".to_string(),
-                display_name: "FireRedASR2-AED".to_string(),
-                kind: "fire-red-aed".to_string(),
-                runtime: Some("onnx-migraphx".to_string()),
-                device: Some("auto".to_string()),
-                available: true,
-                active: true,
-                running: true,
-            }),
-            message: None,
-        };
-        let bytes = encode_message(&message).unwrap();
-        assert!(String::from_utf8(bytes)
-            .unwrap()
-            .contains(r#""phase":"ready""#));
     }
 
     #[test]
@@ -315,14 +257,14 @@ mod tests {
     #[test]
     fn unit_messages_are_json_objects_with_an_external_tag() {
         let text =
-            String::from_utf8(encode_message(&ClientMessage::ListModels {}).unwrap()).unwrap();
-        assert_eq!(text, "{\"ListModels\":{}}\n");
+            String::from_utf8(encode_message(&ClientMessage::ClearHistory {}).unwrap()).unwrap();
+        assert_eq!(text, "{\"ClearHistory\":{}}\n");
         let text = String::from_utf8(encode_message(&ServerMessage::Bye {}).unwrap()).unwrap();
         assert_eq!(text, "{\"Bye\":{}}\n");
     }
 
     #[test]
-    fn protocol_version_is_three() {
-        assert_eq!(PROTOCOL_VERSION, 3);
+    fn protocol_version_is_four() {
+        assert_eq!(PROTOCOL_VERSION, 4);
     }
 }

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Install Voime model profiles.
+"""Install Voime model directories.
 
-Profiles:
-  sensevoice  fixed SenseVoice base package only; Final runs on CPU
-  firered     SenseVoice base + FireRedASR2-AED FP16 GPU package
+Default: FireRedVAD + SenseVoice (`models/vad`, `models/sense-voice`).
+With --gpu: also install FireRed AED + FireRedPunc
+(`models/fire-red-aed`, `models/punc`).
 
-The runtime never calls this script. `scripts/install_models.sh` is the
-supported entry point; it only requires Python 3.10+ and network access.
+The daemon always loads VAD and SenseVoice; the GPU pair is used as Final only
+when both directories exist.
 """
 
 from __future__ import annotations
@@ -52,11 +52,7 @@ def default_cache_dir() -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--profile",
-        choices=["sensevoice", "firered"],
-        default="sensevoice",
-    )
+    parser.add_argument("--gpu", action="store_true", help="also install FireRed AED + Punc")
     parser.add_argument(
         "--model-root",
         "--model-dir",
@@ -65,72 +61,62 @@ def main(argv: list[str] | None = None) -> int:
         default=default_model_root(),
     )
     parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
-    parser.add_argument("--source-dir", type=Path)
-    parser.add_argument("--support-dir", type=Path)
+    parser.add_argument("--source-dir", type=Path, help="local exported FireRed FP16 directory")
+    parser.add_argument(
+        "--punc-source-dir",
+        "--punc-dir",
+        dest="punc_source_dir",
+        type=Path,
+        help="directory containing punc/model.onnx, vocab.txt, labels.json",
+    )
     parser.add_argument(
         "--aed-version",
         choices=["v1", "v2", "auto"],
         default="v1",
         help="v1 = official FP16 package (temporary default), v2 = local fp16 export",
     )
-    parser.add_argument(
-        "--activate",
-        action="store_true",
-        help="write models/active; first install also activates by default",
-    )
     args = parser.parse_args(argv)
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from install_sensevoice import PACKAGE_ID, install as install_sensevoice
+    from install_sensevoice import install as install_sensevoice
+    from install_vad import install as install_vad
 
     root = args.model_root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
 
-    if args.profile == "sensevoice":
-        install_sensevoice(
-            model_root=root,
-            target=None,
-            cache_dir=args.cache_dir,
-            source_dir=args.source_dir,
-            activate=args.activate,
-        )
-        log("SenseVoice 安装完成；Final 使用 CPU SenseVoice")
+    install_vad(model_root=root, cache_dir=args.cache_dir, source_dir=args.source_dir)
+    install_sensevoice(model_root=root, cache_dir=args.cache_dir)
+    log("默认模型安装完成：VAD + SenseVoice（CPU Final）")
+
+    if not args.gpu:
         return 0
 
-    had_active = (root / "active").is_file()
-    base_manifest = root / PACKAGE_ID / "manifest.json"
-    if not base_manifest.is_file():
-        log("FireRed 档需要 SenseVoice 基础包，先安装 base")
-        install_sensevoice(
-            model_root=root,
-            target=None,
-            cache_dir=args.cache_dir,
-            source_dir=args.source_dir,
-            activate=args.activate,
-        )
-        if not had_active and not args.activate:
-            # Let the FireRed package be the first-install selection.
-            try:
-                (root / "active").unlink()
-            except FileNotFoundError:
-                pass
-    if args.source_dir is None and args.aed_version == "v2":
+    punc_source = args.punc_source_dir or args.source_dir
+    have_punc = (root / "punc" / "manifest.json").is_file()
+    if punc_source is None and not have_punc:
         fail(
-            "FireRed v2 需要 --source-dir 提供导出的 FP16 encoder / decoder；"
-            "临时 v1 可省略 --source-dir 自动下载官方 FP16 包"
+            "--gpu 需要 --punc-source-dir 指向导出的 FireRedPunc 目录"
+            "（model.onnx / vocab.txt / labels.json）；"
+            "如果 --source-dir 同时包含 punc/ 也可以复用它"
         )
-    from install_aed import install as install_aed
+    from install_firered import install as install_firered
+    from install_punc import install as install_punc
 
-    install_aed(
+    install_firered(
         model_root=root,
-        target=None,
-        source_dir=args.source_dir,
-        support_dir=args.support_dir,
         cache_dir=args.cache_dir,
+        source_dir=args.source_dir,
         variant=args.aed_version,
-        activate=args.activate,
     )
-    log("FireRed 安装完成；选择 GPU Final 后执行 voime ctl restart-backend")
+    if punc_source is not None:
+        install_punc(
+            model_root=root,
+            source_dir=punc_source,
+        )
+    else:
+        log("复用已安装的 models/punc")
+    log("GPU 模型安装完成：fire-red-aed + punc")
+    log("重启 voimed 后生效；启动时会自动选择 GPU Final")
     return 0
 
 

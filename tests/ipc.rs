@@ -36,11 +36,6 @@ fn framing_round_trips_all_documented_client_messages() {
         },
         ClientMessage::ClearHistory {},
         ClientMessage::Status {},
-        ClientMessage::ListModels {},
-        ClientMessage::SetModel {
-            package_id: "sense-voice-2024-int8".to_string(),
-        },
-        ClientMessage::RestartBackend {},
         ClientMessage::Quit {},
     ];
     for message in messages {

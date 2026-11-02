@@ -4,18 +4,16 @@ use std::time::Duration;
 use anyhow::Context;
 use voime_core::asr::r#final::{FinalBackend, SenseVoiceBackend};
 use voime_core::audio::capture::CaptureHandle;
-use voime_core::config::{self, Args, Config};
+use voime_core::config::Config;
 use voime_core::infer::session::SessionFactory;
-use voime_core::model::BackendKind;
+use voime_core::model::PuncPolicy;
 use voime_core::pipeline::{self, FinalUpdate, Pipeline, PipelineEvent};
 use voime_ipc::{
-    BackendPhase, ClientMessage, ErrorCode, FrontendState, Mode, ModelInfo, Phase, Role,
-    ServerMessage, TriggerSource,
+    ClientMessage, ErrorCode, FrontendState, Mode, Phase, Role, ServerMessage, TriggerSource,
 };
 use voime_log::vlog;
 
 use crate::ipc_server::{IpcServer, ServerEvent};
-use crate::models::ModelCatalog;
 use crate::state::State;
 use crate::worker::WorkerBackend;
 
@@ -25,7 +23,6 @@ type FinalBuild = (Box<dyn FinalBackend>, Option<FinalHandle>);
 pub struct FinalRuntime {
     pub pipeline: Option<Pipeline>,
     factory: SessionFactory,
-    args: Args,
     fallback: bool,
 }
 
@@ -33,47 +30,40 @@ pub struct Daemon {
     config: Config,
     state: State,
     final_runtime: FinalRuntime,
-    models: ModelCatalog,
     worker: Option<FinalHandle>,
     audio: CaptureHandle,
     ipc: IpcServer,
-    running_id: String,
-    gpu_fallback: bool,
     current_segment: Option<u64>,
     next_segment: u64,
     pending_mode: Option<Mode>,
     pending_stop: bool,
     session_active: bool,
+    gpu_fallback: bool,
     shutdown: bool,
     fatal: Option<anyhow::Error>,
 }
 
-/// Builds the Final backend, pipeline and (for worker packages) the GPU
+/// Builds the Final backend, pipeline and (for the GPU path) the worker
 /// process. Audio capture is started by the caller after this succeeds.
 pub fn build_runtime(
     config: &Config,
-    args: Args,
     factory: SessionFactory,
     audio_rx: crossbeam_channel::Receiver<voime_core::audio::capture::AudioChunk>,
 ) -> anyhow::Result<(Config, FinalRuntime, Option<FinalHandle>)> {
     let (backend, worker, fallback) = match build_final(config, &factory) {
         Ok((backend, worker)) => (backend, worker, false),
-        Err(error) if config.manifest.backend.kind == BackendKind::Worker => {
+        Err(error) if config.gpu_final() => {
             vlog!("GPU Final 初始化失败，回退 CPU SenseVoice：{error:#}");
-            let backend = SenseVoiceBackend::new_with_factory(
-                &config.preview_manifest.asr,
-                &factory,
-                pipeline::fbank_config(&config.preview_manifest.fbank),
-            )
-            .context("GPU 不可用且 CPU SenseVoice 回退失败")?;
-            (Box::new(backend) as Box<dyn FinalBackend>, None, true)
+            let backend = build_cpu_final(config, &factory)
+                .context("GPU 不可用且 CPU SenseVoice 回退失败")?;
+            (backend, None, true)
         }
         Err(error) => return Err(error),
     };
     let runtime_config = if fallback {
         let mut runtime_config = config.clone();
-        runtime_config.model_id = voime_core::model::PREVIEW_PACKAGE_ID.to_string();
-        runtime_config.manifest = config.preview_manifest.clone();
+        runtime_config.fire_red = None;
+        runtime_config.punc = None;
         runtime_config
     } else {
         config.clone()
@@ -85,33 +75,35 @@ pub fn build_runtime(
         FinalRuntime {
             pipeline: Some(pipeline),
             factory,
-            args,
             fallback,
         },
         worker,
     ))
 }
 
+fn build_cpu_final(
+    config: &Config,
+    factory: &SessionFactory,
+) -> anyhow::Result<Box<dyn FinalBackend>> {
+    let backend = SenseVoiceBackend::new_with_factory(
+        &config.sense_voice_manifest,
+        factory,
+        pipeline::fbank_config(&config.sense_voice_manifest.fbank),
+    )
+    .context("加载 CPU SenseVoice Final 失败")?;
+    Ok(Box::new(backend))
+}
+
 fn build_final(config: &Config, factory: &SessionFactory) -> anyhow::Result<FinalBuild> {
-    match config.manifest.backend.kind {
-        BackendKind::Builtin => {
-            let backend = SenseVoiceBackend::new_with_factory(
-                &config.manifest.asr,
-                factory,
-                pipeline::fbank_config(&config.manifest.fbank),
-            )
-            .context("加载 CPU SenseVoice Final 失败")?;
-            Ok((Box::new(backend), None))
-        }
-        BackendKind::Worker => {
-            let device = config.manifest.backend.device.as_deref().unwrap_or("auto");
-            let mut worker = WorkerBackend::spawn(&config.model_dir, device)
-                .context("启动 GPU Final worker 失败")?;
-            worker.handshake().context("GPU Final worker 握手失败")?;
-            let handle = Arc::new(Mutex::new(worker));
-            Ok((Box::new(WorkerFinal(Arc::clone(&handle))), Some(handle)))
-        }
+    if !config.gpu_final() {
+        return Ok((build_cpu_final(config, factory)?, None));
     }
+    let fire_red = config.fire_red.as_ref().context("FireRed 目录缺失")?;
+    let mut worker =
+        WorkerBackend::spawn(&fire_red.dir, "auto").context("启动 GPU Final worker 失败")?;
+    worker.handshake().context("GPU Final worker 握手失败")?;
+    let handle = Arc::new(Mutex::new(worker));
+    Ok((Box::new(WorkerFinal(Arc::clone(&handle))), Some(handle)))
 }
 
 struct WorkerFinal(FinalHandle);
@@ -146,28 +138,24 @@ impl Daemon {
     pub fn new(
         config: Config,
         final_runtime: FinalRuntime,
-        models: ModelCatalog,
         worker: Option<FinalHandle>,
         audio: CaptureHandle,
         ipc: IpcServer,
     ) -> Self {
-        let running_id = config.model_id.clone();
         let gpu_fallback = final_runtime.fallback;
         Self {
             config,
             state: State::default(),
             final_runtime,
-            models,
             worker,
             audio,
             ipc,
-            running_id,
-            gpu_fallback,
             current_segment: None,
             next_segment: 1,
             pending_mode: None,
             pending_stop: false,
             session_active: false,
+            gpu_fallback,
             shutdown: false,
             fatal: None,
         }
@@ -354,23 +342,6 @@ impl Daemon {
                 Phase::Recording => self.request_stop(client_id, segment_id),
                 Phase::Finalizing => self.send_error(client_id, ErrorCode::Busy, "正在识别"),
             },
-            ClientMessage::ListModels {} => {
-                let models = self.list_models();
-                self.ipc
-                    .send_to(client_id, &ServerMessage::Models { models });
-            }
-            ClientMessage::SetModel { package_id } => {
-                if !self.can_manage_backend(client_id) {
-                    return;
-                }
-                self.set_model(client_id, package_id);
-            }
-            ClientMessage::RestartBackend {} => {
-                if !self.can_manage_backend(client_id) {
-                    return;
-                }
-                self.restart_backend(client_id);
-            }
             ClientMessage::ClearHistory {} => {
                 self.state.clear_history();
                 self.ipc.broadcast(&ServerMessage::HistoryCleared {});
@@ -395,233 +366,6 @@ impl Daemon {
                 }
                 self.shutdown = true;
             }
-        }
-    }
-
-    fn can_manage_backend(&self, client_id: u64) -> bool {
-        match self.ipc.role(client_id) {
-            Some(Role::Frontend | Role::Control) => true,
-            _ => {
-                self.send_error(
-                    client_id,
-                    ErrorCode::InvalidMessage,
-                    "只有前端或 Control 可以管理模型",
-                );
-                false
-            }
-        }
-    }
-
-    fn list_models(&self) -> Vec<ModelInfo> {
-        if self.config.explicit_final {
-            return vec![self.current_model_info()];
-        }
-        let mut models = match ModelCatalog::scan(&self.config.model_root) {
-            Ok(catalog) => catalog.list(),
-            Err(error) => {
-                vlog!("扫描模型目录失败：{error:#}");
-                Vec::new()
-            }
-        };
-        for model in &mut models {
-            model.running = model.id == self.running_id;
-        }
-        if !models.iter().any(|model| model.id == self.running_id) {
-            models.insert(0, self.current_model_info());
-        }
-        models
-    }
-
-    fn current_model_info(&self) -> ModelInfo {
-        if self.gpu_fallback {
-            return ModelInfo {
-                id: voime_core::model::PREVIEW_PACKAGE_ID.to_string(),
-                display_name: self.config.preview_manifest.display_name.clone(),
-                kind: "sense-voice".to_string(),
-                runtime: None,
-                device: None,
-                available: true,
-                active: false,
-                running: true,
-            };
-        }
-        ModelInfo {
-            id: self.config.model_id.clone(),
-            display_name: self.config.manifest.display_name.clone(),
-            kind: self.config.manifest.asr.kind.as_str().to_string(),
-            runtime: self.config.manifest.backend.runtime.clone(),
-            device: self.config.manifest.backend.device.clone(),
-            available: true,
-            active: self.config.explicit_final
-                || config::read_active_id(&self.config.model_root)
-                    .ok()
-                    .flatten()
-                    .as_deref()
-                    == Some(self.config.model_id.as_str()),
-            running: true,
-        }
-    }
-
-    fn set_model(&mut self, client_id: u64, package_id: String) {
-        if self.config.explicit_final {
-            self.send_error(
-                client_id,
-                ErrorCode::InvalidMessage,
-                "启动参数 --model-dir 固定了模型，不能通过界面切换",
-            );
-            return;
-        }
-        match ModelCatalog::scan(&self.config.model_root) {
-            Ok(catalog) => {
-                if let Some(entry) = catalog.find(&package_id) {
-                    if !entry.available {
-                        self.send_error(
-                            client_id,
-                            ErrorCode::Unavailable,
-                            "GPU Final 不可用；请安装 runtime / 检查驱动与显存",
-                        );
-                        return;
-                    }
-                }
-            }
-            Err(error) => {
-                self.send_error(
-                    client_id,
-                    ErrorCode::Internal,
-                    &format!("扫描模型目录失败：{error:#}"),
-                );
-                return;
-            }
-        }
-        match self.models.set_active(&package_id) {
-            Ok(()) => {
-                vlog!("模型选择已写入 active：{package_id}");
-                self.ipc
-                    .send_to(client_id, &ServerMessage::ModelSelected { package_id });
-            }
-            Err(error) => {
-                self.send_error(
-                    client_id,
-                    ErrorCode::InvalidMessage,
-                    &format!("无法选择模型包：{error:#}"),
-                );
-            }
-        }
-    }
-
-    fn restart_backend(&mut self, client_id: u64) {
-        if self.state.phase != Phase::Idle || self.current_segment.is_some() {
-            self.send_error(client_id, ErrorCode::Busy, "录音或识别进行中，不能重启后端");
-            return;
-        }
-        let old_model_id = self.config.model_id.clone();
-        self.ipc.broadcast(&ServerMessage::BackendState {
-            phase: BackendPhase::Restarting,
-            model: None,
-            message: None,
-        });
-
-        let new_config =
-            match config::resolve_at(&self.config.model_root, self.final_runtime.args.clone()) {
-                Ok(config) => config,
-                Err(error) => {
-                    self.rollback_active(&old_model_id);
-                    self.backend_failed(client_id, format!("加载新模型包失败：{error:#}"));
-                    return;
-                }
-            };
-        let (backend, worker, punc) = match build_final(&new_config, &self.final_runtime.factory) {
-            Ok((backend, worker)) => {
-                let punc =
-                    match pipeline::load_punc(&new_config.manifest, &self.final_runtime.factory) {
-                        Ok(punc) => punc,
-                        Err(error) => {
-                            if let Some(worker) = worker.as_ref() {
-                                if let Ok(mut worker) = worker.lock() {
-                                    let _ = worker.shutdown();
-                                }
-                            }
-                            self.rollback_active(&old_model_id);
-                            self.backend_failed(client_id, format!("加载标点模型失败：{error:#}"));
-                            return;
-                        }
-                    };
-                (backend, worker, punc)
-            }
-            Err(error) => {
-                self.rollback_active(&old_model_id);
-                self.backend_failed(client_id, format!("启动新 Final 失败：{error:#}"));
-                return;
-            }
-        };
-        let update = FinalUpdate {
-            backend,
-            punc,
-            punc_policy: new_config.manifest.asr.options.punc,
-            max_segment_ms: new_config.manifest.max_segment_ms,
-        };
-        let Some(pipeline) = self.final_runtime.pipeline.as_ref() else {
-            self.backend_failed(client_id, "pipeline 未运行".to_string());
-            return;
-        };
-        if let Err(error) = pipeline.replace_final(update) {
-            if let Some(worker) = worker.as_ref() {
-                if let Ok(mut worker) = worker.lock() {
-                    let _ = worker.shutdown();
-                }
-            }
-            self.rollback_active(&old_model_id);
-            self.backend_failed(client_id, format!("切换 Final 失败：{error:#}"));
-            return;
-        }
-
-        let old_worker = std::mem::replace(&mut self.worker, worker);
-        self.config = new_config;
-        self.running_id = self.config.model_id.clone();
-        self.gpu_fallback = false;
-        if let Err(error) = self.models.refresh() {
-            vlog!("刷新模型目录失败：{error:#}");
-        }
-        if let Some(old_worker) = old_worker {
-            if let Ok(mut worker) = old_worker.lock() {
-                let _ = worker.shutdown();
-            }
-        }
-        self.state.phase = Phase::Idle;
-        self.state.partial = None;
-        self.current_segment = None;
-        self.pending_stop = false;
-        self.pending_mode = None;
-        self.session_active = false;
-        self.apply_pipeline_mode();
-        self.sync_audio();
-        vlog!("后端切换完成 -> {}", self.config.model_id);
-        self.ipc.broadcast(&ServerMessage::BackendState {
-            phase: BackendPhase::Ready,
-            model: Some(self.current_model_info()),
-            message: None,
-        });
-        self.broadcast_snapshot();
-    }
-
-    fn backend_failed(&self, client_id: u64, message: String) {
-        vlog!("重启后端失败：{message}");
-        self.ipc.broadcast(&ServerMessage::BackendState {
-            phase: BackendPhase::Failed,
-            model: Some(self.current_model_info()),
-            message: Some(message.clone()),
-        });
-        self.send_error(client_id, ErrorCode::Internal, &message);
-    }
-
-    fn rollback_active(&mut self, old_model_id: &str) {
-        if !self.config.explicit_final {
-            if let Err(error) = config::write_active_id(&self.config.model_root, old_model_id) {
-                vlog!("回滚 active 指针失败：{error:#}");
-            }
-        }
-        if let Err(error) = self.models.refresh() {
-            vlog!("回滚后刷新模型目录失败：{error:#}");
         }
     }
 
@@ -675,8 +419,6 @@ impl Daemon {
 
     fn request_stop(&mut self, client_id: u64, segment_id: u64) {
         if self.state.phase != Phase::Recording {
-            // Toggle may stop between a Final and the continuation
-            // SegmentStarted; remember it for the next Recording(true).
             vlog!(
                 "Stop 落在 phase={:?}，pending_stop 锁存 id={client_id}",
                 self.state.phase
@@ -797,11 +539,7 @@ impl Daemon {
         if let Ok(mut worker) = worker.lock() {
             let _ = worker.shutdown();
         }
-        let backend = match SenseVoiceBackend::new_with_factory(
-            &self.config.preview_manifest.asr,
-            &self.final_runtime.factory,
-            pipeline::fbank_config(&self.config.preview_manifest.fbank),
-        ) {
+        let backend = match build_cpu_final(&self.config, &self.final_runtime.factory) {
             Ok(backend) => backend,
             Err(error) => {
                 vlog!("GPU 回退 CPU 失败：{error:#}");
@@ -809,10 +547,10 @@ impl Daemon {
             }
         };
         let update = FinalUpdate {
-            backend: Box::new(backend),
+            backend,
             punc: None,
-            punc_policy: voime_core::model::PuncPolicy::Builtin,
-            max_segment_ms: self.config.preview_manifest.max_segment_ms,
+            punc_policy: PuncPolicy::Builtin,
+            max_segment_ms: self.config.sense_voice_manifest.max_segment_ms,
         };
         let Some(pipeline) = self.final_runtime.pipeline.as_ref() else {
             return;
@@ -820,13 +558,9 @@ impl Daemon {
         match pipeline.replace_final(update) {
             Ok(()) => {
                 self.gpu_fallback = true;
-                self.running_id = voime_core::model::PREVIEW_PACKAGE_ID.to_string();
+                self.config.fire_red = None;
+                self.config.punc = None;
                 vlog!("GPU Final 不可用，已回退 CPU SenseVoice");
-                self.ipc.broadcast(&ServerMessage::BackendState {
-                    phase: BackendPhase::Failed,
-                    model: Some(self.current_model_info()),
-                    message: Some("GPU Final 不可用，已回退 CPU SenseVoice".to_string()),
-                });
             }
             Err(error) => vlog!("切换 CPU Final 失败：{error:#}"),
         }

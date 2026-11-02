@@ -1,0 +1,56 @@
+{
+  "schema": 3,
+  "kind": "vad",
+  "fbank": {
+    "num_bins": 80,
+    "frame_ms": 25,
+    "shift_ms": 10,
+    "window_type": "hamming"
+  },
+  "model": {
+    "model": "stream-vad.onnx",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inputs": [
+      {
+        "name": "feat",
+        "dtype": "float32",
+        "shape": [
+          1,
+          -1,
+          80
+        ]
+      },
+      {
+        "name": "caches_in",
+        "dtype": "float32",
+        "shape": [
+          8,
+          1,
+          128,
+          19
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "probs",
+        "dtype": "float32",
+        "shape": [
+          1,
+          -1,
+          1
+        ]
+      },
+      {
+        "name": "caches_out",
+        "dtype": "float32",
+        "shape": [
+          8,
+          1,
+          128,
+          -1
+        ]
+      }
+    ]
+  }
+}

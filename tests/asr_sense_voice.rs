@@ -4,7 +4,7 @@ use voime_core::asr::r#final::{FinalBackend, SenseVoiceBackend};
 use voime_core::asr::sense_voice::{greedy_decode, parse_cmvn};
 use voime_core::asr::tokenizer::AsrTokenizer;
 use voime_core::infer::session::SessionFactory;
-use voime_core::model::{ModelManifest, MANIFEST_FILE};
+use voime_core::model::{SenseVoiceManifest, MANIFEST_FILE, SENSE_VOICE_DIR};
 use voime_core::pipeline::fbank_config;
 
 #[test]
@@ -43,17 +43,22 @@ fn cmvn_metadata_encodings() {
 /// graph. Without it the test is a no-op so normal `cargo test` stays offline.
 #[test]
 fn sense_voice_decodes_10_to_60_seconds_when_model_available() {
-    let Some(dir) = std::env::var_os("VOIME_ASR_MODEL_DIR").map(PathBuf::from) else {
+    let Some(root) = std::env::var_os("VOIME_ASR_MODEL_DIR").map(PathBuf::from) else {
         return;
     };
-    let mut manifest = ModelManifest::load(&dir.join(MANIFEST_FILE)).expect("manifest.json");
+    let dir = if root.join(MANIFEST_FILE).is_file() {
+        root
+    } else {
+        root.join(SENSE_VOICE_DIR)
+    };
+    let mut manifest = SenseVoiceManifest::load(&dir.join(MANIFEST_FILE)).expect("manifest.json");
     manifest
         .verify(&dir)
-        .expect("model package must match manifest");
+        .expect("model directory must match manifest");
     manifest.rebase(&dir).expect("rebase model paths");
     let factory = SessionFactory::new(2).expect("ORT");
     let mut backend =
-        SenseVoiceBackend::new_with_factory(&manifest.asr, &factory, fbank_config(&manifest.fbank))
+        SenseVoiceBackend::new_with_factory(&manifest, &factory, fbank_config(&manifest.fbank))
             .expect("SenseVoice session");
     for seconds in [10usize, 20, 30, 60] {
         let samples = vec![0.0f32; seconds * 16_000];

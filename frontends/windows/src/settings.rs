@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
@@ -112,12 +112,6 @@ struct SettingsApp {
     saving: bool,
     daemon_hint: Option<String>,
     doctor: Option<DoctorState>,
-    models: Vec<crate::models::ModelOption>,
-    selected_model: String,
-    active_model: Option<String>,
-    model_pending: bool,
-    model_pending_at: Option<Instant>,
-    model_notice: Option<Notice>,
 }
 
 impl SettingsApp {
@@ -127,12 +121,6 @@ impl SettingsApp {
         sender: Sender<SettingsAction>,
         focus_hotkey: bool,
     ) -> Self {
-        let models = crate::models::scan();
-        let active_model = crate::models::read_active().ok().flatten();
-        let selected_model = active_model
-            .clone()
-            .or_else(|| models.first().map(|model| model.id.clone()))
-            .unwrap_or_default();
         Self {
             sender,
             status,
@@ -148,12 +136,6 @@ impl SettingsApp {
             saving: false,
             daemon_hint: None,
             doctor: None,
-            models,
-            selected_model,
-            active_model,
-            model_pending: false,
-            model_pending_at: None,
-            model_notice: None,
         }
     }
 
@@ -358,18 +340,7 @@ impl eframe::App for SettingsApp {
             self.capture_modifiers = hotkey::modifier_state();
             ctx.request_repaint_after(Duration::from_millis(16));
         }
-        if self.model_pending
-            && self
-                .model_pending_at
-                .is_some_and(|started| started.elapsed() >= Duration::from_secs(15))
-        {
-            self.model_pending = false;
-            self.model_pending_at = None;
-        }
-        if self.saving
-            || self.model_pending
-            || matches!(self.doctor.as_ref(), Some(DoctorState::Running(_)))
-        {
+        if self.saving || matches!(self.doctor.as_ref(), Some(DoctorState::Running(_))) {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
         egui::CentralPanel::default()
@@ -394,8 +365,6 @@ impl eframe::App for SettingsApp {
                                 self.mode_section(ui);
                                 ui.add_space(10.0);
                                 self.hotkey_section(ui);
-                                ui.add_space(10.0);
-                                self.model_section(ui);
                                 if let Some(notice) = self.notice.as_ref() {
                                     ui.add_space(8.0);
                                     self.notice(ui, notice);
@@ -590,103 +559,6 @@ impl SettingsApp {
                 .size(12.0)
                 .color(ui.visuals().weak_text_color()),
         );
-    }
-
-    fn model_section(&mut self, ui: &mut egui::Ui) {
-        section_title(ui, "模型");
-        ui.add_space(6.0);
-        if self.models.is_empty() {
-            ui.label(
-                egui::RichText::new("未找到已安装的模型包；请先运行安装脚本。")
-                    .size(12.5)
-                    .color(ui.visuals().weak_text_color()),
-            );
-            return;
-        }
-        let selected_label = self
-            .models
-            .iter()
-            .find(|model| model.id == self.selected_model)
-            .map(|model| model.label.clone())
-            .unwrap_or_else(|| self.selected_model.clone());
-        let options: Vec<(String, String)> = self
-            .models
-            .iter()
-            .map(|model| (model.id.clone(), model.label.clone()))
-            .collect();
-        ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("voime-model")
-                .selected_text(selected_label)
-                .width((ui.available_width() - 128.0).max(180.0))
-                .show_ui(ui, |ui| {
-                    for (id, label) in &options {
-                        ui.selectable_value(&mut self.selected_model, id.clone(), label);
-                    }
-                });
-            if ui
-                .add_enabled(
-                    !self.model_pending && !self.selected_model.is_empty(),
-                    egui::Button::new("重启后端").corner_radius(8.0),
-                )
-                .clicked()
-            {
-                self.apply_model_selection();
-            }
-        });
-        ui.add_space(6.0);
-        let hint = if let Some(notice) = self.model_notice.as_ref() {
-            notice.text.clone()
-        } else if self.model_pending {
-            "已请求重启后端；录音中会被拒绝。".to_string()
-        } else if self.active_model.as_deref() != Some(self.selected_model.as_str()) {
-            "选择尚未应用；点击“重启后端”生效。".to_string()
-        } else {
-            format!("当前模型包：{}", self.selected_model)
-        };
-        let color = if self.model_notice.as_ref().is_some_and(|notice| notice.error) {
-            DANGER
-        } else {
-            ui.visuals().weak_text_color()
-        };
-        ui.label(egui::RichText::new(hint).size(12.0).color(color));
-        if let Some(package) = self.models.iter().find(|model| model.id == self.selected_model) {
-            ui.label(
-                egui::RichText::new(format!("后端类型：{}", package.kind))
-                    .size(12.0)
-                    .color(ui.visuals().weak_text_color()),
-            );
-        }
-    }
-
-    fn apply_model_selection(&mut self) {
-        if !self
-            .models
-            .iter()
-            .any(|model| model.id == self.selected_model)
-        {
-            self.model_notice = Some(Notice::error("所选模型包不存在，请重新安装"));
-            self.model_pending = false;
-            return;
-        }
-        if let Err(error) = crate::models::write_active(&self.selected_model) {
-            self.model_notice = Some(Notice::error(format!("写入模型选择失败：{error:#}")));
-            self.model_pending = false;
-            return;
-        }
-        self.active_model = Some(self.selected_model.clone());
-        if crate::tray::send_command(crate::tray::TrayCommand::RestartBackend) {
-            self.model_pending = true;
-            self.model_pending_at = Some(Instant::now());
-            self.model_notice = Some(Notice::info(
-                "已请求重启后端；若正在录音，请结束后再次点击。",
-            ));
-        } else {
-            self.model_pending = false;
-            self.model_pending_at = None;
-            self.model_notice = Some(Notice::info(
-                "已保存模型选择；托盘未运行，下次启动服务时生效。",
-            ));
-        }
     }
 
     fn options_section(&mut self, ui: &mut egui::Ui) {

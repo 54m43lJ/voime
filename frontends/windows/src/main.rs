@@ -7,7 +7,6 @@ mod diagnostics;
 mod hotkey;
 mod icon;
 mod ipc;
-mod models;
 mod paths;
 mod preview;
 mod settings;
@@ -434,22 +433,8 @@ impl Frontend {
                 }
                 _ => vlog!("daemon 错误（{code:?}）：{message}"),
             },
-            ServerMessage::Bye {} => self.on_disconnect(),
-            ServerMessage::BackendState {
-                phase,
-                model,
-                message,
-            } => {
-                vlog!(
-                    "后端状态 {phase:?} model={:?} message={:?}",
-                    model.map(|model| model.id),
-                    message
-                );
-            }
-            ServerMessage::HistoryCleared {}
-            | ServerMessage::Status { .. }
-            | ServerMessage::Models { .. }
-            | ServerMessage::ModelSelected { .. } => {}
+            ServerMessage::Bye => self.on_disconnect(),
+            ServerMessage::HistoryCleared | ServerMessage::Status { .. } => {}
         }
     }
 
@@ -831,16 +816,6 @@ impl Frontend {
 
     pub fn run_doctor(&mut self) {
         settings::show_text("Voime 诊断", &diagnostics::doctor_text());
-    }
-
-    pub fn restart_backend(&mut self) {
-        if self.ipc.is_none() {
-            vlog!("daemon 未连接，无法重启后端");
-            return;
-        }
-        if self.send(&ClientMessage::RestartBackend {}) {
-            vlog!("已请求重启 ASR 后端");
-        }
     }
 
     pub fn start_daemon(&mut self) {

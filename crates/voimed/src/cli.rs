@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use clap::Parser;
 
 #[derive(Debug, Parser)]
@@ -10,10 +8,6 @@ use clap::Parser;
     max_term_width = 100
 )]
 pub struct Cli {
-    /// 模型包目录（包含 manifest.json）
-    #[arg(long, value_name = "DIR")]
-    pub model_dir: Option<PathBuf>,
-
     /// 输入设备名称，按精确字符串匹配
     #[arg(long, value_name = "NAME")]
     pub input_device: Option<String>,

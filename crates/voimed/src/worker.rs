@@ -7,15 +7,14 @@ use anyhow::{bail, Context};
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 use serde::{Deserialize, Serialize};
 use voime_core::asr::r#final::{AsrOutput, FinalBackend};
-use voime_core::model::{ModelManifest, MANIFEST_FILE};
 use voime_log::vlog;
-
-use crate::models::worker_binary;
 
 /// Worker protocol is independent of the frontend IPC version.
 pub const WORKER_PROTOCOL_VERSION: u32 = 1;
 const MAX_HEADER_BYTES: u32 = 1024 * 1024;
 const MAX_AUDIO_BYTES: u32 = 64 * 1024 * 1024;
+const LOAD_TIMEOUT: Duration = Duration::from_secs(120);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Serialize)]
 enum Request {
@@ -91,9 +90,6 @@ pub struct WorkerBackend {
 impl WorkerBackend {
     /// Spawns `voime-gpu` for a Final package directory.
     pub fn spawn(manifest: &Path, device: &str) -> anyhow::Result<Self> {
-        let manifest_path = manifest.join(MANIFEST_FILE);
-        let manifest_json = ModelManifest::load(&manifest_path)
-            .with_context(|| format!("读取 worker 模型清单失败 {}", manifest_path.display()))?;
         let binary = worker_binary()
             .context("找不到 voime-gpu；请安装 GPU Final 二进制或设置 VOIME_GPU_BIN")?;
         let mut command = Command::new(&binary);
@@ -105,10 +101,8 @@ impl WorkerBackend {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(runtime) = manifest_json.backend.runtime.as_deref() {
-            if let Some(dir) = runtime_directory(runtime) {
-                command.env("ORT_DYLIB_PATH", dir);
-            }
+        if let Some(dir) = runtime_directory() {
+            command.env("ORT_DYLIB_PATH", dir);
         }
         #[cfg(unix)]
         {
@@ -162,10 +156,10 @@ impl WorkerBackend {
             next_id: 1,
             manifest_dir: manifest.to_path_buf(),
             device: device.to_string(),
-            language: manifest_json.asr.options.language.clone(),
-            use_itn: manifest_json.asr.options.use_itn,
-            load_timeout: Duration::from_millis(manifest_json.backend.load_timeout_ms),
-            request_timeout: Duration::from_millis(manifest_json.backend.request_timeout_ms),
+            language: None,
+            use_itn: false,
+            load_timeout: LOAD_TIMEOUT,
+            request_timeout: REQUEST_TIMEOUT,
         })
     }
 
@@ -327,16 +321,39 @@ impl Drop for WorkerBackend {
     }
 }
 
-fn runtime_directory(runtime: &str) -> Option<PathBuf> {
+pub fn worker_binary() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("VOIME_GPU_BIN") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let name = if cfg!(windows) {
+        "voime-gpu.exe"
+    } else {
+        "voime-gpu"
+    };
+    let sibling = exe.parent()?.join(name);
+    sibling.is_file().then_some(sibling)
+}
+
+fn runtime_directory() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("VOIME_GPU_RUNTIME_DIR") {
         let dir = PathBuf::from(dir);
         if dir.is_dir() {
             return Some(dir);
         }
     }
-    let base = std::env::var_os("VOIME_RUNTIME_DIR")?;
-    let dir = PathBuf::from(base).join(runtime);
-    dir.is_dir().then_some(dir)
+    let base = PathBuf::from(std::env::var_os("VOIME_RUNTIME_DIR")?);
+    let entries = std::fs::read_dir(&base).ok()?;
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if dir.is_dir() {
+            return Some(dir);
+        }
+    }
+    None
 }
 
 fn write_request_frame(

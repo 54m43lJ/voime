@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Context;
-use voime_ipc::{BackendPhase, ClientMessage, Role, ServerMessage, TriggerSource};
+use voime_ipc::{ClientMessage, Role, ServerMessage, TriggerSource};
 use voime_transport::{default_endpoint, Endpoint};
 
 use crate::app::App;
@@ -16,7 +16,6 @@ use crate::cli::{Cli, Command, CtlAction};
 use crate::client::Client;
 
 const CTL_TIMEOUT: Duration = Duration::from_secs(3);
-const RESTART_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn main() -> ExitCode {
     let cli = parse_cli();
@@ -129,70 +128,6 @@ fn run_ctl_inner(endpoint: &Endpoint, action: CtlAction) -> anyhow::Result<()> {
                 }
             }
         }
-        CtlAction::Models => {
-            client.send(&ClientMessage::ListModels {})?;
-            loop {
-                match client.next_event_timeout(Duration::from_secs(5))? {
-                    ServerMessage::Models { models } => {
-                        print_models(&models);
-                        break;
-                    }
-                    ServerMessage::Error { code, message } => {
-                        anyhow::bail!("daemon 错误（{code:?}）：{message}");
-                    }
-                    ServerMessage::Bye {} => anyhow::bail!("daemon 已退出"),
-                    _ => {}
-                }
-            }
-        }
-        CtlAction::Use { package_id } => {
-            client.send(&ClientMessage::SetModel {
-                package_id: package_id.clone(),
-            })?;
-            loop {
-                match client.next_event_timeout(CTL_TIMEOUT)? {
-                    ServerMessage::ModelSelected { package_id } => {
-                        println!("selected {package_id}（restart backend to apply）");
-                        break;
-                    }
-                    ServerMessage::Error { code, message } => {
-                        anyhow::bail!("daemon 错误（{code:?}）：{message}");
-                    }
-                    ServerMessage::Bye {} => anyhow::bail!("daemon 已退出"),
-                    _ => {}
-                }
-            }
-        }
-        CtlAction::RestartBackend => {
-            client.send(&ClientMessage::RestartBackend {})?;
-            loop {
-                match client.next_event_timeout(RESTART_TIMEOUT)? {
-                    ServerMessage::BackendState {
-                        phase,
-                        model,
-                        message,
-                    } => match phase {
-                        BackendPhase::Restarting => println!("backend restarting"),
-                        BackendPhase::Ready => {
-                            let id = model
-                                .map(|model| model.id)
-                                .unwrap_or_else(|| "-".to_string());
-                            println!("backend ready {id}");
-                            break;
-                        }
-                        BackendPhase::Failed => anyhow::bail!(
-                            "重启后端失败：{}",
-                            message.unwrap_or_else(|| "未知错误".to_string())
-                        ),
-                    },
-                    ServerMessage::Error { code, message } => {
-                        anyhow::bail!("daemon 错误（{code:?}）：{message}");
-                    }
-                    ServerMessage::Bye {} => anyhow::bail!("daemon 已退出"),
-                    _ => {}
-                }
-            }
-        }
         CtlAction::Clear => {
             client.send(&ClientMessage::ClearHistory {})?;
             loop {
@@ -239,30 +174,6 @@ fn print_state(message: ServerMessage) {
             eprintln!("voime: daemon 错误（{code:?}）：{message}");
         }
         _ => {}
-    }
-}
-
-fn print_models(models: &[voime_ipc::ModelInfo]) {
-    if models.is_empty() {
-        println!("没有已安装的 Final 模型包");
-        return;
-    }
-    for model in models {
-        let device = if model.runtime.as_deref() == Some("builtin") || model.runtime.is_none() {
-            "CPU"
-        } else {
-            "GPU"
-        };
-        let mut line = format!(
-            "{:<24} {:<26} {:<3} available={:<5} active={:<5} running={:<5}",
-            model.id, model.display_name, device, model.available, model.active, model.running
-        );
-        if !model.available {
-            if let Some(runtime) = model.runtime.as_deref() {
-                line.push_str(&format!(" runtime={runtime} unavailable"));
-            }
-        }
-        println!("{line}");
     }
 }
 

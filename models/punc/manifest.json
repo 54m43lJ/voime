@@ -1,0 +1,48 @@
+{
+  "schema": 3,
+  "kind": "punc",
+  "model": {
+    "model": "model.onnx",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inputs": [
+      {
+        "name": "input_ids",
+        "dtype": "int64",
+        "shape": [
+          1,
+          -1
+        ]
+      },
+      {
+        "name": "attention_mask",
+        "dtype": "int64",
+        "shape": [
+          1,
+          -1
+        ]
+      },
+      {
+        "name": "token_type_ids",
+        "dtype": "int64",
+        "shape": [
+          1,
+          -1
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "logits",
+        "dtype": "float32",
+        "shape": [
+          1,
+          -1,
+          -1
+        ]
+      }
+    ]
+  },
+  "vocab": "vocab.txt",
+  "labels": "labels.json",
+  "max_tokens": 400
+}

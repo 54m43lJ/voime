@@ -29,10 +29,6 @@ int main() {
     assert(parseTriggerSource("continuous") == TriggerSource::Continuous);
     assert(!parseTriggerSource("nope").has_value());
 
-    assert(modelRootPath().find("voime") != std::string::npos);
-    assert(!writeActiveModel("../escape"));
-    assert(!writeActiveModel("not-installed"));
-
     TargetRef target;
     assert(!target.focused());
     assert(target.get() == nullptr);

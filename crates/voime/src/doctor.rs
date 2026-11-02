@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use voime_core::audio::capture;
-use voime_core::config::{self, ACTIVE_FILE};
-use voime_core::model::{BackendKind, ModelManifest, MANIFEST_FILE, PREVIEW_PACKAGE_ID};
+use voime_core::config;
+use voime_core::model::{FIRE_RED_AED_DIR, MANIFEST_FILE, PUNC_DIR};
 use voime_ipc::{FrontendState, Role, ServerMessage};
 use voime_transport::Endpoint;
 
@@ -102,150 +102,108 @@ fn check_daemon(endpoint: &Endpoint, ok: &mut bool) -> Option<ServerMessage> {
 fn check_models(ok: &mut bool) {
     let root = config::default_model_root();
     println!("model: {}", root.display());
-    check_package(&root.join(PREVIEW_PACKAGE_ID), "SenseVoice 基础包", ok);
 
-    let active = match config::read_active_id(&root) {
-        Ok(Some(id)) => Some(id),
-        Ok(None) => {
-            println!(
-                "  FAIL 缺少 {}；Final 选择未知",
-                root.join(ACTIVE_FILE).display()
-            );
-            *ok = false;
-            None
-        }
-        Err(error) => {
-            println!("  FAIL 读取 active 失败：{error:#}");
-            *ok = false;
-            None
-        }
-    };
-    let Some(active) = active else {
-        return;
-    };
-    println!("  OK   active Final = {active}");
-    let Ok(dir) = config::resolve_package(&root, &active) else {
-        println!("  FAIL active 包名非法：{active}");
-        *ok = false;
-        return;
-    };
-    let Some(mut manifest) = check_package(&dir, "Final 包", ok) else {
-        return;
-    };
-    if let Err(error) = manifest.rebase(&dir) {
-        println!("  FAIL Final 路径重定位失败：{error:#}");
-        *ok = false;
-        return;
-    }
-    for required in &manifest.requires {
-        let required_dir = root.join(required);
-        if required_dir.join(MANIFEST_FILE).is_file() {
-            println!("  OK   requires {required}");
-        } else {
-            println!("  FAIL Final 缺少依赖 {required}");
-            *ok = false;
-        }
-    }
-}
-
-fn check_package(dir: &Path, label: &str, ok: &mut bool) -> Option<ModelManifest> {
-    let path = dir.join(MANIFEST_FILE);
-    match ModelManifest::load(&path) {
-        Ok(manifest) => match manifest.verify(dir) {
-            Ok(()) => {
-                println!("  OK   {label} {}", manifest.display_name);
-                Some(manifest)
-            }
+    let vad_dir = root.join(voime_core::model::VAD_DIR);
+    match voime_core::model::VadManifest::load(&vad_dir.join(MANIFEST_FILE)) {
+        Ok(manifest) => match manifest.verify(&vad_dir) {
+            Ok(()) => println!("  OK   VAD {}", vad_dir.display()),
             Err(error) => {
-                println!("  FAIL {label} 文件缺失或 SHA-256 不匹配：{error:#}");
+                println!("  FAIL VAD 校验失败：{error:#}");
                 *ok = false;
-                None
             }
         },
         Err(error) => {
-            println!("  FAIL 无法读取 {label}：{error:#}");
+            println!("  FAIL 无法读取 VAD 清单：{error:#}");
             *ok = false;
-            None
         }
     }
-}
 
-fn check_gpu(ok: &mut bool) {
-    println!("gpu:");
-    let root = config::default_model_root();
-    let active = config::read_active_id(&root).ok().flatten();
-    let mut worker_packages = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&root) {
-        for entry in entries.flatten() {
-            let path = entry.path().join(MANIFEST_FILE);
-            let Ok(manifest) = ModelManifest::load(&path) else {
-                continue;
-            };
-            if manifest.backend.kind == BackendKind::Worker {
-                let runtime = manifest.backend.runtime.clone().unwrap_or_default();
-                worker_packages.push((entry.file_name().to_string_lossy().to_string(), runtime));
+    let sense_dir = root.join(voime_core::model::SENSE_VOICE_DIR);
+    match voime_core::model::SenseVoiceManifest::load(&sense_dir.join(MANIFEST_FILE)) {
+        Ok(manifest) => match manifest.verify(&sense_dir) {
+            Ok(()) => println!("  OK   SenseVoice {}", sense_dir.display()),
+            Err(error) => {
+                println!("  FAIL SenseVoice 校验失败：{error:#}");
+                *ok = false;
+            }
+        },
+        Err(error) => {
+            println!("  FAIL 无法读取 SenseVoice 清单：{error:#}");
+            *ok = false;
+        }
+    }
+
+    let fire_red_dir = root.join(FIRE_RED_AED_DIR);
+    let punc_dir = root.join(PUNC_DIR);
+    let fire_red_present = fire_red_dir.join(MANIFEST_FILE).is_file();
+    let punc_present = punc_dir.join(MANIFEST_FILE).is_file();
+    match (fire_red_present, punc_present) {
+        (false, false) => println!("  OK   Final = CPU SenseVoice；未安装 GPU 组件"),
+        (true, true) => {
+            let mut fire_ok = true;
+            match voime_core::model::FireRedManifest::load(&fire_red_dir.join(MANIFEST_FILE)) {
+                Ok(manifest) => match manifest.verify(&fire_red_dir) {
+                    Ok(()) => println!("  OK   FireRed AED {}", fire_red_dir.display()),
+                    Err(error) => {
+                        println!("  FAIL FireRed AED 校验失败：{error:#}");
+                        fire_ok = false;
+                    }
+                },
+                Err(error) => {
+                    println!("  FAIL 无法读取 FireRed 清单：{error:#}");
+                    fire_ok = false;
+                }
+            }
+            match voime_core::model::PuncManifest::load(&punc_dir.join(MANIFEST_FILE)) {
+                Ok(manifest) => match manifest.verify(&punc_dir) {
+                    Ok(()) => println!("  OK   Punc {}", punc_dir.display()),
+                    Err(error) => {
+                        println!("  FAIL Punc 校验失败：{error:#}");
+                        *ok = false;
+                    }
+                },
+                Err(error) => {
+                    println!("  FAIL 无法读取 Punc 清单：{error:#}");
+                    *ok = false;
+                }
+            }
+            if fire_ok {
+                println!("  OK   Final = FireRed AED (GPU)");
+            } else {
+                *ok = false;
             }
         }
+        (true, false) => {
+            println!("  FAIL FireRed 已安装但缺少 punc 目录");
+            *ok = false;
+        }
+        (false, true) => {
+            println!("  FAIL punc 已安装但缺少 fire-red-aed 目录");
+            *ok = false;
+        }
     }
-    if worker_packages.is_empty() {
-        println!("  WARN 未安装 GPU Final 包；Final 使用 CPU SenseVoice");
+}
+
+fn check_gpu(_ok: &mut bool) {
+    println!("gpu:");
+    let root = config::default_model_root();
+    let installed = root.join(FIRE_RED_AED_DIR).join(MANIFEST_FILE).is_file();
+    if !installed {
+        println!("  WARN 未安装 GPU Final；Final 使用 CPU SenseVoice");
         return;
     }
-    let mut runtime_ok = false;
-    for (id, runtime) in &worker_packages {
-        let available = runtime_available(runtime) && worker_binary().is_some();
-        runtime_ok |= available;
-        let selected = active.as_deref() == Some(id.as_str());
-        if available {
-            println!("  OK   {id} runtime={runtime} worker 可用");
-        } else if selected {
-            println!("  WARN {id} runtime={runtime} 不可用；Final 将回退 CPU SenseVoice");
-        } else {
-            println!("  WARN {id} runtime={runtime} 未安装");
-        }
-    }
-    if !runtime_ok {
-        println!("  WARN GPU runtime 不可用；CPU 路径仍可用");
-    }
-    // A missing GPU runtime is only a WARN: CPU Final remains usable.
-    if worker_packages
-        .iter()
-        .any(|(id, _)| active.as_deref() == Some(id.as_str()))
-        && !runtime_ok
-    {
-        let _ = ok;
-    }
-}
-
-fn runtime_available(runtime: &str) -> bool {
-    if let Some(dir) = std::env::var_os("VOIME_GPU_RUNTIME_DIR") {
-        if !dir.is_empty() && Path::new(&dir).exists() {
-            return true;
-        }
-    }
-    if let Some(base) = std::env::var_os("VOIME_RUNTIME_DIR") {
-        if Path::new(&base).join(runtime).exists() {
-            return true;
-        }
-    }
-    false
-}
-
-fn worker_binary() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("VOIME_GPU_BIN") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let exe = std::env::current_exe().ok()?;
-    let name = if cfg!(windows) {
-        "voime-gpu.exe"
+    if worker_binary().is_some() {
+        println!("  OK   voime-gpu 可执行文件");
     } else {
-        "voime-gpu"
-    };
-    let sibling = exe.parent()?.join(name);
-    sibling.is_file().then_some(sibling)
+        println!("  WARN 未找到 voime-gpu；设置 VOIME_GPU_BIN 或安装到 PATH 同目录");
+    }
+    if std::env::var_os("VOIME_RUNTIME_DIR").is_some()
+        || std::env::var_os("VOIME_GPU_RUNTIME_DIR").is_some()
+    {
+        println!("  OK   GPU runtime 目录已配置");
+    } else {
+        println!("  WARN 未设置 VOIME_RUNTIME_DIR / VOIME_GPU_RUNTIME_DIR");
+    }
 }
 
 fn check_audio(ok: &mut bool) {
@@ -521,4 +479,21 @@ fn microphone_privacy() -> Option<String> {
 #[cfg(windows)]
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn worker_binary() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("VOIME_GPU_BIN") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let name = if cfg!(windows) {
+        "voime-gpu.exe"
+    } else {
+        "voime-gpu"
+    };
+    let sibling = exe.parent()?.join(name);
+    sibling.is_file().then_some(sibling)
 }

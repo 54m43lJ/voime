@@ -34,25 +34,6 @@ std::optional<uint64_t> jsonUint64(const nlohmann::json &body, const char *key) 
     return it->get<uint64_t>();
 }
 
-ModelInfo parseModelInfo(const nlohmann::json &body) {
-    ModelInfo model;
-    model.id = jsonString(body, "id");
-    model.displayName = jsonString(body, "display_name");
-    model.kind = jsonString(body, "kind");
-    auto runtime = jsonString(body, "runtime");
-    if (!runtime.empty()) {
-        model.runtime = runtime;
-    }
-    auto device = jsonString(body, "device");
-    if (!device.empty()) {
-        model.device = device;
-    }
-    model.available = body.value("available", false);
-    model.active = body.value("active", false);
-    model.running = body.value("running", false);
-    return model;
-}
-
 std::optional<Mode> parseMode(const std::string &name) {
     if (name == "ptt") {
         return Mode::Ptt;
@@ -167,7 +148,7 @@ bool IpcClient::connect(const std::string &socket) {
     nlohmann::json hello = {
         {"Hello",
          {{"role", "frontend"},
-          {"version", 3},
+          {"version", 4},
           {"config", config}}},
     };
     sendJson(hello.dump());
@@ -236,30 +217,6 @@ void IpcClient::toggle(uint64_t segmentId, TriggerSource source) {
           {"source", triggerSourceName(source)}}},
     };
     sendJson(message.dump());
-}
-
-void IpcClient::listModels() {
-    if (fd_ < 0) {
-        return;
-    }
-    sendJson("{\"ListModels\":{}}");
-}
-
-void IpcClient::setModel(const std::string &packageId) {
-    if (fd_ < 0) {
-        return;
-    }
-    nlohmann::json message = {
-        {"SetModel", {{"package_id", packageId}}},
-    };
-    sendJson(message.dump());
-}
-
-void IpcClient::restartBackend() {
-    if (fd_ < 0) {
-        return;
-    }
-    sendJson("{\"RestartBackend\":{}}");
 }
 
 void IpcClient::sendJson(const std::string &json) {
@@ -338,21 +295,6 @@ void IpcClient::handleLine(const std::string &line) {
     } catch (...) {
         return;
     }
-    if (document.is_string()) {
-        const auto tag = document.get<std::string>();
-        ServerMessage message;
-        if (tag == "HistoryCleared") {
-            message.type = ServerMessageType::HistoryCleared;
-        } else if (tag == "Bye") {
-            message.type = ServerMessageType::Bye;
-        } else {
-            message.type = ServerMessageType::Unknown;
-        }
-        if (onMessage) {
-            onMessage(message);
-        }
-        return;
-    }
     if (!document.is_object() || document.empty()) {
         return;
     }
@@ -407,29 +349,6 @@ void IpcClient::handleLine(const std::string &line) {
             message.recording = status.value("recording", false);
             message.finalizing = status.value("finalizing", false);
             message.segmentId = jsonUint64(status, "segment_id");
-        }
-    } else if (tag == "Models") {
-        message.type = ServerMessageType::Models;
-        if (body.contains("models") && body["models"].is_array()) {
-            for (const auto &entry : body["models"]) {
-                if (entry.is_object()) {
-                    message.models.push_back(parseModelInfo(entry));
-                }
-            }
-        }
-    } else if (tag == "ModelSelected") {
-        message.type = ServerMessageType::ModelSelected;
-        message.modelId = jsonString(body, "package_id");
-    } else if (tag == "BackendState") {
-        message.type = ServerMessageType::BackendState;
-        message.backendPhase = jsonString(body, "phase");
-        if (body.contains("model") && body["model"].is_object()) {
-            message.model = parseModelInfo(body["model"]);
-            message.modelId = message.model->id;
-        }
-        auto text = jsonString(body, "message");
-        if (!text.empty()) {
-            message.backendMessage = text;
         }
     } else if (tag == "Error") {
         message.type = ServerMessageType::Error;

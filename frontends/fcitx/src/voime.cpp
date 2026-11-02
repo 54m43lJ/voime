@@ -116,23 +116,8 @@ void VoimeAddon::deactivate(const fcitx::InputMethodEntry &entry,
 const fcitx::Configuration *VoimeAddon::getConfig() const { return &config_; }
 
 void VoimeAddon::setConfig(const fcitx::RawConfig &config) {
-    const auto previousModel = config_.model.value();
     config_.load(config, true);
     fcitx::safeSaveAsIni(config_, CONFIG_FILE);
-
-    const auto model = config_.model.value();
-    if (!model.empty() && model != previousModel) {
-        // Like the Windows settings window, apply is also the restart entry.
-        // Writing active while the daemon is offline makes the selection
-        // effective on the next service start.
-        if (client_.connected()) {
-            client_.setModel(model);
-            client_.restartBackend();
-        } else if (!writeActiveModel(model)) {
-            FCITX_WARN() << "voime: cannot select model package " << model;
-        }
-    }
-
     const auto current = currentConfig();
     client_.configure(current.mode, current.hotkey);
 }
@@ -140,9 +125,6 @@ void VoimeAddon::setConfig(const fcitx::RawConfig &config) {
 void VoimeAddon::reloadConfig() {
     migrateLegacyConfig();
     fcitx::readAsIni(config_, CONFIG_FILE);
-    // Empty Model means "follow active"; do not write the active id back into
-    // the user configuration, otherwise a ctl-side model switch would be
-    // silently overridden on the next reload.
     const auto current = currentConfig();
     client_.setConfig(current);
     if (client_.connected()) {
@@ -387,19 +369,6 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
     case ServerMessageType::Bye:
         client_.disconnect();
         break;
-    case ServerMessageType::ModelSelected:
-        FCITX_INFO() << "voime: model selected " << message.modelId;
-        break;
-    case ServerMessageType::BackendState:
-        if (message.backendPhase == "failed") {
-            FCITX_WARN() << "voime: backend restart failed "
-                         << message.backendMessage.value_or("");
-        } else {
-            FCITX_INFO() << "voime: backend " << message.backendPhase << " "
-                         << message.modelId;
-        }
-        break;
-    case ServerMessageType::Models:
     case ServerMessageType::Snapshot:
     case ServerMessageType::HistoryCleared:
     case ServerMessageType::Status:
