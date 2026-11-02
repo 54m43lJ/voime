@@ -36,7 +36,7 @@
 结论先行：实际使用中没有观察到 SenseVoice 的明显错别字；此前少量字符差异更可能来自已删除的 CTC 路径，
 而不是 SenseVoice 模型。本文不再展开 LFR 边缘处理、量化精度与语言参数的归因，
 确定保留的改进只有<strong>分段音频预卷</strong>；另做一个受控的 Rust <code>ort</code> 版本实验，有实际收益才采纳。
-SenseVoice 保持当前推理路径，不换模型、不改前端。
+SenseVoice 保持当前推理路径，不换模型，也不改它的 Partial / Final 呈现；前端只为 Final 模型选择增加入口。
 </p>
 
 <h2 id="s1">1. 决策摘要</h2>
@@ -1514,35 +1514,81 @@ Final 直接输入、不做呈现变化；Fcitx 动态枚举不可用时模型�
   <tr><td>迁移脚本误操作</td><td>旧模型或配置丢失，升级后无法回退。</td><td>默认 <code>--dry-run</code>；执行前要求 daemon 停止；时间戳备份；失败自动恢复；不碰音频等与升级无关的用户数据。</td></tr>
 </table>
 
-<h2 id="s10">10. 文档落点</h2>
+<h2 id="s10">10. 文档动作清单</h2>
 <p><a href="#top">↑</a></p>
 
 <p>
-实现阶段需要把行为写入现有文档；本文只做提案，不直接替换任何契约。
-建议按以下所有者更新：
+本章是实施阶段唯一的产品文档动作清单：每一行对应一个文档章节，“动作”只取增 / 删 / 改；
+新增文档在“文档”列标出。实施时按行完成，不另建“提案 / 现状”双份描述。
 </p>
 
 <table>
-  <tr><th>文档</th><th>计划变更</th></tr>
-  <tr><td>根 <a href="README.html">README</a></td><td>GOAL 改为“SenseVoice 常驻 Preview + 可选 GPU Final（voime-gpu）”；非目标改为“不把 GPU 用于 Preview，不并行运行多个 Final”；Credits 增加 FireRedASR2-AED / FireRedVAD。</td></tr>
-  <tr><td>根 <a href="USER.html">USER</a></td><td><code>Final</code> 语义补充“Preview 固定 SenseVoice；Final 由 SenseVoice 或 FireRed AED 生成，标点由内置或 FireRedPunc 处理”；配置界面增加 GPU Final 可用性提示与安装档位。</td></tr>
-  <tr><td>根 <a href="CORE.html">CORE</a></td><td>最终提交调用栈增加 <code>FinalBackend</code> 的 CPU / worker 分支；Preview 固定 SenseVoice；增加 voime-gpu 生命周期与 Final 重启路径。</td></tr>
-  <tr><td>根 <a href="PROVIDER.html">PROVIDER</a></td><td>模型包条目增加 <code>requires</code> / voime-gpu runtime 契约；SenseVoice 为常驻基础包。</td></tr>
-  <tr><td><a href="crates/voime-core/README.html">voime-core README</a></td><td>“拥有 / 不拥有”表：拥有 VAD、分段、SenseVoice Preview / CPU Final；不拥有 GPU 运行时与 worker。</td></tr>
-  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td><code>AsrBackend</code> 拆为常驻 Preview + 可选 Final；删除 CTC / AED CPU；<code>BackendManifest</code>、<code>PuncPolicy</code>、错误文案。</td></tr>
-  <tr><td><a href="crates/voime-core/CORE.html">voime-core CORE</a></td><td>文件树删除 <code>asr/firered_ctc.rs</code> / <code>asr/firered_aed.rs</code>；保留 <code>sense_voice.rs</code>；新增 Preview 路径与 voime-gpu Final 协议客户端。</td></tr>
-  <tr><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>模型契约：SenseVoice 常驻 Preview / CPU Final、GPU Final / 外部模型、<code>requires</code> 依赖、VAD；记录当前 fbank / LFR / CMVN、ONNX metadata、<code>punc</code> 策略与 SHA；删除 CTC / SenseVoice-punc / AED CPU。</td></tr>
-  <tr><td>新增 <code>crates/voime-gpu/</code> 文档</td><td>voime-gpu 的 README / USER / CORE / PROVIDER / BUILD：协议、生命周期、EP、错误码、打包、许可证。</td></tr>
-  <tr><td><a href="crates/voimed/USER.html">voimed USER</a> / <a href="crates/voimed/CORE.html">CORE</a></td><td><code>models/active</code>（Final）解析、SenseVoice 基础包加载、<code>--model-dir</code>、<code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>、协议 3、<code>doctor</code> 的 Final + Preview 预检与回滚路径。</td></tr>
-  <tr><td><a href="crates/voime/USER.html">voime USER</a></td><td><code>doctor</code> 报告 Final / running、常驻 Preview SenseVoice、GPU 运行时（DirectML / MIGraphX）、驱动、显存、当前 worker；<code>ctl models</code>、<code>ctl use</code>、<code>ctl restart-backend</code>。</td></tr>
-  <tr><td><a href="BUILD.html">BUILD</a></td><td><code>sensevoice</code> / <code>firered</code> 安装档位、<code>--activate</code>、GPU 运行时安装、<code>requires</code> 校验、SHA 校验、许可证 / attribution、体积记录；基础安装只带 CPU ORT（版本按 §3.5 实验结论固定），GPU runtime 按 OS + EP 拆成独立包（含 NVIDIA）；安装流程只写 clean install；独立的一次性迁移脚本单独说明，不纳入安装器；不引入第二推理引擎；CI 必须检查 daemon 不加载 GPU 库。</td></tr>
-  <tr><td>平台前端 USER / CORE</td><td>Final 下拉增加“GPU / CPU”标识、<code>available</code> 与不可用原因；不改变 Preview / Final 的呈现方式；Fcitx 用 <code>EnumAnnotation</code> 动态枚举，不可用时留空；选择后显示“待重启”；新版本内 <code>Final</code> 形状保持不变，但不承诺兼容旧前端。</td></tr>
+  <tr><th>文档</th><th>章节</th><th>动作</th><th>内容</th></tr>
+  <tr><td>根 <a href="README.html">README</a></td><td>§1.1–§1.3</td><td>改</td><td>IDEAL / GOAL / 非目标：默认纯 CPU、GPU 仅可选 Final；删除 FireRedASR2-CTC；删除“不引入第二个 ASR 模型”；写明 GPU 不用于 Preview、不并行多个 Final、不引入第二推理引擎；增加 <code>sensevoice</code> / <code>firered</code> 两档安装。</td></tr>
+  <tr><td>根 <a href="README.html">README</a></td><td>§2 用户交互</td><td>改</td><td>“配置”场景增加 Final 模型选择、CPU / GPU 标识与“待重启”；最终文本的呈现与提交语义不变。</td></tr>
+  <tr><td>根 <a href="README.html">README</a></td><td>§3 项目地图与文档树</td><td>改</td><td>文档树增加 <code>crates/voime-gpu/</code>（README · USER · CORE · PROVIDER · BUILD）；更新组件树。</td></tr>
+  <tr><td>根 <a href="README.html">README</a></td><td>§4 文档所有权</td><td>改</td><td>所有权表增加 voime-gpu 协议 / runtime、Final 选择与重启、安装档位；voime-core 条目删除 CTC；模型契约仍指向 voime-core / voime-gpu PROVIDER。</td></tr>
+  <tr><td>根 <a href="README.html">README</a></td><td>§5 Credits</td><td>改</td><td>删除 FireRedASR2-CTC；增加 SenseVoice / SenseVoiceSmall（FunASR Model License）与 FireRedASR2-AED；保留 FireRedVAD / FireRedPunc；ONNX Runtime 标明 CPU / GPU EP；tokenizers 去掉“CTC 词表”描述。</td></tr>
+  <tr><td>根 <a href="USER.html">USER</a></td><td>§1 TERMS</td><td>改</td><td>删除 CTC；新增 Preview、Final 后端、voime-gpu、<code>active</code>、安装档位；Final 明确定义为 CPU SenseVoice 或 GPU FireRed AED + 对应标点。</td></tr>
+  <tr><td>根 <a href="USER.html">USER</a></td><td>§2 CONVENTIONS</td><td>改</td><td>改为 Preview 固定 SenseVoice、同一时刻只有一个 Final、GPU 库只在 voime-gpu、重启后端只重建 Final；前端不加载模型。</td></tr>
+  <tr><td>根 <a href="USER.html">USER</a></td><td>§3 DIAGRAMS</td><td>改</td><td>总体架构图增加可选 voime-gpu；PTT / Toggle / Continuous 注记 Partial 始终由 SenseVoice 产生，Final 可切 CPU / GPU；提交契约不变。</td></tr>
+  <tr><td>根 <a href="USER.html">USER</a></td><td>§4.1 / §4.4</td><td>改</td><td>配置接口增加 <code>Model</code>（Final 候选、CPU / GPU、<code>available</code>、“待重启”）；端到端契约增加 Final 来源、GPU 回退、重启 <code>Busy</code>、呈现不变。</td></tr>
+  <tr><td>根 <a href="USER.html">USER</a></td><td>§4.2 / §4.3 / §4.5</td><td>改</td><td>CLI 增加 <code>ctl models</code> / <code>use</code> / <code>restart-backend</code> 与 doctor；接口索引增加 voime-gpu 与协议 3；平台覆盖写明 Linux MIGraphX 优先、Windows / NVIDIA 后续、无 GPU 回退 CPU Final。</td></tr>
+  <tr><td>根 <a href="CORE.html">CORE</a></td><td>§1 / §3</td><td>改</td><td>文件树增加 <code>crates/voime-gpu/</code>；<code>tests/asr_ctc.rs</code> 改为 <code>tests/asr_sense_voice.rs</code>；SBOM 增加 voime-gpu / GPU runtime 包，注明基础安装只带 CPU ORT。</td></tr>
+  <tr><td>根 <a href="CORE.html">CORE</a></td><td>§2 CONVENTIONS</td><td>改</td><td>依赖方向、进程边界与线程边界：voime-gpu 为独立进程；pipeline 串行 VAD / SenseVoice / Punc；前端不做 CTC；模型单一来源仍为 voime-core PROVIDER。</td></tr>
+  <tr><td>根 <a href="CORE.html">CORE</a></td><td>§4.1–§4.8</td><td>改</td><td>更新 core <code>Config</code> / <code>ModelManifest</code> / <code>AsrKind</code> / <code>FinalBackend</code> 与 <code>Daemon::new</code>（可替换 Final、worker 句柄）；新增 §4.9 <code>crates/voime-gpu</code> 入口签名。</td></tr>
+  <tr><td>根 <a href="CORE.html">CORE</a></td><td>§5.1–§5.4</td><td>改</td><td>冷启动加载 SenseVoice 基础包 + Final + 条件 worker；热键到提交走 Final 分支；Continuous 加预卷；ctl / 退出加 <code>models</code> / <code>use</code> / <code>restart-backend</code> 与 worker shutdown。</td></tr>
+  <tr><td>根 <a href="PROVIDER.html">PROVIDER</a></td><td>§1–§2</td><td>改</td><td>推理运行时拆 CPU / GPU；模型包加 SenseVoice / FireRed AED；约定 CPU daemon 只加载 CPU ORT、GPU ORT 只在 voime-gpu。</td></tr>
+  <tr><td>根 <a href="PROVIDER.html">PROVIDER</a></td><td>§3 DIAGRAMS</td><td>改</td><td>更新 <code>provider-map</code> / <code>provider-inference</code>：新增 GPU runtime 包与 voime-gpu；VAD / Punc 仍在 CPU daemon。</td></tr>
+  <tr><td>根 <a href="PROVIDER.html">PROVIDER</a></td><td>§4.1–§4.3</td><td>改</td><td>所有权表增加 GPU runtime（voime-gpu PROVIDER）、模型包消费者加 worker；跨边界数据与失败策略增加 GPU 缺失 / 显存不足 / worker 崩溃回退 CPU Final。</td></tr>
+  <tr><td>根 <a href="BUILD.html">BUILD</a></td><td>§1 环境</td><td>改</td><td>GPU 可选依赖（Linux ROCm / MIGraphX P0、Windows DirectML、NVIDIA CUDA 后续）；磁盘改为 SenseVoice 229 MiB + FireRed FP16 约 2.2 GB + runtime；基础安装无 GPU；CPU ORT 版本按 §3.5 实验结论固定。</td></tr>
+  <tr><td>根 <a href="BUILD.html">BUILD</a></td><td>§2 构建根与命令</td><td>改</td><td>构建根增加 voime-gpu；<code>cargo build</code> / <code>cargo test</code> 与产物表更新；基础包不构建 GPU EP。</td></tr>
+  <tr><td>根 <a href="BUILD.html">BUILD</a></td><td>§3.4 / §3.6 / §4</td><td>改</td><td>模型安装改为 <code>--profile sensevoice|firered --activate</code>；新增 <code>install_runtime.sh</code> 与 Windows <code>-Profile</code> / <code>-Activate</code> / <code>-Runtime</code>；schema 3、SenseVoice + FireRed 两包、<code>requires</code>、SHA / metadata、许可证、体积；删除 CTC。</td></tr>
+  <tr><td>根 <a href="BUILD.html">BUILD</a></td><td>§5 / §6</td><td>改</td><td>运行与诊断增加 <code>active</code> / Final / GPU 回退；测试把 <code>asr_ctc.rs</code> 改为 <code>asr_sense_voice.rs</code>，增加 schema 3、预卷、worker / GPU 条件测试、CPU 不加载 GPU 库、迁移测试。</td></tr>
+  <tr><td>根 <a href="BUILD.html">BUILD</a></td><td>§7 / §8</td><td>改</td><td>发布产物增加 voime-gpu、按 OS + EP 拆分的 runtime 包、两档安装脚本；升级只写 clean install，迁移脚本单独成文；卸载清理 <code>active</code> 与 runtime，不承诺旧布局。</td></tr>
+  <tr><td><a href="crates/voime-core/README.html">voime-core README</a></td><td>§1–§4</td><td>改</td><td>CTC 全部改为 SenseVoice Preview / CPU Final；边界增加 <code>FinalBackend</code>（不拥有 GPU worker / runtime）；Credits 增加 SenseVoice，FireRedPunc 仅 GPU Final。</td></tr>
+  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>§1–§2</td><td>改</td><td>术语增加 Preview / Final、SenseVoice、Final 后端、预卷；约定改为 Preview 固定、Final 可选、模型生命周期与回退；删除 CTC。</td></tr>
+  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>§4.1 配置</td><td>改</td><td><code>Config</code> / <code>Args</code> 区分模型根目录与 Final 包目录；<code>--model-dir</code> 只覆盖 Final；新增 <code>preview.enabled</code>；SenseVoice 基础包固定加载。</td></tr>
+  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>§4.3 模型清单</td><td>改</td><td>Manifest 升 schema 3；增加 <code>AsrKind</code> / <code>BackendKind</code> / <code>AsrOptions</code> / <code>BackendManifest</code> / <code>requires</code> / <code>precision</code>；删除 <code>CtcArtifact</code>；明确 SenseVoice / FireRed / External 组合校验。</td></tr>
+  <tr><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>§4.4–§4.5</td><td>改</td><td>Pipeline 增加 <code>FinalBackend</code> 分支与 Preview 固定 SenseVoice；<code>SegmentDropped</code> / 错误增加 worker 不可用、GPU 回退；删除 CTC 失败文案。</td></tr>
+  <tr><td><a href="crates/voime-core/CORE.html">voime-core CORE</a></td><td>§1–§3</td><td>改</td><td>文件树删除 <code>asr/firered_ctc.rs</code>，新增 <code>asr/sense_voice.rs</code> 与 <code>asr/final.rs</code>；约定把 CTC 状态改为 SenseVoice 解码、加预卷、<code>FinalBackend</code>；SBOM 的 fbank 说明去掉 CTC。</td></tr>
+  <tr><td><a href="crates/voime-core/CORE.html">voime-core CORE</a></td><td>§4.2–§4.3 / §4.9–§4.18</td><td>改</td><td>config / model / segmenter / ASR / pipeline 签名更新；segmenter 加环形缓冲与 <code>pre_roll_ms</code>；punc 只服务 GPU Final；infer 仅 CPU ORT；新增 <code>FinalBackend</code> trait。</td></tr>
+  <tr><td><a href="crates/voime-core/CORE.html">voime-core CORE</a></td><td>§5.1–§5.6</td><td>改</td><td>启动、音频 / VAD、Partial、Final、错误调用栈改为 SenseVoice + 预卷 + CPU / GPU Final 分支；worker 失败回退 CPU。</td></tr>
+  <tr><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>§1–§4.2</td><td>改</td><td>只保留 CPU ORT 与 SenseVoice 模型契约；schema 3 manifest；VAD / Punc；GPU AED 张量与 runtime 移到 voime-gpu PROVIDER；删除 CTC / punc 变体。</td></tr>
+  <tr><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>§4.3–§4.5</td><td>改</td><td>ORT CPU 版本 / EP 固定；SenseVoice 张量、fbank / LFR / CMVN、metadata、Punc 输入输出；错误增加 manifest / worker 边界。</td></tr>
+  <tr><td><a href="crates/voime-core/BUILD.html">voime-core BUILD</a></td><td>§3 测试</td><td>改</td><td>测试改名 <code>asr_sense_voice.rs</code>；删除 CTC 环境变量；增加 schema 3、<code>requires</code>、预卷、SenseVoice 金样；GPU 测试不在 core。</td></tr>
+  <tr><td><a href="crates/voimed/README.html">voimed README</a></td><td>§1–§4</td><td>改</td><td>daemon 拥有 Final 选择、<code>active</code>、worker 生命周期；SenseVoice 常驻；边界与 Credits 更新。</td></tr>
+  <tr><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>§1–§2</td><td>改</td><td>术语增加 Final 后端、Preview、<code>active</code>、worker、<code>BackendPhase</code>；约定加 SenseVoice 常驻、单 Final、重启后端、GPU 回退。</td></tr>
+  <tr><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>§3 DIAGRAMS</td><td>改 / 增</td><td>会话状态注记 Preview / Final；新增 Final 切换 / 重启与 worker 生命周期图（<code>backend-restart</code> / <code>gpu-worker</code>）。</td></tr>
+  <tr><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>§4.1–§4.5</td><td>改</td><td><code>--model-dir</code> 指 Final；新增 <code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>、<code>ModelSelected</code> / <code>BackendState</code>、<code>ModelInfo</code>；启动默认值、错误回滚 / GPU 回退。</td></tr>
+  <tr><td><a href="crates/voimed/CORE.html">voimed CORE</a></td><td>§1–§2</td><td>改 / 增</td><td>文件树新增 <code>worker.rs</code>（<code>WorkerBackend</code>）与 <code>models.rs</code>（<code>active</code> / 候选扫描）；约定 worker 监督、重启状态、Preview 不中断。</td></tr>
+  <tr><td><a href="crates/voimed/CORE.html">voimed CORE</a></td><td>§4.3–§4.6</td><td>改</td><td>cli 增加 <code>--model-dir</code> 语义；daemon 增加 Final 后端 / worker；state 增加模型信息；ipc_server 增加新消息。</td></tr>
+  <tr><td><a href="crates/voimed/CORE.html">voimed CORE</a></td><td>§4.7–§4.8</td><td>增</td><td><code>worker.rs</code>：spawn / handshake / transcribe / restart / shutdown；<code>models.rs</code>：扫描、<code>active</code> 解析、<code>available</code> 预检。</td></tr>
+  <tr><td><a href="crates/voimed/CORE.html">voimed CORE</a></td><td>§5.1–§5.7；新增 §5.8–§5.9</td><td>改 / 增</td><td>启动、Pipeline 事件、退出更新；新增重启后端与 GPU 失败回退调用栈；worker 退出顺序。</td></tr>
+  <tr><td><a href="crates/voimed/BUILD.html">voimed BUILD</a></td><td>§1–§5</td><td>改</td><td>环境加 GPU runtime 可选；运行加 <code>active</code> / 模型切换 / doctor；测试加重启 / 回退 / worker；升级处理 <code>active</code> 与模型档位。</td></tr>
+  <tr><td><a href="crates/voime-ipc/README.html">voime-ipc README</a> · <a href="crates/voime-ipc/USER.html">USER</a></td><td>README §1.2 / §3；USER §1–§2</td><td>改</td><td>协议 3；新增模型管理消息；角色与清理；worker 协议不属于 voime-ipc。</td></tr>
+  <tr><td><a href="crates/voime-ipc/USER.html">voime-ipc USER</a></td><td>§3 DIAGRAMS</td><td>增</td><td>新增模型列表 / 选择 / 重启后端时序图。</td></tr>
+  <tr><td><a href="crates/voime-ipc/USER.html">voime-ipc USER</a></td><td>§4.1–§4.4</td><td>改</td><td><code>PROTOCOL_VERSION</code> 1→3；<code>ClientMessage</code> 加 <code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>；<code>ServerMessage</code> 加 <code>Models</code> / <code>ModelSelected</code> / <code>BackendState</code>；增加 <code>ModelInfo</code> / <code>BackendPhase</code>。</td></tr>
+  <tr><td><a href="crates/voime-ipc/USER.html">voime-ipc USER</a> · <a href="crates/voime-ipc/CORE.html">CORE</a> · <a href="crates/voime-ipc/BUILD.html">BUILD</a></td><td>USER §4.5–§4.8；CORE §4.1；BUILD §3</td><td>改</td><td>语义 / JSON / 错误码 / 版本说明升 3；lib 类型；金样覆盖新消息与 version mismatch；旧前端拒绝。</td></tr>
+  <tr><td><a href="crates/voime/USER.html">voime USER</a> · <a href="crates/voime/BUILD.html">BUILD</a></td><td>USER §4.1 / §4.3 / §4.4；BUILD §3 / §4</td><td>改</td><td><code>ctl models</code> / <code>use</code> / <code>restart-backend</code>；输出 Final / running / Preview / GPU；doctor 检查 <code>active</code> / 基础包 / runtime / worker；BUILD 使用示例与测试。</td></tr>
+  <tr><td><a href="crates/voime/CORE.html">voime CORE</a></td><td>§4.2 / §4.7 / §5.4 / §5.5</td><td>改</td><td>CLI 枚举加 <code>Model</code> / <code>Use</code> / <code>RestartBackend</code>；doctor 加模型 / GPU 检查；调用栈更新。</td></tr>
+  <tr><td><a href="frontends/fcitx/README.html">fcitx README</a> · <a href="frontends/fcitx/USER.html">USER</a></td><td>README §1–§4；USER §4.1</td><td>改</td><td>删除 CTC；配置增加 <code>Model</code>（Final）项、<code>EnumAnnotation</code> 动态枚举、“待重启”；不可用时留空。</td></tr>
+  <tr><td><a href="frontends/fcitx/USER.html">fcitx USER</a> · <a href="frontends/fcitx/PROVIDER.html">PROVIDER</a> · <a href="frontends/fcitx/CORE.html">CORE</a></td><td>USER §4.3 / §4.5；PROVIDER §4.3 / §4.5；CORE §4.2 / §4.4 / §5.1 / §5.4；BUILD §4</td><td>改</td><td>IPC 加模型消息 / <code>BackendState</code> / <code>Busy</code>；配置 schema 与协议 3；C++ 配置 / IPC 处理；错误显示；测试覆盖 <code>Model</code> 配置。</td></tr>
+  <tr><td><a href="frontends/windows/README.html">windows README</a> · <a href="frontends/windows/USER.html">USER</a></td><td>README §1–§4；USER §4.1 / §4.3 / §4.4</td><td>改</td><td>删除 CTC；模型选择不写入 <code>config.json</code>，设置窗口读取 <code>active</code>；IPC 新消息；诊断加 GPU / worker。</td></tr>
+  <tr><td><a href="frontends/windows/USER.html">windows USER</a> · <a href="frontends/windows/PROVIDER.html">PROVIDER</a> · <a href="frontends/windows/CORE.html">CORE</a> · <a href="frontends/windows/BUILD.html">BUILD</a></td><td>USER §5；PROVIDER §4.3 / §4.4；CORE §2 / §4.3 / §4.10 / §5.5；BUILD §4</td><td>改</td><td>设置窗口加 Final 下拉 / CPU / GPU / <code>available</code> / 重启后端；命名管道协议 3；<code>settings.rs</code> 动作；测试。</td></tr>
+  <tr><td>新增 <code>crates/voime-gpu/README.html</code> · <code>USER.html</code></td><td>全文</td><td>增</td><td>README：WHAT &amp; WHY、GOAL、非目标、边界、Credits；USER：术语、协议帧、生命周期、CLI、错误码、runtime 包。</td></tr>
+  <tr><td>新增 <code>crates/voime-gpu/CORE.html</code> · <code>PROVIDER.html</code></td><td>全文</td><td>增</td><td>CORE：文件树 / SBOM / 类型 / 调用栈（spawn / handshake / transcribe / shutdown）；PROVIDER：GPU ORT / EP、FireRed AED 张量 / metadata、FP16、错误、许可证；GPU 只接受 FP16，int8 只用于 CPU SenseVoice。</td></tr>
+  <tr><td>新增 <code>crates/voime-gpu/BUILD.html</code> · 组件图表</td><td>全文</td><td>增</td><td>BUILD：构建、runtime 打包、测试、升级；diagrams：<code>protocol.puml</code>、<code>runtime-isolation.puml</code>；生命周期图归 voimed。</td></tr>
+  <tr><td>新增 <code>MIGRATION-asr-v2.html</code></td><td>全文</td><td>增</td><td><code>scripts/migrate-asr-v2.sh</code> 的可选一次性迁移说明：只覆盖上一版本 + 当前开发机；先装新版本；<code>--dry-run</code> / <code>--apply</code>；停止 daemon；时间戳备份 / 恢复；只迁模型 / <code>active</code> / 白名单配置；不转换 CTC / punc / AED CPU；下一大版本删除。</td></tr>
+  <tr><td>图表源与导出</td><td><code>diagram/general-architecture</code> · <code>diagram/provider-map</code> · <code>diagram/provider-inference</code> · <code>crates/voime-core/diagram/inference-boundary</code> · <code>crates/voimed/diagram/backend-restart</code> · <code>crates/voimed/diagram/gpu-worker</code></td><td>改 / 增</td><td>更新 CPU daemon + 可选 GPU Final 的架构与 provider 边界；把重启后端 / worker 生命周期图落到 voimed；改 <code>.puml</code> 后重新导出 <code>.svg</code>，源与图一起提交。</td></tr>
 </table>
 
 <ul class="note">
-  <li>模型契约写在 <code>voime-core PROVIDER</code>；voime-gpu 协议与能力写在 <code>voime-gpu PROVIDER</code>；其他文档链接，不复制张量定义。</li>
-  <li>不写旧包兼容说明、不保留过渡版本；BUILD 的安装流程只描述 clean install，一次性迁移脚本单独成文并明确其可选性与风险。</li>
-  <li>实现完成后，本文可归档；不要在产品文档中保留“提案 / 现状”双份描述。</li>
+  <li>单一来源：公共模型 manifest、VAD、SenseVoice 与 Punc 契约写在 <code>voime-core PROVIDER</code>；FireRed AED 张量、GPU runtime 与 worker 协议写在 <code>voime-gpu PROVIDER</code>；前端 IPC 只写在 <code>voime-ipc USER</code>。其他文档只链接，不复制定义。</li>
+  <li><code>FinalBackend</code> 是 <code>voime-core</code> 的 trait；<code>WorkerBackend</code> 由 <code>voimed</code> 实现并注入 pipeline，<code>voime-core</code> 不依赖 GPU / worker crate。</li>
+  <li>VAD 保持现状：不新增 / 替换 VAD 模型、阈值或评测内容；只更新 <code>Segmenter</code> 的预卷说明，VAD 判定不变。文本后处理仍不存在，不新增相关章节或字段。</li>
+  <li>文档随阶段落地，不提前承诺未实现能力；安装流程只描述 clean install，一次性迁移脚本单独成文并明确其可选性与风险。</li>
+  <li>实现完成后本文归档；不要在产品文档中保留“提案 / 现状”双份描述。</li>
 </ul>
 
 <h2 id="s11">11. 参考</h2>
