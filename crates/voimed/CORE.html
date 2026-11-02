@@ -33,10 +33,9 @@
     ├── <a href="#c4-4">daemon.rs</a>
     ├── <a href="#c4-5">state.rs</a>
     ├── <a href="#c4-6">ipc_server.rs</a>
-    ├── <a href="#c4-7">worker.rs</a>
-    └── <a href="#c4-8">models.rs</a></code></pre>
+    └── <a href="#c4-7">worker.rs</a></code></pre>
 <ul class="note">
-  <li><code>lib.rs</code> 导出 <code>daemon</code> / <code>ipc_server</code> / <code>state</code> / <code>worker</code> / <code>models</code>，供根集成测试使用；<code>main.rs</code> 只做启动编排。</li>
+  <li><code>lib.rs</code> 导出 <code>daemon</code> / <code>ipc_server</code> / <code>state</code> / <code>worker</code>，供根集成测试使用；<code>main.rs</code> 只做启动编排。</li>
 </ul>
 
 <ul class="note">
@@ -51,8 +50,8 @@
   <tr><td>客户端线程</td><td>accept 线程接受连接；每个客户端一个 reader 线程与一个 writer 线程；daemon 主线程只处理事件与状态。</td></tr>
   <tr><td>客户端队列</td><td>每个客户端一个有界发送队列；Final / State 满时移除客户端，Partial 满时只丢该条。</td></tr>
   <tr><td>角色表</td><td><code>clients: HashMap&lt;u64, ClientEntry&gt;</code> 由互斥锁保护；<code>set_role</code> 只允许一个 <code>Frontend</code>。</td></tr>
-  <tr><td>模型选择</td><td><code>models.rs</code> 扫描模型根目录、解析 <code>active</code> 与候选；<code>SetModel</code> 只写指针，<code>RestartBackend</code> 才重建 Final。</td></tr>
-  <tr><td>Preview 不中断</td><td>重启 Final 时保留 SenseVoice 会话、音频与 IPC；只替换 Final 后端 / pipeline 的 Final 路径。</td></tr>
+  <tr><td>模型选择</td><td>启动时由 <code>voime-core::config</code> 按固定目录解析；<code>daemon.rs</code> 只消费 <code>Config</code>，没有模型目录扫描或选择状态。</td></tr>
+  <tr><td>GPU 自动回退</td><td>GPU 初始化失败时 <code>build_runtime</code> 直接改用 CPU SenseVoice；运行期 worker 失败由 <code>try_gpu_fallback</code> 替换 Final 路径，保留 SenseVoice 会话、音频与 IPC。</td></tr>
   <tr><td>worker 监督</td><td><code>worker.rs</code> 负责 spawn / handshake / transcribe / restart / shutdown；超时、崩溃与显存不足按回退策略处理。</td></tr>
   <tr><td>状态机</td><td><code>State.phase</code> 只由 daemon 主线程修改；pipeline 事件与客户端命令都在同一线程串行处理。</td></tr>
   <tr><td>段 ID</td><td><code>next_segment</code> 单调递增，wrapping 后跳过 0；当前段在 Final / 丢弃后清空。</td></tr>
@@ -91,7 +90,6 @@
 <pre><code>pub mod cli;
 pub mod daemon;
 pub mod ipc_server;
-pub mod models;
 pub mod state;
 pub mod worker;</code></pre>
 
@@ -100,13 +98,12 @@ pub mod worker;</code></pre>
 fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;
 fn stop_audio(audio: CaptureHandle);</code></pre>
 <ul class="note">
-  <li><code>main</code> 先检查端点是否已有 daemon，再调用 <code>run</code>；<code>run</code> 按配置 → 会话工厂 → Final 选择 / worker → pipeline → 音频 → IPC → daemon 顺序初始化。</li>
+  <li><code>main</code> 先检查端点是否已有 daemon，再调用 <code>run</code>；<code>run</code> 按配置 → 会话工厂 → 启动时 Final 选择 / worker → pipeline → 音频 → IPC → daemon 顺序初始化。</li>
   <li>初始化失败按逆序释放已创建资源；worker 失败时关闭 pipeline，音频打开失败时先关闭 pipeline。</li>
 </ul>
 
 <h3 id="c4-3">4.3 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Cli {
-    pub model_dir: Option&lt;PathBuf&gt;,
     pub input_device: Option&lt;String&gt;,
     pub threads: Option&lt;usize&gt;,
     pub endpoint: Option&lt;String&gt;,
@@ -117,13 +114,19 @@ pub fn parse() -&gt; Cli;
 fn parse_positive_usize(value: &amp;str) -&gt; Result&lt;usize, String&gt;;</code></pre>
 
 <h3 id="c4-4">4.4 daemon.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct FinalRuntime { /* pipeline + Final backend + optional worker */ }
+<pre><code>type FinalHandle = Arc&lt;Mutex&lt;WorkerBackend&gt;&gt;;
+
+pub struct FinalRuntime {
+    pub pipeline: Option&lt;Pipeline&gt;,
+    factory: SessionFactory,
+    fallback: bool,
+}
+
 pub struct Daemon {
-    _config: Config,
+    config: Config,
     state: State,
     final_runtime: FinalRuntime,
-    models: ModelCatalog,
-    worker: Option&lt;WorkerBackend&gt;,
+    worker: Option&lt;FinalHandle&gt;,
     audio: CaptureHandle,
     ipc: IpcServer,
     current_segment: Option&lt;u64&gt;,
@@ -131,24 +134,27 @@ pub struct Daemon {
     pending_mode: Option&lt;Mode&gt;,
     pending_stop: bool,
     session_active: bool,
+    gpu_fallback: bool,
     shutdown: bool,
     fatal: Option&lt;anyhow::Error&gt;,
 }
 
+pub fn build_runtime(config: &amp;Config, factory: SessionFactory,
+                     audio_rx: Receiver&lt;AudioChunk&gt;)
+    -&gt; anyhow::Result&lt;(Config, FinalRuntime, Option&lt;FinalHandle&gt;)&gt;;
+
 impl Daemon {
     pub fn new(config: Config, final_runtime: FinalRuntime,
-               models: ModelCatalog, worker: Option&lt;WorkerBackend&gt;,
+               worker: Option&lt;FinalHandle&gt;,
                audio: CaptureHandle, ipc: IpcServer) -&gt; Self;
     pub fn run(mut self) -&gt; anyhow::Result&lt;()&gt;;
-    pub fn restart_backend(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
     fn on_server_event(&amp;mut self, event: ServerEvent);
     fn on_client(&amp;mut self, client_id: u64, message: ClientMessage);
-    fn list_models(&amp;self) -&gt; ServerMessage;
-    fn set_model(&amp;mut self, package_id: String) -&gt; anyhow::Result&lt;ServerMessage&gt;;
     fn request_start(&amp;mut self, client_id: u64, segment_id: u64,
                      source: TriggerSource);
     fn request_stop(&amp;mut self, client_id: u64, segment_id: u64);
     fn on_pipeline(&amp;mut self, event: PipelineEvent);
+    fn try_gpu_fallback(&amp;mut self, reason: &amp;str);
     fn allocate_segment(&amp;mut self) -&gt; u64;
     fn broadcast_state(&amp;self);
     fn broadcast_snapshot(&amp;self);
@@ -161,10 +167,14 @@ impl Daemon {
     fn send_error(&amp;self, client_id: u64, code: ErrorCode, message: &amp;str);
 }
 
+fn build_cpu_final(config: &amp;Config, factory: &amp;SessionFactory)
+    -&gt; anyhow::Result&lt;Box&lt;dyn FinalBackend&gt;&gt;;
+fn build_final(config: &amp;Config, factory: &amp;SessionFactory)
+    -&gt; anyhow::Result&lt;(Box&lt;dyn FinalBackend&gt;, Option&lt;FinalHandle&gt;)&gt;;
 fn listens(mode: Mode, session_active: bool) -&gt; bool;
 fn continuation_source(mode: Option&lt;Mode&gt;) -&gt; TriggerSource;</code></pre>
 <ul class="note">
-  <li><code>FinalRuntime</code> / <code>ModelCatalog</code> 为草案类型，分别封装可替换 Final 与模型候选；实现时可按模块拆分调整。</li>
+  <li><code>FinalRuntime</code> 封装 pipeline、会话工厂与是否已回退；没有模型候选目录或选择状态。</li>
 </ul>
 
 <h3 id="c4-5">4.5 state.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -245,23 +255,29 @@ fn decode_frame(reader: &amp;mut impl Read) -&gt; anyhow::Result&lt;Frame&gt;;</
   <li>生命周期、超时与重启策略见 <a href="USER.html#u3-4">本组件 USER §3.4</a>。</li>
 </ul>
 
-<h3 id="c4-8">4.8 models.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct ModelCatalog { /* root + active + candidates */ }
+<h3 id="c4-8">4.8 固定目录与启动时 Final 构建 <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>// Config 由 voime-core::config::resolve 产生：
+//   vad_dir / vad_manifest          始终存在
+//   sense_voice_dir / manifest      始终存在
+//   fire_red: Option&lt;FireRedConfig&gt; 目录 + manifest
+//   punc: Option&lt;PuncConfig&gt;        目录 + manifest
 
-impl ModelCatalog {
-    pub fn scan(root: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
-    pub fn active(&amp;self) -&gt; Option&lt;&amp;ModelInfo&gt;;
-    pub fn list(&amp;self) -&gt; Vec&lt;ModelInfo&gt;;
-    pub fn set_active(&amp;self, package_id: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
-}
+fn build_runtime(config, factory, audio_rx) -&gt; Result&lt;(Config, FinalRuntime, Option&lt;FinalHandle&gt;)&gt;
+    ├── build_final(config, factory)
+    │   ├── 判断 !config.gpu_final() → build_cpu_final(...)
+    │   └── WorkerBackend::spawn(&amp;config.fire_red.dir, "auto") + handshake
+    ├── 判断 GPU 构建失败且 config.gpu_final() → build_cpu_final(...) + fallback=true
+    ├── 回退时 clone config 并清空 fire_red / punc
+    └── pipeline::spawn(&amp;runtime_config, factory, backend, audio_rx)
 
-pub fn read_active(root: &amp;Path) -&gt; anyhow::Result&lt;String&gt;;
-pub fn write_active(root: &amp;Path, package_id: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
-pub fn resolve_package(root: &amp;Path, package_id: &amp;str)
-    -&gt; anyhow::Result&lt;PathBuf&gt;;</code></pre>
+fn build_cpu_final(config, factory) -&gt; Box&lt;dyn FinalBackend&gt;
+    └── SenseVoiceBackend::new_with_factory(
+            &amp;config.sense_voice_manifest, factory,
+            fbank_config(&amp;config.sense_voice_manifest.fbank))</code></pre>
 <ul class="note">
-  <li>扫描跳过无 <code>manifest.json</code> 或无法解析的目录；<code>available</code> 预检 GPU runtime / 驱动 / 显存 / <code>requires</code>，只读目录或调用 worker probe，不在 daemon 内创建 GPU 会话。</li>
-  <li><code>write_active</code> 使用同目录临时文件 + rename；读取去掉首尾空白与 UTF-8 BOM。</li>
+  <li>没有模型目录扫描、候选列表或选择文件；固定根目录的解析和 manifest 校验属于 <code>voime-core</code>。</li>
+  <li><code>fire_red</code> 与 <code>punc</code> 必须同时为 <code>Some</code>；只存在一个时 <code>config::resolve</code> 已返回错误。</li>
+  <li>启动失败时的 GPU 回退已在 <code>build_runtime</code> 完成；运行期回退见 §5.9。</li>
 </ul>
 
 <h2 id="c5">5. Call stack tree</h2>
@@ -275,10 +291,12 @@ pub fn resolve_package(root: &amp;Path, package_id: &amp;str)
     ├── ipc_server::daemon_running(&amp;endpoint)
     │   └── 判断已运行 → ExitCode::SUCCESS
     ├── voimed::run(args)
-    │   ├── voimed::models::ModelCatalog::scan(model_root)
     │   ├── voime_core::config::resolve(args)
+    │   │   ├── 加载 vad + sense-voice（始终）
+    │   │   └── 检查 fire-red-aed + punc 目录配对
     │   ├── voime_core::infer::session::SessionFactory::new(config.threads)
-    │   ├── 判断 Final backend.kind == worker → voimed::worker::WorkerBackend::spawn()
+    │   ├── 判断 gpu_final() → voimed::worker::WorkerBackend::spawn() + handshake
+    │   ├── 判断 GPU 初始化失败 → 回退 CPU SenseVoice
     │   ├── voime_core::pipeline::spawn(&amp;config, factory, final_backend, audio_rx)
     │   ├── voime_core::audio::capture::start(config.input_device, audio_tx)
     │   │   └── 构建输入流并保持暂停，等待 Daemon::sync_audio_result()
@@ -375,43 +393,52 @@ pipeline::PipelineEvent::Recording(true)
         │   ├── accept_thread.join()
         │   ├── clients.clear()
         │   └── listener.take()
-        ├── 判断 worker.is_some() → WorkerBackend::shutdown()
+        ├── 判断 worker.is_some() → worker.lock().shutdown()
         ├── Pipeline::shutdown()
         └── CaptureHandle::stop()</code></pre>
 
-<h3 id="c5-8">5.8 重启后端</h3>
-<pre><code>Daemon::on_client(SetModel { package_id })
-└── Daemon::set_model(package_id)
-    ├── 判断 model_dir_override.is_some() → Error(invalid_message)
-    ├── models::resolve_package(model_root, package_id)
-    ├── ModelManifest::load / verify / requires
-    ├── ModelCatalog::write_active(package_id)
-    └── IpcServer::send ModelSelected
+<h3 id="c5-8">5.8 启动时 Final 选择</h3>
+<pre><code>voimed::run(args)
+└── voime_core::config::resolve(args)
+    ├── VadManifest::load / verify / rebase(model_root/vad)
+    ├── SenseVoiceManifest::load / verify / rebase(model_root/sense-voice)
+    ├── 判断 fire-red-aed/manifest.json 与 punc/manifest.json
+    │   ├── 都存在 → FireRedManifest + PuncManifest 加载 / 校验 / 重定位
+    │   ├── 只存在一个 → anyhow::bail!("FireRed Final 不完整…")
+    │   └── 都不存在 → fire_red = None, punc = None
+    └── 返回 Config（gpu_final() 由 fire_red / punc 是否都为 Some 决定）
 
-Daemon::on_client(RestartBackend)
-└── Daemon::restart_backend()
-    ├── 判断 recording / recognizing → Error(busy)
-    ├── 保存 old_final_id / old_final_runtime
-    ├── config::resolve_final(args)
-    ├── IpcServer::broadcast BackendState { phase: Restarting }
-    ├── 保留 SenseVoice Preview session
-    ├── 判断 new final is worker → 停旧 worker / spawn 新 worker / handshake
-    ├── 重建 Final 路径（CPU SenseVoice 或 GPU FireRed）
-    ├── 判断失败 → 回滚 active + 恢复旧 Final
-    ├── 替换 final_runtime / worker
-    └── IpcServer::broadcast BackendState { phase: Ready, model }</code></pre>
+daemon::build_runtime(&amp;config, factory, audio_rx)
+├── build_final(config, factory)
+│   ├── !gpu_final() → build_cpu_final()
+│   └── gpu_final() → WorkerBackend::spawn(&amp;fire_red.dir, "auto")
+│                     + WorkerBackend::handshake()
+├── 判断 GPU 构建失败 → build_cpu_final() + 日志“GPU Final 初始化失败，回退 CPU SenseVoice”
+├── 回退时清空 config.fire_red / config.punc
+└── pipeline::spawn(&amp;runtime_config, factory, backend, audio_rx)</code></pre>
 
-<h3 id="c5-9">5.9 GPU 失败与回退</h3>
-<pre><code>WorkerBackend::transcribe(samples)
-└── 判断 Error / Timeout / DeviceUnavailable
-    ├── 标记 GPU Final available=false
-    ├── 判断连续失败达到阈值 → 停止 worker + 释放显存
-    ├── 重建 CPU SenseVoice Final
-    ├── IpcServer::broadcast BackendState { phase: Failed, message }
-    └── 当前段按 SegmentDropped 处理；下一段走 CPU Final</code></pre>
+<h3 id="c5-9">5.9 GPU 运行期失败与回退</h3>
+<pre><code>WorkerFinal::transcribe(samples)
+└── 最多 3 次：
+    ├── WorkerBackend::transcribe
+    └── 判断失败 → WorkerBackend::restart() → 重试
+
+PipelineEvent::SegmentDropped(reason)
+└── Daemon::on_pipeline → Daemon::try_gpu_fallback(reason)
+    ├── 判断 gpu_fallback || worker.is_none() → 返回
+    ├── 判断 reason 含 "ASR" / "worker" / "推理" → 继续
+    ├── 停止并释放 worker
+    ├── build_cpu_final(&amp;config, factory)
+    ├── Pipeline::replace_final(
+    │       backend = SenseVoiceBackend,
+    │       punc = None,
+    │       punc_policy = Builtin,
+    │       max_segment_ms = sense_voice_manifest.max_segment_ms)
+    └── 成功 → gpu_fallback = true + 清空 config.fire_red / config.punc</code></pre>
 <ul class="note">
-  <li>重启 / 回退只改变 Final；Preview、VAD、Punc 与前端连接保持。</li>
-  <li>旧 Final 也无法恢复时才退出 daemon，由 systemd / 托盘拉起。</li>
+  <li>启动回退与运行期回退都只改变 Final；Preview、VAD、IPC 与前端连接保持。</li>
+  <li>没有 <code>active</code> 可回滚，也没有 IPC 广播的后端阶段；回退只写日志。</li>
+  <li>回退后若要重新尝试 GPU，需要退出并重启 <code>voimed</code>。</li>
 </ul>
 
 </body>

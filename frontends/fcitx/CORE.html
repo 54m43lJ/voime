@@ -149,15 +149,12 @@ FCITX_CONFIGURATION(
     fcitx::KeyListOption hotkey{this, "Hotkey", _("Hotkey"),
                                 {fcitx::Key("Super+F2")},
                                 fcitx::KeyListConstrain()};
-    fcitx::Option&lt;std::string&gt; model{this, "Model", _("Final model"), ""};
 );
 
 const char *modeName(Mode mode);
-std::string hotkeyString(const fcitx::KeyList &amp;keys);
-void updateModelEnum(fcitx::Option&lt;std::string&gt; &amp;model,
-                     const std::vector&lt;ModelInfo&gt; &amp;models);</code></pre>
+std::string hotkeyString(const fcitx::KeyList &amp;keys);</code></pre>
 <ul class="note">
-  <li><code>Model</code> 使用动态 <code>EnumAnnotation</code> 注入 Final 候选；空值表示跟随 <code>active</code>。</li>
+  <li>配置只有 <code>Mode</code> 与 <code>Hotkey</code>；不存在 <code>Model</code> 字段或动态模型枚举。</li>
 </ul>
 
 <h3 id="c4-3">4.3 src/preview.h, src/preview.cpp <a class="backlink" href="#c1">文件树</a></h3>
@@ -179,24 +176,11 @@ public:
 struct IpcConfig {
     Mode mode = Mode::Ptt;
     std::string hotkey;
-    std::string model;
 };
 
 enum class ServerMessageType {
     Snapshot, SegmentStarted, State, Partial, Final,
-    Models, ModelSelected, BackendState,
     HistoryCleared, Status, Error, Bye, Unknown,
-};
-
-struct ModelInfo {
-    std::string id;
-    std::string displayName;
-    std::string kind;
-    std::optional&lt;std::string&gt; runtime;
-    std::optional&lt;std::string&gt; device;
-    bool available = false;
-    bool active = false;
-    bool running = false;
 };
 
 struct ServerMessage {
@@ -208,9 +192,6 @@ struct ServerMessage {
     TriggerSource source = TriggerSource::Hold;
     std::optional&lt;Mode&gt; mode;
     std::optional&lt;std::string&gt; hotkey;
-    std::vector&lt;ModelInfo&gt; models;
-    std::optional&lt;ModelInfo&gt; model;
-    std::string backendPhase;
     std::string errorCode;
     std::string errorMessage;
 };
@@ -228,9 +209,6 @@ public:
     bool connect(const std::string &amp;socket);
     void disconnect();
     void configure(Mode mode, const std::string &amp;hotkey);
-    void setModel(const std::string &amp;packageId);
-    void listModels();
-    void restartBackend();
     void start(uint64_t segmentId, TriggerSource source);
     void stop(uint64_t segmentId, TriggerSource source);
     void toggle(uint64_t segmentId, TriggerSource source);
@@ -282,8 +260,7 @@ private:
     │   ├── fcitx::readAsIni(config_, "conf/voime.conf")
     │   └── IpcClient::setConfig(currentConfig())
     ├── IpcClient::connect(defaultSocketPath())
-    │   ├── sendJson(Hello { role: frontend, version: 3, config })
-    │   └── IpcClient::listModels()
+    │   └── sendJson(Hello { role: frontend, version: 4, config })
     ├── Instance::watchEvent&lt;InputContextKeyEvent&gt;(PreInputMethod, handleKey)
     ├── Instance::watchEvent&lt;InputContextFocusOut&gt;(PreInputMethod, focus lambda)
     └── EventLoop::addTimeEvent(2 s, reconnect timer)
@@ -347,14 +324,6 @@ private:
         │   ├── 判断 segmentId 不匹配 → 忽略
         │   ├── 判断 target_.focused() → Preview::show
         │   └── 否则 clearPreview()
-        ├── Models
-        │   └── updateModelEnum(config_.model, message.models)
-        ├── ModelSelected
-        │   └── 记录待重启模型；不立即改变运行值
-        ├── BackendState
-        │   ├── 判断 Restarting → 配置页显示“重启中”
-        │   ├── 判断 Ready → 清除待重启并刷新 active / running
-        │   └── 判断 Failed → 保留旧选择 + 写日志
         └── Final
             ├── 判断 segmentId 不匹配 → 忽略
             ├── Preview::clear(target)

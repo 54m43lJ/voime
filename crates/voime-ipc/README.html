@@ -46,8 +46,8 @@ daemon、TUI、Linux addon 与 Windows 前端使用不同语言与不同传输�
   <li>一行一个 JSON；消息边界、最大长度、UTF-8 与版本规则明确。</li>
   <li>daemon、TUI、Linux addon、Windows 前端对 Partial / Final / State 的解释一致。</li>
   <li>新增平台或前端不需要修改消息定义，只需要实现同一协议。</li>
-  <li>Final 模型列表、选择与重启使用同一协议；<code>ModelInfo</code> / <code>BackendState</code> 不由前端或 daemon 私自扩展。</li>
-  <li>协议变更必须提升 <code>PROTOCOL_VERSION</code>；协议 3 为 clean break，旧客户端收到明确错误。</li>
+  <li>协议不包含模型列表、模型选择或后端重启消息；模型由 daemon 从固定模型根目录加载，前端只消费 Final 文本。</li>
+  <li>协议变更必须提升 <code>PROTOCOL_VERSION</code>；当前为协议 4，旧客户端收到明确的 <code>version_mismatch</code>。</li>
 </ul>
 
 <h3 id="r1-3">1.3 非目标</h3>

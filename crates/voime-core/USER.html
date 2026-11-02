@@ -38,7 +38,7 @@
   <tr><td>语音段（<code>Segment</code>）</td><td>分段器输出的一段 16 kHz 单声道样本及起止毫秒；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
   <tr><td>活动段</td><td>分段器当前正在累积的语音段；Partial 只读取活动段末尾。</td></tr>
   <tr><td>完成段队列</td><td>Continuous 模式下已结束、等待最终识别的语音段队列；有界，满时丢弃最旧段。</td></tr>
-  <tr><td>模型清单（<code>ModelManifest</code>）</td><td>声明模型文件、SHA-256、张量契约、fbank 参数与分段上限的 JSON 对象。</td></tr>
+  <tr><td>模型清单（<code>manifest.json</code>）</td><td>每个固定模型目录一份 JSON，声明本目录的 <code>schema</code> / <code>kind</code>、模型文件、SHA-256、张量契约、fbank 参数与分段上限；四个目录互不共享清单。</td></tr>
   <tr><td>Artifact</td><td>清单中一个 ONNX 模型条目：相对路径、SHA-256、输入 / 输出张量声明。</td></tr>
   <tr><td>PyTorch / ONNX 张量声明（<code>TensorSpec</code>）</td><td>张量名、dtype 与形状；用 <code>-1</code> 表示动态维。</td></tr>
   <tr><td>会话工厂（<code>SessionFactory</code>）</td><td>创建 CPU ONNX 会话并按清单校验输入 / 输出张量。</td></tr>
@@ -63,8 +63,8 @@
   <tr><td>Partial</td><td>按时间与新增音频双重门槛节流，只读取活动段末尾；固定由 SenseVoice 产生，不进入历史、不提交；可丢弃。</td></tr>
   <tr><td>Final</td><td>完整段交给 <code>FinalBackend</code>：CPU SenseVoice 或 daemon 注入的 worker；随后按 <code>PuncPolicy</code> 处理标点。空文本不产生 <code>Final</code>，产生 <code>SegmentDropped</code>。</td></tr>
   <tr><td>模式</td><td><code>Mode</code> 由 <a href="../voime-ipc/USER.html#u4-1">voime-ipc USER §4.1</a> 定义；核心只消费，不解析命令行。</td></tr>
-  <tr><td>模型生命周期</td><td>SenseVoice 基础包常驻；VAD 与 Punc 按 Final 模式加载；每段只重置解码状态，不重新加载权重。GPU worker 由 daemon 管理。</td></tr>
-  <tr><td>Final 选择</td><td>核心只加载 daemon 传入的 Final manifest；<code>active</code>、候选列表与重启由 daemon 负责。</td></tr>
+  <tr><td>模型生命周期</td><td>VAD 与 SenseVoice 始终加载；FireRed AED 与 Punc 只在两个目录都存在时加载。每段只重置解码状态，不重新加载权重。GPU worker 由 daemon 管理。</td></tr>
+  <tr><td>Final 选择</td><td>核心按固定目录解析：GPU 条件满足时加载 <code>fire-red-aed</code> + <code>punc</code> 的 manifest；否则使用 SenseVoice。没有 <code>active</code>、候选列表或重启后端。</td></tr>
   <tr><td>有界队列</td><td>完成段队列容量有限；慢识别时音频通道也可能丢弃，不承诺零丢失。</td></tr>
   <tr><td>错误策略</td><td>初始化失败返回错误；运行期单段失败产生 <code>SegmentDropped</code>；连续音频错误达到上限产生 <code>Fatal</code>。</td></tr>
   <tr><td>无持久化</td><td>不写音频、模型缓存或识别文本到磁盘；模型目录只读。</td></tr>
@@ -86,36 +86,58 @@
 <p><a href="#top">↑</a></p>
 
 <h3 id="u4-1">4.1 配置</h3>
-<pre><code>pub struct Config {
+<pre><code>pub struct FireRedConfig {
+    pub dir: PathBuf,
+    pub manifest: FireRedManifest,
+}
+
+pub struct PuncConfig {
+    pub dir: PathBuf,
+    pub manifest: PuncManifest,
+}
+
+pub struct Config {
     pub model_root: PathBuf,
-    pub model_dir: PathBuf,          // 当前 Final 包目录
     pub input_device: Option&lt;String&gt;,
     pub threads: usize,
-    pub manifest: ModelManifest,
     pub preview_enabled: bool,
     pub pre_roll_ms: u32,
+    pub vad_dir: PathBuf,
+    pub vad_manifest: VadManifest,
+    pub sense_voice_dir: PathBuf,
+    pub sense_voice_manifest: SenseVoiceManifest,
+    pub fire_red: Option&lt;FireRedConfig&gt;,
+    pub punc: Option&lt;PuncConfig&gt;,
 }
 
 pub struct Args {
-    pub model_dir: Option&lt;PathBuf&gt;,  // 仅覆盖 Final 包目录
     pub input_device: Option&lt;String&gt;,
     pub threads: Option&lt;usize&gt;,
     pub verbose: bool,
 }
 
+impl Config {
+    pub fn gpu_final(&amp;self) -&gt; bool;       // fire_red.is_some() &amp;&amp; punc.is_some()
+    pub fn max_segment_ms(&amp;self) -&gt; u32;
+}
+
 pub fn resolve(args: Args) -&gt; anyhow::Result&lt;Config&gt;;
+pub fn resolve_at(root: &amp;Path, args: Args) -&gt; anyhow::Result&lt;Config&gt;;
 pub fn default_model_root() -&gt; PathBuf;</code></pre>
 
 <table>
   <tr><th>字段 / 函数</th><th>契约</th></tr>
   <tr><td><code>model_root</code></td><td>模型根目录；默认 <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）。Windows 优先使用 <code>%LOCALAPPDATA%\voime\models</code>，仅在 <code>LOCALAPPDATA</code> 未设置时回退到 XDG / HOME 路径。</td></tr>
-  <tr><td><code>model_dir</code></td><td>当前 Final 包目录，包含 <code>manifest.json</code>；由 <code>active</code> 解析或 <code>--model-dir</code> 显式覆盖。</td></tr>
+  <tr><td><code>vad_dir</code> / <code>vad_manifest</code></td><td><code>model_root/vad</code> 与已加载、校验并重定位的 VAD 清单；始终存在。</td></tr>
+  <tr><td><code>sense_voice_dir</code> / <code>sense_voice_manifest</code></td><td><code>model_root/sense-voice</code> 与已加载、校验并重定位的 SenseVoice 清单；始终存在，服务 Preview 与 CPU Final。</td></tr>
+  <tr><td><code>fire_red</code> / <code>punc</code></td><td>目录与清单都存在时为 <code>Some</code>；两者必须同时存在或同时缺失。</td></tr>
   <tr><td><code>input_device</code></td><td><code>None</code> 使用系统默认输入设备；<code>Some(name)</code> 按设备名精确匹配。</td></tr>
   <tr><td><code>threads</code></td><td>ONNX Runtime intra-op 线程数；必须大于 0。</td></tr>
-  <tr><td><code>manifest</code></td><td><code>resolve</code> 加载、校验并重定位后的 Final 清单。</td></tr>
-  <tr><td><code>preview_enabled</code></td><td>是否产生 Partial；默认 <code>true</code>。Preview 始终使用固定 SenseVoice 基础包，与 Final 选择无关。</td></tr>
-  <tr><td><code>pre_roll_ms</code></td><td>交给 ASR 的段前音频长度；默认 200–300 ms，按模式与目标语料调整；不改变 VAD 判定。</td></tr>
-  <tr><td><code>resolve</code></td><td>读取 <code>model_root/active</code> 或显式 <code>--model-dir</code> → 加载固定 SenseVoice 基础包 → 校验 Final 清单 / SHA-256 / 张量 / 词表 / <code>requires</code> → 重定位路径；失败返回带路径上下文的错误。</td></tr>
+  <tr><td><code>preview_enabled</code></td><td>是否产生 Partial；默认 <code>true</code>。Preview 始终使用固定 SenseVoice 目录，与 GPU Final 无关。</td></tr>
+  <tr><td><code>pre_roll_ms</code></td><td>交给 ASR 的段前音频长度；默认 250 ms；不改变 VAD 判定。</td></tr>
+  <tr><td><code>gpu_final</code></td><td>仅当 <code>fire_red</code> 与 <code>punc</code> 都为 <code>Some</code> 时返回 <code>true</code>；否则使用 CPU SenseVoice。</td></tr>
+  <tr><td><code>resolve</code></td><td>按固定目录加载 <code>vad</code> 与 <code>sense-voice</code> → 检查 <code>fire-red-aed</code> / <code>punc</code> 目录 → 两者都在时加载其清单 / SHA-256 / 张量 / 词表 → 重定位路径；只存在一个时返回安装不完整错误。</td></tr>
+  <tr><td><code>resolve_at</code></td><td>在显式模型根目录上执行同一解析；测试与 doctor 使用。</td></tr>
   <tr><td><code>default_model_root</code></td><td>平台默认模型根目录；端点由 <a href="../voime-transport/USER.html">voime-transport</a> 管理。</td></tr>
 </table>
 
@@ -157,26 +179,19 @@ impl CaptureHandle {
 </table>
 
 <h3 id="u4-3">4.3 模型清单</h3>
-<pre><code>pub struct ModelManifest {
-    pub schema: u32,                 // 只接受 3
-    pub display_name: String,
-    pub sample_rate: u32,
-    pub fbank: FbankManifest,
-    pub max_segment_ms: u32,
-    pub vad: VadArtifact,
-    #[serde(default)]
-    pub requires: Vec&lt;String&gt;,       // GPU 包必需：["sense-voice-2024-int8"]
-    pub backend: BackendManifest,
-    pub asr: AsrArtifact,
-    #[serde(default)]
-    pub punc: Option&lt;PuncArtifact&gt;,
-}
+<pre><code>pub const MANIFEST_FILE: &amp;str = "manifest.json";
+pub const SCHEMA_VERSION: u32 = 3;
+pub const SAMPLES_PER_SECOND: u32 = 16_000;
 
-pub struct FbankManifest {
-    pub num_bins: u32,
-    pub frame_ms: u32,
-    pub shift_ms: u32,
-    pub window_type: String,         // "povey" | "hamming"
+pub const VAD_DIR: &amp;str = "vad";
+pub const SENSE_VOICE_DIR: &amp;str = "sense-voice";
+pub const FIRE_RED_AED_DIR: &amp;str = "fire-red-aed";
+pub const PUNC_DIR: &amp;str = "punc";
+
+pub struct TensorSpec {
+    pub name: String,
+    pub dtype: String,
+    pub shape: Vec&lt;i64&gt;,
 }
 
 pub struct Artifact {
@@ -186,62 +201,77 @@ pub struct Artifact {
     pub outputs: Vec&lt;TensorSpec&gt;,
 }
 
-pub type VadArtifact = Artifact;
-
-pub enum AsrKind { SenseVoice, FireRedAed, External }
-pub enum PuncPolicy { Builtin, External }
 pub enum Precision { Fp16, Int8 }
-pub enum BackendKind { Builtin, Worker }
+pub enum PuncPolicy { Builtin, External }
+
+pub struct FbankManifest {
+    pub num_bins: u32,
+    pub frame_ms: u32,
+    pub shift_ms: u32,
+    pub window_type: String,         // "povey" | "hamming"
+}
 
 pub struct AsrOptions {
     pub language: Option&lt;String&gt;,
     pub use_itn: bool,
-    pub punc: PuncPolicy,
     pub partial: bool,
 }
 
-pub struct AsrArtifact {
-    pub kind: AsrKind,
-    pub model: Option&lt;Artifact&gt;,
-    pub encoder: Option&lt;Artifact&gt;,
-    pub decoder: Option&lt;Artifact&gt;,
-    pub precision: Option&lt;Precision&gt;,
+pub struct VadManifest {
+    pub schema: u32,
+    pub kind: String,                // "vad"
+    pub fbank: FbankManifest,
+    pub model: Artifact,
+}
+
+pub struct SenseVoiceManifest {
+    pub schema: u32,
+    pub kind: String,                // "sense-voice"
+    pub fbank: FbankManifest,
+    pub max_segment_ms: u32,
+    pub model: Artifact,
     pub tokens: PathBuf,
     pub token_count: usize,
     pub options: AsrOptions,
 }
 
-pub struct BackendManifest {
-    pub kind: BackendKind,
-    pub runtime: Option&lt;String&gt;,
-    pub device: Option&lt;String&gt;,
-    pub min_vram_mb: Option&lt;u32&gt;,
-    pub supports_partial: bool,
-    pub load_timeout_ms: u64,
-    pub request_timeout_ms: u64,
+pub struct FireRedManifest {
+    pub schema: u32,
+    pub kind: String,                // "fire-red-aed"
+    pub fbank: FbankManifest,
+    pub max_segment_ms: u32,
+    pub encoder: Artifact,
+    pub decoder: Artifact,
+    pub precision: Precision,
+    pub tokens: PathBuf,
+    pub token_count: usize,
 }
 
-pub struct PuncArtifact {
+pub struct PuncManifest {
+    pub schema: u32,
+    pub kind: String,                // "punc"
     pub model: Artifact,
     pub vocab: PathBuf,
     pub labels: PathBuf,
     pub max_tokens: usize,
 }
 
+// 每个类型都有 load / validate / verify / rebase。
 pub fn resolve_inside(dir: &amp;Path, relative: &amp;Path) -&gt; anyhow::Result&lt;PathBuf&gt;;</code></pre>
 
 <table>
   <tr><th>字段 / 函数</th><th>契约</th></tr>
+  <tr><td>目录布局</td><td><code>model_root/vad</code>、<code>model_root/sense-voice</code>、<code>model_root/fire-red-aed</code>、<code>model_root/punc</code>；每个目录一份 <code>manifest.json</code>，名称固定。</td></tr>
   <tr><td><code>schema</code></td><td>只接受 <code>3</code>；旧 schema 直接拒绝，不做字段推断或默认值补齐。</td></tr>
-  <tr><td><code>sample_rate</code></td><td>必须为 16 kHz；否则启动失败。</td></tr>
+  <tr><td><code>kind</code></td><td>必须与目录对应：<code>vad</code> / <code>sense-voice</code> / <code>fire-red-aed</code> / <code>punc</code>。</td></tr>
   <tr><td><code>fbank</code></td><td>VAD / SenseVoice / AED 参数；SenseVoice 显式 <code>hamming</code>，AED 使用 <code>povey</code>；具体值与预处理见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td></tr>
-  <tr><td><code>max_segment_ms</code></td><td>单段上限；SenseVoice 建议 20 s，FireRed AED 30 s；达到上限强制结束并继续收集后续语音。</td></tr>
-  <tr><td><code>vad</code> / <code>asr</code> / <code>punc</code></td><td>ONNX 文件、SHA-256 与张量声明；<code>verify</code> 校验文件存在、非空且摘要匹配。</td></tr>
-  <tr><td><code>requires</code></td><td>GPU 包必须声明 <code>["sense-voice-2024-int8"]</code>；缺失基础包时加载失败。</td></tr>
-  <tr><td><code>backend.kind</code></td><td><code>builtin</code> 为进程内 CPU；<code>worker</code> 为 voime-gpu。GPU 包必须声明 <code>runtime</code>、<code>device</code>、<code>min_vram_mb</code> 与超时。</td></tr>
-  <tr><td><code>asr</code></td><td><code>sense-voice</code> 要求 <code>model</code> + <code>punc=builtin</code>；<code>fire-red-aed</code> 要求 <code>encoder</code> + <code>decoder</code> + <code>punc=external</code>，v2 为 <code>precision=fp16</code> + <code>token_count=8667</code>；临时 v1 官方 FP16 包为 <code>precision=fp16</code> + <code>token_count=7832</code>；错误组合在加载时失败。</td></tr>
-  <tr><td><code>punc</code></td><td>可选；<code>Builtin</code> 包省略，<code>External</code> 包必须提供。不允许混用。</td></tr>
-  <tr><td><code>resolve_inside</code></td><td>拒绝绝对路径、<code>..</code> 与空路径，防止模型包逃逸目录。</td></tr>
+  <tr><td><code>max_segment_ms</code></td><td>SenseVoice 与 FireRed AED 的单段上限；SenseVoice 为 20 s，FireRed AED 为 30 s；达到上限强制结束并继续收集后续语音。</td></tr>
+  <tr><td><code>model</code> / <code>encoder</code> / <code>decoder</code></td><td>ONNX 文件、SHA-256 与张量声明；<code>verify</code> 校验文件存在、非空且摘要匹配。</td></tr>
+  <tr><td><code>tokens</code> / <code>token_count</code></td><td>SenseVoice 为 <code>tokens.txt</code> + 25055；FireRed AED 为 <code>tokens.txt</code>，FP16 允许 7832（官方 v1）或 8667（v2），INT8 只允许 7832。</td></tr>
+  <tr><td><code>options</code></td><td>SenseVoice 的 <code>language</code> / <code>use_itn</code> / <code>partial</code>；<code>use_itn</code> 必须为 <code>true</code>，内置标点。</td></tr>
+  <tr><td><code>punc</code> 目录</td><td>独立 <code>punc/manifest.json</code>，含 <code>model</code> / <code>vocab</code> / <code>labels</code> / <code>max_tokens</code>；只服务 GPU Final。</td></tr>
+  <tr><td>无跨目录字段</td><td>没有 <code>requires</code>、<code>backend</code> 或 package_id；是否使用 GPU Final 由 <code>fire-red-aed</code> 与 <code>punc</code> 目录是否同时存在决定。</td></tr>
+  <tr><td><code>resolve_inside</code></td><td>拒绝绝对路径、<code>..</code> 与空路径，防止模型目录逃逸。</td></tr>
 </table>
 
 <h3 id="u4-4">4.4 Pipeline</h3>

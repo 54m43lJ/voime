@@ -44,7 +44,7 @@ GPU 崩溃也会带崩 SenseVoice Preview。Voime 把 GPU Final 隔离为独立�
 
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
 <ul>
-  <li>CPU daemon 不加载任何 GPU 库；只有 Final 选择 FireRed 时才启动 <code>voime-gpu</code>。</li>
+  <li>CPU daemon 不加载任何 GPU 库；只有 <code>fire-red-aed</code> 与 <code>punc</code> 两个目录都存在且 GPU 初始化成功时才启动 <code>voime-gpu</code>。</li>
   <li>worker 与 daemon 使用独立协议；GPU 崩溃、超时或显存不足不会中断 SenseVoice Preview。</li>
   <li>GPU 只做 Final，不产生 Partial；所有 Partial 由常驻 SenseVoice 提供。</li>
   <li>FireRed AED 只接受 FP16；加载失败直接报错，不回退 FP32 或 int8。</li>
@@ -71,7 +71,7 @@ GPU 崩溃也会带崩 SenseVoice Preview。Voime 把 GPU Final 隔离为独立�
 <table>
   <tr><th>调用方</th><th>交互</th><th>契约</th></tr>
   <tr><td><code>voimed</code></td><td>spawn、Hello / Ready、Transcribe、Cancel、Shutdown；接收 Result / Error。</td><td><a href="USER.html#u4-2">USER §4.2</a> · <a href="../voimed/CORE.html#c4-7">voimed CORE §4.7</a></td></tr>
-  <tr><td><code>voime doctor</code></td><td>通过 daemon 的 <code>ListModels</code> / <code>BackendState</code> 读取 GPU 可用性、runtime、driver、VRAM 与当前 worker。</td><td><a href="../voime/USER.html#u4-4">voime USER §4.4</a></td></tr>
+  <tr><td><code>voime doctor</code></td><td>检查固定模型目录配对、<code>voime-gpu</code> 可执行文件与 GPU runtime；不通过 IPC 查询模型列表。</td><td><a href="../voime/USER.html#u4-4">voime USER §4.4</a></td></tr>
 </table>
 
 <h2 id="r3">3. 边界</h2>
@@ -81,8 +81,8 @@ GPU 崩溃也会带崩 SenseVoice Preview。Voime 把 GPU Final 隔离为独立�
   <tr><th>拥有</th><th>不拥有</th></tr>
   <tr><td>GPU-only ORT 会话、DirectML / MIGraphX / CUDA EP</td><td>CPU ORT、VAD、SenseVoice、FireRedPunc</td></tr>
   <tr><td>FireRed AED FP16 encoder / decoder 与自回归贪心解码</td><td>分段、预卷、Preview、标点、目标输入</td></tr>
-  <tr><td>worker 协议、handshake、取消、错误码、心跳</td><td>前端 IPC、<code>models/active</code>、daemon 状态机</td></tr>
-  <tr><td>worker 进程生命周期；由 daemon 监督</td><td>模型选择 UI、安装器、日志落盘</td></tr>
+  <tr><td>worker 协议、handshake、取消、错误码、心跳</td><td>前端 IPC、固定模型目录解析、daemon 状态机</td></tr>
+  <tr><td>worker 进程生命周期；由 daemon 监督</td><td>模型安装器、前端配置、日志落盘</td></tr>
 </table>
 <ul class="note">
   <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；worker 行为见 <a href="USER.html">USER</a>。</li>

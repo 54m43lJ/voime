@@ -51,8 +51,8 @@
   <li>说话期间显示当前段的临时文本；最终结果提交到语音段开始时聚焦的输入位置，失焦时不向其他窗口注入。</li>
   <li>音频、模型、VAD、SenseVoice、FireRedPunc 与会话历史由独立 <code>voimed</code> 守护进程持有；GPU Final 由可选的 <code>voime-gpu</code> 处理。</li>
   <li>可选 TUI 连接 daemon，显示模式、热键、临时结果与历史；关闭 TUI 不影响热键、临时窗口与上屏。</li>
-  <li>模型安装两档：<code>sensevoice</code> 只装 SenseVoice；<code>firered</code> 装 SenseVoice + FireRed AED，GPU Final 可选。</li>
-  <li>运行时不需要网络与 Python；默认纯 CPU，GPU 只用于 Final；模型由安装脚本生成，<code>voimed</code> 完全离线运行。</li>
+  <li>模型安装使用固定目录：默认安装 VAD + SenseVoice；<code>--gpu</code> 额外安装 FireRed AED + Punc。</li>
+  <li>运行时不需要网络与 Python；默认纯 CPU，只有 <code>fire-red-aed</code> 与 <code>punc</code> 两个目录都存在且 GPU 初始化成功时才使用 GPU Final，否则使用 CPU SenseVoice。</li>
 </ul>
 
 <h3 id="r1-3">1.3 非目标</h3>
@@ -82,9 +82,9 @@
     <td><a href="frontends/fcitx/USER.html#u4-1">fcitx-addon USER §4.1</a> · <a href="frontends/windows/USER.html#u4-1">windows USER §4.1</a></td>
   </tr>
   <tr>
-    <td>选择 Final 模型</td>
-    <td>配置界面列出 Final 候选，显示 CPU / GPU 与可用性；选择后显示“待重启”，重启后端只重建 Final，Preview 仍由 SenseVoice 处理。</td>
-    <td><a href="USER.html#u4-1">根 USER §4.1</a> · <a href="crates/voimed/USER.html#u4-2">voimed USER §4.2</a> · <a href="frontends/fcitx/USER.html#u4-1">fcitx-addon USER §4.1</a> · <a href="frontends/windows/USER.html#u5">windows USER §5</a></td>
+    <td>GPU Final 自动选择</td>
+    <td>模型根目录固定包含 <code>vad</code>、<code>sense-voice</code>，可选 <code>fire-red-aed</code> 与 <code>punc</code>。启动时 VAD 与 SenseVoice 总是加载；FireRed 与 Punc 两个目录都存在时尝试 GPU Final，GPU 初始化失败自动回退 CPU SenseVoice。没有模型选择、待重启或重启后端操作；更换模型后重启 <code>voimed</code> 进程。</td>
+    <td><a href="USER.html#u4-1">根 USER §4.1</a> · <a href="crates/voimed/USER.html#u3-3">voimed USER §3.3</a> · <a href="BUILD.html#b4">根 BUILD §4</a></td>
   </tr>
   <tr>
     <td>PTT 模式</td>
@@ -175,7 +175,7 @@
   <tr><th>内容</th><th>唯一所有者</th><th>其他文档的做法</th></tr>
   <tr><td>消息类型、JSON 编码、framing、协议版本、错误码</td><td><a href="crates/voime-ipc/USER.html">voime-ipc USER</a></td><td>只链接，不复制定义</td></tr>
   <tr><td>daemon 会话、<code>segment_id</code> 分配、广播、背压、历史</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
-  <tr><td>Final 模型选择、<code>active</code>、重启后端、worker 生命周期</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
+  <tr><td>固定模型目录、启动时 Final 选择、GPU 回退、worker 生命周期</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
   <tr><td>音频、VAD、SenseVoice、<code>FinalBackend</code>、标点、pipeline 的公开 API</td><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>只链接，不复制类型与语义</td></tr>
   <tr><td>模型 manifest、SHA-256、VAD / SenseVoice / Punc 张量</td><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>只链接，不复制张量定义</td></tr>
   <tr><td>voime-gpu 协议、GPU runtime、FireRed AED 张量与 EP</td><td><a href="crates/voime-gpu/PROVIDER.html">voime-gpu PROVIDER</a></td><td>只链接，不复制协议与张量定义</td></tr>
@@ -304,7 +304,7 @@
   <tr><td><a href="https://github.com/nlohmann/json">nlohmann/json</a></td><td>Linux 前端 IPC JSON 解析</td><td>C++ · MIT</td></tr>
 </table>
 <ul class="note">
-  <li>模型权重及其许可证随模型包分发；本仓库不提交权重文件。</li>
+  <li>模型权重及其许可证随模型目录分发；本仓库不提交权重文件。</li>
   <li>各组件的依赖职责见其 <code>CORE</code> 的 SBOM；版本与许可证以仓库清单为准。</li>
 </ul>
 

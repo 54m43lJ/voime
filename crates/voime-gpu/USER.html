@@ -82,7 +82,7 @@ ONNX Runtime EP 的契约见 <a href="PROVIDER.html">PROVIDER</a>；进程监督
 
 <table>
   <tr><th>选项 / 环境</th><th>契约</th></tr>
-  <tr><td><code>--manifest</code></td><td>FireRed AED 包目录；必须包含 <code>manifest.json</code>、encoder / decoder / tokens / punc。</td></tr>
+  <tr><td><code>--manifest</code></td><td>FireRed AED 模型目录；必须包含 <code>manifest.json</code>、encoder / decoder 与 tokens。Punc 是独立目录，由 daemon 处理。</td></tr>
   <tr><td><code>--device</code></td><td><code>auto</code> 或 runtime 支持的设备名；只影响 GPU EP。</td></tr>
   <tr><td><code>--verbose</code></td><td>诊断输出到 stderr；stdout 仍只用于协议。</td></tr>
   <tr><td><code>VOIME_LOG</code></td><td>由 daemon 传入；worker 只写 stderr，由 daemon 统一落盘；不记录识别文本。</td></tr>
@@ -124,7 +124,7 @@ Response
   <tr><th>错误码</th><th>含义</th><th>daemon 动作</th></tr>
   <tr><td><code>RuntimeMissing</code></td><td>GPU runtime 未安装 / 版本不匹配。</td><td>标记 GPU Final 不可用；Preview / CPU Final 继续；提示安装 runtime。</td></tr>
   <tr><td><code>DeviceUnavailable</code></td><td>无 GPU、驱动不匹配、显存不足。</td><td>worker 不可用；Final 回退 CPU SenseVoice；不加载 AED CPU。</td></tr>
-  <tr><td><code>LoadFailed</code></td><td>模型 / EP / 张量校验失败。</td><td>回滚 <code>active</code>；Preview / CPU Final 继续。</td></tr>
+  <tr><td><code>LoadFailed</code></td><td>模型 / EP / 张量校验失败。</td><td>GPU Final 初始化失败；daemon 回退 CPU SenseVoice，Preview 继续。</td></tr>
   <tr><td><code>InferenceFailed</code></td><td>运行期推理失败。</td><td>当前段丢弃；重启 worker；连续失败标记不可用。</td></tr>
   <tr><td><code>Timeout</code></td><td>超过请求预算。</td><td>杀 worker；按崩溃路径处理。</td></tr>
   <tr><td><code>ProtocolMismatch</code></td><td>worker / daemon 协议版本不一致。</td><td>拒绝加载；提示升级 runtime 或 daemon。</td></tr>

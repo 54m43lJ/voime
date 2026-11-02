@@ -30,8 +30,8 @@
 <table>
   <tr><th>项目</th><th>约定</th></tr>
   <tr><td>支持来源</td><td>只支持上一版本 + 当前开发机环境；不覆盖源码构建、其他发行版或其他机器。</td></tr>
-  <tr><td>目标</td><td>schema 3 模型包、<code>models/active</code> Final 指针、白名单配置。</td></tr>
-  <tr><td>不处理</td><td>不转换旧 CTC / SenseVoice-punc / AED CPU 包；不建立运行期兼容层；不改音频等无关用户数据。</td></tr>
+  <tr><td>目标</td><td>schema 3 固定模型目录（<code>vad</code> / <code>sense-voice</code>，可选 <code>fire-red-aed</code> / <code>punc</code>）与 Fcitx 配置备份。</td></tr>
+  <tr><td>不处理</td><td>不转换旧 CTC / SenseVoice-punc / AED CPU 包；不建立运行期兼容层；不迁移模型选择指针（新架构没有）；不改音频等无关用户数据。</td></tr>
   <tr><td>生命周期</td><td>临时脚本，只随 ASR v2 首次发布提供；下一个大版本移除。</td></tr>
 </table>
 
@@ -39,7 +39,7 @@
 <p><a href="#top">↑</a></p>
 
 <ul>
-  <li>先安装新版本二进制；迁移脚本按档位安装 schema 3 模型包，并迁移 <code>active</code> 与白名单配置。</li>
+  <li>先安装新版本二进制；迁移脚本备份旧模型目录与 Fcitx 配置，然后调用安装器写入新的固定模型目录。</li>
   <li>停止 <code>voimed</code>；脚本不会在 daemon 运行时执行。</li>
   <li>确认模型根目录可写，且磁盘空间足够保存时间戳备份。</li>
   <li>阅读发布说明；确认当前环境属于“上一版本 + 当前开发机”，其他环境直接 clean install。</li>
@@ -51,14 +51,20 @@
 <pre><code># 只输出计划，不修改文件
 scripts/migrate-asr-v2.sh --dry-run
 
-# 确认后执行
-scripts/migrate-asr-v2.sh --apply</code></pre>
+# 默认安装 VAD + SenseVoice；GPU 目录再加 --gpu
+scripts/migrate-asr-v2.sh --apply
+scripts/migrate-asr-v2.sh --apply --gpu
+
+# 指定模型根目录
+scripts/migrate-asr-v2.sh --dry-run --model-root /path/to/models</code></pre>
 
 <table>
   <tr><th>选项</th><th>行为</th></tr>
-  <tr><td><code>--dry-run</code></td><td>默认模式；列出将备份、清理、安装与写入的项。</td></tr>
+  <tr><td><code>--dry-run</code></td><td>默认模式；列出将备份、安装与写入的项。</td></tr>
   <tr><td><code>--apply</code></td><td>执行迁移；执行前要求 daemon 已停止。</td></tr>
+  <tr><td><code>--gpu</code></td><td>除默认 VAD + SenseVoice 外，额外安装 FireRed AED + Punc；对应安装步骤需要可用的 Punc 源目录。</td></tr>
   <tr><td><code>--force</code></td><td>忽略已存在的迁移标记；仅用于明确知道后果的重复运行。</td></tr>
+  <tr><td><code>--model-root</code></td><td>覆盖模型根目录。</td></tr>
 </table>
 
 <h2 id="m4">4. 迁移内容</h2>
@@ -66,12 +72,10 @@ scripts/migrate-asr-v2.sh --apply</code></pre>
 
 <table>
   <tr><th>步骤</th><th>行为</th></tr>
-  <tr><td>备份</td><td>把旧模型目录与配置复制到带时间戳的备份目录；失败时停止。</td></tr>
-  <tr><td>清理</td><td>清理旧包 / 旧 <code>active</code> 布局；不把 CTC / punc / AED CPU 包转换为可用后端。</td></tr>
-  <tr><td>安装</td><td>按 <code>sensevoice</code> / <code>firered</code> 档安装 schema 3 新模型包；校验 SHA、张量与 <code>requires</code>。</td></tr>
-  <tr><td>写 active</td><td>写入新 Final 包目录名；使用临时文件 + rename。</td></tr>
-  <tr><td>配置</td><td>按白名单迁移已知配置；未知字段保留在备份中，由用户重新配置。</td></tr>
-  <tr><td>收尾</td><td>写迁移标记；输出新 <code>active</code>、档位与备份路径。</td></tr>
+  <tr><td>备份</td><td>把旧模型目录与 <code>~/.config/fcitx5/conf/voime.conf</code> 复制到带时间戳的备份目录；失败时停止。</td></tr>
+  <tr><td>安装</td><td>调用 <code>install_models.sh</code> 写入固定目录：默认 <code>vad</code> + <code>sense-voice</code>；<code>--gpu</code> 追加 <code>fire-red-aed</code> + <code>punc</code>。</td></tr>
+  <tr><td>配置</td><td>保留 Fcitx 的 <code>Mode</code> / <code>Hotkey</code>；旧模型选择字段不再读取，未知字段保留在备份中。</td></tr>
+  <tr><td>收尾</td><td>写迁移标记 <code>.migrate-asr-v2</code>；输出模型根目录与备份路径。</td></tr>
 </table>
 
 <h2 id="m5">5. 回滚</h2>
@@ -79,7 +83,7 @@ scripts/migrate-asr-v2.sh --apply</code></pre>
 
 <ul>
   <li>失败时脚本自动恢复备份，并保留迁移日志。</li>
-  <li>手工回滚：停止 daemon，把备份目录中的模型 / 配置复制回原位置，恢复旧 <code>active</code>，再启动旧版本。</li>
+  <li>手工回滚：停止 daemon，把备份目录中的模型 / 配置复制回原位置，再启动旧版本；新架构没有 <code>active</code> 需要恢复。</li>
   <li>迁移不是运行期兼容承诺；回滚后旧版本仍按旧规则运行。</li>
 </ul>
 
@@ -89,7 +93,7 @@ scripts/migrate-asr-v2.sh --apply</code></pre>
 <ul>
   <li>不安装或替换二进制；不启动 / 停止 systemd 或托盘。</li>
   <li>不下载模型；模型安装仍由安装脚本完成。</li>
-  <li>不转换旧模型包，不保留旧 schema、<code>active=legacy</code> 或旧目录布局。</li>
+  <li>不转换旧模型包，不保留旧 schema、<code>active=legacy</code> 或旧目录布局；新 daemon 只读取四个固定目录。</li>
   <li>不修改与升级无关的音频、按键或识别历史。</li>
 </ul>
 

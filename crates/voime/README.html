@@ -44,8 +44,8 @@ daemon 在后台运行，用户与运维仍需要一个轻量的观察与控制�
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
 <ul>
   <li>TUI 可连接 daemon，显示模式、热键、临时结果与历史；关闭 TUI 不影响热键、临时窗口与上屏。</li>
-  <li><code>voime ctl</code> 可在脚本中执行 start / stop / toggle / status / clear / quit，以及 models / use / restart-backend。</li>
-  <li><code>voime doctor</code> 用只读检查定位端点、daemon、SenseVoice / Final、GPU runtime、音频与平台前端问题。</li>
+  <li><code>voime ctl</code> 可在脚本中执行 start / stop / toggle / status / clear / quit。</li>
+  <li><code>voime doctor</code> 用只读检查定位端点、daemon、四个固定模型目录、GPU runtime、音频与平台前端问题。</li>
   <li>没有 TTY 时 TUI 明确失败；daemon 与 <code>ctl</code> / <code>doctor</code> 不使用 TUI。</li>
   <li>客户端不加载模型、不解析音频、不处理热键。</li>
 </ul>
@@ -67,11 +67,8 @@ daemon 在后台运行，用户与运维仍需要一个轻量的观察与控制�
   <tr><td><code>voime ctl start|stop|toggle</code></td><td>发送一次控制命令并打印结果状态。</td><td><a href="USER.html#u4-3">USER §4.3</a></td></tr>
   <tr><td><code>voime ctl status</code></td><td>打印 recording / finalizing / segment / mode / hotkey / addon / transcript 计数。</td><td><a href="USER.html#u4-3">USER §4.3</a></td></tr>
   <tr><td><code>voime ctl clear</code></td><td>清空 daemon 历史，保留当前段。</td><td><a href="../voimed/USER.html#u4-2">voimed USER §4.2</a></td></tr>
-  <tr><td><code>voime ctl models</code></td><td>列出 Final 候选与 <code>active</code> / <code>running</code>。</td><td><a href="USER.html#u4-3">USER §4.3</a></td></tr>
-  <tr><td><code>voime ctl use</code></td><td>写 Final 选择；不触发重启。</td><td><a href="USER.html#u4-3">USER §4.3</a></td></tr>
-  <tr><td><code>voime ctl restart-backend</code></td><td>空闲时重建 Final；Preview 不中断。</td><td><a href="USER.html#u4-3">USER §4.3</a></td></tr>
   <tr><td><code>voime ctl quit</code></td><td>停止 daemon；TUI / 前端不受影响（随后断线）。</td><td><a href="../voimed/USER.html#u4-5">voimed USER §4.5</a></td></tr>
-  <tr><td><code>voime doctor</code></td><td>只读检查端点、daemon、SenseVoice / Final、GPU runtime、音频与前端；不修改状态。</td><td><a href="USER.html#u4-4">USER §4.4</a></td></tr>
+  <tr><td><code>voime doctor</code></td><td>只读检查端点、daemon、四个固定模型目录、GPU runtime、音频与前端；不修改状态。</td><td><a href="USER.html#u4-4">USER §4.4</a></td></tr>
 </table>
 
 <h2 id="r3">3. 边界</h2>

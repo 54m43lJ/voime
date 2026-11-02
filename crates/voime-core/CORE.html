@@ -49,7 +49,7 @@
     └── <a href="#c4-19">pipeline.rs</a></code></pre>
 <ul class="note">
   <li>模块入口文件只做 <code>pub mod</code> 导出；具体实现与签名在对应子文件。</li>
-  <li>文档与图表不属于源码结构；模型包路径在运行时由 <code>config::resolve</code> 注入。</li>
+  <li>文档与图表不属于源码结构；固定模型目录在运行时由 <code>config::resolve</code> 解析。</li>
 </ul>
 
 <ul class="note">
@@ -68,7 +68,7 @@
   <tr><td>Partial 门槛</td><td>最小间隔、最小新增音频与尾部长度由 pipeline 模块常量拥有；一次慢推理会推迟下一次 Partial，避免立即重跑。</td></tr>
   <tr><td>分段与预卷</td><td><code>MIN_SPEECH_MS</code> / <code>MIN_SILENCE_MS</code> / <code>PTT_AUTO_END_MS</code> / <code>PRE_ROLL_MS</code> 由 segmenter 模块拥有；达到 <code>max_segment_ms</code> 时强制结束。预卷只扩展 ASR 输入窗口，不改变 VAD 判定。</td></tr>
   <tr><td>FinalBackend</td><td><code>FinalBackend</code> 是 pipeline 的唯一 Final 入口；CPU 实现为 SenseVoice，worker 实现由 daemon 注入；core 不依赖 GPU / worker crate。</td></tr>
-  <tr><td>模型校验</td><td>加载清单时校验 schema 3、采样率、张量声明、<code>requires</code> 与参数范围；<code>verify</code> 校验文件存在、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。</td></tr>
+  <tr><td>模型校验</td><td>加载清单时校验 schema 3、kind、fbank 参数、张量声明、token_count 与参数范围；<code>verify</code> 校验文件存在、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。四个目录各自独立校验。</td></tr>
   <tr><td>错误边界</td><td>库内部使用 <code>anyhow::Result</code> + 上下文；音频错误类型保留 <code>AudioError</code>；pipeline 把可恢复错误转为 <code>SegmentDropped</code>，worker 不可用由 daemon 回退。</td></tr>
   <tr><td>无 OS 依赖</td><td>不直接使用 Unix socket、named pipe、Fcitx、Win32 或 TUI API；<code>config</code> 只保留模型根目录的平台默认值回退（Windows 读 <code>LOCALAPPDATA</code>，Unix 走 XDG / HOME）。</td></tr>
 </table>
@@ -119,23 +119,30 @@ pub fn default_model_root() -&gt; PathBuf;                    // 见 USER §4.1<
 <pre><code>pub const MANIFEST_FILE: &amp;str;
 pub const SCHEMA_VERSION: u32;
 pub const SAMPLES_PER_SECOND: u32;
+pub const VAD_DIR: &amp;str;
+pub const SENSE_VOICE_DIR: &amp;str;
+pub const FIRE_RED_AED_DIR: &amp;str;
+pub const PUNC_DIR: &amp;str;
 
 pub struct TensorSpec { /* 见 USER §4.3 */ }
 pub struct Artifact { /* 见 USER §4.3 */ }
-pub type VadArtifact = Artifact;
-pub struct AsrArtifact { /* 见 USER §4.3 */ }
-pub struct BackendManifest { /* 见 USER §4.3 */ }
-pub struct PuncArtifact { /* 见 USER §4.3 */ }
-pub struct ModelManifest { /* 见 USER §4.3 */ }
+pub enum Precision { Fp16, Int8 }
+pub enum PuncPolicy { Builtin, External }
 pub struct FbankManifest { /* 见 USER §4.3 */ }
+pub struct AsrOptions { /* 见 USER §4.3 */ }
+pub struct VadManifest { /* 见 USER §4.3 */ }
+pub struct SenseVoiceManifest { /* 见 USER §4.3 */ }
+pub struct FireRedManifest { /* 见 USER §4.3 */ }
+pub struct PuncManifest { /* 见 USER §4.3 */ }
 
-impl ModelManifest {
-    pub fn load(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;     // 见 USER §4.3
-    pub fn verify(&amp;self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;; // 见 USER §4.3
-    pub fn rebase(&amp;mut self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;; // 见 USER §4.3
-    fn artifacts(&amp;self) -&gt; Vec&lt;&amp;Artifact&gt;;
-    fn validate_specs(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
+impl VadManifest {
+    pub fn load(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn validate(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn verify(&amp;self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn rebase(&amp;mut self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
 }
+// SenseVoiceManifest / FireRedManifest / PuncManifest 具有同构的
+// load / validate / verify / rebase；展示见 USER §4.3。
 
 fn ensure_file(path: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
 fn verify_file(path: &amp;Path, expected: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
@@ -311,7 +318,7 @@ fn fbank_options(config: FbankConfig) -&gt; FbankOptions;</code></pre>
 pub struct SenseVoice { /* session + tokenizer + CMVN + tensor names */ }
 
 impl SenseVoice {
-    pub fn new_with_factory(artifact: &amp;AsrArtifact,
+    pub fn new_with_factory(manifest: &amp;SenseVoiceManifest,
                             factory: &amp;SessionFactory)
         -&gt; anyhow::Result&lt;Self&gt;;
     pub fn transcribe(&amp;mut self, features: &amp;[Vec&lt;f32&gt;])
@@ -371,7 +378,7 @@ impl Default for PuncConfig { /* MAX_TOKENS */ }
 pub struct FireRedPunc { /* session + tokenizer + labels */ }
 
 impl FireRedPunc {
-    pub fn new_with_factory(artifact: &amp;PuncArtifact,
+    pub fn new_with_factory(manifest: &amp;PuncManifest,
                             factory: &amp;SessionFactory,
                             config: PuncConfig)
         -&gt; anyhow::Result&lt;Self&gt;;
@@ -440,7 +447,7 @@ impl Drop for Pipeline { /* 发送 Shutdown 并 join */ }
 
 struct Worker { /* mode + vad + segmenter + preview + final + punc + queues */ }
 impl Worker {
-    fn new(manifest: &amp;ModelManifest, factory: &amp;SessionFactory,
+    fn new(config: &amp;Config, factory: &amp;SessionFactory,
            final_backend: Box&lt;dyn FinalBackend&gt;,
            events: Sender&lt;PipelineEvent&gt;) -&gt; anyhow::Result&lt;Self&gt;;
     fn run(mut self, audio_rx: Receiver&lt;AudioChunk&gt;,
@@ -477,22 +484,21 @@ fn keeps_collecting_after_end(mode: Mode, reason: SegmentEndReason) -&gt; bool;<
 <h3 id="c5-1">5.1 启动与模型加载</h3>
 <pre><code>voimed::main()
 └── voime_core::config::resolve(args)
-    ├── 加载固定 SenseVoice 基础包
-    ├── 读取 active / --model-dir → Final 包
-    ├── ModelManifest::load(manifest.json)
-    ├── ModelManifest::verify(model_dir)
-    │   ├── verify_file(vad/model, sha256)
-    │   ├── verify_file(asr/model.int8.onnx, sha256)
-    │   └── 判断 punc 存在 → verify_file(punc/model.onnx, sha256)
-    └── ModelManifest::rebase(model_dir)
+    ├── VadManifest::load/verify/rebase(model_root/vad)
+    ├── SenseVoiceManifest::load/verify/rebase(model_root/sense-voice)
+    ├── 判断 fire-red-aed/manifest.json 与 punc/manifest.json 是否同时存在
+    │   ├── 都存在 → FireRedManifest + PuncManifest load/verify/rebase
+    │   ├── 只存在一个 → 返回安装不完整错误
+    │   └── 都不存在 → CPU Final
+    └── 得到 Config { vad, sense_voice, fire_red?, punc? }
 
 voime_core::pipeline::spawn(&amp;config, factory, final_backend, audio_rx)
 ├── std::thread::Builder::spawn(Worker::run)
-└── Worker::new(&amp;manifest, &amp;factory, final_backend, events)
-    ├── FireRedVad::new(&amp;manifest.vad, factory, VadConfig)
-    ├── SenseVoice::new_with_factory(&amp;manifest.asr, factory)
-    ├── 判断 manifest.punc.is_some() → FireRedPunc::new_with_factory(...)
-    └── Segmenter::new(manifest.max_segment_ms, PRE_ROLL_MS)</code></pre>
+└── Worker::new(&amp;config, &amp;factory, final_backend, events)
+    ├── FireRedVad::new(&amp;config.vad_manifest.model, factory, VadConfig)
+    ├── SenseVoice::new_with_factory(&amp;config.sense_voice_manifest, factory)
+    ├── 判断 config.punc.is_some() → FireRedPunc::new_with_factory(...)
+    └── Segmenter::new(config.max_segment_ms(), PRE_ROLL_MS)</code></pre>
 <ul class="note">
   <li>模型校验、会话创建与 worker 启动在 <code>pipeline::spawn</code> 返回前完成；任一步失败直接返回错误。</li>
   <li>GPU Final 的 worker 后端由 <code>voimed</code> 创建并注入；<code>voime-core</code> 不加载 GPU 会话。</li>
@@ -564,8 +570,8 @@ Pipeline::finish_segment()
 ├── 判断 segment.samples.is_empty() → SegmentDropped("空语音段")
 ├── self.final_backend.transcribe(segment.samples)
 ├── 判断 asr.text.trim().is_empty() → SegmentDropped("空识别结果")
-├── 判断 self.manifest.asr.options.punc == Builtin → final = asr.text
-├── 判断 self.manifest.asr.options.punc == External → FireRedPunc::punctuate(&amp;asr.text)
+├── 判断 self.punc_policy == Builtin → final = asr.text
+├── 判断 self.punc_policy == External → FireRedPunc::punctuate(&amp;asr.text)
 ├── Worker::reset_after_segment()
 └── 判断 final 非空 → PipelineEvent::Final(final)</code></pre>
 <ul class="note">

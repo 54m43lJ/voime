@@ -123,9 +123,6 @@ impl IpcClient {
     pub fn try_event(&amp;mut self) -&gt; Option&lt;anyhow::Result&lt;ServerMessage&gt;&gt;;
     pub fn next_event(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
     pub fn snapshot(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
-    pub fn list_models(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
-    pub fn set_model(&amp;mut self, package_id: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
-    pub fn restart_backend(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
 }</code></pre>
 
 <h3 id="c4-4">4.4 hotkey.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -209,13 +206,6 @@ pub fn quit_running() -&gt; anyhow::Result&lt;()&gt;;</code></pre>
         config: Config,
         ack: Sender&lt;Result&lt;(), String&gt;&gt;,
     },
-    SetModel {
-        package_id: String,
-        ack: Sender&lt;Result&lt;(), String&gt;&gt;,
-    },
-    RestartBackend {
-        ack: Sender&lt;Result&lt;(), String&gt;&gt;,
-    },
 }
 
 pub fn run_process(config: Config, status: FrontendStatus,
@@ -228,7 +218,7 @@ fn run_window(config: Config, status: FrontendStatus,
               focus_hotkey: bool) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 <ul class="note">
   <li><code>--settings</code> 启动独立设置进程，<code>run_process</code> 在该进程主线程运行唯一的 egui 事件循环；保存由动作线程执行（校验热键可用性后写盘），结果经 <code>ack</code> 返回窗口，冲突在窗口内显示。</li>
-  <li>Final 模型选择走 daemon 的 <code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>，不写 <code>config.json</code>；设置窗口只保存 Mode / Hotkey / 浮层 / 登录启动。</li>
+  <li>设置窗口只保存 Mode / Hotkey / 浮层 / 登录启动；没有模型选择或后端重启动作，模型由 daemon 从固定模型根目录加载。</li>
   <li>设置窗口的“启动服务 / 停止服务并退出”经 <code>tray::send_command</code>（<code>WM_APP</code> 命令消息）转交托盘执行；托盘未运行时只在窗口内提示，不自行拉起 daemon。</li>
   <li>托盘打开设置前注销全局热键；设置子进程退出后托盘重新加载配置并恢复热键。</li>
 </ul>
@@ -345,12 +335,9 @@ frontend::on_focus_change()
 设置进程
 └── main(--settings)
     └── settings::run_process(config, status, focus_hotkey)
-        ├── IpcClient::list_models() → 填充 Final 下拉
         ├── settings::run_window → eframe::run_native(Voime 设置)
         └── action thread
-            ├── 判断 Save → hotkey::check_available() → Config::save() → ack
-            ├── 判断 SetModel → IpcClient::set_model() → ack
-            └── 判断 RestartBackend → IpcClient::restart_backend() → 等待 BackendState → ack
+            └── 判断 Save → hotkey::check_available() → Config::save() → ack
 
 设置窗口（启动 / 停止服务）
 └── tray::send_command(TrayCommand)（WM_APP 命令消息；托盘未运行时失败）

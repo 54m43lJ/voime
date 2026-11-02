@@ -70,7 +70,7 @@
   <tr><td><code>clap</code></td><td>命令行参数与子命令。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>IPC reader 线程到 TUI 的事件通道。</td></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
-  <tr><td><code>voime-core</code></td><td>doctor 的默认模型根目录、<code>active</code>、Final 清单与音频设备列表。</td></tr>
+  <tr><td><code>voime-core</code></td><td>doctor 的默认模型根目录、四个固定模型目录的清单与音频设备列表。</td></tr>
   <tr><td><code>voime-transport</code></td><td>本机端点与字节流。</td></tr>
   <tr><td><code>anyhow</code></td><td>命令 / 终端 / 连接错误。</td></tr>
 </table>
@@ -95,7 +95,7 @@ fn print_state(message: ServerMessage);</code></pre>
 
 pub enum Command { Ctl(CtlArgs), Doctor }
 pub struct CtlArgs { pub action: CtlAction }
-pub enum CtlAction { Start, Stop, Toggle, Status, Clear, Quit, Models, Use(String), RestartBackend }
+pub enum CtlAction { Start, Stop, Toggle, Status, Clear, Quit }
 
 pub fn parse() -&gt; Cli;</code></pre>
 
@@ -264,9 +264,6 @@ Tui::draw(&amp;mut app)
     ├── Client::snapshot()
     ├── 判断 Start / Stop / Toggle → Client::send(...) + Client::wait_for_state(3 s)
     ├── 判断 Status → Client::send(Status) + Client::next_event_timeout(3 s)
-    ├── 判断 Models → Client::send(ListModels) + 等待 Models
-    ├── 判断 Use → Client::send(SetModel { package_id }) + 等待 ModelSelected
-    ├── 判断 RestartBackend → Client::send(RestartBackend) + 等待 BackendState
     ├── 判断 Clear → Client::send(ClearHistory) + 等待 HistoryCleared
     └── 判断 Quit → Client::send(Quit) + 等待 Bye</code></pre>
 
@@ -276,11 +273,11 @@ Tui::draw(&amp;mut app)
     ├── std::fs::metadata(endpoint.as_unix_path()) → 检查 Unix 0600
     ├── Client::connect_as(endpoint, Role::Control)
     │   ├── Client::snapshot() → daemon 在线
-    │   └── Client::send(ListModels) → active / running / available
+    │   └── Client::send(Status) → 运行状态
     ├── voime_core::config::default_model_root()
-    │   ├── 检查 SenseVoice 基础包
-    │   └── ModelManifest::load / verify → Final
-    ├── doctor::check_gpu_runtime() → runtime / 驱动 / 显存 / worker
+    │   ├── 检查 vad / sense-voice 目录与 manifest
+    │   └── 检查可选 fire-red-aed / punc 目录是否配对
+    ├── doctor::check_gpu_runtime() → runtime / 驱动 / 显存
     ├── voime_core::audio::capture::list_input_devices()
     ├── voime_core::audio::capture::default_input_device_name()
     ├── doctor::fcitx_running() → 遍历 /proc

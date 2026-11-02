@@ -70,7 +70,7 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
 <table>
   <tr><th>场景</th><th>行为</th><th>契约</th></tr>
   <tr><td>安装 / 启动</td><td>每用户安装，登录后启动托盘与 daemon；托盘显示连接状态。</td><td><a href="BUILD.html#b3">BUILD §3</a></td></tr>
-  <tr><td>配置</td><td>托盘右键菜单或设置窗口设置 Mode / Final Model / 浮层 / 登录启动；热键在设置窗口直接按键录制，默认组合避开系统保留键。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
+  <tr><td>配置</td><td>托盘右键菜单或设置窗口设置 Mode / Hotkey / 浮层 / 登录启动；热键在设置窗口直接按键录制，默认组合避开系统保留键。设置窗口没有模型选择。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
   <tr><td>daemon 生命周期</td><td>登录启动托盘，托盘以子进程托管 daemon（唯一所有者）；托盘菜单与设置窗口提供启动、停止、诊断，退出托盘即停止 daemon。</td><td><a href="USER.html#u4-6">USER §4.6</a></td></tr>
   <tr><td>PTT</td><td>按住热键开始，松开结束；需要 key-up。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
   <tr><td>Toggle</td><td>按一下开始，再按一下结束；目标失焦自动结束；会话期间预览浮层保持可见。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
@@ -85,7 +85,7 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
 
 <table>
   <tr><th>拥有</th><th>不拥有</th></tr>
-  <tr><td>全局热键 / PTT key-up</td><td>音频、VAD、SenseVoice、标点、Final 模型加载</td></tr>
+  <tr><td>全局热键 / PTT key-up</td><td>音频、VAD、SenseVoice、标点、Final 后端加载</td></tr>
   <tr><td>前台窗口 / UIA 焦点元素绑定</td><td>daemon 会话、<code>segment_id</code> 分配</td></tr>
   <tr><td>浮层窗口与 DPI / 多显示器定位</td><td>协议消息定义（<a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>）</td></tr>
   <tr><td><code>SendInput</code> / TSF 提交</td><td>本机端点实现（<a href="../../crates/voime-transport/USER.html">voime-transport USER</a>）</td></tr>

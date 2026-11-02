@@ -44,7 +44,7 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
 <ul>
   <li>Linux 与 Windows 使用同一份音频、VAD、SenseVoice、标点与 pipeline 代码。</li>
-  <li><code>voimed</code> 只需要配置模型根目录、Final 目录、设备与线程数，就能获得 Partial / Final 事件。</li>
+  <li><code>voimed</code> 只需要提供模型根目录、设备与线程数，就能获得 Partial / Final 事件；模型根目录按固定四目录布局解析。</li>
   <li>核心通过 <code>FinalBackend</code> 接受 CPU SenseVoice 或外部注入的 worker 后端，不直接依赖 GPU 库。</li>
   <li>模型清单是唯一的模型契约；启动时校验 SHA-256、张量与词表，运行期不重新加载权重。</li>
   <li>核心不依赖 Fcitx、Win32、Unix socket、named pipe、TUI 或 daemon 状态。</li>
@@ -72,7 +72,7 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
 <table>
   <tr><th>调用方</th><th>交互</th><th>契约</th></tr>
   <tr><td><code>voimed</code></td><td>构造 <code>Config</code>、启动音频与 pipeline、消费 <code>PipelineEvent</code>。</td><td><a href="USER.html#u4">USER §4</a></td></tr>
-  <tr><td><code>voime doctor</code></td><td>读取默认模型根目录、<code>active</code>、Final 清单与音频设备列表。</td><td><a href="USER.html#u4-1">USER §4.1</a> · <a href="USER.html#u4-2">USER §4.2</a></td></tr>
+  <tr><td><code>voime doctor</code></td><td>读取默认模型根目录、四个固定模型目录的清单与音频设备列表。</td><td><a href="USER.html#u4-1">USER §4.1</a> · <a href="USER.html#u4-2">USER §4.2</a></td></tr>
   <tr><td>根集成测试</td><td>直接调用分段器、SenseVoice 解析与 pipeline 事件。</td><td><a href="CORE.html#c5">CORE §5</a></td></tr>
 </table>
 
@@ -90,7 +90,7 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
 </table>
 <ul class="note">
   <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；核心内部约定见 <a href="CORE.html#c2">本组件 CORE §2</a>。</li>
-  <li>模型包与推理运行时的外部契约见 <a href="PROVIDER.html">PROVIDER</a>，不要在 README 或 USER 中复制张量形状。</li>
+  <li>固定模型目录与推理运行时的外部契约见 <a href="PROVIDER.html">PROVIDER</a>，不要在 README 或 USER 中复制张量形状。</li>
 </ul>
 
 <h2 id="r4">4. Credits</h2>
