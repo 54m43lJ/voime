@@ -1,0 +1,29 @@
+[package]
+name = "voime-gpu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Voime 可选 GPU Final worker（FireRed AED）"
+
+[[bin]]
+name = "voime-gpu"
+path = "src/main.rs"
+
+[features]
+default = []
+migraphx = ["ort/migraphx"]
+directml = ["ort/directml"]
+cuda = ["ort/cuda"]
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crossbeam-channel.workspace = true
+kaldi-native-fbank.workspace = true
+half = "2"
+ort = { workspace = true, features = ["half"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

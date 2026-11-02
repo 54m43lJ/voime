@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# One-time ASR v2 migration helper. This script is deliberately not called by
+# the installers; clean install remains the default upgrade path.
+
+apply=0
+force=0
+profile="sensevoice"
+model_root="${XDG_DATA_HOME:-$HOME/.local/share}/voime/models"
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}"
+
+usage() {
+  cat >&2 <<'EOF'
+usage: migrate-asr-v2.sh [--dry-run] [--apply] [--force]
+                         [--profile sensevoice|firered]
+                         [--model-root DIR]
+
+Without --apply the script only prints the planned actions.
+EOF
+  exit 2
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) apply=0; shift ;;
+    --apply) apply=1; shift ;;
+    --force) force=1; shift ;;
+    --profile) profile="${2:-}"; shift 2 ;;
+    --model-root) model_root="${2:-}"; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "migrate-asr-v2: unknown argument: $1" >&2; usage ;;
+  esac
+done
+
+case "$profile" in
+  sensevoice|firered) ;;
+  *) echo "migrate-asr-v2: invalid profile $profile" >&2; exit 2 ;;
+esac
+
+marker="$model_root/.migrate-asr-v2"
+if [ -f "$marker" ] && [ "$force" -eq 0 ]; then
+  echo "migrate-asr-v2: already migrated ($marker); use --force to repeat" >&2
+  exit 1
+fi
+
+if [ "$apply" -eq 1 ] && pgrep -x voimed >/dev/null 2>&1; then
+  echo "migrate-asr-v2: 请先停止 voimed" >&2
+  exit 1
+fi
+
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup="$model_root.backup-$timestamp"
+echo "profile:    $profile"
+echo "model root: $model_root"
+echo "backup:     $backup"
+echo "config:     $config_dir/fcitx5/conf/voime.conf"
+echo "active:     $model_root/active"
+
+if [ "$apply" -eq 0 ]; then
+  echo "dry-run: 将备份旧模型目录，安装 schema 3 模型包，写入 active 并写迁移标记"
+  exit 0
+fi
+
+mkdir -p "$(dirname "$backup")"
+if [ -d "$model_root" ]; then
+  cp -a "$model_root" "$backup"
+fi
+if [ -f "$config_dir/fcitx5/conf/voime.conf" ]; then
+  mkdir -p "$backup/config"
+  cp -a "$config_dir/fcitx5/conf/voime.conf" "$backup/config/voime.conf"
+fi
+
+"$(dirname "${BASH_SOURCE[0]}")/install_models.sh" \
+  --profile "$profile" --model-root "$model_root" --activate
+
+printf '%s\n' "$timestamp" >"$marker"
+echo "migrate-asr-v2: 完成；备份位于 $backup"

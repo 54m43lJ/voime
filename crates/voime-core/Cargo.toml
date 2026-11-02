@@ -1,0 +1,24 @@
+[package]
+name = "voime-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Voime 音频、VAD、SenseVoice、FinalBackend、标点与 pipeline"
+
+[dependencies]
+anyhow.workspace = true
+crossbeam-channel.workspace = true
+cpal.workspace = true
+kaldi-native-fbank.workspace = true
+ort.workspace = true
+rubato.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokenizers.workspace = true
+voime-ipc = { path = "../voime-ipc" }
+
+[dev-dependencies]
+tempfile.workspace = true
