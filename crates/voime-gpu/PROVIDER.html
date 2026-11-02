@@ -109,8 +109,8 @@ models/punc/               # 由 daemon 加载，不属于 worker
   <tr><td>Decoder</td><td><code>tokens</code>、self KV cache、cross K/V、<code>offset</code> → <code>logits</code> + 更新后的 self KV cache。</td></tr>
   <tr><td>解码</td><td>自回归贪心；<code>sos</code> 起步，<code>eos</code> / <code>max_len</code> / <code>max_token_per_second=8</code> 停止。</td></tr>
   <tr><td>Metadata</td><td><code>num_decoder_layers</code>、<code>num_head</code>、<code>head_dim</code>、<code>sos</code>、<code>eos</code>、<code>max_len</code>、CMVN；KV cache 形状必须来自 metadata。v1 decoder 图内固定 self KV cache 长度 1024，worker 从 decoder 输入形状检测并使用。</td></tr>
-  <tr><td>Partial</td><td><code>supports_partial=false</code>；Preview 由 daemon 的 SenseVoice 提供。</td></tr>
-  <tr><td>标点</td><td><code>punc=external</code>；由 daemon 的 FireRedPunc 处理，worker 不加载 Punc。</td></tr>
+  <tr><td>Partial</td><td>worker 不产生 Partial；Preview 由 daemon 的 SenseVoice 提供。</td></tr>
+  <tr><td>标点</td><td>由 daemon 的 <code>punc</code> 目录（FireRedPunc）处理，worker 不加载 Punc。</td></tr>
   <tr><td>目录配对</td><td><code>fire-red-aed</code> 必须与 <code>punc</code> 目录同时存在；daemon 在启动时检查，只存在一个则拒绝启动。</td></tr>
 </table>
 
