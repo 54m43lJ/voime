@@ -42,7 +42,7 @@
   <tr><td>Execution Provider</td><td>ONNX Runtime 的推理后端；本组件只使用 CPU，GPU EP 在 <code>voime-gpu</code>。</td></tr>
   <tr><td>fbank</td><td>Kaldi 风格梅尔滤波器组特征；参数由模型清单声明。</td></tr>
   <tr><td>CMVN</td><td>倒谱均值方差归一化；SenseVoice 使用 <code>neg_mean</code> / <code>inv_stddev</code> 两个 metadata。</td></tr>
-  <tr><td>模型目录</td><td>模型根目录下固定的 <code>vad</code> / <code>sense-voice</code> / <code>fire-red-aed</code> / <code>punc</code> 子目录；各自包含 ONNX、词表、标签与 <code>manifest.json</code>。FireRed AED 目录由 voime-gpu 消费。</td></tr>
+  <tr><td>模型目录</td><td>模型根目录下固定的 <code>vad</code> / <code>sense-voice</code> / <code>fire-red-aed</code> / <code>punc</code> 子目录；各自包含 ONNX、词表、标签与 <code>manifest.json</code>。FireRed AED 的清单由 core 校验，ONNX 会话由 voime-gpu 创建。</td></tr>
   <tr><td>manifest</td><td>单个模型目录的权威描述：<code>schema</code>、<code>kind</code>、文件、SHA-256、张量、fbank 与分段上限。四个目录不共享清单，也没有 <code>requires</code> / backend。</td></tr>
   <tr><td>Artifact</td><td>manifest 中一个 ONNX 条目；含相对路径、SHA-256、输入 / 输出张量。</td></tr>
   <tr><td>SHA-256</td><td>模型文件内容摘要；启动时逐文件校验。</td></tr>
@@ -159,7 +159,7 @@
   <tr><td>FireRed AED</td><td><code>encoder.fp16.onnx</code> / <code>decoder.fp16.onnx</code> + <code>tokens.txt</code>；临时默认官方 v1 FP16 为 7832 tokens，decoder 自查 self KV cache（固定 1024）；v2 FP16 为 8667 tokens。张量契约见 <a href="../voime-gpu/PROVIDER.html#p4-2">voime-gpu PROVIDER §4.2</a>。</td></tr>
   <tr><td>Punc 文件</td><td><code>model.onnx</code> + <code>vocab.txt</code> + <code>labels.json</code>；只服务 GPU Final。输入 <code>input_ids</code> 为词表 id，<code>attention_mask</code> 固定 1，<code>token_type_ids</code> 固定 0；输出为逐 token 类别 logits，类别数不得小于标签表。</td></tr>
   <tr><td>加载选择</td><td>核心始终加载 <code>vad</code> + <code>sense-voice</code>；只有 <code>fire-red-aed</code> 与 <code>punc</code> 目录同时存在时才将 FireRed 交给 worker。只存在一个时返回安装不完整错误。</td></tr>
-  <tr><td>安装</td><td><code>tools/install_models.py</code> 下载并写出四个目录；每个目录安装后校验 SHA-256 与 metadata，再由 <code>tools/verify_models.py</code> 整体复核。</td></tr>
+  <tr><td>安装</td><td><code>tools/install_models.py</code> 默认写出 <code>vad</code> + <code>sense-voice</code>，<code>--gpu</code> 再写出 <code>fire-red-aed</code> + <code>punc</code>；每个目录安装后校验 SHA-256 与 metadata，再由 <code>tools/verify_models.py</code> 整体复核。</td></tr>
 </table>
 <ul class="note">
   <li>官方 SenseVoice 包为 <code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>；<code>use_itn=true</code>、内置标点。</li>

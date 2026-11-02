@@ -31,7 +31,7 @@
   <tr><td>Linux AMD</td><td>ROCm 7.2.1 + MIGraphX；ORT 1.23.2；P0 验收平台 RX 9070 XT 16 GB。</td></tr>
   <tr><td>Windows AMD</td><td>DirectML runtime；P1。</td></tr>
   <tr><td>NVIDIA</td><td>CUDA / TensorRT runtime；P1 / P2，独立打包。</td></tr>
-  <tr><td>模型</td><td>FireRed AED FP16 encoder / decoder / tokens / punc；编译不需要权重。</td></tr>
+  <tr><td>模型</td><td><code>fire-red-aed</code> 目录的 FP16 encoder / decoder / tokens；<code>punc</code> 由 daemon 加载。编译不需要权重。</td></tr>
   <tr><td>隔离</td><td>GPU feature 只在本二进制启用；daemon 构建不得打开 directml / migraphx / cuda feature。</td></tr>
 </table>
 

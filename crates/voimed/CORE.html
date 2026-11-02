@@ -301,7 +301,7 @@ fn build_cpu_final(config, factory) -&gt; Box&lt;dyn FinalBackend&gt;
     │   ├── voime_core::audio::capture::start(config.input_device, audio_tx)
     │   │   └── 构建输入流并保持暂停，等待 Daemon::sync_audio_result()
     │   ├── ipc_server::IpcServer::bind(&amp;endpoint)
-    │   └── daemon::Daemon::new(config, final_runtime, models, worker, audio, ipc).run()
+    │   └── daemon::Daemon::new(config, final_runtime, worker, audio, ipc).run()
     └── 判断 Err → eprintln! + ExitCode::from(1)</code></pre>
 
 <h3 id="c5-2">5.2 连接、Hello 与角色</h3>
@@ -437,7 +437,7 @@ PipelineEvent::SegmentDropped(reason)
     └── 成功 → gpu_fallback = true + 清空 config.fire_red / config.punc</code></pre>
 <ul class="note">
   <li>启动回退与运行期回退都只改变 Final；Preview、VAD、IPC 与前端连接保持。</li>
-  <li>没有 <code>active</code> 可回滚，也没有 IPC 广播的后端阶段；回退只写日志。</li>
+  <li>回退只替换 Final 路径并写日志；没有持久化选择状态，也没有 IPC 广播的后端阶段。</li>
   <li>回退后若要重新尝试 GPU，需要退出并重启 <code>voimed</code>。</li>
 </ul>
 

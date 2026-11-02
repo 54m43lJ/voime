@@ -47,6 +47,7 @@
   <tr><td>进程边界</td><td>只运行在独立 <code>voime-gpu</code> 进程；没有库 API 被 daemon 链接。</td></tr>
   <tr><td>GPU EP</td><td>DirectML / MIGraphX / CUDA 只在此进程注册；CPU ORT 不在此进程加载。</td></tr>
   <tr><td>FP16</td><td>encoder / decoder 只接受 FP16；加载失败返回错误，不回退其他精度。</td></tr>
+  <tr><td>模型目录</td><td>只加载 daemon 传入的 <code>fire-red-aed</code> manifest 与 encoder / decoder / tokens；不读取 VAD、SenseVoice 或 Punc 目录。</td></tr>
   <tr><td>协议权威</td><td>帧格式、消息与错误码只在 <a href="USER.html#u4-2">USER §4.2</a> / <a href="USER.html#u4-3">§4.3</a> 定义。</td></tr>
   <tr><td>无状态</td><td>每个 Final 段独立解码；不保留跨段 KV cache、音频或文本。</td></tr>
   <tr><td>错误映射</td><td>模型 / EP / 设备错误映射为 worker 错误码；不把 GPU 错误暴露成前端文案。</td></tr>
@@ -83,6 +84,9 @@ fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 }
 
 pub fn parse() -&gt; Args;</code></pre>
+<ul class="note">
+  <li><code>--manifest</code> 指向 <code>models/fire-red-aed</code>；<code>punc</code> 是 daemon 加载的独立目录，不传给 worker。</li>
+</ul>
 
 <h3 id="c4-3">4.3 protocol.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Frame { pub header: Header, pub audio: Vec&lt;f32&gt; }

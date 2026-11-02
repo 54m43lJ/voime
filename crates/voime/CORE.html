@@ -190,15 +190,19 @@ pub const TEXT: Color;</code></pre>
 <h3 id="c4-7">4.7 doctor.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub fn run(endpoint: &amp;Endpoint) -&gt; bool;
 
+fn check_log();
+fn check_endpoint(endpoint: &amp;Endpoint, ok: &amp;mut bool);
+fn check_daemon(endpoint: &amp;Endpoint, ok: &amp;mut bool) -&gt; Option&lt;ServerMessage&gt;;
+fn check_models(ok: &amp;mut bool);
+fn check_gpu(ok: &amp;mut bool);
+fn check_audio(ok: &amp;mut bool);
+fn check_fcitx(snapshot: Option&lt;&amp;ServerMessage&gt;, ok: &amp;mut bool);
+fn check_windows(snapshot: Option&lt;&amp;ServerMessage&gt;, ok: &amp;mut bool);
 fn fcitx_running() -&gt; bool;
 fn addon_path(relative: &amp;str) -&gt; Option&lt;PathBuf&gt;;
 fn library_path() -&gt; Option&lt;PathBuf&gt;;
 fn user_config_path() -&gt; Option&lt;PathBuf&gt;;
-fn check_models(endpoint: &amp;Endpoint) -&gt; ModelReport;
-fn check_gpu_runtime() -&gt; RuntimeReport;</code></pre>
-<ul class="note">
-  <li><code>ModelReport</code> / <code>RuntimeReport</code> 为草案返回类型，可按 doctor 输出实现调整。</li>
-</ul>
+fn worker_binary() -&gt; Option&lt;PathBuf&gt;;</code></pre>
 
 <h2 id="c5">5. Call stack tree</h2>
 <p><a href="#top">↑</a></p>
@@ -270,21 +274,25 @@ Tui::draw(&amp;mut app)
 <h3 id="c5-5">5.5 doctor</h3>
 <pre><code>voime::main()
 └── voime::doctor::run(endpoint)
-    ├── std::fs::metadata(endpoint.as_unix_path()) → 检查 Unix 0600
-    ├── Client::connect_as(endpoint, Role::Control)
-    │   ├── Client::snapshot() → daemon 在线
-    │   └── Client::send(Status) → 运行状态
-    ├── voime_core::config::default_model_root()
+    ├── doctor::check_log()
+    ├── doctor::check_endpoint(endpoint, &amp;mut ok)
+    │   └── Unix: metadata + 权限 0600
+    ├── doctor::check_daemon(endpoint, &amp;mut ok)
+    │   └── Client::connect_as(Control) + Snapshot / Status
+    ├── doctor::check_models(&amp;mut ok)
+    │   ├── voime_core::config::default_model_root()
     │   ├── 检查 vad / sense-voice 目录与 manifest
     │   └── 检查可选 fire-red-aed / punc 目录是否配对
-    ├── doctor::check_gpu_runtime() → runtime / 驱动 / 显存
-    ├── voime_core::audio::capture::list_input_devices()
-    ├── voime_core::audio::capture::default_input_device_name()
-    ├── doctor::fcitx_running() → 遍历 /proc
-    ├── doctor::addon_path("addon/voime.conf")
-    ├── doctor::library_path() → /usr / /usr/local
-    ├── doctor::addon_path("inputmethod/voime.conf") → 旧条目检查
-    └── doctor::user_config_path() → XDG_CONFIG_HOME / HOME</code></pre>
+    ├── doctor::check_gpu(&amp;mut ok) → voime-gpu / runtime / 驱动 / 显存
+    ├── doctor::check_audio(&amp;mut ok)
+    │   └── list_input_devices / default_input_device_name
+    ├── doctor::check_fcitx(snapshot, &amp;mut ok)
+    │   ├── fcitx_running() → 遍历 /proc
+    │   ├── addon_path("addon/voime.conf")
+    │   ├── library_path() → /usr / /usr/local
+    │   ├── addon_path("inputmethod/voime.conf") → 旧条目检查
+    │   └── user_config_path() → XDG_CONFIG_HOME / HOME
+    └── doctor::check_windows(snapshot, &amp;mut ok)（Windows）</code></pre>
 
 <h3 id="c5-6">5.6 断线与退出</h3>
 <pre><code>Client reader thread
