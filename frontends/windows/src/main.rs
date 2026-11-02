@@ -433,8 +433,8 @@ impl Frontend {
                 }
                 _ => vlog!("daemon 错误（{code:?}）：{message}"),
             },
-            ServerMessage::Bye => self.on_disconnect(),
-            ServerMessage::HistoryCleared | ServerMessage::Status { .. } => {}
+            ServerMessage::Bye {} => self.on_disconnect(),
+            ServerMessage::HistoryCleared {} | ServerMessage::Status { .. } => {}
         }
     }
 

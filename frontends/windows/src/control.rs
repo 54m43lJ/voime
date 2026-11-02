@@ -120,7 +120,7 @@ fn quit_running_at(endpoint: &voime_transport::Endpoint) -> Result<()> {
             config: None,
         },
     )?;
-    write_message(&mut stream, &ClientMessage::Quit)?;
+    write_message(&mut stream, &ClientMessage::Quit {})?;
     Ok(())
 }
 
