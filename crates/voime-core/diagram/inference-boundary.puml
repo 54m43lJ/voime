@@ -4,21 +4,24 @@ skinparam shadowing false
 hide footbox
 
 participant "voime-core" as Core
-participant "ONNX Runtime" as Ort
+participant "ONNX Runtime CPU" as Ort
 participant "模型文件" as Model
 
 Core -> Model : 读取 + SHA-256
 Core -> Ort : SessionBuilder::commit_from_file()
 Ort -> Core : Session
 Core -> Ort : metadata()
-Ort -> Core : cmvn_mean / cmvn_inv_stddev
+Ort -> Core : CMVN / LFR / ITN / 语言 id
 
 loop 每个语音段
-  Core -> Core : fbank + CMVN
-  Core -> Ort : run(x, x_lens)
-  Ort -> Core : log_probs
-  Core -> Core : greedy CTC
-  Core -> Ort : run(punc input_ids, mask, token_type_ids)
+  Core -> Core : fbank + LFR + CMVN
+  Core -> Ort : run(x, x_length, language, text_norm)
   Ort -> Core : logits
+  Core -> Core : greedy decode
 end
+
+note over Core
+  FireRed AED 与 GPU ORT 不在本组件加载；
+  GPU Final 由 voimed 注入的 worker 处理。
+end note
 @enduml

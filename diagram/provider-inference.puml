@@ -5,16 +5,24 @@ hide footbox
 
 participant "Voime" as Voime
 participant "模型包" as Model
-participant "ONNX Runtime" as Ort
+participant "ONNX Runtime CPU" as OrtCpu
+participant "ONNX Runtime GPU / EP" as OrtGpu
 
 Voime -> Model : 读取 manifest.json
-Voime -> Model : SHA-256 + 张量校验
-Voime -> Ort : 创建 CPU 会话
-Ort -> Voime : Session
+Voime -> Model : SHA-256 + 张量 / requires 校验
+Voime -> OrtCpu : 创建 SenseVoice / VAD 会话
+OrtCpu -> Voime : Session
 
 loop 每个语音段
-  Voime -> Ort : 推理
-  Ort -> Voime : log_probs / logits
+  Voime -> OrtCpu : SenseVoice Preview / CPU Final
+  OrtCpu -> Voime : logits / text
+end
+
+opt Final = FireRed AED
+  Voime -> OrtGpu : voime-gpu 创建 encoder / decoder 会话
+  OrtGpu -> Voime : Session
+  Voime -> OrtGpu : Transcribe(final segment)
+  OrtGpu -> Voime : text
 end
 
 note over Voime

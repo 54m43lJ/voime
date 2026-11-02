@@ -57,7 +57,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>独立构建根</td><td><code>frontends/windows</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>；不进入根 <code>cargo test --workspace</code>。</td></tr>
   <tr><td>平台</td><td>只构建 Windows 目标；Linux CI 不构建本 crate。</td></tr>
-  <tr><td>无模型</td><td>不链接 ONNX Runtime，不加载模型，不做 VAD / CTC / 分段。</td></tr>
+  <tr><td>无模型</td><td>不链接 ONNX Runtime，不加载模型，不做 VAD / SenseVoice / 分段；不加载 DirectML / CUDA / MIGraphX。</td></tr>
   <tr><td>事件循环</td><td>主线程拥有托盘与消息循环；IPC reader 线程把消息送入有界通道；热键 / 目标 / 浮层更新回到主线程。设置窗口在独立进程（<code>voime-tray.exe --settings</code>）运行唯一的 egui 事件循环，托盘轮询设置子进程并在其退出后重载配置。</td></tr>
   <tr><td>daemon 生命周期</td><td>daemon 由托盘以子进程启动，并加入设置了 <code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code> 的 Job Object；托盘退出或崩溃即终止 daemon；托盘是 daemon 的唯一所有者。</td></tr>
   <tr><td>目标所有权</td><td>目标窗口 / 焦点元素属于前端私有类型；协议只传 <code>segment_id</code> 与事件。</td></tr>
@@ -123,6 +123,9 @@ impl IpcClient {
     pub fn try_event(&amp;mut self) -&gt; Option&lt;anyhow::Result&lt;ServerMessage&gt;&gt;;
     pub fn next_event(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
     pub fn snapshot(&amp;mut self) -&gt; anyhow::Result&lt;ServerMessage&gt;;
+    pub fn list_models(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn set_model(&amp;mut self, package_id: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn restart_backend(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
 }</code></pre>
 
 <h3 id="c4-4">4.4 hotkey.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -206,6 +209,13 @@ pub fn quit_running() -&gt; anyhow::Result&lt;()&gt;;</code></pre>
         config: Config,
         ack: Sender&lt;Result&lt;(), String&gt;&gt;,
     },
+    SetModel {
+        package_id: String,
+        ack: Sender&lt;Result&lt;(), String&gt;&gt;,
+    },
+    RestartBackend {
+        ack: Sender&lt;Result&lt;(), String&gt;&gt;,
+    },
 }
 
 pub fn run_process(config: Config, status: FrontendStatus,
@@ -218,6 +228,7 @@ fn run_window(config: Config, status: FrontendStatus,
               focus_hotkey: bool) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 <ul class="note">
   <li><code>--settings</code> 启动独立设置进程，<code>run_process</code> 在该进程主线程运行唯一的 egui 事件循环；保存由动作线程执行（校验热键可用性后写盘），结果经 <code>ack</code> 返回窗口，冲突在窗口内显示。</li>
+  <li>Final 模型选择走 daemon 的 <code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>，不写 <code>config.json</code>；设置窗口只保存 Mode / Hotkey / 浮层 / 登录启动。</li>
   <li>设置窗口的“启动服务 / 停止服务并退出”经 <code>tray::send_command</code>（<code>WM_APP</code> 命令消息）转交托盘执行；托盘未运行时只在窗口内提示，不自行拉起 daemon。</li>
   <li>托盘打开设置前注销全局热键；设置子进程退出后托盘重新加载配置并恢复热键。</li>
 </ul>
@@ -334,9 +345,12 @@ frontend::on_focus_change()
 设置进程
 └── main(--settings)
     └── settings::run_process(config, status, focus_hotkey)
+        ├── IpcClient::list_models() → 填充 Final 下拉
         ├── settings::run_window → eframe::run_native(Voime 设置)
         └── action thread
-            └── 判断 Save → hotkey::check_available() → Config::save() → ack
+            ├── 判断 Save → hotkey::check_available() → Config::save() → ack
+            ├── 判断 SetModel → IpcClient::set_model() → ack
+            └── 判断 RestartBackend → IpcClient::restart_backend() → 等待 BackendState → ack
 
 设置窗口（启动 / 停止服务）
 └── tray::send_command(TrayCommand)（WM_APP 命令消息；托盘未运行时失败）

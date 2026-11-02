@@ -1,0 +1,25 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "voime-gpu" as Worker
+
+Daemon -> Worker : spawn
+Daemon -> Worker : Hello { protocol, manifest, device }
+Worker -> Worker : 校验 manifest / 加载 FireRed AED FP16
+Worker --> Daemon : Ready { provider, device, vram_mb }
+
+Daemon -> Worker : Transcribe { id } + PCM f32
+Worker -> Worker : fbank / CMVN / encoder / decoder
+Worker --> Daemon : Result { id, text, latency_ms, rtf }
+
+opt 取消 / 超时
+  Daemon -> Worker : Cancel { id }
+  Worker --> Daemon : Error { Timeout }
+end
+
+Daemon -> Worker : Shutdown
+Worker --> Daemon : Bye
+@enduml

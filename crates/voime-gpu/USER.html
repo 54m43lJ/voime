@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>USER — voime-gpu</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>USER — voime-gpu</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<p>
+本文定义 <code>voime-gpu</code> 对 daemon 暴露的协议与生命周期。模型张量、GPU runtime 与
+ONNX Runtime EP 的契约见 <a href="PROVIDER.html">PROVIDER</a>；进程监督与回退见
+<a href="../voimed/USER.html#u3-4">voimed USER §3.4</a>。
+</p>
+
+<h2 id="u1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>worker</td><td><code>voime-gpu</code> 进程；只处理 GPU Final，不处理 Partial、VAD 或标点。</td></tr>
+  <tr><td>协议（protocol）</td><td>worker 与 daemon 之间的独立帧协议；与前端 IPC 的 <code>PROTOCOL_VERSION</code> 无关。</td></tr>
+  <tr><td>frame</td><td><code>u32 header_len</code> + UTF-8 JSON 头 + <code>u32 audio_len</code> + little-endian <code>f32</code> PCM。</td></tr>
+  <tr><td>handshake</td><td>daemon 启动 worker 后发送 <code>Hello</code>，worker 加载模型并返回 <code>Ready</code>。</td></tr>
+  <tr><td>Final 段</td><td>daemon 已切分完成的完整语音段；worker 不接收逐帧音频。</td></tr>
+  <tr><td>FP16</td><td>GPU 产品路径唯一精度；int8 只用于 CPU SenseVoice。</td></tr>
+  <tr><td>runtime 包</td><td>按 OS + EP 拆分的 ORT / EP 动态库包；不进入模型目录。</td></tr>
+</table>
+
+<h2 id="u2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>GPU-only</td><td>worker 只创建 GPU ORT 会话；不加载 SenseVoice、VAD、FireRedPunc 或 CPU 模型。</td></tr>
+  <tr><td>Final-only</td><td>只接收完整语音段；不产生 Partial，不缓存跨段状态。</td></tr>
+  <tr><td>单请求</td><td>同一时刻只处理一个 <code>Transcribe</code>；新请求在忙时返回 <code>Error{InferenceFailed}</code>。</td></tr>
+  <tr><td>FP16</td><td>encoder / decoder 只接受 <code>fp16</code>；加载失败不回退 FP32 / int8。</td></tr>
+  <tr><td>无持久化</td><td>不写音频、识别文本、模型缓存或日志到磁盘；日志走 stderr。</td></tr>
+  <tr><td>stdout</td><td>只用于协议帧；诊断输出走 stderr，由 daemon 转发到 <code>voime-log</code>。</td></tr>
+  <tr><td>隐私</td><td>协议只回传文本与耗时；daemon 记录长度、耗时与错误码，不记录文本。</td></tr>
+  <tr><td>资源上限</td><td>单帧音频上限 64 MiB；超限、截断或长度不匹配都是协议错误。</td></tr>
+</table>
+
+<h2 id="u3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u3-1">3.1 worker 生命周期</h3>
+<div class="diagram"><img src="diagram/lifecycle.svg" alt="voimed 启动、握手、推理与关闭 voime-gpu 的时序图"></div>
+<ul class="note">
+  <li>CPU Final 不启动 worker；GPU Final 才 spawn / handshake。</li>
+  <li>worker 崩溃、超时或显存不足时由 daemon 重启或回退 CPU SenseVoice。</li>
+</ul>
+
+<h3 id="u3-2">3.2 worker 协议</h3>
+<div class="diagram"><img src="diagram/protocol.svg" alt="worker 帧格式与 Hello / Transcribe / Result / Shutdown 消息顺序"></div>
+<ul class="note">
+  <li>控制消息是 JSON，音频是原始 little-endian <code>f32</code> PCM；不使用 base64。</li>
+  <li><code>Hello</code> 与 <code>Ready</code> 校验协议版本、模型 manifest、device 与能力。</li>
+</ul>
+
+<h2 id="u4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u4-1">4.1 命令行与环境</h3>
+<pre><code>voime-gpu --manifest &lt;DIR&gt; --device &lt;auto|DEVICE&gt; [--verbose]</code></pre>
+
+<table>
+  <tr><th>选项 / 环境</th><th>契约</th></tr>
+  <tr><td><code>--manifest</code></td><td>FireRed AED 包目录；必须包含 <code>manifest.json</code>、encoder / decoder / tokens / punc。</td></tr>
+  <tr><td><code>--device</code></td><td><code>auto</code> 或 runtime 支持的设备名；只影响 GPU EP。</td></tr>
+  <tr><td><code>--verbose</code></td><td>诊断输出到 stderr；stdout 仍只用于协议。</td></tr>
+  <tr><td><code>VOIME_LOG</code></td><td>由 daemon 传入；worker 只写 stderr，由 daemon 统一落盘；不记录识别文本。</td></tr>
+  <tr><td><code>ORT_DYLIB_PATH</code></td><td>worker 自己设置 GPU ORT 路径；不继承 daemon 的 CPU ORT 路径。</td></tr>
+</table>
+
+<h3 id="u4-2">4.2 协议</h3>
+<pre><code>Frame
+├── u32 header_len
+├── header: UTF-8 JSON
+├── u32 audio_len
+└── audio: f32le mono, 16 kHz, [-1, 1]
+
+Request
+├── Hello { protocol, manifest, device }
+├── Transcribe { id, sample_rate, language, use_itn }
+├── Cancel { id }
+└── Shutdown
+
+Response
+├── Ready { protocol, backend, provider, device, vram_mb, supports_partial }
+├── Result { id, text, latency_ms, rtf }
+├── Error { id, code, message }
+└── Bye
+</code></pre>
+
+<table>
+  <tr><th>消息</th><th>方向</th><th>语义</th></tr>
+  <tr><td><code>Hello</code></td><td>daemon → worker</td><td>声明协议版本、manifest 路径与 device；worker 校验后加载模型。</td></tr>
+  <tr><td><code>Ready</code></td><td>worker → daemon</td><td>模型 / EP / 设备就绪；<code>supports_partial=false</code> 只描述 FireRed Final。</td></tr>
+  <tr><td><code>Transcribe</code></td><td>daemon → worker</td><td>发送一个完整 Final 段的 PCM；<code>id</code> 用于匹配 Result / Error。</td></tr>
+  <tr><td><code>Result</code></td><td>worker → daemon</td><td>纯文本、耗时与 RTF；不含 Partial，不做标点。</td></tr>
+  <tr><td><code>Cancel</code></td><td>daemon → worker</td><td>取消当前请求；worker 尽快返回 <code>Error{Timeout}</code> 或丢弃结果。</td></tr>
+  <tr><td><code>Shutdown</code> / <code>Bye</code></td><td>daemon → worker / worker → daemon</td><td>正常关闭；daemon 等待 5 s，超时强杀。</td></tr>
+</table>
+
+<h3 id="u4-3">4.3 错误码</h3>
+<table>
+  <tr><th>错误码</th><th>含义</th><th>daemon 动作</th></tr>
+  <tr><td><code>RuntimeMissing</code></td><td>GPU runtime 未安装 / 版本不匹配。</td><td>标记 GPU Final 不可用；Preview / CPU Final 继续；提示安装 runtime。</td></tr>
+  <tr><td><code>DeviceUnavailable</code></td><td>无 GPU、驱动不匹配、显存不足。</td><td>worker 不可用；Final 回退 CPU SenseVoice；不加载 AED CPU。</td></tr>
+  <tr><td><code>LoadFailed</code></td><td>模型 / EP / 张量校验失败。</td><td>回滚 <code>active</code>；Preview / CPU Final 继续。</td></tr>
+  <tr><td><code>InferenceFailed</code></td><td>运行期推理失败。</td><td>当前段丢弃；重启 worker；连续失败标记不可用。</td></tr>
+  <tr><td><code>Timeout</code></td><td>超过请求预算。</td><td>杀 worker；按崩溃路径处理。</td></tr>
+  <tr><td><code>ProtocolMismatch</code></td><td>worker / daemon 协议版本不一致。</td><td>拒绝加载；提示升级 runtime 或 daemon。</td></tr>
+</table>
+
+<h3 id="u4-4">4.4 超时与重启</h3>
+<table>
+  <tr><th>阶段</th><th>默认预算</th><th>失败处理</th></tr>
+  <tr><td>spawn</td><td>无法执行 / 退出码非零</td><td><code>BackendFailed</code>；Final 回退 CPU。</td></tr>
+  <tr><td>handshake</td><td>120 s</td><td>杀 worker；重试或回退 CPU。</td></tr>
+  <tr><td>transcribe</td><td>60 s</td><td>杀 worker 并重建；当前段丢弃。</td></tr>
+  <tr><td>health</td><td>2 s</td><td>连续失败进入重启；不阻塞录音。</td></tr>
+  <tr><td>shutdown</td><td>5 s</td><td>Windows Job Object / Linux 进程组强杀，确保无孤儿。</td></tr>
+</table>
+<ul class="note">
+  <li>worker 崩溃退避 1 s / 2 s / 5 s，最多 3 次；仍失败则 Final 回退 CPU SenseVoice 或报错，Preview 继续。</li>
+  <li>CPU Final 不启动 worker；GPU Final 才付出进程与显存成本。</li>
+</ul>
+
+</body>
+</html>

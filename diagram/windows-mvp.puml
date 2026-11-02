@@ -6,7 +6,7 @@ left to right direction
 
 actor "用户" as User
 component "Windows 前端\n托盘 / 全局热键 / 目标绑定 / 浮层" as Frontend
-component "voimed\n音频 / VAD / CTC / 标点 / 会话" as Daemon
+component "voimed\n音频 / VAD / SenseVoice / 标点 / 会话" as Daemon
 component "目标应用\nHWND / UIA 焦点元素" as App
 component "麦克风" as Mic
 component "本地模型包" as Models

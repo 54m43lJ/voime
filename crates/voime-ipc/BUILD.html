@@ -51,9 +51,9 @@ cargo fmt -p voime-ipc --check</code></pre>
 
 <table>
   <tr><th>测试</th><th>覆盖</th></tr>
-  <tr><td>单元测试</td><td>Hello 往返、外部标签与小写值、超长消息、缺少换行。</td></tr>
-  <tr><td><code>tests/ipc.rs</code></td><td>握手 / 角色 / Mode / framing 的跨组件集成测试。</td></tr>
-  <tr><td>协议金样</td><td>C++ 前端与 Rust 客户端共用同一组 JSON 样例；新增消息时必须同步。</td></tr>
+  <tr><td>单元测试</td><td>Hello 往返、外部标签与小写值、超长消息、缺少换行、协议 3 版本拒绝。</td></tr>
+  <tr><td><code>tests/ipc.rs</code></td><td>握手 / 角色 / Mode / framing / <code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code> 的跨组件集成测试。</td></tr>
+  <tr><td>协议金样</td><td>C++ 前端与 Rust 客户端共用同一组 JSON 样例；新增 <code>Models</code> / <code>ModelSelected</code> / <code>BackendState</code> 时必须同步。</td></tr>
 </table>
 <ul class="note">
   <li>根 workspace 的完整测试与发布命令见 <a href="../../BUILD.html#b6">根 BUILD §6</a>。</li>

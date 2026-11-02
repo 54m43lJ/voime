@@ -47,7 +47,7 @@ Linux 桌面的键盘、输入焦点与文本提交由 Fcitx5 持有。Voime 需
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
 <ul>
   <li>addon 随 Fcitx5 后台加载，不注册输入法条目；Shift / Super+Space 不会切到 Voime。</li>
-  <li>只配置一个 <code>Mode</code> 与一个 <code>Hotkey</code>；PTT 按住、Toggle 切换、Continuous 忽略热键。</li>
+  <li>配置一个 <code>Mode</code>、一个 <code>Hotkey</code> 与一个 Final <code>Model</code>；PTT 按住、Toggle 切换、Continuous 忽略热键。</li>
   <li>热键由 Fcitx 捕获；普通按键完全照常输入。</li>
   <li>Partial 显示在 Fcitx 输入面板；Final 提交到语音段开始时聚焦的输入框。</li>
   <li>目标失焦时不误提交；daemon 断线时放行热键，不影响普通输入。</li>
@@ -68,7 +68,7 @@ Linux 桌面的键盘、输入焦点与文本提交由 Fcitx5 持有。Voime 需
 <table>
   <tr><th>场景</th><th>行为</th><th>契约</th></tr>
   <tr><td>安装 addon</td><td>安装 <code>voime.so</code> 与 addon 描述文件，重启 Fcitx；在 Addons 页面可见，不加入输入法组。</td><td><a href="BUILD.html#b2">BUILD §2</a></td></tr>
-  <tr><td>配置</td><td>在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 设置 <code>Mode</code> / <code>Hotkey</code>。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
+  <tr><td>配置</td><td>在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 设置 <code>Mode</code> / <code>Hotkey</code> / <code>Model</code>；<code>Model</code> 只选择 Final。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
   <tr><td>PTT</td><td>按住热键开始，松开结束；静音可自动结束。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
   <tr><td>Toggle</td><td>按一下开始，再按一下结束；目标失焦自动结束；无语音时保持空白窗口。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
   <tr><td>Continuous</td><td>VAD 自动分段，热键不参与。</td><td><a href="USER.html#u3-2">USER §3.2</a></td></tr>
@@ -83,7 +83,7 @@ Linux 桌面的键盘、输入焦点与文本提交由 Fcitx5 持有。Voime 需
 
 <table>
   <tr><th>拥有</th><th>不拥有</th></tr>
-  <tr><td>Fcitx 热键匹配与消费</td><td>音频采集、VAD、CTC、标点</td></tr>
+  <tr><td>Fcitx 热键匹配与消费</td><td>音频采集、VAD、SenseVoice、标点、Final 模型加载</td></tr>
   <tr><td>语音段目标 <code>InputContext</code> 绑定 / 失焦处理</td><td>daemon 会话、<code>segment_id</code> 分配</td></tr>
   <tr><td>Fcitx <code>InputPanel</code> preedit 显示</td><td>协议消息定义（<a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>）</td></tr>
   <tr><td><code>commitString</code> 提交</td><td>OS 传输实现（<a href="../../crates/voime-transport/USER.html">voime-transport USER</a>）</td></tr>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — voime-gpu</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — voime-gpu</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+<a href="../../BUILD.html">BUILD</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="PROVIDER.html">PROVIDER</a>
+<a href="BUILD.html">BUILD</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>crates/voime-gpu/
+├── Cargo.toml
+└── src/
+    ├── <a href="#c4-1">main.rs</a>
+    ├── <a href="#c4-2">cli.rs</a>
+    ├── <a href="#c4-3">protocol.rs</a>
+    ├── <a href="#c4-4">server.rs</a>
+    ├── <a href="#c4-5">aed.rs</a>
+    └── <a href="#c4-6">runtime.rs</a></code></pre>
+<ul class="note">
+  <li>模块入口只做导出；具体签名与调用栈见对应小节。</li>
+  <li>GPU 构建单元独立于 daemon；feature 不得通过 workspace feature unification 进入 <code>voimed</code>。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>进程边界</td><td>只运行在独立 <code>voime-gpu</code> 进程；没有库 API 被 daemon 链接。</td></tr>
+  <tr><td>GPU EP</td><td>DirectML / MIGraphX / CUDA 只在此进程注册；CPU ORT 不在此进程加载。</td></tr>
+  <tr><td>FP16</td><td>encoder / decoder 只接受 FP16；加载失败返回错误，不回退其他精度。</td></tr>
+  <tr><td>协议权威</td><td>帧格式、消息与错误码只在 <a href="USER.html#u4-2">USER §4.2</a> / <a href="USER.html#u4-3">§4.3</a> 定义。</td></tr>
+  <tr><td>无状态</td><td>每个 Final 段独立解码；不保留跨段 KV cache、音频或文本。</td></tr>
+  <tr><td>错误映射</td><td>模型 / EP / 设备错误映射为 worker 错误码；不把 GPU 错误暴露成前端文案。</td></tr>
+  <tr><td>资源释放</td><td>Shutdown / 崩溃都必须释放 GPU 会话与显存；daemon 不持有 GPU 资源。</td></tr>
+</table>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td><code>ort</code></td><td>GPU ONNX Runtime 会话、EP 注册、张量输入输出与 metadata。</td></tr>
+  <tr><td><code>serde</code> / <code>serde_json</code></td><td>worker 协议 JSON 头。</td></tr>
+  <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>启动、加载、推理与协议错误。</td></tr>
+  <tr><td><code>crossbeam-channel</code></td><td>请求串行化与 shutdown 唤醒。</td></tr>
+  <tr><td>GPU runtime</td><td>DirectML / MIGraphX / CUDA 动态库；由独立 runtime 包提供，不编入基础包。</td></tr>
+</table>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c4-1">4.1 main.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>fn main() -&gt; std::process::ExitCode;
+fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+<ul class="note">
+  <li><code>main</code> 只做协议循环与错误退出；模型加载在 <code>server::handshake</code> 内完成。</li>
+</ul>
+
+<h3 id="c4-2">4.2 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Args {
+    pub manifest: PathBuf,
+    pub device: String,
+    pub verbose: bool,
+}
+
+pub fn parse() -&gt; Args;</code></pre>
+
+<h3 id="c4-3">4.3 protocol.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Frame { pub header: Header, pub audio: Vec&lt;f32&gt; }
+pub struct Header { /* ... */ }
+
+pub enum Request { Hello { .. }, Transcribe { .. }, Cancel { .. }, Shutdown }
+pub enum Response { Ready { .. }, Result { .. }, Error { .. }, Bye }
+pub enum ErrorCode { RuntimeMissing, DeviceUnavailable, LoadFailed, InferenceFailed, Timeout, ProtocolMismatch }
+
+pub fn read_frame(reader: &amp;mut impl Read) -&gt; anyhow::Result&lt;Frame&gt;;
+pub fn write_frame(writer: &amp;mut impl Write, header: &amp;Header, audio: &amp;[f32]) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+
+<h3 id="c4-4">4.4 server.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Server { /* runtime + aed + stdout protocol */ }
+
+impl Server {
+    pub fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;
+    fn handshake(&amp;mut self, hello: Hello) -&gt; anyhow::Result&lt;Ready&gt;;
+    fn transcribe(&amp;mut self, request: Transcribe, audio: &amp;[f32]) -&gt; anyhow::Result&lt;Result&gt;;
+    fn shutdown(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+}</code></pre>
+
+<h3 id="c4-5">4.5 aed.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct FireRedAed { /* encoder + decoder + tokenizer + metadata */ }
+
+impl FireRedAed {
+    pub fn load(manifest: &amp;Path, runtime: &amp;GpuRuntime) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;AedOutput&gt;;
+}
+
+pub struct AedOutput {
+    pub text: String,
+    pub latency_ms: u64,
+    pub rtf: f32,
+}</code></pre>
+<ul class="note">
+  <li><code>transcribe</code> 内完成 fbank / CMVN、encoder、自回归 decoder、KV cache 与 tokenizer。</li>
+  <li>停止条件为 <code>eos</code>、<code>max_len</code> 或 <code>max_token_per_second</code>；不做 beam search。</li>
+</ul>
+
+<h3 id="c4-6">4.6 runtime.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct GpuRuntime { /* EP + device + vram */ }
+
+impl GpuRuntime {
+    pub fn load(device: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn create(&amp;self, artifact: &amp;Artifact) -&gt; anyhow::Result&lt;Session&gt;;
+    pub fn vram_mb(&amp;self) -&gt; u32;
+    pub fn provider(&amp;self) -&gt; &amp;str;
+}
+</code></pre>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 启动与握手</h3>
+<pre><code>voime-gpu::main()
+├── voime_gpu::cli::parse()
+├── voime_gpu::server::Server::run(args)
+│   ├── GpuRuntime::load(device)
+│   ├── protocol::read_frame(stdin)
+│   ├── 判断 Request::Hello → Server::handshake(hello)
+│   │   ├── FireRedAed::load(manifest, runtime)
+│   │   └── protocol::write_frame(Ready)
+│   └── 判断加载失败 → protocol::write_frame(Error { LoadFailed })
+└── 判断 Err → eprintln! + ExitCode::from(1)</code></pre>
+
+<h3 id="c5-2">5.2 推理</h3>
+<pre><code>protocol::read_frame(stdin)
+└── 判断 Request::Transcribe → Server::transcribe(request, audio)
+    ├── FireRedAed::transcribe(audio)
+    │   ├── Fbank / CMVN
+    │   ├── Encoder::run(x, x_lens) → cross_k / cross_v
+    │   ├── Decoder::run(...) → logits / KV cache
+    │   └── AsrTokenizer::decode(ids)
+    └── protocol::write_frame(Result { id, text, latency_ms, rtf })</code></pre>
+
+<h3 id="c5-3">5.3 取消与关闭</h3>
+<pre><code>protocol::read_frame(stdin)
+├── 判断 Request::Cancel → 丢弃当前结果 + write Error(Timeout)
+└── 判断 Request::Shutdown
+    ├── protocol::write_frame(Bye)
+    ├── FireRedAed::drop() → 释放 GPU 会话
+    └── GpuRuntime::drop() → 释放 EP / 显存</code></pre>
+
+</body>
+</html>

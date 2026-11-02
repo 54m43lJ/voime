@@ -6,10 +6,11 @@ left to right direction
 
 actor "用户" as User
 component "平台宿主\nFcitx5 / Windows 输入栈" as Host
-component "Voime\n平台前端 + ASR daemon" as Voime
+component "Voime\n平台前端 + ASR daemon\n+ 可选 voime-gpu" as Voime
 component "目标应用" as App
 component "麦克风" as Mic
-component "本地模型包\nFireRedVAD / FireRedASR2-CTC / FireRedPunc" as Models
+component "本地模型包\nSenseVoice / FireRedVAD\n可选 FireRed AED / FireRedPunc" as Models
+component "GPU runtime\nDirectML / MIGraphX / CUDA" as Gpu
 
 User --> Host : 键盘 / 热键
 Host --> Voime : 按键 / 焦点
@@ -18,4 +19,5 @@ Host --> App : 普通按键 / 最终文本
 Host --> User : 临时窗口 / 状态
 Voime --> Mic : PCM
 Voime --> Models : 只读加载
+Voime --> Gpu : 仅 GPU Final
 @enduml

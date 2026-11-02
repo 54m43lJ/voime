@@ -1,0 +1,26 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "voime-gpu" as Worker
+participant "模型包" as Package
+
+Daemon -> Daemon : 保留 SenseVoice Preview / VAD / Punc
+Daemon -> Package : 读取 Final manifest / 校验 SHA
+alt Final 是 CPU SenseVoice
+  Daemon -> Daemon : 不启动 worker
+else Final 是 GPU FireRed
+  Daemon -> Worker : spawn + Hello
+  Worker -> Worker : 加载 FireRed AED FP16
+  Worker --> Daemon : Ready
+  Daemon -> Worker : Transcribe(final segment)
+  Worker --> Daemon : text
+end
+alt worker 崩溃 / 超时 / 显存不足
+  Daemon -> Worker : 退避重启（1 / 2 / 5 s）
+  Daemon -> Daemon : 仍失败则回退 CPU SenseVoice
+end
+Daemon -> Worker : Shutdown（如已启动）
+@enduml

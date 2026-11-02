@@ -75,7 +75,7 @@
 
 <h3 id="u4-1">4.1 命令行</h3>
 <pre><code>voime [--endpoint &lt;ENDPOINT&gt;]
-voime ctl &lt;start|stop|toggle|status|clear|quit&gt; [--endpoint &lt;ENDPOINT&gt;]
+voime ctl &lt;start|stop|toggle|status|clear|quit|models|use|restart-backend&gt; [--endpoint &lt;ENDPOINT&gt;]
 voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
 
 <table>
@@ -86,6 +86,9 @@ voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
   <tr><td><code>voime ctl toggle</code></td><td>发送 <code>Toggle { segment_id: 0, source: Cli }</code>。</td></tr>
   <tr><td><code>voime ctl status</code></td><td>发送 <code>Status</code>；打印一行状态。</td></tr>
   <tr><td><code>voime ctl clear</code></td><td>发送 <code>ClearHistory</code>；等待 <code>HistoryCleared</code>。</td></tr>
+  <tr><td><code>voime ctl models</code></td><td>发送 <code>ListModels</code>；打印 Final 候选、CPU / GPU、available、active / running。</td></tr>
+  <tr><td><code>voime ctl use &lt;id&gt;</code></td><td>发送 <code>SetModel { package_id }</code>；只写 <code>active</code>，不触发重启。</td></tr>
+  <tr><td><code>voime ctl restart-backend</code></td><td>发送 <code>RestartBackend</code>；等待 <code>BackendState</code>；录音 / 识别中返回 <code>Busy</code>。</td></tr>
   <tr><td><code>voime ctl quit</code></td><td>发送 <code>Quit</code>；等待 <code>Bye</code>。</td></tr>
   <tr><td><code>voime doctor</code></td><td>只读检查；退出码 0 表示全部通过，1 表示存在 FAIL。</td></tr>
   <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名。</td></tr>
@@ -118,6 +121,17 @@ recording=true finalizing=false segment=Some(3)
 # status
 recording=false finalizing=false segment=None mode=ptt hotkey=Super+F2 addon=Connected transcript=2
 
+# models
+sense-voice-2024-int8  SenseVoice 2024 ITN  CPU   available=true  active=true   running=true
+fire-red-aed-gpu       FireRedASR2-AED     GPU   available=true  active=false  running=false
+
+# use
+selected fire-red-aed-gpu (restart backend to apply)
+
+# restart-backend
+backend restarting
+backend ready fire-red-aed-gpu
+
 # clear
 history cleared
 
@@ -128,6 +142,8 @@ voimed stopped</code></pre>
   <tr><th>输出</th><th>契约</th></tr>
   <tr><td>start / stop / toggle</td><td>打印 <code>State</code> 的 recording / finalizing / segment；Error 走 stderr。</td></tr>
   <tr><td>status</td><td><code>Status</code> 的所有字段；未知 mode / hotkey 显示 <code>-</code>。</td></tr>
+  <tr><td>models</td><td><code>Models</code> 的所有 Final 候选；不可用项显示原因，不隐藏。</td></tr>
+  <tr><td>use / restart-backend</td><td><code>use</code> 打印已写 <code>active</code>；<code>restart-backend</code> 打印 <code>BackendState</code> 阶段与模型。</td></tr>
   <tr><td>clear / quit</td><td>成功标记；Error 或 Bye 走 stderr / 退出码 1。</td></tr>
   <tr><td>超时</td><td>超时时间内没有响应则报错退出；具体值见 <a href="CORE.html#c2">CORE §2</a>。</td></tr>
 </table>
@@ -137,7 +153,11 @@ voimed stopped</code></pre>
   OK   权限 0600
   OK   daemon 在线
 model: /home/user/.local/share/voime/models
-  OK   manifest 与 SHA-256 校验通过
+  OK   SenseVoice 基础包  sense-voice-2024-int8
+  OK   active  Final = sense-voice-2024-int8
+  OK   Final manifest / SHA-256 校验通过
+gpu:
+  WARN 未安装 GPU runtime；Final 使用 CPU SenseVoice
 audio:
   OK   2 个输入设备，默认 ...
 log:
@@ -153,8 +173,9 @@ fcitx:
 <table>
   <tr><th>检查</th><th>契约</th></tr>
   <tr><td>端点</td><td>检查默认端点 / <code>--endpoint</code> 指定端点；Unix 上检查权限是否 0600。</td></tr>
-  <tr><td>daemon</td><td>以 <code>control</code> 角色连接并读取 Snapshot。</td></tr>
-  <tr><td>模型</td><td>固定检查默认模型目录；不读取 <code>--model-dir</code>。</td></tr>
+  <tr><td>daemon</td><td>以 <code>control</code> 角色连接，读取 Snapshot 与 <code>ListModels</code>。</td></tr>
+  <tr><td>模型</td><td>检查 SenseVoice 基础包、<code>active</code>、Final manifest / SHA / <code>requires</code>；<code>--model-dir</code> 部署显示显式路径。</td></tr>
+  <tr><td>GPU</td><td>报告 runtime、驱动、显存、当前 worker 与 GPU Final 可用性；不可用只记 WARN，CPU 路径仍可用。</td></tr>
   <tr><td>音频</td><td>枚举输入设备并显示默认设备名；不打开流。</td></tr>
   <tr><td>日志</td><td>报告 <code>VOIME_LOG</code> 启用状态与日志文件位置；未启用时给出默认目录，不计为 FAIL。</td></tr>
   <tr><td>平台前端</td><td>当前 Linux 检查 fcitx5 进程、addon 描述、<code>voime.so</code>、旧 inputmethod 条目与用户配置。</td></tr>
@@ -162,7 +183,7 @@ fcitx:
 </table>
 <ul class="note">
   <li>doctor 当前是 Linux 实现；Windows 前端落地后按 <a href="../../frontends/windows/USER.html#u4-4">windows USER §4.4</a> 增加平台检查。</li>
-  <li>自定义前缀或 <code>--model-dir</code> 部署需要手工确认；doctor 固定检查默认路径。</li>
+  <li>自定义前缀或 <code>--model-dir</code> 部署需要手工确认；doctor 默认检查模型根目录与 <code>active</code>，显式覆盖时报告覆盖路径。</li>
 </ul>
 
 <h2 id="u5">5. UI</h2>

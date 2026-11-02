@@ -110,7 +110,8 @@
 <h3 id="u4-1">4.1 addon 配置</h3>
 <pre><code># ~/.config/fcitx5/conf/voime.conf
 Mode=ptt
-Hotkey=Super+F2</code></pre>
+Hotkey=Super+F2
+Model=</code></pre>
 
 <table>
   <tr><th>配置项</th><th>取值</th><th>默认</th><th>说明</th></tr>
@@ -126,10 +127,17 @@ Hotkey=Super+F2</code></pre>
     <td><code>Super+F2</code></td>
     <td><code>ptt</code> 按住、<code>toggle</code> 切换、<code>continuous</code> 忽略；设为空可禁用。</td>
   </tr>
+  <tr>
+    <td><code>Model</code></td>
+    <td>Final 包目录名；空值表示跟随 <code>active</code></td>
+    <td>空</td>
+    <td>由 <code>EnumAnnotation</code> 动态枚举 Final 候选；显示 CPU / GPU 与不可用原因；选择后标记“待重启”。</td>
+  </tr>
 </table>
 <ul class="note">
   <li>配置通过 <code>fcitx5-configtool</code> 的 Addons 页面或直接编辑文件完成；修改后重新加载 addon 配置或重启 Fcitx。</li>
   <li>旧版本无后缀的 <code>~/.config/fcitx5/conf/voime</code> 会在启动时迁移到 <code>voime.conf</code>。</li>
+  <li><code>Model</code> 只选择 Final；SenseVoice Preview 不由配置界面选择。动态枚举不可用时模型列表留空，不做固定 enum 或自由文本补偿。</li>
   <li>端点使用 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code> 默认路径，不作为用户配置项。</li>
 </ul>
 
@@ -153,14 +161,16 @@ Hotkey=Super+F2</code></pre>
 
 <table>
   <tr><th>消息</th><th>addon 行为</th></tr>
-  <tr><td><code>Hello { role: Fcitx, version, config }</code></td><td>连接后发送；携带当前 Mode / Hotkey。</td></tr>
+  <tr><td><code>Hello { role: Frontend, version, config }</code></td><td>连接后发送；携带当前 Mode / Hotkey。</td></tr>
   <tr><td><code>Configure { mode, hotkey }</code></td><td>配置重载时发送；新模式在下一段生效。</td></tr>
+  <tr><td><code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code></td><td>配置页加载、保存或点击重启时发送；<code>SetModel</code> 只写 <code>active</code>，<code>RestartBackend</code> 在空闲时重建 Final。</td></tr>
   <tr><td><code>Start</code> / <code>Stop</code></td><td>PTT / Toggle 热键触发；携带本地提示 ID 与 <code>Hold</code> / <code>Toggle</code> 来源。</td></tr>
   <tr><td><code>SegmentStarted</code></td><td>记录最终 <code>segment_id</code>；Continuous 与 Toggle 续段跟随当前焦点。</td></tr>
   <tr><td><code>State</code></td><td>更新 recording / finalizing；Idle 时清理目标与临时窗口。</td></tr>
   <tr><td><code>Partial</code></td><td>只处理当前段；显示到目标输入面板。</td></tr>
   <tr><td><code>Final</code></td><td>只处理当前目标段；清空临时窗口并提交。</td></tr>
-  <tr><td><code>Error</code></td><td>角色 / 版本 / 非法消息时断开重连；推理错误在 Toggle 会话中重置。</td></tr>
+  <tr><td><code>Models</code> / <code>ModelSelected</code> / <code>BackendState</code></td><td>刷新 Final 下拉与可用性；<code>BackendState</code> 为 <code>Ready</code> 前显示“待重启”，失败时保留旧选择并写日志。</td></tr>
+  <tr><td><code>Error</code></td><td>角色 / 版本 / 非法消息 / <code>busy</code> / 模型不可用时断开重连或显示日志；推理错误在 Toggle 会话中重置。</td></tr>
   <tr><td><code>Bye</code></td><td>断开并等待重连。</td></tr>
 </table>
 
@@ -180,7 +190,8 @@ Hotkey=Super+F2</code></pre>
   <tr><th>错误</th><th>触发条件</th><th>处理</th></tr>
   <tr><td>addon 未加载</td><td>描述文件缺失、ABI 不匹配或库加载失败。</td><td>Fcitx 日志 / <code>voime doctor</code>；不消费热键。</td></tr>
   <tr><td>daemon 不可用</td><td>无法连接 socket。</td><td>放行热键；按重连策略重试。</td></tr>
-  <tr><td>角色冲突 / 版本不匹配</td><td>已有前端连接或协议版本不一致。</td><td>断开并重试；日志记录。</td></tr>
+  <tr><td>角色冲突 / 版本不匹配</td><td>已有前端连接或协议版本不一致。</td><td>断开并重试；日志记录；旧版本必须升级。</td></tr>
+  <tr><td>Final 不可用 / 重启失败</td><td><code>available=false</code>、<code>BackendState{Failed}</code> 或 <code>busy</code>。</td><td>保留下拉旧选择；显示“待重启”或错误；不自动切换模型。</td></tr>
   <tr><td>没有目标输入框</td><td>按键时没有焦点。</td><td>不开始语音段；不提交。</td></tr>
   <tr><td>目标丢失</td><td>提交前失焦 / 销毁。</td><td>清空临时窗口；Final 保留历史。</td></tr>
   <tr><td>ASR 推理错误</td><td>daemon 返回 <code>inference</code>。</td><td>Toggle 会话重置为空白窗口；其他模式清理状态。</td></tr>

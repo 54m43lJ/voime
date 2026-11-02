@@ -30,7 +30,8 @@
   <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）。</td></tr>
   <tr><td>Linux</td><td>ALSA 开发头文件；Fcitx5 不是 daemon 的构建依赖。</td></tr>
   <tr><td>Windows</td><td>Rust MSVC 工具链；WASAPI 由 cpal 处理。</td></tr>
-  <tr><td>模型</td><td>运行前必须安装完整模型包；编译不需要权重。</td></tr>
+  <tr><td>模型</td><td>运行前必须安装完整模型包；SenseVoice 基础包始终需要，FireRed AED 仅在 <code>firered</code> 档 / GPU Final 时需要；编译不需要权重。</td></tr>
+  <tr><td>GPU runtime</td><td>可选；只有 Final 选择 GPU FireRed 时才需要 <code>voime-gpu</code> 与对应 runtime。缺失时 Final 回退 CPU SenseVoice。</td></tr>
   <tr><td>服务管理</td><td>Linux systemd user service；Windows daemon 是托盘子进程，随托盘启动和退出，不使用独立服务或独立退出流程。</td></tr>
 </table>
 
@@ -63,13 +64,20 @@ systemctl --user enable --now voime.service
 systemctl --user status voime.service
 
 # 或前台启动
-voimed --verbose</code></pre>
+voimed --verbose
+
+# 查看 / 切换 Final；重启后端不重启进程
+voime ctl models
+voime ctl use fire-red-aed-gpu
+voime ctl restart-backend</code></pre>
 
 <table>
   <tr><th>操作</th><th>命令 / 契约</th></tr>
   <tr><td>停止</td><td>Linux：<code>voime ctl quit</code> 或 <code>systemctl --user stop voime.service</code>；Windows：退出托盘即停止。</td></tr>
-  <tr><td>重启</td><td><code>systemctl --user restart voime.service</code>；前端会定时重连。</td></tr>
-  <tr><td>诊断</td><td><code>voime doctor</code> 检查端点、daemon、模型、音频与前端。</td></tr>
+  <tr><td>重启进程</td><td><code>systemctl --user restart voime.service</code>；前端会定时重连。</td></tr>
+  <tr><td>重启后端</td><td><code>voime ctl restart-backend</code>；只重建 Final，SenseVoice Preview 与 IPC 保持。</td></tr>
+  <tr><td>模型选择</td><td><code>voime ctl models</code> / <code>use</code>；<code>active</code> 是权威，<code>--model-dir</code> 只用于开发排障。</td></tr>
+  <tr><td>诊断</td><td><code>voime doctor</code> 检查端点、daemon、SenseVoice 基础包、Final / running、GPU runtime 与前端。</td></tr>
   <tr><td>日志</td><td>给服务环境设 <code>VOIME_LOG=1</code>（或目录路径）后重启，日志写入 <code>{XDG_STATE_HOME}/voime/logs/voimed.log</code>；Windows 为 <code>%LOCALAPPDATA%\voime\logs\voimed.log</code>。</td></tr>
   <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>；自定义端点用 <code>--endpoint</code>（<code>--socket</code> 为兼容别名）。</td></tr>
 </table>
@@ -87,10 +95,12 @@ cargo fmt -p voimed --check</code></pre>
 
 <table>
   <tr><th>测试</th><th>覆盖</th></tr>
-  <tr><td><code>tests/daemon.rs</code></td><td>端点存活、断线角色、daemon 生命周期。</td></tr>
-  <tr><td><code>tests/state.rs</code></td><td>快照默认值、清空历史、status 字段。</td></tr>
-  <tr><td><code>tests/ipc.rs</code></td><td>握手、角色、模式与 framing。</td></tr>
-  <tr><td><code>tests/segmenter.rs</code></td><td>分段端点与最大段长。</td></tr>
+  <tr><td><code>tests/daemon.rs</code></td><td>端点存活、断线角色、daemon 生命周期、Final 重启 / 回滚。</td></tr>
+  <tr><td><code>tests/state.rs</code></td><td>快照默认值、清空历史、status 字段、模型选择状态。</td></tr>
+  <tr><td><code>tests/ipc.rs</code></td><td>握手、角色、模式、framing、<code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>。</td></tr>
+  <tr><td><code>tests/segmenter.rs</code></td><td>分段端点、最大段长与预卷。</td></tr>
+  <tr><td>worker / GPU</td><td>spawn / handshake / 超时 / 崩溃重启 / 回退 CPU；只在专用 runner 启用。</td></tr>
+  <tr><td>模型切换</td><td>录音中拒绝、成功切换、失败回滚、Preview 不中断、连续重启。</td></tr>
 </table>
 
 <h2 id="b5">5. 升级 / 卸载</h2>
@@ -98,10 +108,10 @@ cargo fmt -p voimed --check</code></pre>
 
 <table>
   <tr><th>操作</th><th>步骤</th></tr>
-  <tr><td>升级</td><td>停止服务；重新运行安装脚本；启动服务；前端自动重连。</td></tr>
-  <tr><td>迁移配置</td><td>模型目录与端点路径由 CLI / 安装脚本决定；不迁移历史（不持久化）。</td></tr>
-  <tr><td>卸载</td><td><code>systemctl --user disable --now voime.service</code>；删除 <code>~/.local/bin/voimed</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录按需保留。</td></tr>
-  <tr><td>Windows</td><td>退出托盘（同时停止 daemon）；删除 <code>voimed.exe</code> / <code>voime.exe</code>；按需删除模型目录与登录启动项。</td></tr>
+  <tr><td>升级</td><td>停止服务；重新运行安装脚本；启动服务；前端自动重连。模型 / <code>active</code> 默认 clean install，旧 schema / 旧包直接拒绝。</td></tr>
+  <tr><td>迁移配置</td><td>模型根目录、<code>active</code> 与端点路径由 CLI / 安装脚本决定；不迁移历史（不持久化）。上一版本可手工运行 <code>scripts/migrate-asr-v2.sh</code>，安装器不调用。</td></tr>
+  <tr><td>卸载</td><td><code>systemctl --user disable --now voime.service</code>；删除 <code>~/.local/bin/voimed</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录与 GPU runtime 按需保留。</td></tr>
+  <tr><td>Windows</td><td>退出托盘（同时停止 daemon）；删除 <code>voimed.exe</code> / <code>voime.exe</code> / 可选 <code>voime-gpu.exe</code>；按需删除模型目录、GPU runtime 与登录启动项。</td></tr>
 </table>
 
 </body>

@@ -126,8 +126,9 @@
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>端点</td><td><code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td></tr>
   <tr><td>权限</td><td>当前用户 DACL；拒绝远程客户端；不使用 <code>Global\</code> 跨会话。</td></tr>
-  <tr><td>读写</td><td>字节流；一行一个 JSON；最大 1 MiB。</td></tr>
+  <tr><td>读写</td><td>字节流；一行一个 JSON；最大 1 MiB；<code>PROTOCOL_VERSION=3</code>。</td></tr>
   <tr><td>关闭</td><td>关闭句柄并唤醒阻塞读；按重连策略重连。</td></tr>
+  <tr><td>GPU 边界</td><td>前端只消费 <code>ModelInfo</code> / <code>BackendState</code>；不链接 ONNX Runtime、DirectML 或 CUDA。</td></tr>
   <tr><td>详细契约</td><td><a href="../../crates/voime-transport/PROVIDER.html#p4-2">voime-transport PROVIDER §4.2</a></td></tr>
 </table>
 

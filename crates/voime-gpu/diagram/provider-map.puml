@@ -1,0 +1,15 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+skinparam componentStyle rectangle
+left to right direction
+
+component "voime-gpu" as Worker
+component "FireRed AED 模型包\nencoder / decoder / tokens / punc" as Model
+component "GPU runtime 包\nMIGraphX / DirectML / CUDA" as Runtime
+component "ONNX Runtime GPU\nExecution Provider" as Ort
+
+Worker --> Model : manifest / SHA / tensors
+Worker --> Runtime : ORT / EP 动态库
+Worker --> Ort : GPU 会话
+@enduml

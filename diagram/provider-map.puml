@@ -13,8 +13,10 @@ package "平台边界" {
 
 package "本机资源" {
   component "音频设备\ncpal / ALSA / WASAPI" as Audio
-  component "ONNX Runtime\nCPU" as Ort
-  component "模型包\nFireRedVAD / CTC / Punc" as Models
+  component "ONNX Runtime\nCPU" as OrtCpu
+  component "ONNX Runtime\nGPU / EP" as OrtGpu
+  component "模型包\nSenseVoice / FireRedVAD\nFireRedPunc / 可选 FireRed AED" as Models
+  component "GPU runtime 包\nMIGraphX / DirectML / CUDA" as Runtime
 }
 
 package "本机端点" {
@@ -25,8 +27,10 @@ package "本机端点" {
 Voime --> Fcitx : 热键 / 目标 / 提交
 Voime --> Win : 热键 / 目标 / 提交
 Voime --> Audio : PCM
-Voime --> Ort : 推理
+Voime --> OrtCpu : CPU 推理
 Voime --> Models : 只读加载
 Voime --> Unix : daemon ↔ 客户端
 Voime --> Pipe : daemon ↔ 客户端
+Voime --> OrtGpu : 仅 voime-gpu
+Voime --> Runtime : 仅 voime-gpu
 @enduml

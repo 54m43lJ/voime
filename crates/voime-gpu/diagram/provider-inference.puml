@@ -1,0 +1,27 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voime-gpu" as Worker
+participant "模型包" as Model
+participant "GPU runtime 包" as Runtime
+participant "ONNX Runtime GPU" as Ort
+
+Worker -> Model : 读取 manifest.json
+Worker -> Model : SHA-256 + 张量 / metadata 校验
+Worker -> Runtime : 加载 ORT / EP
+Worker -> Ort : 创建 encoder / decoder 会话
+Ort -> Worker : Session
+
+loop 每个 Final 段
+  Worker -> Worker : fbank + CMVN
+  Worker -> Ort : encoder / decoder 推理
+  Ort -> Worker : logits / text
+end
+
+note over Worker
+  模型只读；每个 Final 段独立解码，
+  不保留跨段 KV cache。
+end note
+@enduml

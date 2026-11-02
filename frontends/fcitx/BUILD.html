@@ -82,8 +82,8 @@ ctest --test-dir build/fcitx --output-on-failure</code></pre>
 
 <table>
   <tr><th>测试</th><th>覆盖</th></tr>
-  <tr><td><code>tests/addon_test.cpp</code></td><td>Mode / 热键字符串 / IPC 枚举 / target 空引用。</td></tr>
-  <tr><td>手工验收</td><td>Addons 页面加载、不出现在输入法组、Mode 三态、热键冲突、临时窗口、Final 提交、目标失焦、daemon 重启重连。</td></tr>
+  <tr><td><code>tests/addon_test.cpp</code></td><td>Mode / 热键字符串 / <code>Model</code> 配置 / IPC 枚举 / target 空引用。</td></tr>
+  <tr><td>手工验收</td><td>Addons 页面加载、不出现在输入法组、Mode 三态、Model 下拉与待重启、热键冲突、临时窗口、Final 提交、目标失焦、daemon 重启重连、GPU Final 不可用回退。</td></tr>
   <tr><td>frontend 覆盖</td><td>原生 Wayland、XWayland / XIM、支持 text-input 的终端；不支持输入法协议的窗口不承诺。</td></tr>
 </table>
 

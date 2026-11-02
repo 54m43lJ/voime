@@ -32,9 +32,11 @@
     ├── <a href="#c4-3">cli.rs</a>
     ├── <a href="#c4-4">daemon.rs</a>
     ├── <a href="#c4-5">state.rs</a>
-    └── <a href="#c4-6">ipc_server.rs</a></code></pre>
+    ├── <a href="#c4-6">ipc_server.rs</a>
+    ├── <a href="#c4-7">worker.rs</a>
+    └── <a href="#c4-8">models.rs</a></code></pre>
 <ul class="note">
-  <li><code>lib.rs</code> 导出 <code>daemon</code> / <code>ipc_server</code> / <code>state</code>，供根集成测试使用；<code>main.rs</code> 只做启动编排。</li>
+  <li><code>lib.rs</code> 导出 <code>daemon</code> / <code>ipc_server</code> / <code>state</code> / <code>worker</code> / <code>models</code>，供根集成测试使用；<code>main.rs</code> 只做启动编排。</li>
 </ul>
 
 <ul class="note">
@@ -48,12 +50,15 @@
   <tr><td>事件循环</td><td>daemon 主线程用 <code>crossbeam_channel::select!</code> 同时等待 IPC 事件与 pipeline 事件；100 ms 超时用于检查关闭。</td></tr>
   <tr><td>客户端线程</td><td>accept 线程接受连接；每个客户端一个 reader 线程与一个 writer 线程；daemon 主线程只处理事件与状态。</td></tr>
   <tr><td>客户端队列</td><td>每个客户端一个有界发送队列；Final / State 满时移除客户端，Partial 满时只丢该条。</td></tr>
-  <tr><td>角色表</td><td><code>clients: HashMap&lt;u64, ClientEntry&gt;</code> 由互斥锁保护；<code>set_role</code> 只允许一个 <code>Frontend</code>（线协议仍接受 <code>fcitx</code> 兼容别名）。</td></tr>
+  <tr><td>角色表</td><td><code>clients: HashMap&lt;u64, ClientEntry&gt;</code> 由互斥锁保护；<code>set_role</code> 只允许一个 <code>Frontend</code>。</td></tr>
+  <tr><td>模型选择</td><td><code>models.rs</code> 扫描模型根目录、解析 <code>active</code> 与候选；<code>SetModel</code> 只写指针，<code>RestartBackend</code> 才重建 Final。</td></tr>
+  <tr><td>Preview 不中断</td><td>重启 Final 时保留 SenseVoice 会话、音频与 IPC；只替换 Final 后端 / pipeline 的 Final 路径。</td></tr>
+  <tr><td>worker 监督</td><td><code>worker.rs</code> 负责 spawn / handshake / transcribe / restart / shutdown；超时、崩溃与显存不足按回退策略处理。</td></tr>
   <tr><td>状态机</td><td><code>State.phase</code> 只由 daemon 主线程修改；pipeline 事件与客户端命令都在同一线程串行处理。</td></tr>
   <tr><td>段 ID</td><td><code>next_segment</code> 单调递增，wrapping 后跳过 0；当前段在 Final / 丢弃后清空。</td></tr>
   <tr><td>模式生效</td><td>Idle 时立即 <code>pipeline.set_mode</code>；非 Idle 时暂存到 <code>pending_mode</code>，段结束后应用。</td></tr>
   <tr><td>前端断开</td><td>前端状态置 disconnected；Continuous 退 PTT；结束当前段；广播 Snapshot。</td></tr>
-  <tr><td>退出顺序</td><td>广播 Bye → IPC shutdown → pipeline shutdown → audio stop → 删除端点。</td></tr>
+  <tr><td>退出顺序</td><td>广播 Bye → IPC shutdown → worker shutdown → pipeline shutdown → audio stop → 删除端点。</td></tr>
   <tr><td>传输边界</td><td><code>ipc_server.rs</code> 只使用 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Listener</code> / <code>Stream</code>；daemon 不 import <code>std::os::unix</code> 或 Win32。</td></tr>
   <tr><td>运行日志</td><td>状态机、IPC 生命周期与段事件经 <code>voime_log::vlog!</code> 记录；机制见 <a href="../voime-log/CORE.html">voime-log CORE</a>，隐私约定见 <a href="../voime-log/USER.html#u2">voime-log USER §2</a>。</td></tr>
 </table>
@@ -66,8 +71,10 @@
 
 <table>
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
-  <tr><td><code>voime-core</code></td><td>配置、音频、模型、pipeline。</td></tr>
+  <tr><td><code>voime-core</code></td><td>配置、音频、模型、pipeline、<code>FinalBackend</code>。</td></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
+  <tr><td>worker 协议</td><td><code>worker.rs</code> 的 JSON / 长度前缀帧；协议定义见 <a href="../voime-gpu/USER.html">voime-gpu USER</a>。</td></tr>
+  <tr><td><code>serde</code></td><td>worker 协议头与模型 manifest 解析。</td></tr>
   <tr><td><code>voime-log</code></td><td>运行日志（<code>VOIME_LOG</code> 启用）。</td></tr>
   <tr><td><code>voime-transport</code></td><td>本机端点与字节流。</td></tr>
   <tr><td><code>clap</code></td><td>命令行参数。</td></tr>
@@ -84,15 +91,17 @@
 <pre><code>pub mod cli;
 pub mod daemon;
 pub mod ipc_server;
-pub mod state;</code></pre>
+pub mod models;
+pub mod state;
+pub mod worker;</code></pre>
 
 <h3 id="c4-2">4.2 main.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>fn main() -&gt; std::process::ExitCode;
 fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;
 fn stop_audio(audio: CaptureHandle);</code></pre>
 <ul class="note">
-  <li><code>main</code> 先检查端点是否已有 daemon，再调用 <code>run</code>；<code>run</code> 按配置 → 会话工厂 → pipeline → 音频 → IPC → daemon 顺序初始化。</li>
-  <li>初始化失败按逆序释放已创建资源；音频打开失败时先关闭 pipeline。</li>
+  <li><code>main</code> 先检查端点是否已有 daemon，再调用 <code>run</code>；<code>run</code> 按配置 → 会话工厂 → Final 选择 / worker → pipeline → 音频 → IPC → daemon 顺序初始化。</li>
+  <li>初始化失败按逆序释放已创建资源；worker 失败时关闭 pipeline，音频打开失败时先关闭 pipeline。</li>
 </ul>
 
 <h3 id="c4-3">4.3 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -108,10 +117,13 @@ pub fn parse() -&gt; Cli;
 fn parse_positive_usize(value: &amp;str) -&gt; Result&lt;usize, String&gt;;</code></pre>
 
 <h3 id="c4-4">4.4 daemon.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct Daemon {
+<pre><code>pub struct FinalRuntime { /* pipeline + Final backend + optional worker */ }
+pub struct Daemon {
     _config: Config,
     state: State,
-    pipeline: Pipeline,
+    final_runtime: FinalRuntime,
+    models: ModelCatalog,
+    worker: Option&lt;WorkerBackend&gt;,
     audio: CaptureHandle,
     ipc: IpcServer,
     current_segment: Option&lt;u64&gt;,
@@ -124,11 +136,15 @@ fn parse_positive_usize(value: &amp;str) -&gt; Result&lt;usize, String&gt;;</cod
 }
 
 impl Daemon {
-    pub fn new(config: Config, pipeline: Pipeline,
+    pub fn new(config: Config, final_runtime: FinalRuntime,
+               models: ModelCatalog, worker: Option&lt;WorkerBackend&gt;,
                audio: CaptureHandle, ipc: IpcServer) -&gt; Self;
     pub fn run(mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn restart_backend(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
     fn on_server_event(&amp;mut self, event: ServerEvent);
     fn on_client(&amp;mut self, client_id: u64, message: ClientMessage);
+    fn list_models(&amp;self) -&gt; ServerMessage;
+    fn set_model(&amp;mut self, package_id: String) -&gt; anyhow::Result&lt;ServerMessage&gt;;
     fn request_start(&amp;mut self, client_id: u64, segment_id: u64,
                      source: TriggerSource);
     fn request_stop(&amp;mut self, client_id: u64, segment_id: u64);
@@ -147,6 +163,9 @@ impl Daemon {
 
 fn listens(mode: Mode, session_active: bool) -&gt; bool;
 fn continuation_source(mode: Option&lt;Mode&gt;) -&gt; TriggerSource;</code></pre>
+<ul class="note">
+  <li><code>FinalRuntime</code> / <code>ModelCatalog</code> 为草案类型，分别封装可替换 Final 与模型候选；实现时可按模块拆分调整。</li>
+</ul>
 
 <h3 id="c4-5">4.5 state.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct State {
@@ -206,6 +225,45 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
                 clients: &amp;Arc&lt;Mutex&lt;HashMap&lt;u64, ClientEntry&gt;&gt;&gt;,
                 events: &amp;Sender&lt;ServerEvent&gt;) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 
+<h3 id="c4-7">4.7 worker.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct WorkerBackend { /* child + streams + protocol state */ }
+
+impl WorkerBackend {
+    pub fn spawn(manifest: &amp;Path, device: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn handshake(&amp;mut self) -&gt; anyhow::Result&lt;Ready&gt;;
+    pub fn transcribe(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;String&gt;;
+    pub fn restart(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn shutdown(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+}
+
+impl FinalBackend for WorkerBackend { /* 见 voime-core USER §4.4 */ }
+
+fn encode_frame(header: &amp;Header, audio: &amp;[f32]) -&gt; anyhow::Result&lt;Vec&lt;u8&gt;&gt;;
+fn decode_frame(reader: &amp;mut impl Read) -&gt; anyhow::Result&lt;Frame&gt;;</code></pre>
+<ul class="note">
+  <li>worker 协议版本独立于前端 IPC；帧格式与错误码见 <a href="../voime-gpu/USER.html#u4-2">voime-gpu USER §4.2</a>。</li>
+  <li>生命周期、超时与重启策略见 <a href="USER.html#u3-4">本组件 USER §3.4</a>。</li>
+</ul>
+
+<h3 id="c4-8">4.8 models.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct ModelCatalog { /* root + active + candidates */ }
+
+impl ModelCatalog {
+    pub fn scan(root: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn active(&amp;self) -&gt; Option&lt;&amp;ModelInfo&gt;;
+    pub fn list(&amp;self) -&gt; Vec&lt;ModelInfo&gt;;
+    pub fn set_active(&amp;self, package_id: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
+}
+
+pub fn read_active(root: &amp;Path) -&gt; anyhow::Result&lt;String&gt;;
+pub fn write_active(root: &amp;Path, package_id: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
+pub fn resolve_package(root: &amp;Path, package_id: &amp;str)
+    -&gt; anyhow::Result&lt;PathBuf&gt;;</code></pre>
+<ul class="note">
+  <li>扫描跳过无 <code>manifest.json</code> 或无法解析的目录；<code>available</code> 预检 GPU runtime / 驱动 / 显存 / <code>requires</code>，只读目录或调用 worker probe，不在 daemon 内创建 GPU 会话。</li>
+  <li><code>write_active</code> 使用同目录临时文件 + rename；读取去掉首尾空白与 UTF-8 BOM。</li>
+</ul>
+
 <h2 id="c5">5. Call stack tree</h2>
 <p><a href="#top">↑</a></p>
 
@@ -217,13 +275,15 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
     ├── ipc_server::daemon_running(&amp;endpoint)
     │   └── 判断已运行 → ExitCode::SUCCESS
     ├── voimed::run(args)
+    │   ├── voimed::models::ModelCatalog::scan(model_root)
     │   ├── voime_core::config::resolve(args)
     │   ├── voime_core::infer::session::SessionFactory::new(config.threads)
-    │   ├── voime_core::pipeline::spawn(&amp;config, factory, audio_rx)
+    │   ├── 判断 Final backend.kind == worker → voimed::worker::WorkerBackend::spawn()
+    │   ├── voime_core::pipeline::spawn(&amp;config, factory, final_backend, audio_rx)
     │   ├── voime_core::audio::capture::start(config.input_device, audio_tx)
     │   │   └── 构建输入流并保持暂停，等待 Daemon::sync_audio_result()
     │   ├── ipc_server::IpcServer::bind(&amp;endpoint)
-    │   └── daemon::Daemon::new(config, pipeline, audio, ipc).run()
+    │   └── daemon::Daemon::new(config, final_runtime, models, worker, audio, ipc).run()
     └── 判断 Err → eprintln! + ExitCode::from(1)</code></pre>
 
 <h3 id="c5-2">5.2 连接、Hello 与角色</h3>
@@ -242,7 +302,7 @@ Daemon::run()
     └── Daemon::on_client(client_id, Hello { role, version, config })
         ├── 判断 version != PROTOCOL_VERSION → send Error(version_mismatch) + disconnect
         ├── IpcServer::set_role(client_id, role)
-        ├── 判断 role == Fcitx → state.addon = Connected
+        ├── 判断 role == Frontend → state.addon = Connected
         ├── State::apply_mode(config.mode)
         ├── Daemon::apply_pipeline_mode()
         ├── Daemon::sync_audio_result()
@@ -297,7 +357,7 @@ pipeline::PipelineEvent::Recording(true)
 <pre><code>ipc_server reader loop 退出
 └── events.send(ServerEvent::Disconnected { client_id, role })
     └── Daemon::on_server_event(Disconnected)
-        ├── 判断 role == Fcitx → state.addon = Disconnected
+        ├── 判断 role == Frontend → state.addon = Disconnected
         ├── session_active = false
         ├── 判断 state.mode == Continuous → Pipeline::set_mode(Ptt)
         ├── 判断 current_segment.is_some() → Pipeline::finish_segment()
@@ -315,8 +375,44 @@ pipeline::PipelineEvent::Recording(true)
         │   ├── accept_thread.join()
         │   ├── clients.clear()
         │   └── listener.take()
+        ├── 判断 worker.is_some() → WorkerBackend::shutdown()
         ├── Pipeline::shutdown()
         └── CaptureHandle::stop()</code></pre>
+
+<h3 id="c5-8">5.8 重启后端</h3>
+<pre><code>Daemon::on_client(SetModel { package_id })
+└── Daemon::set_model(package_id)
+    ├── 判断 model_dir_override.is_some() → Error(invalid_message)
+    ├── models::resolve_package(model_root, package_id)
+    ├── ModelManifest::load / verify / requires
+    ├── ModelCatalog::write_active(package_id)
+    └── IpcServer::send ModelSelected
+
+Daemon::on_client(RestartBackend)
+└── Daemon::restart_backend()
+    ├── 判断 recording / recognizing → Error(busy)
+    ├── 保存 old_final_id / old_final_runtime
+    ├── config::resolve_final(args)
+    ├── IpcServer::broadcast BackendState { phase: Restarting }
+    ├── 保留 SenseVoice Preview session
+    ├── 判断 new final is worker → 停旧 worker / spawn 新 worker / handshake
+    ├── 重建 Final 路径（CPU SenseVoice 或 GPU FireRed）
+    ├── 判断失败 → 回滚 active + 恢复旧 Final
+    ├── 替换 final_runtime / worker
+    └── IpcServer::broadcast BackendState { phase: Ready, model }</code></pre>
+
+<h3 id="c5-9">5.9 GPU 失败与回退</h3>
+<pre><code>WorkerBackend::transcribe(samples)
+└── 判断 Error / Timeout / DeviceUnavailable
+    ├── 标记 GPU Final available=false
+    ├── 判断连续失败达到阈值 → 停止 worker + 释放显存
+    ├── 重建 CPU SenseVoice Final
+    ├── IpcServer::broadcast BackendState { phase: Failed, message }
+    └── 当前段按 SegmentDropped 处理；下一段走 CPU Final</code></pre>
+<ul class="note">
+  <li>重启 / 回退只改变 Final；Preview、VAD、Punc 与前端连接保持。</li>
+  <li>旧 Final 也无法恢复时才退出 daemon，由 systemd / 托盘拉起。</li>
+</ul>
 
 </body>
 </html>

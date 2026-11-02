@@ -1,0 +1,37 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "配置界面" as UI
+participant "平台前端" as Frontend
+participant "voimed" as Daemon
+participant "Final 后端" as Final
+
+UI -> Frontend : 打开 Final 模型列表
+Frontend -> Daemon : ListModels
+Daemon -> Daemon : 扫描模型根目录 / available 预检
+Daemon --> Frontend : Models
+Frontend --> UI : CPU / GPU / active / running
+
+UI -> Frontend : 选择 Final
+Frontend -> Daemon : SetModel { package_id }
+Daemon -> Daemon : 校验 manifest / requires / 写 active
+Daemon --> Frontend : ModelSelected
+Frontend --> UI : 待重启
+
+UI -> Frontend : 重启后端
+Frontend -> Daemon : RestartBackend
+alt 空闲
+  Daemon -> Daemon : 保留 SenseVoice Preview
+  Daemon -> Final : shutdown 旧 Final
+  Daemon -> Daemon : resolve + verify active
+  Daemon -> Final : 重建 CPU SenseVoice / spawn voime-gpu
+  Daemon --> Frontend : BackendState { Ready }
+else 录音 / 识别中
+  Daemon --> Frontend : Error { Busy }
+else 加载失败
+  Daemon -> Daemon : 回滚 active / 旧 Final
+  Daemon --> Frontend : BackendState { Failed }
+end
+@enduml

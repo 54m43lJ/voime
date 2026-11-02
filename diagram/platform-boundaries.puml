@@ -10,6 +10,7 @@ package "共享 Cargo workspace" {
   component "voime-transport\nEndpoint / Stream 契约" as Transport
   component "voimed\ndaemon" as Daemon
   component "voime\nCLI / TUI" as Cli
+  component "voime-gpu\nGPU Final worker" as Gpu
 }
 
 package "Linux 构建根" {
@@ -25,6 +26,7 @@ Fcitx --> Daemon : Unix socket
 Win --> Daemon : named pipe
 Tsf --> Daemon : named pipe
 Daemon --> Core
+Daemon --> Gpu : GPU Final only
 Daemon --> Ipc
 Daemon --> Transport
 Cli --> Ipc
