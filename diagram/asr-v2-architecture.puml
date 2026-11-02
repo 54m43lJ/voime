@@ -1,0 +1,31 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+left to right direction
+hide stereotype
+
+actor "用户" as User
+component "Fcitx / Windows 前端" as Frontend
+component "voimed\ndaemon" as Daemon
+component "voime-core\nCPU pipeline\nORT CPU" as Core
+component "SenseVoice\nCPU 默认后端" as SenseVoice
+component "GPU worker\n可选独立进程" as GpuWorker
+component "FireRedPunc\nCPU 标点" as Punc
+
+database "models/active" as Active
+folder "模型包" as Packages {
+  artifact "sense-voice-2024-int8" as SvPackage
+  artifact "fire-red-aed-gpu" as AedPackage
+}
+
+User --> Frontend
+Frontend --> Daemon : IPC
+Daemon --> Active : 解析当前包
+Active --> Packages
+Daemon --> Core : PCM / 分段
+Core --> SenseVoice : CPU 默认
+Core --> Punc : external 标点
+Daemon --> GpuWorker : 完整语音段\n仅 GPU 模型
+GpuWorker --> Daemon : 原始文本
+Daemon --> Frontend : Final
+@enduml

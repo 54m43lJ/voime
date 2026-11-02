@@ -6,7 +6,7 @@ hide footbox
 participant "配置界面" as UI
 participant "前端\n(Fcitx / 托盘)" as Frontend
 participant "voimed" as Daemon
-participant "pipeline" as Pipeline
+participant "pipeline / worker" as Pipeline
 
 UI -> Frontend : 选择模型 / 点击重启后端
 Frontend -> Daemon : SetModel(package_id)
@@ -16,13 +16,14 @@ Frontend -> Daemon : RestartBackend
 alt 空闲
   Daemon -> Pipeline : shutdown
   Daemon -> Daemon : resolve + verify active
+  Daemon -> Daemon : GPU 模型时 spawn worker / handshake
   Daemon -> Pipeline : spawn(new config)
-  Daemon --> Frontend : BackendReady
+  Daemon --> Frontend : BackendState(Ready)
 else 录音 / 识别中
   Daemon --> Frontend : Error(Busy)
 else 加载失败
   Daemon -> Daemon : 回滚 active + 旧 pipeline
-  Daemon --> Frontend : BackendFailed
+  Daemon --> Frontend : BackendState(Failed)
 end
 note over Daemon
   重启后端 = 重建 pipeline；
