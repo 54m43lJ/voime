@@ -1,9 +1,0 @@
-[package]
-name = "voime-log"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-description = "Voime 轻量运行日志"
-
-[dependencies]
