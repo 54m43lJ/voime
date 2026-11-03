@@ -195,7 +195,7 @@ fn addon_path(relative: &amp;str) -&gt; Option&lt;PathBuf&gt;;
 fn library_path() -&gt; Option&lt;PathBuf&gt;;
 fn user_config_path() -&gt; Option&lt;PathBuf&gt;;
 fn check_models(endpoint: &amp;Endpoint) -&gt; ModelReport;
-fn check_gpu_runtime() -&gt; RuntimeReport;</code></pre>
+fn check_gpu_backends() -&gt; BackendReport;</code></pre>
 <ul class="note">
   <li><code>ModelReport</code> / <code>RuntimeReport</code> 为草案返回类型，可按 doctor 输出实现调整。</li>
 </ul>
@@ -280,7 +280,7 @@ Tui::draw(&amp;mut app)
     ├── voime_core::config::default_model_root()
     │   ├── 检查 SenseVoice 基础包
     │   └── ModelManifest::load / verify → Final
-    ├── doctor::check_gpu_runtime() → runtime / 驱动 / 显存 / worker
+    ├── doctor::check_gpu_backends() → FireRed / Qwen runtime / 驱动 / 显存 / worker
     ├── voime_core::audio::capture::list_input_devices()
     ├── voime_core::audio::capture::default_input_device_name()
     ├── doctor::fcitx_running() → 遍历 /proc

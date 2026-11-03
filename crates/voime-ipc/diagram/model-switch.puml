@@ -26,7 +26,7 @@ alt 空闲
   Daemon -> Daemon : 保留 SenseVoice Preview
   Daemon -> Final : shutdown 旧 Final
   Daemon -> Daemon : resolve + verify active
-  Daemon -> Final : 重建 CPU SenseVoice / spawn voime-gpu
+  Daemon -> Final : 重建 CPU SenseVoice / FireRed worker / Qwen worker
   Daemon --> Frontend : BackendState { Ready }
 else 录音 / 识别中
   Daemon --> Frontend : Error { Busy }

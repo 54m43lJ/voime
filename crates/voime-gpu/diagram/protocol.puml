@@ -4,15 +4,15 @@ skinparam shadowing false
 hide footbox
 
 participant "voimed" as Daemon
-participant "voime-gpu" as Worker
+participant "voime-gpu-firered / qwen3" as Worker
 
-Daemon -> Worker : spawn
+Daemon -> Worker : spawn（按 Final kind 选择二进制）
 Daemon -> Worker : Hello { protocol, manifest, device }
-Worker -> Worker : 校验 manifest / 加载 FireRed AED FP16
-Worker --> Daemon : Ready { provider, device, vram_mb }
+Worker -> Worker : 校验 manifest / 加载模型 FP16
+Worker --> Daemon : Ready { backend, runtime, device, vram_mb }
 
 Daemon -> Worker : Transcribe { id } + PCM f32
-Worker -> Worker : fbank / CMVN / encoder / decoder
+Worker -> Worker : 模型前端 / encoder / decoder
 Worker --> Daemon : Result { id, text, latency_ms, rtf }
 
 opt 取消 / 超时

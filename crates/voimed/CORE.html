@@ -229,7 +229,7 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
 <pre><code>pub struct WorkerBackend { /* child + streams + protocol state */ }
 
 impl WorkerBackend {
-    pub fn spawn(manifest: &amp;Path, device: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn spawn(kind: AsrKind, manifest: &amp;Path, device: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn handshake(&amp;mut self) -&gt; anyhow::Result&lt;Ready&gt;;
     pub fn transcribe(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;String&gt;;
     pub fn restart(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
@@ -278,7 +278,8 @@ pub fn resolve_package(root: &amp;Path, package_id: &amp;str)
     │   ├── voimed::models::ModelCatalog::scan(model_root)
     │   ├── voime_core::config::resolve(args)
     │   ├── voime_core::infer::session::SessionFactory::new(config.threads)
-    │   ├── 判断 Final backend.kind == worker → voimed::worker::WorkerBackend::spawn()
+    │   ├── 判断 Final kind == fire-red-aed → WorkerBackend::spawn(FireRed, ...)
+    │   ├── 判断 Final kind == qwen3-asr → WorkerBackend::spawn(Qwen3, ...)
     │   ├── voime_core::pipeline::spawn(&amp;config, factory, final_backend, audio_rx)
     │   ├── voime_core::audio::capture::start(config.input_device, audio_tx)
     │   │   └── 构建输入流并保持暂停，等待 Daemon::sync_audio_result()
@@ -396,7 +397,7 @@ Daemon::on_client(RestartBackend)
     ├── IpcServer::broadcast BackendState { phase: Restarting }
     ├── 保留 SenseVoice Preview session
     ├── 判断 new final is worker → 停旧 worker / spawn 新 worker / handshake
-    ├── 重建 Final 路径（CPU SenseVoice 或 GPU FireRed）
+    ├── 重建 Final 路径（CPU SenseVoice / FireRed worker / Qwen worker）
     ├── 判断失败 → 回滚 active + 恢复旧 Final
     ├── 替换 final_runtime / worker
     └── IpcServer::broadcast BackendState { phase: Ready, model }</code></pre>
@@ -410,7 +411,7 @@ Daemon::on_client(RestartBackend)
     ├── IpcServer::broadcast BackendState { phase: Failed, message }
     └── 当前段按 SegmentDropped 处理；下一段走 CPU Final</code></pre>
 <ul class="note">
-  <li>重启 / 回退只改变 Final；Preview、VAD、Punc 与前端连接保持。</li>
+  <li>重启 / 回退只改变 Final；Preview、VAD 与前端连接保持。</li>
   <li>旧 Final 也无法恢复时才退出 daemon，由 systemd / 托盘拉起。</li>
 </ul>
 

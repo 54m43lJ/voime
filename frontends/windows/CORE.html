@@ -57,7 +57,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>独立构建根</td><td><code>frontends/windows</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>；不进入根 <code>cargo test --workspace</code>。</td></tr>
   <tr><td>平台</td><td>只构建 Windows 目标；Linux CI 不构建本 crate。</td></tr>
-  <tr><td>无模型</td><td>不链接 ONNX Runtime，不加载模型，不做 VAD / SenseVoice / 分段；不加载 DirectML / CUDA / MIGraphX。</td></tr>
+  <tr><td>无模型</td><td>不链接 ONNX Runtime，不加载模型，不做 VAD / SenseVoice / 分段；不加载 Vulkan / CUDA 或任何 GPU runtime。</td></tr>
   <tr><td>事件循环</td><td>主线程拥有托盘与消息循环；IPC reader 线程把消息送入有界通道；热键 / 目标 / 浮层更新回到主线程。设置窗口在独立进程（<code>voime-tray.exe --settings</code>）运行唯一的 egui 事件循环，托盘轮询设置子进程并在其退出后重载配置。</td></tr>
   <tr><td>daemon 生命周期</td><td>daemon 由托盘以子进程启动，并加入设置了 <code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code> 的 Job Object；托盘退出或崩溃即终止 daemon；托盘是 daemon 的唯一所有者。</td></tr>
   <tr><td>目标所有权</td><td>目标窗口 / 焦点元素属于前端私有类型；协议只传 <code>segment_id</code> 与事件。</td></tr>

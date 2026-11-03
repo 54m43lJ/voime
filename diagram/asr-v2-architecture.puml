@@ -7,15 +7,18 @@ hide stereotype
 actor "用户" as User
 component "Fcitx / Windows 前端" as Frontend
 component "voimed\ndaemon" as Daemon
-component "voime-core\nCPU pipeline\nORT CPU" as Core
+component "voime-core\nCPU pipeline\nCPU ORT" as Core
 component "SenseVoice\n常驻 Preview\n+ CPU Final" as SenseVoice
-component "voime-gpu\n可选 Final 进程" as GpuWorker
-component "FireRedPunc\nGPU Final 标点" as Punc
+component "voime-gpu-firered\n可选 Final" as FireRedWorker
+component "OpenASR / FireRed\nAED + Punc" as FireRedModel
+component "voime-gpu-qwen3\n可选 Final" as QwenWorker
+component "llama.cpp / Qwen\nASR + mmproj" as QwenModel
 
 database "models/active" as Active
 folder "模型包" as Packages {
-  artifact "sense-voice-2024-int8" as SvPackage
-  artifact "fire-red-aed-gpu" as AedPackage
+  artifact "sense-voice-2024-int8\n+ VAD" as SvPackage
+  artifact "fire-red-aed-fp16\n+ FireRedPunc" as FireRedPackage
+  artifact "qwen3-asr-1.7b-fp16\n+ mmproj" as QwenPackage
 }
 
 User --> Frontend
@@ -24,13 +27,17 @@ Daemon --> Active : 解析 Final 包
 Active --> Packages
 Daemon --> Core : PCM / 分段
 Core --> SenseVoice : Preview + CPU Final
-Core --> Punc : GPU Final 标点
-Daemon --> GpuWorker : Final only\nGPU 模型
-GpuWorker --> Daemon : Final 文本
+Daemon --> FireRedWorker : Final = FireRed\n按 kind 硬编码
+Daemon --> QwenWorker : Final = Qwen\n按 kind 硬编码
+FireRedWorker --> FireRedModel
+QwenWorker --> QwenModel
+FireRedWorker --> Daemon : Final 文本（已加标点）
+QwenWorker --> Daemon : Final 文本（内置标点）
 Daemon --> Frontend : Partial / Final
 
 note right of Daemon
   Preview 固定 SenseVoice；
-  GPU 只替换 Final
+  GPU 只替换 Final；
+  两个 worker 不会同时运行
 end note
 @enduml

@@ -78,8 +78,10 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 # 跳过构建 / 模型 / 登录启动
 powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoBuild -NoModels -NoStartup
 
-# 单独安装模型
+# 单独安装模型：默认 / 追加 FireRed / 追加 Qwen
 powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -ModelDir "$env:LOCALAPPDATA\voime\models"
+powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -FireRed -ModelDir "$env:LOCALAPPDATA\voime\models"
+powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -Qwen3 -ModelDir "$env:LOCALAPPDATA\voime\models"
 
 # 卸载（可选删除设置与模型）
 powershell -ExecutionPolicy Bypass -File packaging\windows\uninstall.ps1 -RemoveSettings -RemoveModels</code></pre>

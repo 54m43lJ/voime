@@ -3,21 +3,20 @@ skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
 hide footbox
 
-participant "voime-gpu" as Worker
+participant "voime-gpu-firered / qwen3" as Worker
 participant "模型包" as Model
 participant "GPU runtime 包" as Runtime
-participant "ONNX Runtime GPU" as Ort
+participant "OpenASR / llama.cpp" as Engine
 
 Worker -> Model : 读取 manifest.json
 Worker -> Model : SHA-256 + 张量 / metadata 校验
-Worker -> Runtime : 加载 ORT / EP
-Worker -> Ort : 创建 encoder / decoder 会话
-Ort -> Worker : Session
+Worker -> Runtime : 加载 Vulkan / CUDA
+Worker -> Engine : 创建 FireRed 或 Qwen 会话
+Engine -> Worker : Session
 
 loop 每个 Final 段
-  Worker -> Worker : fbank + CMVN
-  Worker -> Ort : encoder / decoder 推理
-  Ort -> Worker : logits / text
+  Worker -> Engine : 前端 + encoder / decoder
+  Engine -> Worker : logits / text
 end
 
 note over Worker

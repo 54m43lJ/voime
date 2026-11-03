@@ -5,11 +5,13 @@ skinparam componentStyle rectangle
 left to right direction
 
 component "voime-gpu" as Worker
-component "FireRed AED 模型包\nencoder / decoder / tokens / punc" as Model
-component "GPU runtime 包\nMIGraphX / DirectML / CUDA" as Runtime
-component "ONNX Runtime GPU\nExecution Provider" as Ort
+component "FireRed 模型包\nAED FP16 + Punc" as FireRedModel
+component "Qwen 模型包\nQwen3-ASR F16 + mmproj" as QwenModel
+component "GPU runtime 包\nVulkan / CUDA" as Runtime
+component "OpenASR / llama.cpp" as Engine
 
-Worker --> Model : manifest / SHA / tensors
-Worker --> Runtime : ORT / EP 动态库
-Worker --> Ort : GPU 会话
+Worker --> FireRedModel : manifest / SHA / oasr
+Worker --> QwenModel : manifest / SHA / gguf
+Worker --> Runtime : Vulkan / CUDA 动态库
+Worker --> Engine : 模型专用会话
 @enduml

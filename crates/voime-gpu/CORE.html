@@ -28,15 +28,21 @@
 <pre><code>crates/voime-gpu/
 ├── Cargo.toml
 └── src/
-    ├── <a href="#c4-1">main.rs</a>
-    ├── <a href="#c4-2">cli.rs</a>
-    ├── <a href="#c4-3">protocol.rs</a>
-    ├── <a href="#c4-4">server.rs</a>
-    ├── <a href="#c4-5">aed.rs</a>
-    └── <a href="#c4-6">runtime.rs</a></code></pre>
+    ├── <a href="#c4-1">lib.rs</a>                 公共导出
+    ├── <a href="#c4-2">cli.rs</a>                 两个 bin 共用参数
+    ├── <a href="#c4-3">protocol.rs</a>            frame / Request / Response
+    ├── <a href="#c4-4">server.rs</a>              公共协议循环
+    ├── <a href="#c4-5">firered/mod.rs</a>         FireRed worker 入口
+    ├── <a href="#c4-6">firered/openasr.rs</a>     OpenASR / ggml runtime
+    ├── <a href="#c4-7">firered/punc.rs</a>        FireRedPunc
+    ├── <a href="#c4-8">qwen/mod.rs</a>            Qwen worker 入口
+    ├── <a href="#c4-9">qwen/llama.rs</a>          llama.cpp / ggml runtime
+    └── <a href="#c4-10">qwen/parse.rs</a>          language tag 解析
+</code></pre>
 <ul class="note">
-  <li>模块入口只做导出；具体签名与调用栈见对应小节。</li>
+  <li>两个 bin：<code>voime-gpu-firered</code>、<code>voime-gpu-qwen3</code>；共享 <code>protocol</code> / <code>server</code>。</li>
   <li>GPU 构建单元独立于 daemon；feature 不得通过 workspace feature unification 进入 <code>voimed</code>。</li>
+  <li>每个 bin 只启用自己的 feature；不要在一个二进制里同时链入两个 runtime。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -44,12 +50,14 @@
 
 <table>
   <tr><th>约定</th><th>内容</th></tr>
-  <tr><td>进程边界</td><td>只运行在独立 <code>voime-gpu</code> 进程；没有库 API 被 daemon 链接。</td></tr>
-  <tr><td>GPU EP</td><td>DirectML / MIGraphX / CUDA 只在此进程注册；CPU ORT 不在此进程加载。</td></tr>
-  <tr><td>FP16</td><td>encoder / decoder 只接受 FP16；加载失败返回错误，不回退其他精度。</td></tr>
+  <tr><td>进程边界</td><td>只运行在独立 worker 进程；没有库 API 被 daemon 链接。</td></tr>
+  <tr><td>硬编码映射</td><td>daemon 按 <code>AsrKind</code> 选择二进制；worker 不接收 runtime 插件路径，不动态加载 EP。</td></tr>
+  <tr><td>GPU runtime</td><td>FireRed 用 OpenASR / ggml；Qwen 用 llama.cpp / ggml；Vulkan / CUDA 只在此进程注册。</td></tr>
+  <tr><td>FP16</td><td>两个模型都只接受 FP16；加载失败返回错误，不回退其他精度。</td></tr>
   <tr><td>协议权威</td><td>帧格式、消息与错误码只在 <a href="USER.html#u4-2">USER §4.2</a> / <a href="USER.html#u4-3">§4.3</a> 定义。</td></tr>
   <tr><td>无状态</td><td>每个 Final 段独立解码；不保留跨段 KV cache、音频或文本。</td></tr>
-  <tr><td>错误映射</td><td>模型 / EP / 设备错误映射为 worker 错误码；不把 GPU 错误暴露成前端文案。</td></tr>
+  <tr><td>标点</td><td>FireRed 在 worker 内应用 FireRedPunc；Qwen 使用模型内置标点。</td></tr>
+  <tr><td>错误映射</td><td>模型 / runtime / 设备错误映射为 worker 错误码；不把底层文案暴露成前端文案。</td></tr>
   <tr><td>资源释放</td><td>Shutdown / 崩溃都必须释放 GPU 会话与显存；daemon 不持有 GPU 资源。</td></tr>
 </table>
 
@@ -58,22 +66,23 @@
 
 <table>
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
-  <tr><td><code>ort</code></td><td>GPU ONNX Runtime 会话、EP 注册、张量输入输出与 metadata。</td></tr>
+  <tr><td>OpenASR / ggml</td><td>FireRed AED + FireRedPunc 的 Vulkan / CUDA runtime。</td></tr>
+  <tr><td>llama.cpp / ggml</td><td>Qwen3-ASR 的 Vulkan / CUDA runtime。</td></tr>
   <tr><td><code>serde</code> / <code>serde_json</code></td><td>worker 协议 JSON 头。</td></tr>
   <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>启动、加载、推理与协议错误。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>请求串行化与 shutdown 唤醒。</td></tr>
-  <tr><td>GPU runtime</td><td>DirectML / MIGraphX / CUDA 动态库；由独立 runtime 包提供，不编入基础包。</td></tr>
+  <tr><td>Vulkan / CUDA runtime</td><td>由独立 runtime 包提供，不编入基础包。</td></tr>
 </table>
 
 <h2 id="c4">4. Internal types &amp; method signatures</h2>
 <p><a href="#top">↑</a></p>
 
-<h3 id="c4-1">4.1 main.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>fn main() -&gt; std::process::ExitCode;
-fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
-<ul class="note">
-  <li><code>main</code> 只做协议循环与错误退出；模型加载在 <code>server::handshake</code> 内完成。</li>
-</ul>
+<h3 id="c4-1">4.1 lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod cli;
+pub mod protocol;
+pub mod server;
+pub mod firered;
+pub mod qwen;</code></pre>
 
 <h3 id="c4-2">4.2 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Args {
@@ -96,7 +105,7 @@ pub fn read_frame(reader: &amp;mut impl Read) -&gt; anyhow::Result&lt;Frame&gt;;
 pub fn write_frame(writer: &amp;mut impl Write, header: &amp;Header, audio: &amp;[f32]) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 
 <h3 id="c4-4">4.4 server.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct Server { /* runtime + aed + stdout protocol */ }
+<pre><code>pub struct Server { /* worker-specific backend + stdout protocol */ }
 
 impl Server {
     pub fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;
@@ -105,67 +114,98 @@ impl Server {
     fn shutdown(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
 }</code></pre>
 
-<h3 id="c4-5">4.5 aed.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct FireRedAed { /* encoder + decoder + tokenizer + metadata */ }
+<h3 id="c4-5">4.5 firered/mod.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct FireRedWorker { /* OpenASR + AED + Punc */ }
 
-impl FireRedAed {
-    pub fn load(manifest: &amp;Path, runtime: &amp;GpuRuntime) -&gt; anyhow::Result&lt;Self&gt;;
+impl FireRedWorker {
+    pub fn load(manifest: &amp;Path, runtime: &amp;OpenAsrRuntime) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn transcribe(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;AedOutput&gt;;
-}
-
-pub struct AedOutput {
-    pub text: String,
-    pub latency_ms: u64,
-    pub rtf: f32,
 }</code></pre>
-<ul class="note">
-  <li><code>transcribe</code> 内完成 fbank / CMVN、encoder、自回归 decoder、KV cache 与 tokenizer。</li>
-  <li>停止条件为 <code>eos</code>、<code>max_len</code> 或 <code>max_token_per_second</code>；不做 beam search。</li>
-</ul>
 
-<h3 id="c4-6">4.6 runtime.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct GpuRuntime { /* EP + device + vram */ }
+<h3 id="c4-6">4.6 firered/openasr.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct OpenAsrRuntime { /* Vulkan / CUDA device */ }
 
-impl GpuRuntime {
+impl OpenAsrRuntime {
     pub fn load(device: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
-    pub fn create(&amp;self, artifact: &amp;Artifact) -&gt; anyhow::Result&lt;Session&gt;;
+    pub fn transcribe(&amp;self, model: &amp;Path, samples: &amp;[f32]) -&gt; anyhow::Result&lt;String&gt;;
     pub fn vram_mb(&amp;self) -&gt; u32;
     pub fn provider(&amp;self) -&gt; &amp;str;
-}
-</code></pre>
+}</code></pre>
+
+<h3 id="c4-7">4.7 firered/punc.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct FireRedPunc { /* FireRedPunc oasr */ }
+
+impl FireRedPunc {
+    pub fn load(manifest: &amp;Path, runtime: &amp;OpenAsrRuntime) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn punctuate(&amp;self, text: &amp;str) -&gt; anyhow::Result&lt;String&gt;;
+}</code></pre>
+
+<h3 id="c4-8">4.8 qwen/mod.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct QwenWorker { /* llama.cpp + Qwen GGUF + mmproj */ }
+
+impl QwenWorker {
+    pub fn load(manifest: &amp;Path, runtime: &amp;LlamaRuntime) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;QwenOutput&gt;;
+}</code></pre>
+
+<h3 id="c4-9">4.9 qwen/llama.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct LlamaRuntime { /* Vulkan / CUDA + llama-server or libllama */ }
+
+impl LlamaRuntime {
+    pub fn load(device: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;self, model: &amp;Path, mmproj: &amp;Path, samples: &amp;[f32]) -&gt; anyhow::Result&lt;String&gt;;
+    pub fn vram_mb(&amp;self) -&gt; u32;
+    pub fn provider(&amp;self) -&gt; &amp;str;
+}</code></pre>
+
+<h3 id="c4-10">4.10 qwen/parse.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub fn strip_language_tag(text: &amp;str) -&gt; &amp;str;
+pub fn normalize_text(text: &amp;str) -&gt; String;</code></pre>
+<ul class="note">
+  <li><code>strip_language_tag</code> 去掉 llama.cpp 输出的 <code>language ...&lt;asr_text&gt;</code> 前缀；<code>language None</code> 与空文本按空段处理。</li>
+  <li>Qwen worker 不自行添加标点；标点由模型输出。</li>
+</ul>
 
 <h2 id="c5">5. Call stack tree</h2>
 <p><a href="#top">↑</a></p>
 
-<h3 id="c5-1">5.1 启动与握手</h3>
-<pre><code>voime-gpu::main()
+<h3 id="c5-1">5.1 FireRed worker 启动</h3>
+<pre><code>voime-gpu-firered::main()
 ├── voime_gpu::cli::parse()
-├── voime_gpu::server::Server::run(args)
-│   ├── GpuRuntime::load(device)
-│   ├── protocol::read_frame(stdin)
-│   ├── 判断 Request::Hello → Server::handshake(hello)
-│   │   ├── FireRedAed::load(manifest, runtime)
-│   │   └── protocol::write_frame(Ready)
-│   └── 判断加载失败 → protocol::write_frame(Error { LoadFailed })
-└── 判断 Err → eprintln! + ExitCode::from(1)</code></pre>
+├── OpenAsrRuntime::load(device)
+├── protocol::read_frame(stdin)
+├── 判断 Request::Hello → FireRedWorker::load(manifest, runtime)
+│   ├── FireRedPunc::load(...)
+│   └── protocol::write_frame(Ready)
+└── 判断加载失败 → protocol::write_frame(Error { LoadFailed })</code></pre>
 
-<h3 id="c5-2">5.2 推理</h3>
+<h3 id="c5-2">5.2 Qwen worker 启动</h3>
+<pre><code>voime-gpu-qwen3::main()
+├── voime_gpu::cli::parse()
+├── LlamaRuntime::load(device)
+├── protocol::read_frame(stdin)
+├── 判断 Request::Hello → QwenWorker::load(manifest, runtime)
+│   └── protocol::write_frame(Ready)
+└── 判断加载失败 → protocol::write_frame(Error { LoadFailed })</code></pre>
+
+<h3 id="c5-3">5.3 推理</h3>
 <pre><code>protocol::read_frame(stdin)
-└── 判断 Request::Transcribe → Server::transcribe(request, audio)
-    ├── FireRedAed::transcribe(audio)
-    │   ├── Fbank / CMVN
-    │   ├── Encoder::run(x, x_lens) → cross_k / cross_v
-    │   ├── Decoder::run(...) → logits / KV cache
-    │   └── AsrTokenizer::decode(ids)
-    └── protocol::write_frame(Result { id, text, latency_ms, rtf })</code></pre>
+├── 判断 Request::Transcribe 且 FireRed
+│   ├── OpenAsrRuntime::transcribe(aed, audio)
+│   ├── FireRedPunc::punctuate(text)
+│   └── protocol::write_frame(Result { text })
+└── 判断 Request::Transcribe 且 Qwen
+    ├── LlamaRuntime::transcribe(model, mmproj, audio)
+    ├── qwen::parse::strip_language_tag(text)
+    └── protocol::write_frame(Result { text })</code></pre>
 
-<h3 id="c5-3">5.3 取消与关闭</h3>
+<h3 id="c5-4">5.4 取消与关闭</h3>
 <pre><code>protocol::read_frame(stdin)
 ├── 判断 Request::Cancel → 丢弃当前结果 + write Error(Timeout)
 └── 判断 Request::Shutdown
     ├── protocol::write_frame(Bye)
-    ├── FireRedAed::drop() → 释放 GPU 会话
-    └── GpuRuntime::drop() → 释放 EP / 显存</code></pre>
+    ├── FireRedWorker / QwenWorker::drop() → 释放模型与显存
+    └── runtime::drop() → 释放 Vulkan / CUDA</code></pre>
 
 </body>
 </html>

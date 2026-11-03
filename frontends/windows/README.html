@@ -50,7 +50,7 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
 <ul>
   <li>用户按热键说话，浮层显示 Partial，Final 注入语音段开始时聚焦的输入位置。</li>
   <li>目标失焦、提权窗口、注入失败时不误提交；最终文本保留在 daemon 历史 / TUI。</li>
-  <li>前端不加载模型、不做 VAD / SenseVoice / 分段；只消费 IPC 消息。GPU 库只在 <code>voime-gpu</code>。</li>
+  <li>前端不加载模型、不做 VAD / SenseVoice / 分段；只消费 IPC 消息。GPU 库只在对应 <code>voime-gpu-firered</code> / <code>voime-gpu-qwen3</code>。</li>
   <li>命名管道只允许当前用户；不记录按键、音频或识别文本到磁盘。</li>
   <li>安装、登录启动、托盘、卸载形成闭环；不把 daemon 装成 Session 0 服务。</li>
 </ul>

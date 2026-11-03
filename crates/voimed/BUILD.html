@@ -30,8 +30,8 @@
   <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）。</td></tr>
   <tr><td>Linux</td><td>ALSA 开发头文件；Fcitx5 不是 daemon 的构建依赖。</td></tr>
   <tr><td>Windows</td><td>Rust MSVC 工具链；WASAPI 由 cpal 处理。</td></tr>
-  <tr><td>模型</td><td>运行前必须安装完整模型包；SenseVoice 基础包始终需要，FireRed AED 仅在 <code>firered</code> 档 / GPU Final 时需要；编译不需要权重。</td></tr>
-  <tr><td>GPU runtime</td><td>可选；只有 Final 选择 GPU FireRed 时才需要 <code>voime-gpu</code> 与对应 runtime。缺失时 Final 回退 CPU SenseVoice。</td></tr>
+  <tr><td>模型</td><td>运行前必须安装完整模型包；SenseVoice 基础包始终需要，FireRed / Qwen 仅在 <code>--firered</code> / <code>--qwen3</code> 或对应 GPU Final 时需要；编译不需要权重。</td></tr>
+  <tr><td>GPU runtime</td><td>可选；只有 Final 选择 FireRed / Qwen 时才需要对应 worker 与 runtime。缺失时 Final 回退 CPU SenseVoice。</td></tr>
   <tr><td>服务管理</td><td>Linux systemd user service；Windows daemon 是托盘子进程，随托盘启动和退出，不使用独立服务或独立退出流程。</td></tr>
 </table>
 
@@ -68,7 +68,8 @@ voimed --verbose
 
 # 查看 / 切换 Final；重启后端不重启进程
 voime ctl models
-voime ctl use fire-red-aed-gpu
+voime ctl use fire-red-aed-fp16
+voime ctl use qwen3-asr-1.7b-fp16
 voime ctl restart-backend</code></pre>
 
 <table>
@@ -77,7 +78,7 @@ voime ctl restart-backend</code></pre>
   <tr><td>重启进程</td><td><code>systemctl --user restart voime.service</code>；前端会定时重连。</td></tr>
   <tr><td>重启后端</td><td><code>voime ctl restart-backend</code>；只重建 Final，SenseVoice Preview 与 IPC 保持。</td></tr>
   <tr><td>模型选择</td><td><code>voime ctl models</code> / <code>use</code>；<code>active</code> 是权威，<code>--model-dir</code> 只用于开发排障。</td></tr>
-  <tr><td>诊断</td><td><code>voime doctor</code> 检查端点、daemon、SenseVoice 基础包、Final / running、GPU runtime 与前端。</td></tr>
+  <tr><td>诊断</td><td><code>voime doctor</code> 检查端点、daemon、SenseVoice 基础包、Final / running、两个 GPU backend / runtime 与前端。</td></tr>
   <tr><td>日志</td><td>给服务环境设 <code>VOIME_LOG=1</code>（或目录路径）后重启，日志写入 <code>{XDG_STATE_HOME}/voime/logs/voimed.log</code>；Windows 为 <code>%LOCALAPPDATA%\voime\logs\voimed.log</code>。</td></tr>
   <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>；自定义端点用 <code>--endpoint</code>（<code>--socket</code> 为兼容别名）。</td></tr>
 </table>
@@ -111,7 +112,7 @@ cargo fmt -p voimed --check</code></pre>
   <tr><td>升级</td><td>停止服务；重新运行安装脚本；启动服务；前端自动重连。模型 / <code>active</code> 默认 clean install，旧 schema / 旧包直接拒绝。</td></tr>
   <tr><td>迁移配置</td><td>模型根目录、<code>active</code> 与端点路径由 CLI / 安装脚本决定；不迁移历史（不持久化）。上一版本可手工运行 <code>scripts/migrate-asr-v2.sh</code>，安装器不调用。</td></tr>
   <tr><td>卸载</td><td><code>systemctl --user disable --now voime.service</code>；删除 <code>~/.local/bin/voimed</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录与 GPU runtime 按需保留。</td></tr>
-  <tr><td>Windows</td><td>退出托盘（同时停止 daemon）；删除 <code>voimed.exe</code> / <code>voime.exe</code> / 可选 <code>voime-gpu.exe</code>；按需删除模型目录、GPU runtime 与登录启动项。</td></tr>
+  <tr><td>Windows</td><td>退出托盘（同时停止 daemon）；删除 <code>voimed.exe</code> / <code>voime.exe</code> / 可选 <code>voime-gpu-firered.exe</code> / <code>voime-gpu-qwen3.exe</code>；按需删除模型目录、GPU runtime 与登录启动项。</td></tr>
 </table>
 
 </body>

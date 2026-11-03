@@ -39,7 +39,7 @@
   <tr><td>触发来源（TriggerSource）</td><td>段开始 / 停止的来源：<code>hold</code>、<code>toggle</code>、<code>tui</code>、<code>cli</code>、<code>continuous</code>。</td></tr>
   <tr><td>阶段（Phase）</td><td>daemon 当前状态：<code>idle</code>、<code>recording</code>、<code>finalizing</code>。</td></tr>
   <tr><td>前端状态（FrontendState）</td><td>平台前端是否连接到 daemon：<code>connected</code> / <code>disconnected</code>。</td></tr>
-  <tr><td>模型信息（<code>ModelInfo</code>）</td><td>一个 Final 候选：<code>id</code>、显示名、kind、runtime、device、<code>available</code>、<code>active</code>、<code>running</code>。</td></tr>
+  <tr><td>模型信息（<code>ModelInfo</code>）</td><td>一个 Final 候选：<code>id</code>、显示名、kind、backend、runtime、device、<code>available</code>、<code>active</code>、<code>running</code>。</td></tr>
   <tr><td>后端阶段（<code>BackendPhase</code>）</td><td><code>restarting</code> / <code>ready</code> / <code>failed</code>；由 <code>BackendState</code> 广播。</td></tr>
   <tr><td><code>active</code> / <code>running</code></td><td><code>active</code> 是已保存的 Final 选择；<code>running</code> 是 daemon 当前实际 Final。两者不一致时界面显示“待重启”。</td></tr>
   <tr><td><code>segment_id</code></td><td>daemon 为语音段分配的唯一整数；客户端发送的 ID 只是提示，最终以 <code>SegmentStarted</code> 为准。</td></tr>
@@ -210,6 +210,7 @@ pub struct ModelInfo {
     pub id: String,
     pub display_name: String,
     pub kind: String,
+    pub backend: String,             // builtin / voime-gpu-firered / voime-gpu-qwen3
     pub runtime: Option&lt;String&gt;,
     pub device: Option&lt;String&gt;,
     pub available: bool,
@@ -274,18 +275,20 @@ pub struct Status {
 <pre><code>// client → daemon
 {"Hello":{"role":"frontend","version":3,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
 {"ListModels":{}}
-{"SetModel":{"package_id":"fire-red-aed-gpu"}}
+{"SetModel":{"package_id":"fire-red-aed-fp16"}}
 {"RestartBackend":{}}
 
 // daemon → client
 {"SegmentStarted":{"segment_id":1,"source":"toggle"}}
 {"Partial":{"segment_id":1,"text":"明天的日程"}}
 {"Final":{"segment_id":1,"text":"明天的日程帮我确认一下。"}}
-{"Models":{"models":[{"id":"sense-voice-2024-int8","display_name":"SenseVoice 2024 ITN","kind":"sense-voice","runtime":"builtin","device":null,"available":true,"active":true,"running":true}]}}
-{"ModelSelected":{"package_id":"fire-red-aed-gpu"}}
+{"Models":{"models":[{"id":"sense-voice-2024-int8","display_name":"SenseVoice 2024 ITN","kind":"sense-voice","backend":"builtin","runtime":"builtin","device":null,"available":true,"active":true,"running":true}]}}
+{"ModelSelected":{"package_id":"fire-red-aed-fp16"}}
 {"BackendState":{"phase":"restarting","model":null,"message":null}}
-{"BackendState":{"phase":"ready","model":{"id":"fire-red-aed-gpu","display_name":"FireRedASR2-AED (GPU, FP16)","kind":"fire-red-aed","runtime":"onnx-migraphx","device":"auto","available":true,"active":true,"running":true},"message":null}}
-{"Error":{"code":"role_conflict","message":"已有前端连接"}}</code></pre>
+{"BackendState":{"phase":"ready","model":{"id":"fire-red-aed-fp16","display_name":"FireRedASR2-AED (GPU, FP16)","kind":"fire-red-aed","backend":"voime-gpu-firered","runtime":"openasr-vulkan","device":"auto","available":true,"active":true,"running":true},"message":null}}
+{"Error":{"code":"role_conflict","message":"已有前端连接"}}
+{"Models":{"models":[{"id":"qwen3-asr-1.7b-fp16","display_name":"Qwen3-ASR 1.7B (GPU, FP16)","kind":"qwen3-asr","backend":"voime-gpu-qwen3","runtime":"llama-vulkan","device":"auto","available":true,"active":false,"running":false}]}}
+</code></pre>
 
 <h3 id="u4-7">4.7 错误码</h3>
 <table>

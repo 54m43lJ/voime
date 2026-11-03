@@ -14,9 +14,10 @@ package "平台边界" {
 package "本机资源" {
   component "音频设备\ncpal / ALSA / WASAPI" as Audio
   component "ONNX Runtime\nCPU" as OrtCpu
-  component "ONNX Runtime\nGPU / EP" as OrtGpu
-  component "模型包\nSenseVoice / FireRedVAD\nFireRedPunc / 可选 FireRed AED" as Models
-  component "GPU runtime 包\nMIGraphX / DirectML / CUDA" as Runtime
+  component "OpenASR / ggml\nVulkan / CUDA" as OpenAsr
+  component "llama.cpp / ggml\nVulkan / CUDA" as Llama
+  component "模型包\nSenseVoice + VAD\nFireRed AED + Punc\nQwen3-ASR + mmproj" as Models
+  component "GPU runtime 包\n按模型 + OS + EP 拆分" as Runtime
 }
 
 package "本机端点" {
@@ -31,6 +32,7 @@ Voime --> OrtCpu : CPU 推理
 Voime --> Models : 只读加载
 Voime --> Unix : daemon ↔ 客户端
 Voime --> Pipe : daemon ↔ 客户端
-Voime --> OrtGpu : 仅 voime-gpu
-Voime --> Runtime : 仅 voime-gpu
+Voime --> OpenAsr : 仅 FireRed worker
+Voime --> Llama : 仅 Qwen worker
+Voime --> Runtime : 仅对应 worker
 @enduml

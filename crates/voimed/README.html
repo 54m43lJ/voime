@@ -38,7 +38,7 @@
 也不应该由每个平台前端各复制一份。<code>voimed</code> 是唯一的识别守护进程：它持有音频、
 模型选择、pipeline 与会话历史，通过本机 IPC 向平台前端、TUI 与控制客户端提供
 <code>SegmentStarted</code> / <code>Partial</code> / <code>Final</code> 等事件。
-SenseVoice 始终常驻；GPU FireRed AED 只在 Final 选择时由 <code>voime-gpu</code> 处理。
+SenseVoice 始终常驻；GPU Final 只在选择时由 <code>voime-gpu-firered</code> 或 <code>voime-gpu-qwen3</code> 处理。
 </p>
 
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
@@ -47,7 +47,7 @@ SenseVoice 始终常驻；GPU FireRed AED 只在 Final 选择时由 <code>voime-
   <li>平台前端只发送 Start / Stop / Toggle 与配置，不接触模型或音频。</li>
   <li>同一时刻只有一个语音段；<code>segment_id</code> 由 daemon 分配并广播。</li>
   <li>Final / State 不丢弃；Partial 可丢弃；慢客户端不会阻塞 daemon。</li>
-  <li>Final 模型由 <code>models/active</code> 选择；GPU Final 由 <code>voime-gpu</code> 处理，不可用时回退 CPU SenseVoice。</li>
+  <li>Final 模型由 <code>models/active</code> 选择；GPU Final 由对应模型 worker 处理，不可用时回退 CPU SenseVoice。</li>
   <li>重启后端只重建 Final，SenseVoice Preview、IPC 与会话历史不中断。</li>
   <li>daemon 退出时按顺序停止 worker、pipeline、音频与 IPC，并清理端点。</li>
 </ul>
@@ -57,7 +57,7 @@ SenseVoice 始终常驻；GPU FireRed AED 只在 Final 选择时由 <code>voime-
   <li>不处理热键、输入焦点、目标绑定、临时窗口或文本提交。</li>
   <li>不实现平台 UI、托盘、配置界面或安装器。</li>
   <li>不解析命令行模式 / 热键；这些由前端通过 IPC 提供。</li>
-  <li>不加载 GPU ORT / EP，也不实现 FireRed AED 解码；这些属于 <code>voime-gpu</code>。</li>
+  <li>不加载 GPU runtime，也不实现 FireRed / Qwen 解码；这些属于对应 GPU worker。</li>
   <li>不保存音频、按键或历史到磁盘；<code>models/active</code> 是唯一持久化的 Final 选择。</li>
   <li>不直接依赖 Fcitx / Win32；OS 传输由 <a href="../voime-transport/USER.html">voime-transport</a> 负责。</li>
 </ul>
@@ -81,7 +81,7 @@ SenseVoice 始终常驻；GPU FireRed AED 只在 Final 选择时由 <code>voime-
   <tr><th>拥有</th><th>不拥有</th></tr>
   <tr><td>音频设备生命周期、SenseVoice 基础包加载、Final 选择与 pipeline 线程</td><td>热键、输入上下文、临时窗口、提交</td></tr>
   <tr><td>会话状态、<code>segment_id</code> 分配、模式切换、<code>active</code>、重启后端</td><td>前端配置界面与平台默认值</td></tr>
-  <tr><td>voime-gpu 生命周期、handshake、超时与回退；CPU / GPU Final 切换</td><td>GPU 模型解码、GPU EP、FireRed AED 张量</td></tr>
+  <tr><td>两个 GPU worker 的生命周期、handshake、超时与回退；CPU / GPU Final 切换</td><td>GPU 模型解码、Vulkan / CUDA runtime、FireRed / Qwen 张量</td></tr>
   <tr><td>IPC 服务端、角色、广播、背压、历史</td><td>协议消息形状（<a href="../voime-ipc/USER.html">voime-ipc</a>）</td></tr>
   <tr><td>daemon 生命周期与退出顺序</td><td>OS transport 实现（<a href="../voime-transport/USER.html">voime-transport</a>）</td></tr>
 </table>
@@ -96,7 +96,7 @@ SenseVoice 始终常驻；GPU FireRed AED 只在 Final 选择时由 <code>voime-
 <table>
   <tr><th>项目</th><th>在本组件中的角色</th><th>技术栈 / 许可</th></tr>
   <tr><td><code>voime-core</code></td><td>音频、VAD、SenseVoice、标点、pipeline、<code>FinalBackend</code></td><td>本仓库</td></tr>
-  <tr><td><code>voime-gpu</code></td><td>可选 GPU Final worker 协议与进程</td><td>本仓库</td></tr>
+  <tr><td><code>voime-gpu</code></td><td>两个可选 GPU Final worker 的协议与进程</td><td>本仓库</td></tr>
   <tr><td><code>voime-ipc</code></td><td>消息类型与 framing</td><td>本仓库</td></tr>
   <tr><td><code>voime-transport</code></td><td>本机端点</td><td>本仓库</td></tr>
   <tr><td><a href="https://github.com/clap-rs/clap">clap</a></td><td>命令行参数</td><td>Rust · MIT / Apache-2.0</td></tr>

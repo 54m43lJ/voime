@@ -169,7 +169,7 @@ Model=</code></pre>
   <tr><td><code>State</code></td><td>更新 recording / finalizing；Idle 时清理目标与临时窗口。</td></tr>
   <tr><td><code>Partial</code></td><td>只处理当前段；显示到目标输入面板。</td></tr>
   <tr><td><code>Final</code></td><td>只处理当前目标段；清空临时窗口并提交。</td></tr>
-  <tr><td><code>Models</code> / <code>ModelSelected</code> / <code>BackendState</code></td><td>刷新 Final 下拉与可用性；<code>BackendState</code> 为 <code>Ready</code> 前显示“待重启”，失败时保留旧选择并写日志。</td></tr>
+  <tr><td><code>Models</code> / <code>ModelSelected</code> / <code>BackendState</code></td><td>刷新 Final 下拉与两个 GPU backend 可用性；<code>BackendState</code> 为 <code>Ready</code> 前显示“待重启”，失败时保留旧选择并写日志。</td></tr>
   <tr><td><code>Error</code></td><td>角色 / 版本 / 非法消息 / <code>busy</code> / 模型不可用时断开重连或显示日志；推理错误在 Toggle 会话中重置。</td></tr>
   <tr><td><code>Bye</code></td><td>断开并等待重连。</td></tr>
 </table>

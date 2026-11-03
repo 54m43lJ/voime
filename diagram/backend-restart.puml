@@ -6,7 +6,7 @@ hide footbox
 participant "配置界面" as UI
 participant "前端\n(Fcitx / 托盘)" as Frontend
 participant "voimed" as Daemon
-participant "Final 路径 / voime-gpu" as Pipeline
+participant "Final 路径 / GPU worker" as Pipeline
 
 UI -> Frontend : 选择 Final / 点击重启后端
 Frontend -> Daemon : SetModel(package_id)
@@ -15,10 +15,10 @@ Daemon --> Frontend : ModelSelected
 Frontend -> Daemon : RestartBackend
 alt 空闲
   Daemon -> Daemon : 保留 SenseVoice Preview
-  Daemon -> Pipeline : shutdown Final
+  Daemon -> Pipeline : shutdown 旧 Final / worker
   Daemon -> Daemon : resolve + verify active
-  Daemon -> Daemon : Final 是 GPU 时 spawn voime-gpu / handshake
-  Daemon -> Pipeline : 重建 Final（CPU / GPU）
+  Daemon -> Daemon : FireRed → voime-gpu-firered；Qwen → voime-gpu-qwen3
+  Daemon -> Pipeline : 重建 Final（CPU / FireRed / Qwen）
   Daemon --> Frontend : BackendState(Ready)
 else 录音 / 识别中
   Daemon --> Frontend : Error(Busy)

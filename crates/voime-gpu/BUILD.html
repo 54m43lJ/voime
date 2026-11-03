@@ -27,56 +27,63 @@
 
 <table>
   <tr><th>项目</th><th>要求</th></tr>
-  <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）；与 daemon 同 workspace，但作为独立二进制构建。</td></tr>
-  <tr><td>Linux AMD</td><td>ROCm 7.2.1 + MIGraphX；ORT 1.23.2；P0 验收平台 RX 9070 XT 16 GB。</td></tr>
-  <tr><td>Windows AMD</td><td>DirectML runtime；P1。</td></tr>
-  <tr><td>NVIDIA</td><td>CUDA / TensorRT runtime；P1 / P2，独立打包。</td></tr>
-  <tr><td>模型</td><td>FireRed AED FP16 encoder / decoder / tokens / punc；编译不需要权重。</td></tr>
-  <tr><td>隔离</td><td>GPU feature 只在本二进制启用；daemon 构建不得打开 directml / migraphx / cuda feature。</td></tr>
+  <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）；与 daemon 同 workspace，但两个 worker 作为独立 bin 构建。</td></tr>
+  <tr><td>Linux AMD</td><td>Vulkan（OpenASR / llama.cpp）；P0 验收平台 RX 9070 XT 16 GB；不需要 ROCm / MIGraphX。</td></tr>
+  <tr><td>Windows AMD</td><td>Vulkan；P1。</td></tr>
+  <tr><td>NVIDIA</td><td>CUDA runtime；P1 / P2，独立打包。</td></tr>
+  <tr><td>FireRed 模型</td><td>FireRed AED FP16 + FireRedPunc <code>.oasr</code>；编译不需要权重。</td></tr>
+  <tr><td>Qwen 模型</td><td>Qwen3-ASR 1.7B F16 GGUF + mmproj；编译不需要权重。</td></tr>
+  <tr><td>隔离</td><td>GPU feature 只在对应 bin 启用；daemon 构建不得打开 firered / qwen GPU feature。</td></tr>
 </table>
 
 <h2 id="b2">2. 构建</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code># 通用 GPU 二进制（runtime 由动态库提供）
-cargo build --release -p voime-gpu
+<pre><code># FireRed worker（Linux / Windows AMD）
+cargo build --release -p voime-gpu --bin voime-gpu-firered --features firered-vulkan
 
-# Linux AMD 示例
-cargo build --release -p voime-gpu --features migraphx
+# Qwen worker（Linux / Windows AMD）
+cargo build --release -p voime-gpu --bin voime-gpu-qwen3 --features qwen3-vulkan
 
-# Windows AMD 示例
-cargo build --release -p voime-gpu --features directml</code></pre>
+# NVIDIA 示例
+cargo build --release -p voime-gpu --bin voime-gpu-firered --features firered-cuda
+cargo build --release -p voime-gpu --bin voime-gpu-qwen3 --features qwen3-cuda</code></pre>
 
 <table>
   <tr><th>产物</th><th>说明</th></tr>
-  <tr><td><code>target/release/voime-gpu</code></td><td>独立 GPU Final worker；只加载 GPU ORT / EP。</td></tr>
-  <tr><td><code>voime-gpu.exe</code></td><td>Windows 产物；由托盘 / daemon 以子进程托管。</td></tr>
-  <tr><td>runtime 包</td><td><code>voime-gpu-linux-migraphx</code> / <code>voime-gpu-windows-directml</code> / <code>voime-gpu-linux-cuda</code> / <code>voime-gpu-windows-cuda</code>。</td></tr>
+  <tr><td><code>target/release/voime-gpu-firered</code></td><td>FireRed GPU Final worker；OpenASR / FireRed AED + FireRedPunc。</td></tr>
+  <tr><td><code>target/release/voime-gpu-qwen3</code></td><td>Qwen GPU Final worker；llama.cpp / Qwen3-ASR + mmproj。</td></tr>
+  <tr><td><code>voime-gpu-firered.exe</code> / <code>voime-gpu-qwen3.exe</code></td><td>Windows 产物；由托盘 / daemon 以子进程托管。</td></tr>
+  <tr><td>runtime 包</td><td><code>voime-gpu-firered-*</code> / <code>voime-gpu-qwen3-*</code>，按 OS + EP 拆分。</td></tr>
 </table>
 <ul class="note">
-  <li>基础安装不包含本二进制或 runtime；只有 <code>firered</code> 档 / 显式 opt-in 才安装。</li>
+  <li>基础安装不包含两个 worker；只有 <code>--firered</code> / <code>--qwen3</code> 或显式安装 runtime 才使用。</li>
   <li>不要把 GPU runtime 放入模型目录；模型包不允许自带可执行文件。</li>
+  <li>两个 bin 不要同时启用两个模型 feature；每个 runtime 包只带一个 worker。</li>
 </ul>
 
 <h2 id="b3">3. 运行与安装</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code># 安装模型（含 FireRed AED）
-scripts/install_models.sh --profile firered --activate
+<pre><code># 安装模型
+scripts/install_models.sh --firered --activate
+scripts/install_models.sh --qwen3 --activate
 
 # Linux AMD runtime
-scripts/install_runtime.sh --runtime linux-migraphx
+scripts/install_runtime.sh --backend firered
+scripts/install_runtime.sh --backend qwen3
 
 # Windows AMD runtime
-powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -Runtime windows-directml</code></pre>
+powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -FireRed -Runtime firered-vulkan
+powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -Qwen3 -Runtime qwen3-vulkan</code></pre>
 
 <table>
   <tr><th>操作</th><th>契约</th></tr>
-  <tr><td>安装</td><td>runtime 包独立目录、版本、SHA 与签名；安装需显式 opt-in。</td></tr>
-  <tr><td>启动</td><td>由 <code>voimed</code> spawn；用户不直接运行 worker，排障时可手动启动。</td></tr>
+  <tr><td>安装</td><td>runtime 包独立目录、版本、SHA 与签名；按模型安装，显式 opt-in。</td></tr>
+  <tr><td>启动</td><td>由 <code>voimed</code> 按 Final kind spawn；用户不直接运行 worker，排障时可手动启动。</td></tr>
   <tr><td>停止</td><td>daemon 发送 <code>Shutdown</code>；5 s 超时后强杀；Windows Job Object / Linux 进程组确保无孤儿。</td></tr>
-  <tr><td>诊断</td><td><code>voime doctor</code> / <code>ctl models</code> 显示 runtime、driver、VRAM、worker 与 <code>BackendState</code>。</td></tr>
-  <tr><td>卸载</td><td>删除 runtime 目录与可选 <code>voime-gpu</code> 二进制；模型目录按需保留。</td></tr>
+  <tr><td>诊断</td><td><code>voime doctor</code> / <code>ctl models</code> 显示两个 backend 的 runtime、driver、VRAM、worker 与 <code>BackendState</code>。</td></tr>
+  <tr><td>卸载</td><td>删除对应 worker 与 runtime 目录；模型目录按需保留；不删除另一个 worker。</td></tr>
 </table>
 
 <h2 id="b4">4. 测试</h2>
@@ -89,10 +96,11 @@ cargo fmt -p voime-gpu --check</code></pre>
 <table>
   <tr><th>测试</th><th>覆盖</th></tr>
   <tr><td>协议</td><td>帧长度、截断、协议版本、Hello / Ready、Transcribe / Result、Cancel、Shutdown。</td></tr>
-  <tr><td>模型</td><td>FP16 encoder / decoder、metadata、KV cache 形状、tokens、SHA；FP16 不可用直接失败。</td></tr>
-  <tr><td>生命周期</td><td>spawn / handshake / 超时 / 崩溃重启 / 显存不足 / shutdown 无孤儿。</td></tr>
-  <tr><td>隔离</td><td>worker 不加载 CPU 模型；daemon 不加载 GPU 库；移除 runtime 后 CPU Final 仍可用。</td></tr>
-  <tr><td>性能</td><td>首次加载、RTF、p95 收尾延迟、峰值 VRAM；目标机器冻结。</td></tr>
+  <tr><td>FireRed</td><td>FP16 AED / Punc、metadata、SHA；Punc 输出；无 Partial。</td></tr>
+  <tr><td>Qwen</td><td>F16 GGUF + mmproj；language tag 解析；<code>ctx=4096</code>；空文本；无 Partial。</td></tr>
+  <tr><td>生命周期</td><td>两个 worker 的 spawn / handshake / 超时 / 崩溃重启 / 显存不足 / shutdown 无孤儿。</td></tr>
+  <tr><td>隔离</td><td>worker 不加载 CPU 模型；daemon 不加载 GPU 库；移除某个 runtime 后 CPU Final 仍可用。</td></tr>
+  <tr><td>性能</td><td>两个模型的首次加载、RTF、p95 收尾延迟、峰值 VRAM；目标机器冻结。</td></tr>
 </table>
 
 <h2 id="b5">5. 升级 / 卸载</h2>
@@ -100,9 +108,9 @@ cargo fmt -p voime-gpu --check</code></pre>
 
 <table>
   <tr><th>操作</th><th>步骤</th></tr>
-  <tr><td>升级 worker</td><td>停止 daemon 或重启后端；替换 <code>voime-gpu</code> 与 runtime；旧 Final 不可用时回退 CPU SenseVoice。</td></tr>
+  <tr><td>升级 worker</td><td>停止 daemon 或重启后端；替换对应 worker 与 runtime；旧 Final 不可用时回退 CPU SenseVoice。</td></tr>
   <tr><td>升级 runtime</td><td>独立替换 runtime 目录；校验版本 / SHA / 签名；不改变模型目录。</td></tr>
-  <tr><td>卸载</td><td>删除 worker 二进制与 runtime；不删除 SenseVoice 基础包；<code>active</code> 改回 CPU 或重新安装。</td></tr>
+  <tr><td>卸载</td><td>删除对应 worker 与 runtime；不删除 SenseVoice 基础包；<code>active</code> 改回 CPU 或重新安装。</td></tr>
   <tr><td>迁移</td><td>旧 GPU 包 / 旧 schema 直接拒绝；不建立运行期兼容层。</td></tr>
 </table>
 

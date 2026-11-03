@@ -123,14 +123,15 @@ recording=false finalizing=false segment=None mode=ptt hotkey=Super+F2 addon=Con
 
 # models
 sense-voice-2024-int8  SenseVoice 2024 ITN  CPU   available=true  active=true   running=true
-fire-red-aed-gpu       FireRedASR2-AED     GPU   available=true  active=false  running=false
+fire-red-aed-fp16      FireRedASR2-AED     GPU   available=true  active=false  running=false
+qwen3-asr-1.7b-fp16    Qwen3-ASR 1.7B      GPU   available=true  active=true   running=true
 
 # use
-selected fire-red-aed-gpu (restart backend to apply)
+selected qwen3-asr-1.7b-fp16 (restart backend to apply)
 
 # restart-backend
 backend restarting
-backend ready fire-red-aed-gpu
+backend ready qwen3-asr-1.7b-fp16
 
 # clear
 history cleared
@@ -157,7 +158,7 @@ model: /home/user/.local/share/voime/models
   OK   active  Final = sense-voice-2024-int8
   OK   Final manifest / SHA-256 校验通过
 gpu:
-  WARN 未安装 GPU runtime；Final 使用 CPU SenseVoice
+  WARN 未安装 FireRed / Qwen worker runtime；Final 使用 CPU SenseVoice
 audio:
   OK   2 个输入设备，默认 ...
 log:
@@ -175,7 +176,7 @@ fcitx:
   <tr><td>端点</td><td>检查默认端点 / <code>--endpoint</code> 指定端点；Unix 上检查权限是否 0600。</td></tr>
   <tr><td>daemon</td><td>以 <code>control</code> 角色连接，读取 Snapshot 与 <code>ListModels</code>。</td></tr>
   <tr><td>模型</td><td>检查 SenseVoice 基础包、<code>active</code>、Final manifest / SHA / <code>requires</code>；<code>--model-dir</code> 部署显示显式路径。</td></tr>
-  <tr><td>GPU</td><td>报告 runtime、驱动、显存、当前 worker 与 GPU Final 可用性；不可用只记 WARN，CPU 路径仍可用。</td></tr>
+  <tr><td>GPU</td><td>报告两个 backend 的 runtime、驱动、显存、当前 worker 与 GPU Final 可用性；不可用只记 WARN，CPU 路径仍可用。</td></tr>
   <tr><td>音频</td><td>枚举输入设备并显示默认设备名；不打开流。</td></tr>
   <tr><td>日志</td><td>报告 <code>VOIME_LOG</code> 启用状态与日志文件位置；未启用时给出默认目录，不计为 FAIL。</td></tr>
   <tr><td>平台前端</td><td>当前 Linux 检查 fcitx5 进程、addon 描述、<code>voime.so</code>、旧 inputmethod 条目与用户配置。</td></tr>

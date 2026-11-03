@@ -43,7 +43,7 @@
   <tr><td>PyTorch / ONNX 张量声明（<code>TensorSpec</code>）</td><td>张量名、dtype 与形状；用 <code>-1</code> 表示动态维。</td></tr>
   <tr><td>会话工厂（<code>SessionFactory</code>）</td><td>创建 CPU ONNX 会话并按清单校验输入 / 输出张量。</td></tr>
   <tr><td>fbank</td><td>Kaldi 风格梅尔滤波器组特征；VAD 使用流式窗口，SenseVoice 使用整段独立计算。</td></tr>
-  <tr><td>CMVN</td><td>倒谱均值方差归一化；从 SenseVoice / AED ONNX metadata 读取。</td></tr>
+  <tr><td>CMVN</td><td>倒谱均值方差归一化；从 SenseVoice ONNX metadata 读取。</td></tr>
   <tr><td>greedy decode</td><td>逐帧 argmax、合并连续重复、去掉 blank 0 的解码方式；SenseVoice 使用该路径。</td></tr>
   <tr><td>pipeline worker</td><td>核心内部唯一的工作线程；串行执行重采样、VAD、分段、SenseVoice / Final 与标点。</td></tr>
   <tr><td>Preview</td><td>语音段进行中的 Partial 路径；固定由常驻 SenseVoice 产生。</td></tr>
@@ -61,9 +61,9 @@
   <tr><td>命令优先</td><td>pipeline 先处理命令，再处理音频；<code>FinishSegment</code> 不会排在已积压的音频块之后。</td></tr>
   <tr><td>段边界</td><td><code>StartSegment</code> 丢弃按键前已采集的音频，但保留配置的预卷；<code>FinishSegment</code> 先排空已采集音频，再强制结束当前段。</td></tr>
   <tr><td>Partial</td><td>按时间与新增音频双重门槛节流，只读取活动段末尾；固定由 SenseVoice 产生，不进入历史、不提交；可丢弃。</td></tr>
-  <tr><td>Final</td><td>完整段交给 <code>FinalBackend</code>：CPU SenseVoice 或 daemon 注入的 worker；随后按 <code>PuncPolicy</code> 处理标点。空文本不产生 <code>Final</code>，产生 <code>SegmentDropped</code>。</td></tr>
+  <tr><td>Final</td><td>完整段交给 <code>FinalBackend</code>：CPU SenseVoice、FireRed worker 或 Qwen worker；FireRed 由 worker 内 FireRedPunc 加标点，SenseVoice / Qwen 使用内置标点。空文本不产生 <code>Final</code>，产生 <code>SegmentDropped</code>。</td></tr>
   <tr><td>模式</td><td><code>Mode</code> 由 <a href="../voime-ipc/USER.html#u4-1">voime-ipc USER §4.1</a> 定义；核心只消费，不解析命令行。</td></tr>
-  <tr><td>模型生命周期</td><td>SenseVoice 基础包常驻；VAD 与 Punc 按 Final 模式加载；每段只重置解码状态，不重新加载权重。GPU worker 由 daemon 管理。</td></tr>
+  <tr><td>模型生命周期</td><td>SenseVoice 基础包常驻；VAD 随基础包加载；GPU 模型由对应 worker 管理；每段只重置解码状态，不重新加载权重。</td></tr>
   <tr><td>Final 选择</td><td>核心只加载 daemon 传入的 Final manifest；<code>active</code>、候选列表与重启由 daemon 负责。</td></tr>
   <tr><td>有界队列</td><td>完成段队列容量有限；慢识别时音频通道也可能丢弃，不承诺零丢失。</td></tr>
   <tr><td>错误策略</td><td>初始化失败返回错误；运行期单段失败产生 <code>SegmentDropped</code>；连续音频错误达到上限产生 <code>Fatal</code>。</td></tr>
@@ -158,25 +158,25 @@ impl CaptureHandle {
 
 <h3 id="u4-3">4.3 模型清单</h3>
 <pre><code>pub struct ModelManifest {
-    pub schema: u32,                 // 只接受 3
+    pub schema: u32,                 // 只接受 4
     pub display_name: String,
     pub sample_rate: u32,
-    pub fbank: FbankManifest,
+    pub frontend: FrontendManifest,
     pub max_segment_ms: u32,
-    pub vad: VadArtifact,
+    #[serde(default)]
+    pub vad: Option&lt;VadArtifact&gt;,   // 只在 SenseVoice 基础包
     #[serde(default)]
     pub requires: Vec&lt;String&gt;,       // GPU 包必需：["sense-voice-2024-int8"]
     pub backend: BackendManifest,
     pub asr: AsrArtifact,
-    #[serde(default)]
-    pub punc: Option&lt;PuncArtifact&gt;,
 }
 
-pub struct FbankManifest {
+pub struct FrontendManifest {
+    pub kind: String,                // sensevoice-fbank80 / firered-fbank80 / qwen-mel128
     pub num_bins: u32,
     pub frame_ms: u32,
     pub shift_ms: u32,
-    pub window_type: String,         // "povey" | "hamming"
+    pub window_type: String,         // "povey" | "hamming" | "hann"
 }
 
 pub struct Artifact {
@@ -188,10 +188,11 @@ pub struct Artifact {
 
 pub type VadArtifact = Artifact;
 
-pub enum AsrKind { SenseVoice, FireRedAed, External }
-pub enum PuncPolicy { Builtin, External }
+pub enum AsrKind { SenseVoice, FireRedAed, Qwen3Asr }
+pub enum PuncPolicy { Builtin, External } // External 由所属 GPU worker 实现
 pub enum Precision { Fp16 }
 pub enum BackendKind { Builtin, Worker }
+pub enum ModelFormat { Onnx, Oasr, Gguf }
 
 pub struct AsrOptions {
     pub language: Option&lt;String&gt;,
@@ -202,18 +203,19 @@ pub struct AsrOptions {
 
 pub struct AsrArtifact {
     pub kind: AsrKind,
+    pub format: ModelFormat,
     pub model: Option&lt;Artifact&gt;,
-    pub encoder: Option&lt;Artifact&gt;,
-    pub decoder: Option&lt;Artifact&gt;,
+    pub mmproj: Option&lt;Artifact&gt;,
+    pub punc: Option&lt;Artifact&gt;,
     pub precision: Option&lt;Precision&gt;,
-    pub tokens: PathBuf,
-    pub token_count: usize,
+    pub tokens: Option&lt;PathBuf&gt;,
+    pub token_count: Option&lt;usize&gt;,
     pub options: AsrOptions,
 }
 
 pub struct BackendManifest {
     pub kind: BackendKind,
-    pub runtime: Option&lt;String&gt;,
+    pub runtime: Option&lt;String&gt;,    // openasr-vulkan / llama-vulkan / openasr-cuda / llama-cuda
     pub device: Option&lt;String&gt;,
     pub min_vram_mb: Option&lt;u32&gt;,
     pub supports_partial: bool,
@@ -221,26 +223,19 @@ pub struct BackendManifest {
     pub request_timeout_ms: u64,
 }
 
-pub struct PuncArtifact {
-    pub model: Artifact,
-    pub vocab: PathBuf,
-    pub labels: PathBuf,
-    pub max_tokens: usize,
-}
-
 pub fn resolve_inside(dir: &amp;Path, relative: &amp;Path) -&gt; anyhow::Result&lt;PathBuf&gt;;</code></pre>
 
 <table>
   <tr><th>字段 / 函数</th><th>契约</th></tr>
-  <tr><td><code>schema</code></td><td>只接受 <code>3</code>；旧 schema 直接拒绝，不做字段推断或默认值补齐。</td></tr>
+  <tr><td><code>schema</code></td><td>只接受 <code>4</code>；旧 schema 直接拒绝，不做字段推断或默认值补齐。</td></tr>
   <tr><td><code>sample_rate</code></td><td>必须为 16 kHz；否则启动失败。</td></tr>
-  <tr><td><code>fbank</code></td><td>VAD / SenseVoice / AED 参数；SenseVoice 显式 <code>hamming</code>，AED 使用 <code>povey</code>；具体值与预处理见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td></tr>
-  <tr><td><code>max_segment_ms</code></td><td>单段上限；SenseVoice 建议 20 s，FireRed AED 30 s；达到上限强制结束并继续收集后续语音。</td></tr>
-  <tr><td><code>vad</code> / <code>asr</code> / <code>punc</code></td><td>ONNX 文件、SHA-256 与张量声明；<code>verify</code> 校验文件存在、非空且摘要匹配。</td></tr>
+  <tr><td><code>frontend</code></td><td>SenseVoice / FireRed 使用 80-bin fbank；Qwen 使用 128-bin mel；具体值见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td></tr>
+  <tr><td><code>max_segment_ms</code></td><td>单段上限；SenseVoice 20 s，两个 GPU 包 30 s；达到上限强制结束并继续收集后续语音。</td></tr>
+  <tr><td><code>vad</code> / <code>asr</code></td><td>VAD 只在 SenseVoice 基础包；ASR 产物按 kind 校验文件、SHA-256 与张量声明。</td></tr>
   <tr><td><code>requires</code></td><td>GPU 包必须声明 <code>["sense-voice-2024-int8"]</code>；缺失基础包时加载失败。</td></tr>
-  <tr><td><code>backend.kind</code></td><td><code>builtin</code> 为进程内 CPU；<code>worker</code> 为 voime-gpu。GPU 包必须声明 <code>runtime</code>、<code>device</code>、<code>min_vram_mb</code> 与超时。</td></tr>
-  <tr><td><code>asr</code></td><td><code>sense-voice</code> 要求 <code>model</code> + <code>punc=builtin</code>；<code>fire-red-aed</code> 要求 <code>encoder</code> + <code>decoder</code> + <code>precision=fp16</code> + <code>punc=external</code>；错误组合在加载时失败。</td></tr>
-  <tr><td><code>punc</code></td><td>可选；<code>Builtin</code> 包省略，<code>External</code> 包必须提供。不允许混用。</td></tr>
+  <tr><td><code>backend.kind</code></td><td><code>builtin</code> 为进程内 CPU；<code>worker</code> 为模型专用 GPU worker。GPU 包必须声明 <code>runtime</code>、<code>device</code>、<code>min_vram_mb</code> 与超时。</td></tr>
+  <tr><td><code>asr</code></td><td><code>sense-voice</code> 要求 ONNX <code>model</code> + <code>punc=builtin</code>；<code>fire-red-aed</code> 要求 <code>oasr</code> <code>model</code> + <code>punc</code> + <code>precision=fp16</code> + <code>punc=external</code>；<code>qwen3-asr</code> 要求 GGUF <code>model</code> + <code>mmproj</code> + <code>precision=fp16</code> + <code>punc=builtin</code>。</td></tr>
+  <tr><td><code>punc</code></td><td>只存在于 FireRed 包；由 FireRed worker 加载。SenseVoice / Qwen 不提供 punc 段。</td></tr>
   <tr><td><code>resolve_inside</code></td><td>拒绝绝对路径、<code>..</code> 与空路径，防止模型包逃逸目录。</td></tr>
 </table>
 
@@ -289,7 +284,7 @@ impl Pipeline {
   <tr><td><code>SetMode</code></td><td>切换 <code>ptt</code> / <code>toggle</code> / <code>continuous</code>；下一段生效。</td><td>daemon 同步配置。</td></tr>
   <tr><td><code>Recording(true/false)</code></td><td>采集开始 / 结束；Toggle 可在 Final 后再次产生 <code>Recording(true)</code>。</td><td>更新前端录音标记与 daemon phase。</td></tr>
   <tr><td><code>Partial(text)</code></td><td>活动段末尾的临时识别；固定由 SenseVoice 产生；可丢弃。</td><td>显示临时文本，不提交。</td></tr>
-  <tr><td><code>Final(text)</code></td><td>完整段经 <code>FinalBackend</code> 识别并按 <code>PuncPolicy</code> 加标点后的最终文本。</td><td>加入历史并广播。</td></tr>
+  <tr><td><code>Final(text)</code></td><td>完整段经 <code>FinalBackend</code> 识别后的最终文本；FireRed 已由 worker 加标点，SenseVoice / Qwen 使用内置标点。</td><td>加入历史并广播。</td></tr>
   <tr><td><code>SegmentDropped</code></td><td>当前段因空音频、音频过短、Final 推理 / 标点失败等原因被丢弃。</td><td>清空临时文本，继续监听；daemon 决定是否回退 Final。</td></tr>
   <tr><td><code>Fatal</code></td><td>音频流连续失败或不可恢复的核心错误。</td><td>daemon 记录并退出。</td></tr>
   <tr><td><code>shutdown</code></td><td>发送 Shutdown 并等待 pipeline 退出；worker 由 daemon 另行关闭。</td><td>daemon 停止服务。</td></tr>

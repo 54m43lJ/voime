@@ -192,6 +192,7 @@ struct ModelInfo {
     std::string id;
     std::string displayName;
     std::string kind;
+    std::string backend;                 // builtin / voime-gpu-firered / voime-gpu-qwen3
     std::optional&lt;std::string&gt; runtime;
     std::optional&lt;std::string&gt; device;
     bool available = false;

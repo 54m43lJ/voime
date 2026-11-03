@@ -6,7 +6,7 @@ hide footbox
 participant "Voime" as Voime
 participant "模型包" as Model
 participant "ONNX Runtime CPU" as OrtCpu
-participant "ONNX Runtime GPU / EP" as OrtGpu
+participant "OpenASR / llama.cpp\nVulkan / CUDA" as Gpu
 
 Voime -> Model : 读取 manifest.json
 Voime -> Model : SHA-256 + 张量 / requires 校验
@@ -18,11 +18,18 @@ loop 每个语音段
   OrtCpu -> Voime : logits / text
 end
 
-opt Final = FireRed AED
-  Voime -> OrtGpu : voime-gpu 创建 encoder / decoder 会话
-  OrtGpu -> Voime : Session
-  Voime -> OrtGpu : Transcribe(final segment)
-  OrtGpu -> Voime : text
+opt Final = FireRed
+  Voime -> Gpu : voime-gpu-firered 加载 AED + Punc
+  Gpu -> Voime : Ready
+  Voime -> Gpu : Transcribe(final segment)
+  Gpu -> Voime : text（已加标点）
+end
+
+opt Final = Qwen
+  Voime -> Gpu : voime-gpu-qwen3 加载 Qwen + mmproj
+  Gpu -> Voime : Ready
+  Voime -> Gpu : Transcribe(final segment)
+  Gpu -> Voime : text（内置标点）
 end
 
 note over Voime

@@ -40,7 +40,7 @@
 一个常驻 daemon 持有音频、VAD、ASR、标点与会话历史，平台前端只负责热键、目标输入位置、
 临时文本与最终提交。Linux 前端运行在 Fcitx5 内；Windows 前端以独立桌面进程提供后台听写。
 运行时不联网、不上传音频；默认不需要 GPU 或 Python，只有可选的 GPU Final 才使用
-<code>voime-gpu</code>。
+<code>voime-gpu-firered</code> 或 <code>voime-gpu-qwen3</code>。
 </p>
 
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
@@ -49,9 +49,9 @@
   <li>前端配置一个模式：<code>ptt</code>（按住说话）、<code>toggle</code>（按一下切换）或 <code>continuous</code>（VAD 自动分段）。</li>
   <li>前端配置一个热键；<code>ptt</code> 按住说话，<code>toggle</code> 切换录音，<code>continuous</code> 忽略热键。</li>
   <li>说话期间显示当前段的临时文本；最终结果提交到语音段开始时聚焦的输入位置，失焦时不向其他窗口注入。</li>
-  <li>音频、模型、VAD、SenseVoice、FireRedPunc 与会话历史由独立 <code>voimed</code> 守护进程持有；GPU Final 由可选的 <code>voime-gpu</code> 处理。</li>
+  <li>音频、模型、VAD、SenseVoice 与会话历史由独立 <code>voimed</code> 守护进程持有；GPU Final 由可选的 <code>voime-gpu-firered</code>（FireRed AED + FireRedPunc）或 <code>voime-gpu-qwen3</code>（Qwen3-ASR）处理。</li>
   <li>可选 TUI 连接 daemon，显示模式、热键、临时结果与历史；关闭 TUI 不影响热键、临时窗口与上屏。</li>
-  <li>模型安装两档：<code>sensevoice</code> 只装 SenseVoice；<code>firered</code> 装 SenseVoice + FireRed AED，GPU Final 可选。</li>
+  <li>模型安装默认只装 SenseVoice + VAD；<code>--firered</code> 追加 FireRed AED + Punc，<code>--qwen3</code> 追加 Qwen3-ASR 1.7B；两个 GPU 选项可同时安装。</li>
   <li>运行时不需要网络与 Python；默认纯 CPU，GPU 只用于 Final；模型由安装脚本生成，<code>voimed</code> 完全离线运行。</li>
 </ul>
 
@@ -61,7 +61,7 @@
   <li>不实现跨平台统一 UI 抽象；各平台前端保留自己的热键、目标、预览与提交实现。</li>
   <li>不保证锁屏、安全桌面、提权窗口、游戏或未使用受支持输入协议的应用。</li>
   <li>不使用客户端 preedit 作为 Linux 临时文本；Fcitx 输入面板由宿主渲染。</li>
-  <li>不把 GPU 用于 Preview，不并行运行多个 Final，不引入第二推理引擎；不做 CPU AED。</li>
+  <li>不把 GPU 用于 Preview，不并行运行多个 Final，不做 CPU AED / CPU Qwen；GPU 只通过两个模型专用的独立 worker 运行，不引入通用 runtime 插件或动态 EP 选择。</li>
   <li>不实现规则纠错、文本改写、摘要或翻译；不增加 <code>--rewrite</code> 或文本后处理阶段。</li>
   <li>不保存音频、按键或识别历史到磁盘。</li>
 </ul>
@@ -163,7 +163,7 @@
   <li>根 <code>README / USER / CORE / PROVIDER / BUILD</code> 是父文档；每个组件目录下的同名文档是子树。</li>
   <li>父文档只定义产品级边界与组件关系；组件内部类型、签名和调用栈只出现在组件 <code>CORE</code>。</li>
   <li><code>voime-transport</code> 与 <code>frontends/windows</code> 已落地；TSF 保持可选，未启用时不构建。</li>
-  <li><code>voime-gpu</code> 是可选的 GPU Final 进程；基础安装不包含它，CPU 路径不加载任何 GPU 库。</li>
+  <li><code>voime-gpu</code> 是 GPU Final 组件，包含两个独立 worker 模块：<code>voime-gpu-firered</code>（OpenASR / FireRed AED）与 <code>voime-gpu-qwen3</code>（llama.cpp / Qwen3-ASR）；基础安装不包含它们，CPU 路径不加载任何 GPU 库。</li>
   <li>Fcitx 文档与源码均位于 <code>frontends/fcitx</code>。</li>
   <li>源码结构见 <a href="CORE.html#c1">根 CORE §1</a>。</li>
 </ul>
@@ -177,8 +177,8 @@
   <tr><td>daemon 会话、<code>segment_id</code> 分配、广播、背压、历史</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
   <tr><td>Final 模型选择、<code>active</code>、重启后端、worker 生命周期</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
   <tr><td>音频、VAD、SenseVoice、<code>FinalBackend</code>、标点、pipeline 的公开 API</td><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>只链接，不复制类型与语义</td></tr>
-  <tr><td>模型 manifest、SHA-256、VAD / SenseVoice / Punc 张量</td><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>只链接，不复制张量定义</td></tr>
-  <tr><td>voime-gpu 协议、GPU runtime、FireRed AED 张量与 EP</td><td><a href="crates/voime-gpu/PROVIDER.html">voime-gpu PROVIDER</a></td><td>只链接，不复制协议与张量定义</td></tr>
+  <tr><td>模型 manifest、SHA-256、VAD / SenseVoice 张量</td><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>只链接，不复制张量定义</td></tr>
+  <tr><td>voime-gpu 协议、两个 worker、Vulkan / CUDA runtime、FireRed / Qwen 模型契约</td><td><a href="crates/voime-gpu/PROVIDER.html">voime-gpu PROVIDER</a></td><td>只链接，不复制协议与张量定义</td></tr>
   <tr><td>OS 本机传输契约（Unix socket / named pipe）</td><td><a href="crates/voime-transport/USER.html">voime-transport USER</a></td><td>只链接，不复制端点与安全细节</td></tr>
   <tr><td>Linux 热键、目标、临时窗口、提交</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td><td>Windows 前端只引用行为契约</td></tr>
   <tr><td>Windows 热键、目标、浮层、注入、TSF</td><td><a href="frontends/windows/USER.html">windows USER</a></td><td>Linux 前端不复制 Windows API</td></tr>
@@ -292,11 +292,13 @@
   <tr><th>项目</th><th>在本项目中的角色</th><th>技术栈 / 许可</th></tr>
   <tr><td><a href="https://github.com/fcitx/fcitx5">Fcitx5</a></td><td>Linux 输入法框架、addon 宿主、键盘与文本提交</td><td>C++ · LGPL-2.1+</td></tr>
   <tr><td><a href="https://github.com/FunAudioLLM/SenseVoice">FunAudioLLM/SenseVoice</a></td><td>SenseVoiceSmall 语音识别模型（常驻 Preview / CPU Final）</td><td>ONNX · FunASR Model License</td></tr>
-  <tr><td><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam/FireRedASR2S</a></td><td>FireRedASR2-AED 语音识别模型（可选 GPU Final）</td><td>ONNX · Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam/FireRedASR2S</a></td><td>FireRedASR2-AED 语音识别模型（可选 GPU Final，OpenASR / ggml）</td><td>oasr / ggml · Apache-2.0</td></tr>
   <tr><td><a href="https://github.com/FireRedTeam/FireRedVAD">FireRedTeam/FireRedVAD</a></td><td>FireRedVAD 流式语音活动检测</td><td>ONNX · Apache-2.0</td></tr>
-  <tr><td><a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedTeam/FireRedPunc</a></td><td>FireRedPunc 中英文标点预测（GPU Final）</td><td>BERT / ONNX · Apache-2.0</td></tr>
-  <tr><td><a href="https://onnxruntime.ai/">ONNX Runtime</a></td><td>CPU / GPU 推理运行时（GPU 仅 voime-gpu）</td><td>C++ · MIT</td></tr>
-  <tr><td><a href="https://github.com/huggingface/tokenizers">tokenizers</a></td><td>FireRedPunc 的 BERT 分词</td><td>Rust · Apache-2.0</td></tr>
+  <tr><td><a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedTeam/FireRedPunc</a></td><td>FireRedPunc 中英文标点预测（FireRed worker）</td><td>oasr / ggml · Apache-2.0</td></tr>
+  <tr><td><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR 1.7B</a></td><td>Qwen3-ASR 语音识别模型（可选 GPU Final，llama.cpp / ggml）</td><td>GGUF / ggml · Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/QuintinShaw/openasr">OpenASR</a></td><td>FireRed AED / FireRedPunc 的 ggml Vulkan / CUDA runtime</td><td>Rust + ggml · Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a></td><td>Qwen3-ASR 的 ggml Vulkan / CUDA runtime</td><td>C++ · MIT</td></tr>
+  <tr><td><a href="https://onnxruntime.ai/">ONNX Runtime</a></td><td>CPU SenseVoice / VAD 推理</td><td>C++ · MIT</td></tr>
   <tr><td><a href="https://github.com/ratatui/ratatui">ratatui</a> / <a href="https://github.com/crossterm-rs/crossterm">crossterm</a></td><td>可选 TUI</td><td>Rust · MIT</td></tr>
   <tr><td><a href="https://github.com/RustAudio/cpal">cpal</a></td><td>麦克风采集</td><td>Rust · Apache-2.0</td></tr>
   <tr><td><a href="https://github.com/HEnquist/rubato">rubato</a></td><td>采样率转换</td><td>Rust · MIT</td></tr>

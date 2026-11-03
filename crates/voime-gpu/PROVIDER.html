@@ -27,13 +27,13 @@
 
 <table>
   <tr><th>术语</th><th>定义</th></tr>
-  <tr><td>ONNX Runtime GPU</td><td>带 DirectML / MIGraphX / CUDA EP 的 ONNX Runtime；只由 <code>voime-gpu</code> 加载。</td></tr>
-  <tr><td>Execution Provider（EP）</td><td>GPU 推理后端；Linux AMD 使用 MIGraphX，Windows AMD 使用 DirectML，NVIDIA 使用 CUDA / TensorRT。</td></tr>
-  <tr><td>runtime 包</td><td>按 OS + EP 拆分的 ORT / EP 动态库包；独立目录、版本、SHA 与签名。</td></tr>
-  <tr><td>FireRed AED</td><td>FireRedASR2-AED 1.1B encoder-decoder 模型；非流式，只用于 Final。</td></tr>
+  <tr><td>GPU runtime</td><td>执行 FireRed / Qwen 的 Vulkan 或 CUDA runtime；只由对应 worker 加载。</td></tr>
+  <tr><td>runtime 包</td><td>按模型 + OS + EP 拆分的 worker 二进制与 runtime 库；独立目录、版本、SHA 与签名。</td></tr>
+  <tr><td>FireRed AED</td><td>FireRedASR2-AED 1.1B encoder-decoder 模型；非流式，只用于 Final；OpenASR <code>.oasr</code> FP16。</td></tr>
+  <tr><td>FireRedPunc</td><td>FireRed Final 标点模型；OpenASR <code>.oasr</code> FP16；由 FireRed worker 加载。</td></tr>
+  <tr><td>Qwen3-ASR</td><td>Qwen3-ASR 1.7B 语音识别模型；F16 GGUF + mmproj；只用于 Final；内置标点。</td></tr>
   <tr><td>FP16</td><td>GPU 产品路径唯一精度；int8 只用于 CPU SenseVoice。</td></tr>
-  <tr><td>metadata</td><td>ONNX 模型自带的键值元数据；decoder 层数、head、KV cache 形状、sos / eos 等从这里读取。</td></tr>
-  <tr><td>device</td><td>runtime 暴露的 GPU 设备名；<code>auto</code> 由 EP 选择默认设备。</td></tr>
+  <tr><td>device</td><td>runtime 暴露的 GPU 设备名；<code>auto</code> 由 runtime 选择默认设备。</td></tr>
 </table>
 
 <h2 id="p2">2. CONVENTIONS</h2>
@@ -41,65 +41,91 @@
 
 <table>
   <tr><th>约定</th><th>内容</th></tr>
-  <tr><td>进程隔离</td><td>GPU runtime 只进入 <code>voime-gpu</code>；daemon 只映射 CPU ORT，不加载 ROCm / CUDA / DirectML / MIGraphX。</td></tr>
-  <tr><td>平台顺序</td><td>Linux AMD MIGraphX 为 P0；Windows DirectML 与 NVIDIA CUDA / TensorRT 为后续独立 runtime 包。</td></tr>
-  <tr><td>精度</td><td>FireRed AED 只接受 FP16；加载失败直接报错，不回退 FP32 / int8。</td></tr>
+  <tr><td>进程隔离</td><td>GPU runtime 只进入对应 worker；daemon 只映射 CPU ONNX Runtime，不加载 Vulkan / CUDA / ROCm / MIGraphX / DirectML。</td></tr>
+  <tr><td>模型专用</td><td>FireRed worker 只加载 OpenASR / FireRed；Qwen worker 只加载 llama.cpp / Qwen；两者不共享模型或 runtime 目录。</td></tr>
+  <tr><td>平台顺序</td><td>Linux AMD Vulkan 为 P0；Windows AMD Vulkan 为 P1；NVIDIA CUDA 为 P1 / P2；不使用 MIGraphX / DirectML。</td></tr>
+  <tr><td>精度</td><td>两个模型只接受 FP16；加载失败直接报错，不回退 FP32 / int8。</td></tr>
   <tr><td>模型不可变</td><td>模型包运行期只读；worker 加载时再次校验 SHA-256、张量与 metadata。</td></tr>
   <tr><td>运行时隔离</td><td>runtime 包不进入模型目录；模型包不允许自带可执行文件。</td></tr>
-  <tr><td>错误边界</td><td>EP / 设备 / 模型错误映射为 worker 错误码；不把底层文案写进前端。</td></tr>
+  <tr><td>错误边界</td><td>runtime / 设备 / 模型错误映射为 worker 错误码；不把底层文案写进前端。</td></tr>
 </table>
 
 <h2 id="p3">3. DIAGRAMS</h2>
 <p><a href="#top">↑</a></p>
 
 <h3 id="p3-1">3.1 GPU runtime 边界</h3>
-<div class="diagram"><img src="diagram/provider-map.svg" alt="voime-gpu 消费 GPU runtime 与 FireRed AED 模型包的组件图"></div>
+<div class="diagram"><img src="diagram/provider-map.svg" alt="voime-gpu 消费两个模型包与 GPU runtime 的组件图"></div>
 <ul class="note">
-  <li>Voime 作为单一参与者；GPU runtime 与模型包是外部 provider。</li>
-  <li>仅 Final 路径使用这些 provider；Preview、VAD 与 Punc 不在此边界内。</li>
+  <li>Voime 作为单一参与者；GPU runtime 与两个模型包是外部 provider。</li>
+  <li>仅 Final 路径使用这些 provider；Preview、VAD 不在此边界内。</li>
 </ul>
 
 <h3 id="p3-2">3.2 模型加载与推理边界</h3>
-<div class="diagram"><img src="diagram/provider-inference.svg" alt="voime-gpu 加载 FireRed AED 并执行 GPU 推理的时序图"></div>
+<div class="diagram"><img src="diagram/provider-inference.svg" alt="voime-gpu 加载 FireRed / Qwen 并执行 GPU 推理的时序图"></div>
 <ul class="note">
-  <li>启动时校验 manifest、encoder / decoder、tokens 与 metadata；每个 Final 段只重置解码状态。</li>
-  <li>VAD / Punc 不在 worker 内；它们由 daemon 处理。</li>
+  <li>启动时校验 manifest、模型、Punc / mmproj 与 metadata；每个 Final 段只重置解码状态。</li>
+  <li>VAD 不在 worker 内；FireRedPunc 在 FireRed worker 内；Qwen 标点由模型内置。</li>
 </ul>
 
 <h2 id="p4">4. INTERFACES</h2>
 <p><a href="#top">↑</a></p>
 
 <h3 id="p4-1">4.1 模型包目录</h3>
-<pre><code>fire-red-aed-gpu/
+<pre><code>fire-red-aed-fp16/
 ├── manifest.json
-├── vad/stream-vad.onnx
-├── punc/model.onnx
-├── asr/encoder.fp16.onnx
-├── asr/decoder.fp16.onnx
-└── asr/tokens.txt
+├── asr/firered-aed.fp16.oasr
+└── punc/firered-punc.fp16.oasr
+
+qwen3-asr-1.7b-fp16/
+├── manifest.json
+├── asr/qwen3-asr-1.7b.f16.gguf
+└── asr/mmproj-qwen3-asr-1.7b.f16.gguf
 </code></pre>
 
 <pre><code>{
-  "schema": 3,
+  "schema": 4,
   "display_name": "FireRedASR2-AED (GPU, FP16)",
   "requires": ["sense-voice-2024-int8"],
   "sample_rate": 16000,
-  "fbank": { "num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "povey" },
+  "frontend": { "kind": "firered-fbank80", "num_bins": 80, "frame_ms": 25, "shift_ms": 10, "window_type": "povey" },
   "max_segment_ms": 30000,
-  "vad": { /* 仅用于包完整性校验 */ },
   "asr": {
     "kind": "fire-red-aed",
+    "format": "oasr",
     "precision": "fp16",
-    "encoder": { "model": "asr/encoder.fp16.onnx", "sha256": "..." },
-    "decoder": { "model": "asr/decoder.fp16.onnx", "sha256": "..." },
-    "tokens": "asr/tokens.txt",
-    "token_count": 8667,
+    "model": { "model": "asr/firered-aed.fp16.oasr", "sha256": "..." },
+    "punc": { "model": "punc/firered-punc.fp16.oasr", "sha256": "..." },
     "options": { "punc": "external", "partial": false }
   },
-  "punc": { /* ... */ },
   "backend": {
     "kind": "worker",
-    "runtime": "onnx-migraphx",
+    "runtime": "openasr-vulkan",
+    "device": "auto",
+    "min_vram_mb": 4096,
+    "supports_partial": false,
+    "load_timeout_ms": 120000,
+    "request_timeout_ms": 60000
+  }
+}</code></pre>
+
+<pre><code>{
+  "schema": 4,
+  "display_name": "Qwen3-ASR 1.7B (GPU, FP16)",
+  "requires": ["sense-voice-2024-int8"],
+  "sample_rate": 16000,
+  "frontend": { "kind": "qwen-mel128", "num_bins": 128, "frame_ms": 25, "shift_ms": 10, "window_type": "hann" },
+  "max_segment_ms": 30000,
+  "asr": {
+    "kind": "qwen3-asr",
+    "format": "gguf",
+    "precision": "fp16",
+    "model": { "model": "asr/qwen3-asr-1.7b.f16.gguf", "sha256": "..." },
+    "mmproj": { "model": "asr/mmproj-qwen3-asr-1.7b.f16.gguf", "sha256": "..." },
+    "options": { "punc": "builtin", "partial": false }
+  },
+  "backend": {
+    "kind": "worker",
+    "runtime": "llama-vulkan",
     "device": "auto",
     "min_vram_mb": 6144,
     "supports_partial": false,
@@ -108,41 +134,40 @@
   }
 }</code></pre>
 
-<h3 id="p4-2">4.2 AED 张量与 metadata</h3>
+<h3 id="p4-2">4.2 模型契约</h3>
 <table>
-  <tr><th>项目</th><th>契约</th></tr>
-  <tr><td>模型</td><td>FireRedASR2-AED 1.1B；encoder + decoder + tokens；FP16 权重约 2.2 GB；显存预算 4–6 GB；Apache-2.0。</td></tr>
-  <tr><td>fbank</td><td>80 bin、25 / 10 ms、<code>povey</code>、<code>normalize_samples=false</code>、<code>high_freq=0</code>、<code>snip_edges=true</code>；不做 LFR。</td></tr>
-  <tr><td>CMVN</td><td>80 维；<code>(x - cmvn_mean) * cmvn_inv_stddev</code>。</td></tr>
-  <tr><td>Encoder</td><td><code>x[1,T,80]</code> f32、<code>x_lens[1]</code> i64 → <code>cross_k</code> / <code>cross_v</code>。</td></tr>
-  <tr><td>Decoder</td><td><code>tokens</code>、self KV cache、cross K/V、<code>offset</code> → <code>logits</code> + 更新后的 self KV cache。</td></tr>
-  <tr><td>解码</td><td>自回归贪心；<code>sos</code> 起步，<code>eos</code> / <code>max_len</code> / <code>max_token_per_second=8</code> 停止。</td></tr>
-  <tr><td>Metadata</td><td><code>num_decoder_layers</code>、<code>num_head</code>、<code>head_dim</code>、<code>sos</code>、<code>eos</code>、<code>max_len</code>、CMVN；KV cache 形状必须来自 metadata，不能硬编码。</td></tr>
-  <tr><td>Partial</td><td><code>supports_partial=false</code>；Preview 由 daemon 的 SenseVoice 提供。</td></tr>
-  <tr><td>标点</td><td><code>punc=external</code>；由 daemon 的 FireRedPunc 处理，worker 不加载 Punc。</td></tr>
-  <tr><td>requires</td><td>必须声明 <code>["sense-voice-2024-int8"]</code>；daemon 在加载前校验基础包。</td></tr>
+  <tr><th>项目</th><th>FireRed worker</th><th>Qwen worker</th></tr>
+  <tr><td>模型</td><td>FireRedASR2-AED 1.1B；FP16；<code>.oasr</code>；约 2.2 GB；Apache-2.0。</td><td>Qwen3-ASR 1.7B；FP16；F16 GGUF + mmproj 约 4.4 GB；Apache-2.0。</td></tr>
+  <tr><td>前端</td><td>80-bin fbank、25 / 10 ms、<code>povey</code>、<code>normalize_samples=false</code>；不做 LFR。</td><td>128-bin log-mel、25 / 10 ms、<code>hann</code>；由 llama.cpp mmproj 处理。</td></tr>
+  <tr><td>解码</td><td>自回归贪心；<code>eos</code> / <code>max_len</code> / <code>max_token_per_second=8</code> 停止。</td><td>贪心；<code>temperature=0</code>；<code>max_new_tokens</code> 按段长设置；<code>ctx=4096</code>。</td></tr>
+  <tr><td>标点</td><td>FireRedPunc；worker 返回已加标点文本。</td><td>模型内置；返回已加标点文本。</td></tr>
+  <tr><td>输出</td><td>纯文本；无 Partial。</td><td>纯文本；去掉 <code>language ...&lt;asr_text&gt;</code> 前缀；无 Partial。</td></tr>
+  <tr><td>显存</td><td>约 2.6 GB 峰值。</td><td>约 5.2 GB 峰值。</td></tr>
+  <tr><td>实测</td><td>4.2 s 464 ms；30 s 826 ms；120 s 2.2 s。</td><td>4.2 s 235 ms；30 s 786 ms；120 s 4.8 s（512 token 截断）。</td></tr>
+  <tr><td>requires</td><td>必须声明 <code>["sense-voice-2024-int8"]</code>。</td><td>必须声明 <code>["sense-voice-2024-int8"]</code>。</td></tr>
 </table>
 
 <h3 id="p4-3">4.3 GPU runtime 与 EP</h3>
 <table>
-  <tr><th>平台 / 硬件</th><th>runtime 包</th><th>EP</th><th>说明</th></tr>
-  <tr><td>Linux + AMD</td><td><code>voime-gpu-linux-migraphx</code></td><td>MIGraphX</td><td>ROCm 7.2.1 + ORT 1.23.2；P0 第一实现平台。</td></tr>
-  <tr><td>Windows + AMD</td><td><code>voime-gpu-windows-directml</code></td><td>DirectML</td><td>P1；DirectML 已进入 sustained engineering，新功能转向 WinML。</td></tr>
-  <tr><td>Linux + NVIDIA</td><td><code>voime-gpu-linux-cuda</code></td><td>CUDA / TensorRT</td><td>P1；独立 runtime 包，不带 AMD 依赖。</td></tr>
-  <tr><td>Windows + NVIDIA</td><td><code>voime-gpu-windows-cuda</code></td><td>CUDA / TensorRT</td><td>P2；独立 runtime 包。</td></tr>
+  <tr><th>平台 / 硬件</th><th>FireRed runtime 包</th><th>Qwen runtime 包</th><th>runtime</th></tr>
+  <tr><td>Linux + AMD</td><td><code>voime-gpu-firered-linux-vulkan</code></td><td><code>voime-gpu-qwen3-linux-vulkan</code></td><td>Vulkan；P0</td></tr>
+  <tr><td>Windows + AMD</td><td><code>voime-gpu-firered-windows-vulkan</code></td><td><code>voime-gpu-qwen3-windows-vulkan</code></td><td>Vulkan；P1</td></tr>
+  <tr><td>Linux + NVIDIA</td><td><code>voime-gpu-firered-linux-cuda</code></td><td><code>voime-gpu-qwen3-linux-cuda</code></td><td>CUDA；P1</td></tr>
+  <tr><td>Windows + NVIDIA</td><td><code>voime-gpu-firered-windows-cuda</code></td><td><code>voime-gpu-qwen3-windows-cuda</code></td><td>CUDA；P2</td></tr>
   <tr><td>无 GPU / driver 不匹配</td><td>—</td><td>—</td><td>不启动 worker；Final 走 CPU SenseVoice。</td></tr>
 </table>
 <ul class="note">
-  <li>每个 runtime 包只带本环境 ORT / EP 库，单独目录、版本、SHA 与签名；安装需显式 opt-in。</li>
-  <li>worker 设置自己的 <code>ORT_DYLIB_PATH</code>，不继承 daemon 的 CPU ORT 路径。</li>
+  <li>每个 runtime 包只带本模型 + 本环境的 worker / runtime，单独目录、版本、SHA 与签名；安装需显式 opt-in。</li>
+  <li>worker 设置自己的 runtime / 库路径，不继承 daemon 的 CPU ONNX Runtime 路径。</li>
+  <li>不使用 ONNX Runtime GPU EP、MIGraphX 或 DirectML。</li>
 </ul>
 
 <h3 id="p4-4">4.4 错误与失败策略</h3>
 <table>
   <tr><th>错误</th><th>触发条件</th><th>处理</th></tr>
-  <tr><td><code>RuntimeMissing</code></td><td>runtime 目录缺失、版本不匹配或动态库加载失败。</td><td>worker 退出；daemon 标记 GPU Final 不可用；最终回退 CPU。</td></tr>
-  <tr><td><code>DeviceUnavailable</code></td><td>无 GPU、驱动不匹配、显存不足。</td><td>worker 退出；不加载 CPU AED；Preview 继续。</td></tr>
-  <tr><td><code>LoadFailed</code></td><td>encoder / decoder / metadata / SHA 校验失败。</td><td>worker 不进入 Ready；daemon 回滚 <code>active</code>。</td></tr>
+  <tr><td><code>RuntimeMissing</code></td><td>runtime 目录缺失、版本不匹配或动态库加载失败。</td><td>worker 退出；daemon 标记该 GPU Final 不可用；最终回退 CPU。</td></tr>
+  <tr><td><code>DeviceUnavailable</code></td><td>无 GPU、驱动不匹配、显存不足。</td><td>worker 退出；不加载 CPU AED / Qwen；Preview 继续。</td></tr>
+  <tr><td><code>LoadFailed</code></td><td>模型 / Punc / mmproj / metadata / SHA 校验失败。</td><td>worker 不进入 Ready；daemon 回滚 <code>active</code>。</td></tr>
   <tr><td><code>InferenceFailed</code></td><td>运行期推理失败。</td><td>当前段丢弃；daemon 重启 worker；连续失败回退 CPU。</td></tr>
   <tr><td><code>Timeout</code></td><td>handshake / transcribe 超预算。</td><td>daemon 杀 worker；按崩溃路径重建。</td></tr>
   <tr><td><code>ProtocolMismatch</code></td><td>worker / daemon 协议版本不一致。</td><td>拒绝加载；提示升级 runtime 或 daemon。</td></tr>

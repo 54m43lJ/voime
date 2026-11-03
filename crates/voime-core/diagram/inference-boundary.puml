@@ -21,7 +21,7 @@ loop 每个语音段
 end
 
 note over Core
-  FireRed AED 与 GPU ORT 不在本组件加载；
-  GPU Final 由 voimed 注入的 worker 处理。
+  FireRed / Qwen 与 GPU runtime 不在本组件加载；
+  GPU Final 由 voimed 注入的对应 worker 处理。
 end note
 @enduml

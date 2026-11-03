@@ -57,7 +57,7 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
   <li>不处理热键、输入焦点、目标绑定、临时窗口或文本提交。</li>
   <li>不提供 TUI、配置 UI 或会话历史；这些属于 <code>voime</code> 与 <code>voimed</code>。</li>
   <li>不做模型下载、导出或安装；安装脚本在根 <code>scripts/</code> / <code>tools/</code>。</li>
-  <li>不加载 GPU runtime、不启动 worker；可选 <code>voime-gpu</code> 由 daemon 管理。</li>
+  <li>不加载 GPU runtime、不启动 worker；可选的 <code>voime-gpu-firered</code> / <code>voime-gpu-qwen3</code> 由 daemon 管理。</li>
   <li>不保存音频、按键或识别文本到磁盘。</li>
 </ul>
 
@@ -83,9 +83,8 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
   <tr><th>拥有</th><th>不拥有</th></tr>
   <tr><td>16 kHz / 单声道 / <code>f32</code> 音频归一化与重采样</td><td>设备选择策略、平台隐私 / 通信设备策略</td></tr>
   <tr><td>FireRedVAD 流式推理与分段器</td><td>热键、模式切换、目标输入位置</td></tr>
-  <tr><td>SenseVoice Preview / CPU Final、fbank、CMVN、greedy 解码</td><td>GPU 模型、GPU EP、worker 生命周期</td></tr>
-  <tr><td>FireRedPunc 标点（GPU Final）</td><td>模型下载 / 安装 / 版本发布</td></tr>
-  <tr><td>pipeline 线程、Partial 节流、完成段队列、<code>FinalBackend</code></td><td>平台路径、日志、systemd / 登录启动</td></tr>
+  <tr><td>SenseVoice Preview / CPU Final、fbank、CMVN、greedy 解码</td><td>GPU 模型、Vulkan / CUDA runtime、worker 生命周期</td></tr>
+  <tr><td>pipeline 线程、Partial 节流、完成段队列、<code>FinalBackend</code> 注入</td><td>FireRed / Qwen GPU Final 模型解码与标点；平台路径、日志、systemd / 登录启动</td></tr>
   <tr><td>模型清单解析、SHA-256、张量校验</td><td>OS 传输端点、GPU runtime</td></tr>
 </table>
 <ul class="note">
@@ -102,8 +101,7 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
   <tr><td><a href="https://github.com/HEnquist/rubato">rubato</a></td><td>设备采样率到 16 kHz 的流式重采样</td><td>Rust · MIT</td></tr>
   <tr><td><a href="https://github.com/RustedBytes/kaldi-native-fbank">kaldi-native-fbank</a></td><td>与 SenseVoice / VAD 一致的 fbank 特征</td><td>Rust · Apache-2.0</td></tr>
   <tr><td><a href="https://onnxruntime.ai/">ONNX Runtime</a> / <code>ort</code></td><td>CPU 推理会话</td><td>C++ / Rust · MIT</td></tr>
-  <tr><td><a href="https://github.com/huggingface/tokenizers">tokenizers</a></td><td>FireRedPunc 的 BERT 分词</td><td>Rust · Apache-2.0</td></tr>
-  <tr><td><a href="https://github.com/FunAudioLLM/SenseVoice">SenseVoice</a> · <a href="https://github.com/FireRedTeam/FireRedVAD">FireRedVAD</a> · <a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedPunc</a></td><td>常驻识别、端点检测与 GPU Final 标点</td><td>ONNX · FunASR Model License / Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/FunAudioLLM/SenseVoice">SenseVoice</a> · <a href="https://github.com/FireRedTeam/FireRedVAD">FireRedVAD</a></td><td>常驻识别与端点检测</td><td>ONNX · FunASR Model License / Apache-2.0</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>音频与命令通道</td><td>Rust · MIT / Apache-2.0</td></tr>
 </table>
 

@@ -42,8 +42,6 @@
     ├── <a href="#c4-12">asr/sense_voice.rs</a>
     ├── <a href="#c4-13">asr/final.rs</a>
     ├── <a href="#c4-14">asr/tokenizer.rs</a>
-    ├── <a href="#c4-15">punc.rs</a>
-    ├── <a href="#c4-16">punc/firered.rs</a>
     ├── <a href="#c4-17">infer.rs</a>
     ├── <a href="#c4-18">infer/session.rs</a>
     └── <a href="#c4-19">pipeline.rs</a></code></pre>
@@ -68,7 +66,7 @@
   <tr><td>Partial 门槛</td><td>最小间隔、最小新增音频与尾部长度由 pipeline 模块常量拥有；一次慢推理会推迟下一次 Partial，避免立即重跑。</td></tr>
   <tr><td>分段与预卷</td><td><code>MIN_SPEECH_MS</code> / <code>MIN_SILENCE_MS</code> / <code>PTT_AUTO_END_MS</code> / <code>PRE_ROLL_MS</code> 由 segmenter 模块拥有；达到 <code>max_segment_ms</code> 时强制结束。预卷只扩展 ASR 输入窗口，不改变 VAD 判定。</td></tr>
   <tr><td>FinalBackend</td><td><code>FinalBackend</code> 是 pipeline 的唯一 Final 入口；CPU 实现为 SenseVoice，worker 实现由 daemon 注入；core 不依赖 GPU / worker crate。</td></tr>
-  <tr><td>模型校验</td><td>加载清单时校验 schema 3、采样率、张量声明、<code>requires</code> 与参数范围；<code>verify</code> 校验文件存在、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。</td></tr>
+  <tr><td>模型校验</td><td>加载清单时校验 schema 4、采样率、张量声明、<code>requires</code> 与参数范围；<code>verify</code> 校验文件存在、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。</td></tr>
   <tr><td>错误边界</td><td>库内部使用 <code>anyhow::Result</code> + 上下文；音频错误类型保留 <code>AudioError</code>；pipeline 把可恢复错误转为 <code>SegmentDropped</code>，worker 不可用由 daemon 回退。</td></tr>
   <tr><td>无 OS 依赖</td><td>不直接使用 Unix socket、named pipe、Fcitx、Win32 或 TUI API；<code>config</code> 只保留模型根目录的平台默认值回退（Windows 读 <code>LOCALAPPDATA</code>，Unix 走 XDG / HOME）。</td></tr>
 </table>
@@ -86,7 +84,6 @@
   <tr><td><code>rubato</code></td><td>设备采样率到 16 kHz 的流式重采样。</td></tr>
   <tr><td><code>kaldi-native-fbank</code></td><td>与 SenseVoice / VAD 对齐的 fbank 特征。</td></tr>
   <tr><td><code>ort</code></td><td>ONNX Runtime 会话、张量输入输出与 metadata。</td></tr>
-  <tr><td><code>tokenizers</code></td><td>FireRedPunc 的 WordPiece 分词。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>音频、命令与事件通道。</td></tr>
   <tr><td><code>serde</code> / <code>serde_json</code></td><td>模型清单、CMVN JSON 与标点标签解析。</td></tr>
   <tr><td><code>sha2</code></td><td>模型文件 SHA-256 校验。</td></tr>
@@ -104,7 +101,6 @@ pub mod config;
 pub mod infer;
 pub mod model;
 pub mod pipeline;
-pub mod punc;
 pub mod vad;</code></pre>
 
 <h3 id="c4-2">4.2 config.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -125,7 +121,7 @@ pub struct Artifact { /* 见 USER §4.3 */ }
 pub type VadArtifact = Artifact;
 pub struct AsrArtifact { /* 见 USER §4.3 */ }
 pub struct BackendManifest { /* 见 USER §4.3 */ }
-pub struct PuncArtifact { /* 见 USER §4.3 */ }
+pub struct AsrArtifact { /* 见 USER §4.3 */ }
 pub struct ModelManifest { /* 见 USER §4.3 */ }
 pub struct FbankManifest { /* 见 USER §4.3 */ }
 
@@ -343,8 +339,8 @@ pub struct FinalOutput {
 }
 </code></pre>
 <ul class="note">
-  <li><code>FinalBackend</code> 只接收原始 PCM；CPU 实现内部做 fbank，worker 实现把 PCM 发给 voime-gpu。</li>
-  <li>worker 实现由 <code>voimed</code> 注入，<code>voime-core</code> 不依赖 <code>voime-gpu</code> crate。</li>
+  <li><code>FinalBackend</code> 只接收原始 PCM；CPU 实现内部做 fbank，worker 实现把 PCM 发给对应 GPU worker。</li>
+  <li>worker 实现由 <code>voimed</code> 注入，<code>voime-core</code> 不依赖 <code>voime-gpu</code>。</li>
 </ul>
 
 <h3 id="c4-14">4.14 asr/tokenizer.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -359,36 +355,11 @@ impl AsrTokenizer {
 fn is_special(token: &amp;str) -&gt; bool;
 fn collapse_spaces(text: &amp;str) -&gt; String;</code></pre>
 
-<h3 id="c4-15">4.15 punc.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub mod firered;</code></pre>
-
-<h3 id="c4-16">4.16 punc/firered.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub const MAX_TOKENS: usize;
-
-pub struct PuncConfig { pub max_tokens: usize }
-impl Default for PuncConfig { /* MAX_TOKENS */ }
-
-pub struct FireRedPunc { /* session + tokenizer + labels */ }
-
-impl FireRedPunc {
-    pub fn new_with_factory(artifact: &amp;PuncArtifact,
-                            factory: &amp;SessionFactory,
-                            config: PuncConfig)
-        -&gt; anyhow::Result&lt;Self&gt;;
-    pub fn punctuate(&amp;mut self, text: &amp;str) -&gt; anyhow::Result&lt;String&gt;;
-    fn punctuate_chunk(&amp;mut self, text: &amp;str) -&gt; anyhow::Result&lt;String&gt;;
-}
-
-fn load_wordpiece(vocab: &amp;Path) -&gt; anyhow::Result&lt;HfTokenizer&gt;;
-fn split_chunks(text: &amp;str, max_tokens: usize) -&gt; Vec&lt;String&gt;;
-fn argmax(values: &amp;[f32]) -&gt; usize;
-fn fix_ascii_punctuation(text: &amp;str) -&gt; String;
-fn fix_english_text(text: &amp;str) -&gt; String;</code></pre>
-<ul class="note">
-  <li><code>punctuate</code> 按 token 上限切块，逐块推理并按字符偏移插入标签；最后修正 ASCII / 英文标点。</li>
-  <li>FireRedPunc 只服务 GPU Final；SenseVoice 使用模型内置标点，不加载本模块。</li>
-  <li>模型类别数小于标签表、输出长度不足或输入类型不支持时返回错误。</li>
-</ul>
+<h3 id="c4-15">4.15 Punc（不在本组件） <a class="backlink" href="#c1">文件树</a></h3>
+<p>
+FireRedPunc 已移到 FireRed worker；SenseVoice / Qwen 使用模型内置标点。
+<code>voime-core</code> 不加载 Punc，也不实现 Punc 会话。
+</p>
 
 <h3 id="c4-17">4.17 infer.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub mod session;</code></pre>
@@ -413,7 +384,7 @@ pub fn dtype_is_i64(dtype: &amp;str) -&gt; bool;
 fn normalize_dtype(dtype: &amp;str) -&gt; String;
 pub fn element_type_of(spec: &amp;TensorSpec) -&gt; anyhow::Result&lt;TensorElementType&gt;;</code></pre>
 <ul class="note">
-  <li><code>SessionFactory</code> 只创建 CPU Execution Provider 会话；GPU ORT / EP 由 <code>voime-gpu</code> 独立创建。</li>
+  <li><code>SessionFactory</code> 只创建 CPU Execution Provider 会话；Vulkan / CUDA runtime 由对应 GPU worker 独立创建。</li>
 </ul>
 
 <h3 id="c4-19">4.19 pipeline.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -438,7 +409,7 @@ impl Pipeline {
 }
 impl Drop for Pipeline { /* 发送 Shutdown 并 join */ }
 
-struct Worker { /* mode + vad + segmenter + preview + final + punc + queues */ }
+struct Worker { /* mode + vad + segmenter + preview + final + queues */ }
 impl Worker {
     fn new(manifest: &amp;ModelManifest, factory: &amp;SessionFactory,
            final_backend: Box&lt;dyn FinalBackend&gt;,
@@ -483,7 +454,7 @@ fn keeps_collecting_after_end(mode: Mode, reason: SegmentEndReason) -&gt; bool;<
     ├── ModelManifest::verify(model_dir)
     │   ├── verify_file(vad/model, sha256)
     │   ├── verify_file(asr/model.int8.onnx, sha256)
-    │   └── 判断 punc 存在 → verify_file(punc/model.onnx, sha256)
+    │   └── 判断 kind == fire-red-aed → 校验 FireRed worker 产物
     └── ModelManifest::rebase(model_dir)
 
 voime_core::pipeline::spawn(&amp;config, factory, final_backend, audio_rx)
@@ -491,7 +462,7 @@ voime_core::pipeline::spawn(&amp;config, factory, final_backend, audio_rx)
 └── Worker::new(&amp;manifest, &amp;factory, final_backend, events)
     ├── FireRedVad::new(&amp;manifest.vad, factory, VadConfig)
     ├── SenseVoice::new_with_factory(&amp;manifest.asr, factory)
-    ├── 判断 manifest.punc.is_some() → FireRedPunc::new_with_factory(...)
+    ├── 判断 Final 为 GPU → WorkerBackend 由 daemon 注入
     └── Segmenter::new(manifest.max_segment_ms, PRE_ROLL_MS)</code></pre>
 <ul class="note">
   <li>模型校验、会话创建与 worker 启动在 <code>pipeline::spawn</code> 返回前完成；任一步失败直接返回错误。</li>
@@ -564,8 +535,7 @@ Pipeline::finish_segment()
 ├── 判断 segment.samples.is_empty() → SegmentDropped("空语音段")
 ├── self.final_backend.transcribe(segment.samples)
 ├── 判断 asr.text.trim().is_empty() → SegmentDropped("空识别结果")
-├── 判断 self.manifest.asr.options.punc == Builtin → final = asr.text
-├── 判断 self.manifest.asr.options.punc == External → FireRedPunc::punctuate(&amp;asr.text)
+├── final = asr.text   // FireRed worker 已加标点；SenseVoice / Qwen 内置
 ├── Worker::reset_after_segment()
 └── 判断 final 非空 → PipelineEvent::Final(final)</code></pre>
 <ul class="note">
