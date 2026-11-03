@@ -38,7 +38,7 @@
   <tr><td>语音段（<code>Segment</code>）</td><td>分段器输出的一段 16 kHz 单声道样本及起止毫秒；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
   <tr><td>活动段</td><td>分段器当前正在累积的语音段；Partial 只读取活动段末尾。</td></tr>
   <tr><td>完成段队列</td><td>Continuous 模式下已结束、等待最终识别的语音段队列；有界，满时丢弃最旧段。</td></tr>
-  <tr><td>模型清单（<code>manifest.json</code>）</td><td>每个固定模型目录一份 JSON，声明本目录的 <code>schema</code> / <code>kind</code>、模型文件、SHA-256、张量契约、fbank 参数与分段上限；四个目录互不共享清单。</td></tr>
+  <tr><td>模型清单（<code>manifest.json</code>）</td><td>每个模型子目录一份 JSON，声明本目录的 <code>schema</code> / <code>kind</code>、模型文件、SHA-256、张量契约、fbank 参数与分段上限；模型目录共享资源包父目录，但不共享清单。</td></tr>
   <tr><td>Artifact</td><td>清单中一个 ONNX 模型条目：相对路径、SHA-256、输入 / 输出张量声明。</td></tr>
   <tr><td>PyTorch / ONNX 张量声明（<code>TensorSpec</code>）</td><td>张量名、dtype 与形状；用 <code>-1</code> 表示动态维。</td></tr>
   <tr><td>会话工厂（<code>SessionFactory</code>）</td><td>创建 CPU ONNX 会话并按清单校验输入 / 输出张量。</td></tr>
@@ -63,8 +63,8 @@
   <tr><td>Partial</td><td>按时间与新增音频双重门槛节流，只读取活动段末尾；固定由 SenseVoice 产生，不进入历史、不提交；可丢弃。</td></tr>
   <tr><td>Final</td><td>完整段交给 <code>FinalBackend</code>：CPU SenseVoice 或 daemon 注入的 worker；随后按 <code>PuncPolicy</code> 处理标点。空文本不产生 <code>Final</code>，产生 <code>SegmentDropped</code>。</td></tr>
   <tr><td>模式</td><td><code>Mode</code> 由 <a href="../voime-ipc/USER.html#u4-1">voime-ipc USER §4.1</a> 定义；核心只消费，不解析命令行。</td></tr>
-  <tr><td>模型生命周期</td><td>VAD 与 SenseVoice 始终加载；FireRed AED 与 Punc 只在两个目录都存在时加载。每段只重置解码状态，不重新加载权重。GPU worker 由 daemon 管理。</td></tr>
-  <tr><td>Final 选择</td><td>核心按固定目录解析：GPU 条件满足时加载 <code>fire-red-aed</code> + <code>punc</code> 的 manifest；否则使用 SenseVoice。没有 <code>active</code>、候选列表或重启后端。</td></tr>
+  <tr><td>模型生命周期</td><td>VAD 与 SenseVoice 始终加载；FireRedASR 与 Punc 只在后端设置为 GPU 且 firered 资源包完整时加载。每段只重置解码状态，不重新加载权重。GPU worker 由 daemon 管理。</td></tr>
+  <tr><td>Final 后端</td><td>核心读取 <code>models/backend</code>（或显式 <code>Args.backend</code>）：<code>cpu</code> 只加载 <code>default/</code> 资源包；<code>gpu</code> 再加载 <code>firered/</code> 资源包的 <code>fire-red-aed</code> + <code>punc</code>。没有 <code>active</code> 或候选列表。</td></tr>
   <tr><td>有界队列</td><td>完成段队列容量有限；慢识别时音频通道也可能丢弃，不承诺零丢失。</td></tr>
   <tr><td>错误策略</td><td>初始化失败返回错误；运行期单段失败产生 <code>SegmentDropped</code>；连续音频错误达到上限产生 <code>Fatal</code>。</td></tr>
   <tr><td>无持久化</td><td>不写音频、模型缓存或识别文本到磁盘；模型目录只读。</td></tr>
@@ -78,7 +78,7 @@
 <ul class="note">
   <li>调用方只发送命令并消费事件；重采样、VAD、分段与 SenseVoice 在 pipeline worker 内串行执行。</li>
   <li>PTT / Toggle 由调用方的 Start / Stop 驱动；Continuous 由 VAD 端点自动分段。</li>
-  <li>GPU Final 通过 daemon 注入的 worker 完成；Partial 始终由 SenseVoice 产生。</li>
+  <li>GPU 后端通过 daemon 注入的 worker 完成；Partial 始终由 SenseVoice 产生。</li>
   <li>队列与 Partial 节流的具体常量和内部状态见 <a href="CORE.html#c2">CORE §2</a>。</li>
 </ul>
 
@@ -98,6 +98,9 @@ pub struct PuncConfig {
 
 pub struct Config {
     pub model_root: PathBuf,
+    pub backend: Backend,
+    pub default_pack: PathBuf,
+    pub firered_pack: PathBuf,
     pub input_device: Option&lt;String&gt;,
     pub threads: usize,
     pub preview_enabled: bool,
@@ -111,32 +114,41 @@ pub struct Config {
 }
 
 pub struct Args {
+    pub backend: Option&lt;Backend&gt;,
     pub input_device: Option&lt;String&gt;,
     pub threads: Option&lt;usize&gt;,
     pub verbose: bool,
 }
 
 impl Config {
-    pub fn gpu_final(&amp;self) -&gt; bool;       // fire_red.is_some() &amp;&amp; punc.is_some()
+    pub fn gpu_final(&amp;self) -&gt; bool;       // backend == Backend::Gpu
     pub fn max_segment_ms(&amp;self) -&gt; u32;
 }
 
 pub fn resolve(args: Args) -&gt; anyhow::Result&lt;Config&gt;;
 pub fn resolve_at(root: &amp;Path, args: Args) -&gt; anyhow::Result&lt;Config&gt;;
+pub fn load_firered_pack(root: &amp;Path) -&gt; anyhow::Result&lt;(FireRedConfig, PuncConfig)&gt;;
+pub fn backend_file(root: &amp;Path) -&gt; PathBuf;
+pub fn read_backend(root: &amp;Path) -&gt; anyhow::Result&lt;Option&lt;Backend&gt;&gt;;
+pub fn write_backend(root: &amp;Path, backend: Backend) -&gt; anyhow::Result&lt;()&gt;;
 pub fn default_model_root() -&gt; PathBuf;</code></pre>
 
 <table>
   <tr><th>字段 / 函数</th><th>契约</th></tr>
   <tr><td><code>model_root</code></td><td>模型根目录；默认 <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）。Windows 优先使用 <code>%LOCALAPPDATA%\voime\models</code>，仅在 <code>LOCALAPPDATA</code> 未设置时回退到 XDG / HOME 路径。</td></tr>
-  <tr><td><code>vad_dir</code> / <code>vad_manifest</code></td><td><code>model_root/vad</code> 与已加载、校验并重定位的 VAD 清单；始终存在。</td></tr>
-  <tr><td><code>sense_voice_dir</code> / <code>sense_voice_manifest</code></td><td><code>model_root/sense-voice</code> 与已加载、校验并重定位的 SenseVoice 清单；始终存在，服务 Preview 与 CPU Final。</td></tr>
-  <tr><td><code>fire_red</code> / <code>punc</code></td><td>目录与清单都存在时为 <code>Some</code>；两者必须同时存在或同时缺失。</td></tr>
+  <tr><td><code>backend</code></td><td><code>cpu</code> 或 <code>gpu</code>；显式 <code>Args.backend</code> 优先，否则读 <code>model_root/backend</code>，缺失时 CPU。</td></tr>
+  <tr><td><code>default_pack</code> / <code>firered_pack</code></td><td><code>model_root/default</code> 与 <code>model_root/firered</code> 资源包目录。</td></tr>
+  <tr><td><code>vad_dir</code> / <code>vad_manifest</code></td><td><code>model_root/default/vad</code> 与已加载、校验并重定位的 VAD 清单；始终存在。</td></tr>
+  <tr><td><code>sense_voice_dir</code> / <code>sense_voice_manifest</code></td><td><code>model_root/default/sense-voice</code> 与已加载、校验并重定位的 SenseVoice 清单；始终存在，服务 Preview 与 CPU 后端 Final。</td></tr>
+  <tr><td><code>fire_red</code> / <code>punc</code></td><td>仅 <code>backend=gpu</code> 时为 <code>Some</code>，对应 <code>model_root/firered/fire-red-aed</code> 与 <code>model_root/firered/punc</code>；两者必须同时存在。</td></tr>
   <tr><td><code>input_device</code></td><td><code>None</code> 使用系统默认输入设备；<code>Some(name)</code> 按设备名精确匹配。</td></tr>
   <tr><td><code>threads</code></td><td>ONNX Runtime intra-op 线程数；必须大于 0。</td></tr>
-  <tr><td><code>preview_enabled</code></td><td>是否产生 Partial；默认 <code>true</code>。Preview 始终使用固定 SenseVoice 目录，与 GPU Final 无关。</td></tr>
+  <tr><td><code>preview_enabled</code></td><td>是否产生 Partial；默认 <code>true</code>。Preview 始终使用 default 资源包的 SenseVoice，与后端选择无关。</td></tr>
   <tr><td><code>pre_roll_ms</code></td><td>交给 ASR 的段前音频长度；默认 250 ms；不改变 VAD 判定。</td></tr>
-  <tr><td><code>gpu_final</code></td><td>仅当 <code>fire_red</code> 与 <code>punc</code> 都为 <code>Some</code> 时返回 <code>true</code>；否则使用 CPU SenseVoice。</td></tr>
-  <tr><td><code>resolve</code></td><td>按固定目录加载 <code>vad</code> 与 <code>sense-voice</code> → 检查 <code>fire-red-aed</code> / <code>punc</code> 目录 → 两者都在时加载其清单 / SHA-256 / 张量 / 词表 → 重定位路径；只存在一个时返回安装不完整错误。</td></tr>
+  <tr><td><code>gpu_final</code></td><td><code>backend == gpu</code> 时返回 <code>true</code>；CPU 后端不加载 firered 资源包。</td></tr>
+  <tr><td><code>resolve</code></td><td>解析后端设置 → 加载 <code>default/vad</code> 与 <code>default/sense-voice</code> → <code>gpu</code> 时加载 <code>firered/</code> 的清单 / SHA-256 / 张量 / 词表；firered 不完整或初始化失败时返回错误。</td></tr>
+  <tr><td><code>load_firered_pack</code></td><td>独立加载并校验 firered 资源包；daemon 在空闲切换到 GPU 时复用。</td></tr>
+  <tr><td><code>read_backend</code> / <code>write_backend</code></td><td>读写 <code>model_root/backend</code>；写入使用临时文件 + rename；缺失按 CPU。</td></tr>
   <tr><td><code>resolve_at</code></td><td>在显式模型根目录上执行同一解析；测试与 doctor 使用。</td></tr>
   <tr><td><code>default_model_root</code></td><td>平台默认模型根目录；端点由 <a href="../voime-transport/USER.html">voime-transport</a> 管理。</td></tr>
 </table>
@@ -183,10 +195,15 @@ impl CaptureHandle {
 pub const SCHEMA_VERSION: u32 = 3;
 pub const SAMPLES_PER_SECOND: u32 = 16_000;
 
+pub const DEFAULT_PACK_DIR: &amp;str = "default";
+pub const FIRERED_PACK_DIR: &amp;str = "firered";
 pub const VAD_DIR: &amp;str = "vad";
 pub const SENSE_VOICE_DIR: &amp;str = "sense-voice";
 pub const FIRE_RED_AED_DIR: &amp;str = "fire-red-aed";
 pub const PUNC_DIR: &amp;str = "punc";
+
+pub fn default_pack_root(model_root: &amp;Path) -&gt; PathBuf;
+pub fn firered_pack_root(model_root: &amp;Path) -&gt; PathBuf;
 
 pub struct TensorSpec {
     pub name: String,
@@ -261,16 +278,16 @@ pub fn resolve_inside(dir: &amp;Path, relative: &amp;Path) -&gt; anyhow::Result&
 
 <table>
   <tr><th>字段 / 函数</th><th>契约</th></tr>
-  <tr><td>目录布局</td><td><code>model_root/vad</code>、<code>model_root/sense-voice</code>、<code>model_root/fire-red-aed</code>、<code>model_root/punc</code>；每个目录一份 <code>manifest.json</code>，名称固定。</td></tr>
+  <tr><td>目录布局</td><td><code>model_root/default/vad</code>、<code>model_root/default/sense-voice</code>、<code>model_root/firered/fire-red-aed</code>、<code>model_root/firered/punc</code>；每个模型子目录一份 <code>manifest.json</code>。</td></tr>
   <tr><td><code>schema</code></td><td>只接受 <code>3</code>；旧 schema 直接拒绝，不做字段推断或默认值补齐。</td></tr>
-  <tr><td><code>kind</code></td><td>必须与目录对应：<code>vad</code> / <code>sense-voice</code> / <code>fire-red-aed</code> / <code>punc</code>。</td></tr>
+  <tr><td><code>kind</code></td><td>必须与模型子目录对应：<code>vad</code> / <code>sense-voice</code> / <code>fire-red-aed</code> / <code>punc</code>。</td></tr>
   <tr><td><code>fbank</code></td><td>VAD / SenseVoice / AED 参数；SenseVoice 显式 <code>hamming</code>，AED 使用 <code>povey</code>；具体值与预处理见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td></tr>
   <tr><td><code>max_segment_ms</code></td><td>SenseVoice 与 FireRed AED 的单段上限；SenseVoice 为 20 s，FireRed AED 为 30 s；达到上限强制结束并继续收集后续语音。</td></tr>
   <tr><td><code>model</code> / <code>encoder</code> / <code>decoder</code></td><td>ONNX 文件、SHA-256 与张量声明；<code>verify</code> 校验文件存在、非空且摘要匹配。</td></tr>
   <tr><td><code>tokens</code> / <code>token_count</code></td><td>SenseVoice 为 <code>tokens.txt</code> + 25055；FireRed AED 为 <code>tokens.txt</code>，FP16 允许 7832（官方 v1）或 8667（v2），INT8 只允许 7832。</td></tr>
   <tr><td><code>options</code></td><td>SenseVoice 的 <code>language</code> / <code>use_itn</code> / <code>partial</code>；<code>use_itn</code> 必须为 <code>true</code>，内置标点。</td></tr>
-  <tr><td><code>punc</code> 目录</td><td>独立 <code>punc/manifest.json</code>，含 <code>model</code> / <code>vocab</code> / <code>labels</code> / <code>max_tokens</code>；只服务 GPU Final。</td></tr>
-  <tr><td>无跨目录字段</td><td>没有 <code>requires</code>、<code>backend</code> 或 package_id；是否使用 GPU Final 由 <code>fire-red-aed</code> 与 <code>punc</code> 目录是否同时存在决定。</td></tr>
+  <tr><td><code>punc</code> 目录</td><td><code>firered/punc/manifest.json</code>，含 <code>model</code> / <code>vocab</code> / <code>labels</code> / <code>max_tokens</code>；只服务 GPU 后端。</td></tr>
+  <tr><td>无跨目录字段</td><td>没有 <code>requires</code>、<code>backend</code> 或 package_id；后端设置决定是否加载 firered 资源包。</td></tr>
   <tr><td><code>resolve_inside</code></td><td>拒绝绝对路径、<code>..</code> 与空路径，防止模型目录逃逸。</td></tr>
 </table>
 
@@ -279,7 +296,15 @@ pub fn resolve_inside(dir: &amp;Path, relative: &amp;Path) -&gt; anyhow::Result&
     StartSegment,
     FinishSegment,
     SetMode(Mode),
+    ReplaceFinal(Box&lt;FinalUpdate&gt;),
     Shutdown,
+}
+
+pub struct FinalUpdate {
+    pub backend: Box&lt;dyn FinalBackend&gt;,
+    pub punc: Option&lt;FireRedPunc&gt;,
+    pub punc_policy: PuncPolicy,
+    pub max_segment_ms: u32,
 }
 
 pub enum PipelineEvent {
@@ -309,6 +334,7 @@ impl Pipeline {
     pub fn start_segment(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
     pub fn finish_segment(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
     pub fn set_mode(&amp;self, mode: Mode) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn replace_final(&amp;self, update: FinalUpdate) -&gt; anyhow::Result&lt;()&gt;;
     pub fn shutdown(self) -&gt; anyhow::Result&lt;()&gt;;
 }</code></pre>
 
@@ -320,7 +346,7 @@ impl Pipeline {
   <tr><td><code>Recording(true/false)</code></td><td>采集开始 / 结束；Toggle 可在 Final 后再次产生 <code>Recording(true)</code>。</td><td>更新前端录音标记与 daemon phase。</td></tr>
   <tr><td><code>Partial(text)</code></td><td>活动段末尾的临时识别；固定由 SenseVoice 产生；可丢弃。</td><td>显示临时文本，不提交。</td></tr>
   <tr><td><code>Final(text)</code></td><td>完整段经 <code>FinalBackend</code> 识别并按 <code>PuncPolicy</code> 加标点后的最终文本。</td><td>加入历史并广播。</td></tr>
-  <tr><td><code>SegmentDropped</code></td><td>当前段因空音频、音频过短、Final 推理 / 标点失败等原因被丢弃。</td><td>清空临时文本，继续监听；daemon 决定是否回退 Final。</td></tr>
+  <tr><td><code>SegmentDropped</code></td><td>当前段因空音频、音频过短、Final 推理 / 标点失败等原因被丢弃。</td><td>清空临时文本，继续监听；daemon 决定是否回退 CPU。</td></tr>
   <tr><td><code>Fatal</code></td><td>音频流连续失败或不可恢复的核心错误。</td><td>daemon 记录并退出。</td></tr>
   <tr><td><code>shutdown</code></td><td>发送 Shutdown 并等待 pipeline 退出；worker 由 daemon 另行关闭。</td><td>daemon 停止服务。</td></tr>
 </table>
@@ -346,7 +372,7 @@ impl Pipeline {
   <tr><td><code>PlayStream</code> / <code>PauseStream</code></td><td>启动或暂停输入流失败。</td><td>启动失败；重试后仍失败则提示设备不可用。</td></tr>
   <tr><td><code>StreamLost</code> / 流错误哨兵</td><td>运行期音频流错误。</td><td>丢弃当前段；连续失败达到上限后 daemon 退出。</td></tr>
   <tr><td>模型加载错误</td><td>清单缺失、SHA 不匹配、张量不符、词表格式错误。</td><td>启动失败；重新安装模型。</td></tr>
-  <tr><td><code>SegmentDropped</code></td><td>单段 Final 推理失败、GPU worker 不可用或结果为空。</td><td>丢弃该段；daemon 可回退 CPU SenseVoice 并继续监听。</td></tr>
+  <tr><td><code>SegmentDropped</code></td><td>单段推理失败、GPU worker 不可用或结果为空。</td><td>丢弃该段；daemon 可回退 CPU SenseVoice 并继续监听。</td></tr>
   <tr><td><code>Fatal</code></td><td>不可恢复的音频 / 核心错误。</td><td>daemon 退出并记录日志。</td></tr>
 </table>
 

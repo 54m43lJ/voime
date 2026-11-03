@@ -33,7 +33,7 @@ ONNX Runtime EP 的契约见 <a href="PROVIDER.html">PROVIDER</a>；进程监督
 
 <table>
   <tr><th>术语</th><th>定义</th></tr>
-  <tr><td>worker</td><td><code>voime-gpu</code> 进程；只处理 GPU Final，不处理 Partial、VAD 或标点。</td></tr>
+  <tr><td>worker</td><td><code>voime-gpu</code> 进程；只处理 GPU 后端的 FireRedASR，不处理 Partial、VAD 或标点。</td></tr>
   <tr><td>协议（protocol）</td><td>worker 与 daemon 之间的独立帧协议；与前端 IPC 的 <code>PROTOCOL_VERSION</code> 无关。</td></tr>
   <tr><td>frame</td><td><code>u32 header_len</code> + UTF-8 JSON 头 + <code>u32 audio_len</code> + little-endian <code>f32</code> PCM。</td></tr>
   <tr><td>handshake</td><td>daemon 启动 worker 后发送 <code>Hello</code>，worker 加载模型并返回 <code>Ready</code>。</td></tr>
@@ -63,7 +63,7 @@ ONNX Runtime EP 的契约见 <a href="PROVIDER.html">PROVIDER</a>；进程监督
 <h3 id="u3-1">3.1 worker 生命周期</h3>
 <div class="diagram"><img src="diagram/lifecycle.svg" alt="voimed 启动、握手、推理与关闭 voime-gpu 的时序图"></div>
 <ul class="note">
-  <li>CPU Final 不启动 worker；GPU Final 才 spawn / handshake。</li>
+  <li>CPU 后端不启动 worker；只有后端设置为 GPU 且 firered 资源包完整时才 spawn / handshake。</li>
   <li>worker 崩溃、超时或显存不足时由 daemon 重启或回退 CPU SenseVoice。</li>
 </ul>
 
@@ -86,7 +86,7 @@ ONNX Runtime EP 的契约见 <a href="PROVIDER.html">PROVIDER</a>；进程监督
   <tr><td><code>--device</code></td><td><code>auto</code> 或 runtime 支持的设备名；只影响 GPU EP。</td></tr>
   <tr><td><code>--verbose</code></td><td>诊断输出到 stderr；stdout 仍只用于协议。</td></tr>
   <tr><td><code>VOIME_LOG</code></td><td>由 daemon 传入；worker 只写 stderr，由 daemon 统一落盘；不记录识别文本。</td></tr>
-  <tr><td><code>ORT_DYLIB_PATH</code></td><td>worker 自己设置 GPU ORT 路径；不继承 daemon 的 CPU ORT 路径。</td></tr>
+  <tr><td><code>VOIME_GPU_BIN</code></td><td>指向自包含 worker；provider 动态库放在同一目录。worker 不继承 daemon 的 CPU ORT 路径。</td></tr>
 </table>
 
 <h3 id="u4-2">4.2 协议</h3>
@@ -112,7 +112,7 @@ Response
 <table>
   <tr><th>消息</th><th>方向</th><th>语义</th></tr>
   <tr><td><code>Hello</code></td><td>daemon → worker</td><td>声明协议版本、manifest 路径与 device；worker 校验后加载模型。</td></tr>
-  <tr><td><code>Ready</code></td><td>worker → daemon</td><td>模型 / EP / 设备就绪；<code>supports_partial=false</code> 只描述 FireRed Final。</td></tr>
+  <tr><td><code>Ready</code></td><td>worker → daemon</td><td>模型 / EP / 设备就绪；<code>supports_partial=false</code> 只描述 FireRed 输出。</td></tr>
   <tr><td><code>Transcribe</code></td><td>daemon → worker</td><td>发送一个完整 Final 段的 PCM；<code>id</code> 用于匹配 Result / Error。</td></tr>
   <tr><td><code>Result</code></td><td>worker → daemon</td><td>纯文本、耗时与 RTF；不含 Partial，不做标点。</td></tr>
   <tr><td><code>Cancel</code></td><td>daemon → worker</td><td>取消当前请求；worker 尽快返回 <code>Error{Timeout}</code> 或丢弃结果。</td></tr>
@@ -122,9 +122,9 @@ Response
 <h3 id="u4-3">4.3 错误码</h3>
 <table>
   <tr><th>错误码</th><th>含义</th><th>daemon 动作</th></tr>
-  <tr><td><code>RuntimeMissing</code></td><td>GPU runtime 未安装 / 版本不匹配。</td><td>标记 GPU Final 不可用；Preview / CPU Final 继续；提示安装 runtime。</td></tr>
-  <tr><td><code>DeviceUnavailable</code></td><td>无 GPU、驱动不匹配、显存不足。</td><td>worker 不可用；Final 回退 CPU SenseVoice；不加载 AED CPU。</td></tr>
-  <tr><td><code>LoadFailed</code></td><td>模型 / EP / 张量校验失败。</td><td>GPU Final 初始化失败；daemon 回退 CPU SenseVoice，Preview 继续。</td></tr>
+  <tr><td><code>RuntimeMissing</code></td><td>GPU runtime 未安装 / 版本不匹配。</td><td>标记 GPU 后端不可用；Preview / CPU 后端继续；提示安装 runtime。</td></tr>
+  <tr><td><code>DeviceUnavailable</code></td><td>无 GPU、驱动不匹配、显存不足。</td><td>worker 不可用；daemon 回退 CPU SenseVoice；不加载 AED CPU。</td></tr>
+  <tr><td><code>LoadFailed</code></td><td>模型 / EP / 张量校验失败。</td><td>GPU 后端初始化失败；daemon 回退 CPU SenseVoice，Preview 继续。</td></tr>
   <tr><td><code>InferenceFailed</code></td><td>运行期推理失败。</td><td>当前段丢弃；重启 worker；连续失败标记不可用。</td></tr>
   <tr><td><code>Timeout</code></td><td>超过请求预算。</td><td>杀 worker；按崩溃路径处理。</td></tr>
   <tr><td><code>ProtocolMismatch</code></td><td>worker / daemon 协议版本不一致。</td><td>拒绝加载；提示升级 runtime 或 daemon。</td></tr>
@@ -133,15 +133,15 @@ Response
 <h3 id="u4-4">4.4 超时与重启</h3>
 <table>
   <tr><th>阶段</th><th>默认预算</th><th>失败处理</th></tr>
-  <tr><td>spawn</td><td>无法执行 / 退出码非零</td><td><code>BackendFailed</code>；Final 回退 CPU。</td></tr>
+  <tr><td>spawn</td><td>无法执行 / 退出码非零</td><td><code>BackendFailed</code>；daemon 回退 CPU。</td></tr>
   <tr><td>handshake</td><td>120 s</td><td>杀 worker；重试或回退 CPU。</td></tr>
   <tr><td>transcribe</td><td>60 s</td><td>杀 worker 并重建；当前段丢弃。</td></tr>
   <tr><td>health</td><td>2 s</td><td>连续失败进入重启；不阻塞录音。</td></tr>
   <tr><td>shutdown</td><td>5 s</td><td>Windows Job Object / Linux 进程组强杀，确保无孤儿。</td></tr>
 </table>
 <ul class="note">
-  <li>worker 崩溃退避 1 s / 2 s / 5 s，最多 3 次；仍失败则 Final 回退 CPU SenseVoice 或报错，Preview 继续。</li>
-  <li>CPU Final 不启动 worker；GPU Final 才付出进程与显存成本。</li>
+  <li>worker 崩溃退避 1 s / 2 s / 5 s，最多 3 次；仍失败则 daemon 回退 CPU SenseVoice 或报错，Preview 继续。</li>
+  <li>CPU 后端不启动 worker；GPU 后端才付出进程与显存成本。</li>
 </ul>
 
 </body>

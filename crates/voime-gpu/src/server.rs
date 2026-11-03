@@ -54,7 +54,7 @@ impl Server {
                 Request::Hello {
                     protocol,
                     manifest,
-                    device,
+                    ..
                 } => {
                     if protocol != PROTOCOL_VERSION {
                         write_error(
@@ -65,19 +65,6 @@ impl Server {
                         )?;
                         bail!("worker 协议版本不匹配");
                     }
-                    let runtime = match GpuRuntime::load(&device) {
-                        Ok(runtime) => runtime,
-                        Err(error) => {
-                            write_error(
-                                &mut output,
-                                None,
-                                ErrorCode::DeviceUnavailable,
-                                &format!("{error:#}"),
-                            )?;
-                            bail!("重新加载 GPU runtime 失败：{error:#}");
-                        }
-                    };
-                    self.runtime = runtime;
                     match FireRedAed::load(std::path::Path::new(&manifest), &self.runtime) {
                         Ok(aed) => {
                             self.aed = Some(aed);

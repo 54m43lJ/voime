@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{bail, Context};
-use ort::ep::ExecutionProviderDispatch;
+use ort::environment::Environment;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 
@@ -9,7 +9,7 @@ use ort::session::Session;
 pub struct GpuRuntime {
     device: String,
     provider: String,
-    providers: Vec<ExecutionProviderDispatch>,
+    env: Environment,
 }
 
 impl GpuRuntime {
@@ -59,25 +59,24 @@ impl GpuRuntime {
                 "RuntimeMissing：voime-gpu 未启用 GPU EP（构建时选择 migraphx / directml / cuda）"
             );
         }
-        let _ = ort::init()
+        let env = ort::init()
             .with_name("voime-gpu")
             .with_telemetry(false)
-            .with_execution_providers(providers.clone())
-            .commit();
+            .with_execution_providers(providers)
+            .build()
+            .context("创建 ONNX Runtime GPU 环境失败")?;
         Ok(Self {
             device: device.to_string(),
             provider: names.join(","),
-            providers,
+            env,
         })
     }
 
     pub fn create(&self, model: &Path) -> anyhow::Result<Session> {
-        let mut builder = Session::builder()
+        let mut builder = Session::builder(&self.env)
             .map_err(|error| anyhow::anyhow!("创建 GPU ONNX 会话构建器失败：{error}"))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|error| anyhow::anyhow!("设置图优化级别失败：{error}"))?
-            .with_execution_providers(self.providers.clone())
-            .map_err(|error| anyhow::anyhow!("注册 GPU Execution Provider 失败：{error}"))?;
+            .map_err(|error| anyhow::anyhow!("设置图优化级别失败：{error}"))?;
         builder
             .commit_from_file(model)
             .with_context(|| format!("加载 GPU ONNX 模型失败 {}", model.display()))

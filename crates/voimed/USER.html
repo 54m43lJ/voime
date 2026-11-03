@@ -31,11 +31,11 @@
 
 <table>
   <tr><th>术语</th><th>定义</th></tr>
-  <tr><td>daemon</td><td><code>voimed</code> 进程；拥有音频、固定模型目录加载、pipeline、会话状态与 IPC 服务。</td></tr>
-  <tr><td>Final 后端</td><td>产生 Final 的路径：CPU SenseVoice，或 <code>fire-red-aed</code> + <code>punc</code> 目录都存在时的 GPU FireRed AED（<code>voime-gpu</code>）。启动时自动决定。</td></tr>
+  <tr><td>daemon</td><td><code>voimed</code> 进程；拥有音频、资源包加载、pipeline、会话状态、后端设置与 IPC 服务。</td></tr>
+  <tr><td>Final 后端</td><td>产生 Final 的路径：CPU SenseVoice，或 GPU FireRedASR（<code>voime-gpu</code>）+ CPU FireRedPunc。由设置选择，启动时读取 <code>models/backend</code>。</td></tr>
   <tr><td>Preview</td><td>语音段进行中的 Partial 路径；固定由常驻 SenseVoice 产生，不受 Final 后端影响。</td></tr>
-  <tr><td>固定模型目录</td><td><code>models/vad</code>、<code>models/sense-voice</code>、<code>models/fire-red-aed</code>、<code>models/punc</code>；每个目录一份 manifest。没有 <code>active</code> 或 package_id。</td></tr>
-  <tr><td>worker / <code>voime-gpu</code></td><td>可选 GPU Final 进程；daemon 负责 spawn、handshake、超时、重启与回退。</td></tr>
+  <tr><td>资源包</td><td><code>models/default/</code>（<code>vad</code>、<code>sense-voice</code>）与 <code>models/firered/</code>（<code>fire-red-aed</code>、<code>punc</code>）；每个模型子目录一份 manifest。没有 <code>active</code> 或 package_id。</td></tr>
+  <tr><td>worker / <code>voime-gpu</code></td><td>可选 GPU 后端进程；daemon 负责 spawn、handshake、超时、重启与回退。</td></tr>
   <tr><td>会话（session）</td><td>从 PTT 按下、Toggle 开始或 Continuous 首个段开始，到停止 / 失焦 / 断线为止的一段用户交互。一个 Toggle 会话可以包含多个语音段。</td></tr>
   <tr><td>语音段（segment）</td><td>产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>；daemon 为每段分配 <code>segment_id</code>。</td></tr>
   <tr><td>当前段</td><td><code>current_segment</code>；同一时刻最多一个，Final / SegmentDropped 后清空。</td></tr>
@@ -53,10 +53,10 @@
 
 <table>
   <tr><th>约定</th><th>内容</th></tr>
-  <tr><td>模式所有权</td><td>Mode / Hotkey 来自前端 <code>Hello</code> / <code>Configure</code>；daemon 只保存并消费，不解析命令行模式。</td></tr>
-  <tr><td>SenseVoice 常驻</td><td><code>models/sense-voice</code> 始终加载，负责所有 Preview 与 CPU Final；GPU Final 不改变 Preview。</td></tr>
-  <tr><td>单 Final</td><td>同一时刻只有一个 Final 后端；CPU SenseVoice 与 GPU FireRed AED 二选一。GPU 初始化或运行失败时回退 CPU SenseVoice，不加载 CPU AED。</td></tr>
-  <tr><td>模型重载</td><td>启动时按目录存在性决定 CPU / GPU Final；没有运行时切换或重启后端。安装、替换或删除模型目录后重启 <code>voimed</code> 进程。</td></tr>
+  <tr><td>模式所有权</td><td>Mode / Hotkey 来自前端 <code>Hello</code> / <code>Configure</code>；后端来自 <code>models/backend</code>、<code>--backend</code> 或 <code>SetBackend</code>。daemon 只保存并消费，不解析命令行模式。</td></tr>
+  <tr><td>SenseVoice 常驻</td><td><code>default/sense-voice</code> 始终加载，负责所有 Preview 与 CPU 后端 Final；GPU 后端不改变 Preview。</td></tr>
+  <tr><td>单后端</td><td>同一时刻只有一个 Final 后端；CPU SenseVoice 与 GPU FireRedASR 二选一。切换通过 <code>SetBackend</code>，仅空闲时执行。GPU 初始化或运行失败时回退 CPU SenseVoice，不加载 CPU AED。</td></tr>
+  <tr><td>后端持久化</td><td><code>models/backend</code> 保存 <code>cpu</code> / <code>gpu</code>；缺失为 CPU。启动时读取，<code>--backend</code> 可覆盖本次运行；IPC 切换成功后写回。</td></tr>
   <tr><td>单活动段</td><td>同一时刻只有一个语音段；Recording / Finalizing 期间新的 Start 返回 <code>busy</code>。</td></tr>
   <tr><td>ID 分配</td><td>daemon 递增分配 <code>segment_id</code>；客户端传入的 ID 只是提示；<code>SegmentStarted</code> 是权威值。</td></tr>
   <tr><td>Stop 匹配</td><td><code>Stop</code> 的非零 ID 在 PTT / Continuous 下必须匹配当前段；0 表示停止当前段。Toggle 忽略 ID，停止当前 Toggle 段。</td></tr>
@@ -67,7 +67,7 @@
   <tr><td>历史</td><td>只存最终文本；<code>ClearHistory</code> 保留当前段与 partial。</td></tr>
   <tr><td>角色</td><td>只允许一个 <code>frontend</code> 连接；<code>Configure</code> 只接受前端；<code>Quit</code> 只接受 <code>control</code>。</td></tr>
   <tr><td>退出顺序</td><td>广播 <code>Bye</code> → 关闭 IPC → 停止 worker → 停止 pipeline → 停止音频 → 删除端点。</td></tr>
-  <tr><td>无持久化</td><td>不写音频、按键或历史到磁盘；daemon 退出后历史丢失。模型目录只读，没有任何 Final 选择文件。</td></tr>
+  <tr><td>无历史持久化</td><td>不写音频、按键或历史到磁盘；daemon 退出后历史丢失。资源包只读，后端选择写入 <code>models/backend</code>。</td></tr>
   <tr><td>端点</td><td>daemon 通过 <a href="../voime-transport/USER.html">voime-transport</a> 绑定端点；Unix 使用文件系统 socket，Windows 使用命名管道。</td></tr>
 </table>
 
@@ -80,7 +80,7 @@
   <li>PTT / Continuous 每段回到 Idle；Toggle 在 Final 后回到 Recording，保留同一个会话。</li>
   <li>空段、识别错误与目标失焦都回到 Idle；最终文本是否保留由前端决定。</li>
   <li>前端断线会停止当前段并把有效模式退回 <code>ptt</code>。</li>
-  <li>启动时按固定目录选择的 Final 路径不改变 SenseVoice Preview 与会话状态；更换模型需重启进程。</li>
+  <li>后端设置不改变 SenseVoice Preview 与会话状态；录音中不切换，空闲时只重建 Final 路径。</li>
 </ul>
 
 <h3 id="u3-2">3.2 Continuous 自动分段</h3>
@@ -88,36 +88,39 @@
 <ul class="note">
   <li>VAD 起点触发 <code>SegmentStarted</code>；无需客户端发送 Start。</li>
   <li>完成段进入有界队列，识别慢时丢弃最旧段；音频通道也可能丢弃。</li>
-  <li>Partial 固定 SenseVoice；Final 可走 CPU SenseVoice 或 GPU FireRed，失败时回退 CPU。</li>
+  <li>Partial 固定 SenseVoice；Final 可走 CPU SenseVoice 或 GPU FireRedASR，失败时回退 CPU。</li>
 </ul>
 
-<h3 id="u3-3">3.3 启动时 Final 选择与回退</h3>
+<h3 id="u3-3">3.3 启动时后端选择与回退</h3>
+<div class="diagram"><img src="diagram/backend-restart.svg" alt="空闲时 SetBackend 重建 Final 路径与 GPU 回退的时序图"></div>
 <ul class="note">
-  <li>启动时始终加载 <code>vad</code> 与 <code>sense-voice</code>；再检查 <code>fire-red-aed</code> 与 <code>punc</code> 目录。</li>
-  <li>两个 GPU 目录都存在时 spawn <code>voime-gpu</code> 并握手；失败或 GPU Final 不可用时自动使用 CPU SenseVoice。</li>
-  <li>只存在一个 GPU 目录时启动失败并报告安装不完整；两个都不存在时直接使用 CPU Final。</li>
-  <li>没有模型选择、<code>active</code>、待重启或重启后端；更换目录后重启 <code>voimed</code>。</li>
+  <li>启动时始终加载 <code>default/vad</code> 与 <code>default/sense-voice</code>；后端设置为 <code>gpu</code> 时再加载 <code>firered/</code>。</li>
+  <li>后端为 GPU 时 spawn <code>voime-gpu</code> 并握手；失败时回退 CPU SenseVoice 并写入 <code>backend=cpu</code>。</li>
+  <li>firered 资源包不完整时 GPU 后端加载失败；CPU 后端不读取 firered。</li>
+  <li>后端选择来自 <code>models/backend</code>、<code>--backend</code> 或空闲时的 <code>SetBackend</code>；没有 <code>active</code> 或模型候选列表。</li>
 </ul>
 
 <h3 id="u3-4">3.4 GPU worker 生命周期</h3>
 <div class="diagram"><img src="diagram/gpu-worker.svg" alt="voimed 与可选 voime-gpu 的启动、握手、推理与关闭时序图"></div>
 <ul class="note">
-  <li>CPU Final 不启动 worker；只有 <code>fire-red-aed</code> 与 <code>punc</code> 目录都存在且 GPU 初始化成功时才 spawn <code>voime-gpu</code>。</li>
-  <li>worker 崩溃 / 超时 / 显存不足时重启或回退 CPU Final；Preview 不中断。</li>
+  <li>CPU 后端不启动 worker；只有后端设置为 GPU 且 firered 初始化成功时才 spawn <code>voime-gpu</code>。</li>
+  <li>worker 崩溃 / 超时 / 显存不足时重启或回退 CPU 后端；Preview 不中断。</li>
 </ul>
 
 <h2 id="u4">4. INTERFACES</h2>
 <p><a href="#top">↑</a></p>
 
 <h3 id="u4-1">4.1 命令行</h3>
-<pre><code>voimed [--input-device &lt;NAME&gt;]
+<pre><code>voimed [--backend &lt;cpu|gpu&gt;]
+       [--input-device &lt;NAME&gt;]
        [--threads &lt;N&gt;]
        [--endpoint &lt;ENDPOINT&gt;]
        [--verbose]</code></pre>
 
 <table>
   <tr><th>选项</th><th>契约</th></tr>
-  <tr><td>模型根目录</td><td>没有模型选择参数；固定使用平台默认模型根目录，按 <code>vad</code> / <code>sense-voice</code> / 可选 <code>fire-red-aed</code> + <code>punc</code> 加载。默认值见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</td></tr>
+  <tr><td>模型根目录</td><td>使用平台默认模型根目录；资源包按 <code>default/</code> 与可选 <code>firered/</code> 加载。默认值见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</td></tr>
+  <tr><td><code>--backend</code></td><td>本次运行使用 <code>cpu</code> 或 <code>gpu</code>，覆盖 <code>models/backend</code>；不写回设置。</td></tr>
   <tr><td><code>--input-device</code></td><td>输入设备名，按精确字符串匹配；省略时使用默认设备。</td></tr>
   <tr><td><code>--threads</code></td><td>ONNX Runtime intra-op 线程数；必须大于 0。</td></tr>
   <tr><td><code>--endpoint</code></td><td>本机传输端点；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名。</td></tr>
@@ -137,6 +140,7 @@
   <tr><th>消息</th><th>前置条件</th><th>daemon 行为</th></tr>
   <tr><td><code>Hello</code></td><td>连接后的第一条消息。</td><td>校验版本与角色；<code>frontend</code> 连接更新前端状态 / Mode / Hotkey 并广播 Snapshot；其他角色返回 Snapshot。</td></tr>
   <tr><td><code>Configure</code></td><td>客户端角色为 <code>frontend</code>。</td><td>更新 Mode / Hotkey；Idle 时立即应用 pipeline 模式，否则等当前段结束；广播 Snapshot。</td></tr>
+  <tr><td><code>SetBackend</code></td><td>角色为 <code>frontend</code> / <code>control</code>，且 Phase=Idle。</td><td>准备新后端；成功替换 Final、写 <code>models/backend</code> 并广播 <code>BackendChanged</code> + Snapshot；忙碌返回 <code>busy</code>，加载失败返回 <code>inference</code>。</td></tr>
   <tr><td><code>Start</code></td><td>Phase=Idle。</td><td>分配 <code>segment_id</code>、进入 Recording、启动 pipeline、广播 <code>SegmentStarted</code> 与 <code>State</code>。</td></tr>
   <tr><td><code>Stop</code></td><td>Phase=Recording。</td><td>校验 ID（Toggle 例外），请求 pipeline 结束当前段；进入 Finalizing。</td></tr>
   <tr><td><code>Toggle</code></td><td>Idle 或 Recording。</td><td>Idle 时等同 Start；Recording 时等同 Stop；Finalizing 时返回 <code>busy</code>。</td></tr>
@@ -151,6 +155,7 @@
   <tr><td><code>SegmentStarted</code></td><td>Start / Toggle 成功，或 Continuous / Toggle 续段。</td><td>携带最终 <code>segment_id</code> 与来源；前端据此绑定 / 跟随目标。</td></tr>
   <tr><td><code>State</code></td><td>Phase 变化。</td><td>录音 / 收尾状态；前端更新临时窗口。</td></tr>
   <tr><td><code>Partial</code></td><td>pipeline 产生临时结果。</td><td>可丢弃；只显示，不提交。</td></tr>
+  <tr><td><code>BackendChanged</code></td><td>SetBackend 成功、GPU 回退或启动回退。</td><td>携带当前生效的 <code>cpu</code> / <code>gpu</code>；前端设置页同步。</td></tr>
   <tr><td><code>Final</code></td><td>完整段识别成功。</td><td>加入历史；前端清空临时文本并提交。</td></tr>
   <tr><td><code>Snapshot</code></td><td>Hello、配置变化、前端连接 / 断开。</td><td>全量状态；字段见 <a href="../voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a>。</td></tr>
   <tr><td><code>Error</code></td><td>协议、角色、忙碌、模型不可用或推理失败。</td><td>按 <code>code</code> 处理；不解析文案。</td></tr>
@@ -163,9 +168,9 @@
 <h3 id="u4-4">4.4 启动与默认值</h3>
 <table>
   <tr><th>项目</th><th>契约</th><th>所有者</th></tr>
-  <tr><td>模型根目录</td><td>默认目录（Linux XDG / HOME 回退，Windows <code>%LOCALAPPDATA%\voime\models</code>）见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>；固定包含 <code>vad</code>、<code>sense-voice</code>，可选 <code>fire-red-aed</code>、<code>punc</code>。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
-  <tr><td>Final 选择</td><td>启动时 <code>fire-red-aed</code> 与 <code>punc</code> 两个目录都存在则尝试 GPU Final，否则 CPU SenseVoice；GPU 初始化失败回退 CPU。没有选择指针。</td><td>本组件 §2</td></tr>
-  <tr><td>Preview</td><td><code>preview_enabled</code> 默认 <code>true</code>；固定使用 <code>sense-voice</code> 目录，与 Final 无关。</td><td>本组件 §2</td></tr>
+  <tr><td>模型根目录</td><td>默认目录（Linux XDG / HOME 回退，Windows <code>%LOCALAPPDATA%\voime\models</code>）见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>；<code>default/</code> 必需，<code>firered/</code> 仅 GPU 后端需要。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
+  <tr><td>后端选择</td><td>启动时读取 <code>models/backend</code>（缺省 cpu）；<code>--backend</code> 覆盖本次运行。空闲时 <code>SetBackend</code> 只重建 Final 路径并写回设置；GPU 初始化失败回退 CPU。</td><td>本组件 §2</td></tr>
+  <tr><td>Preview</td><td><code>preview_enabled</code> 默认 <code>true</code>；固定使用 <code>default/sense-voice</code>，与后端无关。</td><td>本组件 §2</td></tr>
   <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>（未设置时 <code>/tmp/voime-&lt;uid&gt;/voimed.sock</code>）；Windows 默认 <code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td><td><a href="../voime-transport/USER.html#u4">voime-transport USER §4</a></td></tr>
   <tr><td>线程数</td><td>默认 2；必须大于 0。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
   <tr><td>初始模式</td><td>无前端连接时有效模式为 <code>ptt</code>；前端 Hello 后使用其配置。</td><td>本组件 §2</td></tr>
@@ -175,11 +180,11 @@
 <table>
   <tr><th>情况</th><th>行为</th></tr>
   <tr><td>模型 / 音频初始化失败</td><td>启动失败，stderr + 退出码 1；不绑定端点。</td></tr>
-  <tr><td><code>vad</code> / <code>sense-voice</code> 目录缺失或校验失败</td><td>启动失败；doctor 报错；不会猜测路径或自动安装。</td></tr>
+  <tr><td><code>default/</code> 缺失或校验失败</td><td>启动失败；doctor 报错；不会猜测路径或自动安装。</td></tr>
   <tr><td>端点已被活动 daemon 占用</td><td>幂等退出（退出码 0）。</td></tr>
   <tr><td>FireRed / Punc 只存在一个</td><td>启动失败并报告安装不完整；需补齐两个目录或同时移除。</td></tr>
   <tr><td>FireRed / Punc 目录校验失败</td><td>启动失败；不进入 CPU 猜测路径；doctor 报错。</td></tr>
-  <tr><td>GPU 初始化 / runtime / 显存不可用</td><td>启动时自动回退 CPU SenseVoice；Preview 继续；不加载 CPU AED；日志记录原因。</td></tr>
+  <tr><td>GPU 初始化 / runtime / 显存不可用</td><td>启动时回退 CPU SenseVoice 并写入 <code>backend=cpu</code>；Preview 继续；不加载 CPU AED；日志记录原因。</td></tr>
   <tr><td>运行期 GPU worker 失败</td><td>当前段丢弃；daemon 尝试重启 worker，连续失败后回退 CPU SenseVoice；Preview 继续。</td></tr>
   <tr><td>单段推理失败</td><td>广播 <code>Error{code:"inference"}</code>，清空当前段，继续监听；GPU 失败按回退策略处理。</td></tr>
   <tr><td>前端断线</td><td>前端状态置 disconnected；Continuous 退回 PTT；结束当前段；广播 Snapshot。</td></tr>

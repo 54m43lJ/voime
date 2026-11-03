@@ -39,6 +39,7 @@
   <tr><td><code>InputContextKeyEvent</code></td><td>Fcitx 的按键事件；addon 在 <code>PreInputMethod</code> 阶段读取并决定是否消费。</td></tr>
   <tr><td><code>PreInputMethod</code></td><td>Fcitx 事件管线中位于输入法处理之前的阶段；Voime 在这里匹配热键。</td></tr>
   <tr><td>模式（Mode）</td><td><code>ptt</code> / <code>toggle</code> / <code>continuous</code>；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
+  <tr><td>后端（Backend）</td><td><code>cpu</code> / <code>gpu</code>；与 daemon 当前后端同步，决定 Final 路径。</td></tr>
   <tr><td>热键（Hotkey）</td><td>addon 配置的唯一组合键；PTT 按住、Toggle 切换、Continuous 忽略。</td></tr>
   <tr><td>PTT 模式</td><td>按下热键开始采集，松开结束；静音可自动结束。</td></tr>
   <tr><td>Toggle 模式</td><td>第一次按热键开始，第二次按结束；会话期间 VAD 可连续切分多个段，没有语音时也保持空白临时窗口。</td></tr>
@@ -110,6 +111,7 @@
 <h3 id="u4-1">4.1 addon 配置</h3>
 <pre><code># ~/.config/fcitx5/conf/voime.conf
 Mode=ptt
+Backend=cpu
 Hotkey=Super+F2</code></pre>
 
 <table>
@@ -121,6 +123,12 @@ Hotkey=Super+F2</code></pre>
     <td>决定热键语义与 daemon 是否自动连续分段。</td>
   </tr>
   <tr>
+    <td><code>Backend</code></td>
+    <td><code>cpu</code> · <code>gpu</code></td>
+    <td><code>cpu</code></td>
+    <td>CPU 后端为 VAD + SenseVoice；GPU 后端为 CPU VAD / SenseVoice / Punc + GPU FireRedASR。保存后发送 <code>SetBackend</code>；daemon 忙碌时保留原值。</td>
+  </tr>
+  <tr>
     <td><code>Hotkey</code></td>
     <td>Fcitx key 语法，例如 <code>Super+F2</code></td>
     <td><code>Super+F2</code></td>
@@ -130,7 +138,8 @@ Hotkey=Super+F2</code></pre>
 <ul class="note">
   <li>配置通过 <code>fcitx5-configtool</code> 的 Addons 页面或直接编辑文件完成；修改后重新加载 addon 配置或重启 Fcitx。</li>
   <li>旧版本无后缀的 <code>~/.config/fcitx5/conf/voime</code> 会在启动时迁移到 <code>voime.conf</code>。</li>
-  <li>addon 配置只有 <code>Mode</code> / <code>Hotkey</code>；模型由 daemon 从固定模型根目录加载，配置界面不提供模型选择。</li>
+  <li>addon 配置包含 <code>Mode</code> / <code>Backend</code> / <code>Hotkey</code>；模型由 daemon 从资源包加载，配置界面不提供模型选择。</li>
+  <li>连接后以 Snapshot 的后端同步配置；用户修改 <code>Backend</code> 时发送 <code>SetBackend</code>，daemon 回退或切换后以 <code>BackendChanged</code> 更新配置。</li>
   <li>端点使用 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code> 默认路径，不作为用户配置项。</li>
 </ul>
 
@@ -156,6 +165,8 @@ Hotkey=Super+F2</code></pre>
   <tr><th>消息</th><th>addon 行为</th></tr>
   <tr><td><code>Hello { role: Frontend, version, config }</code></td><td>连接后发送；携带当前 Mode / Hotkey。</td></tr>
   <tr><td><code>Configure { mode, hotkey }</code></td><td>配置重载时发送；新模式在下一段生效。</td></tr>
+  <tr><td><code>SetBackend { backend }</code></td><td>用户修改 <code>Backend</code> 时发送；daemon 成功切换后回 <code>BackendChanged</code>。</td></tr>
+  <tr><td><code>BackendChanged { backend }</code></td><td>同步 addon 配置并保存；GPU 回退时也会收到。</td></tr>
   <tr><td><code>Start</code> / <code>Stop</code></td><td>PTT / Toggle 热键触发；携带本地提示 ID 与 <code>Hold</code> / <code>Toggle</code> 来源。</td></tr>
   <tr><td><code>SegmentStarted</code></td><td>记录最终 <code>segment_id</code>；Continuous 与 Toggle 续段跟随当前焦点。</td></tr>
   <tr><td><code>State</code></td><td>更新 recording / finalizing；Idle 时清理目标与临时窗口。</td></tr>
@@ -182,7 +193,7 @@ Hotkey=Super+F2</code></pre>
   <tr><td>addon 未加载</td><td>描述文件缺失、ABI 不匹配或库加载失败。</td><td>Fcitx 日志 / <code>voime doctor</code>；不消费热键。</td></tr>
   <tr><td>daemon 不可用</td><td>无法连接 socket。</td><td>放行热键；按重连策略重试。</td></tr>
   <tr><td>角色冲突 / 版本不匹配</td><td>已有前端连接或协议版本不一致。</td><td>断开并重试；日志记录；旧版本必须升级。</td></tr>
-  <tr><td>daemon 模型/后端错误</td><td>启动时目录缺失、GPU 初始化失败或 daemon 返回 <code>unavailable</code> / <code>inference</code>。</td><td>daemon 内部回退 CPU Final；前端只记录日志，不涉及模型选择。</td></tr>
+  <tr><td>daemon 模型/后端错误</td><td>启动时目录缺失、GPU 初始化失败或 daemon 返回 <code>unavailable</code> / <code>inference</code>。</td><td>daemon 内部回退 CPU 后端；<code>BackendChanged</code> 同步配置，前端只记录日志。</td></tr>
   <tr><td>没有目标输入框</td><td>按键时没有焦点。</td><td>不开始语音段；不提交。</td></tr>
   <tr><td>目标丢失</td><td>提交前失焦 / 销毁。</td><td>清空临时窗口；Final 保留历史。</td></tr>
   <tr><td>ASR 推理错误</td><td>daemon 返回 <code>inference</code>。</td><td>Toggle 会话重置为空白窗口；其他模式清理状态。</td></tr>

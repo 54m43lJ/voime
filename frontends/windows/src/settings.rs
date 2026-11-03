@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use eframe::egui;
-use voime_ipc::Mode;
+use voime_ipc::{Backend, Mode};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -101,6 +101,7 @@ struct SettingsApp {
     sender: Sender<SettingsAction>,
     status: FrontendStatus,
     mode: Mode,
+    backend: Backend,
     hotkey: Hotkey,
     overlay_enabled: bool,
     start_at_login: bool,
@@ -125,6 +126,7 @@ impl SettingsApp {
             sender,
             status,
             mode: config.mode,
+            backend: config.backend,
             hotkey: config.hotkey,
             overlay_enabled: config.overlay_enabled,
             start_at_login: config.start_at_login,
@@ -218,6 +220,7 @@ impl SettingsApp {
             hotkey: self.hotkey,
             start_at_login: self.start_at_login,
             overlay_enabled: self.overlay_enabled,
+            backend: self.backend,
         };
         let (ack, wait) = crossbeam_channel::bounded(1);
         if self
@@ -364,6 +367,8 @@ impl eframe::App for SettingsApp {
                                 ui.add_space(10.0);
                                 self.mode_section(ui);
                                 ui.add_space(10.0);
+                                self.backend_section(ui);
+                                ui.add_space(10.0);
                                 self.hotkey_section(ui);
                                 if let Some(notice) = self.notice.as_ref() {
                                     ui.add_space(8.0);
@@ -457,6 +462,53 @@ impl SettingsApp {
             Mode::Ptt => "按住热键说话，松开后识别并提交；适合短句和快速输入。",
             Mode::Toggle => "按一下开始，再按一下结束；适合较长的一段话。",
             Mode::Continuous => "由 VAD 自动检测语音起止，不需要热键。",
+        };
+        ui.label(
+            egui::RichText::new(description)
+                .size(12.5)
+                .color(ui.visuals().weak_text_color()),
+        );
+    }
+
+    fn backend_section(&mut self, ui: &mut egui::Ui) {
+        section_title(ui, "识别后端");
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            for (backend, label) in [(Backend::Cpu, "CPU"), (Backend::Gpu, "GPU")] {
+                let selected = self.backend == backend;
+                let text = egui::RichText::new(label).size(14.0).color(if selected {
+                    egui::Color32::WHITE
+                } else {
+                    ui.visuals().text_color()
+                });
+                let button = egui::Button::new(text)
+                    .fill(if selected {
+                        ACCENT
+                    } else {
+                        ui.visuals().faint_bg_color
+                    })
+                    .stroke(egui::Stroke::new(
+                        1.0_f32,
+                        if selected {
+                            ACCENT
+                        } else {
+                            ui.visuals().widgets.noninteractive.bg_stroke.color
+                        },
+                    ))
+                    .corner_radius(8.0)
+                    .min_size(egui::vec2(126.0, 34.0));
+                if ui.add(button).clicked() {
+                    self.backend = backend;
+                    self.notice = None;
+                }
+            }
+        });
+        ui.add_space(6.0);
+        let description = match self.backend {
+            Backend::Cpu => "VAD + SenseVoice 全部在 CPU；不使用 FireRed 与标点模型。",
+            Backend::Gpu => {
+                "VAD / SenseVoice / 标点留在 CPU，FireRedASR 由 voime-gpu 在 GPU 上运行。需要 firered 资源包。"
+            }
         };
         ui.label(
             egui::RichText::new(description)
@@ -904,6 +956,7 @@ mod tests {
             false,
         );
         app.mode = Mode::Toggle;
+        app.backend = Backend::Gpu;
         app.hotkey = crate::hotkey::parse("Ctrl+Alt+F9").unwrap();
         app.overlay_enabled = false;
         app.start_at_login = false;
@@ -911,6 +964,7 @@ mod tests {
         app.save(&ctx);
         let SettingsAction::Save { config, ack } = receiver.try_recv().unwrap();
         assert_eq!(config.mode, Mode::Toggle);
+        assert_eq!(config.backend, Backend::Gpu);
         assert_eq!(config.hotkey.to_string(), "Ctrl+Alt+F9");
         assert!(!config.overlay_enabled);
         assert!(!config.start_at_login);

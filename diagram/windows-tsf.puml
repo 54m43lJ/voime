@@ -8,7 +8,7 @@ actor "用户" as User
 component "Voime 前端\n托盘 / 全局热键 / 配置" as Broker
 component "voimed\n音频 / VAD / SenseVoice / 标点 / 会话" as Daemon
 component "麦克风" as Mic
-component "本地模型包" as Models
+component "本地资源包" as Models
 
 package "目标应用进程" {
   component "Voime TSF DLL" as TSF

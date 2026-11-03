@@ -28,16 +28,43 @@
 <table>
   <tr><th>项目</th><th>要求</th></tr>
   <tr><td>平台</td><td>Linux + Fcitx5（当前验收平台）；Windows 10 / 11 x64（P2 / P3 已实现）。</td></tr>
-  <tr><td>Fcitx5</td><td>≥ 5.1.23，运行中；<code>fcitx5-configtool</code> 用于配置 <code>Mode</code> / <code>Hotkey</code>；没有模型选择项。</td></tr>
-  <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）；首次构建需要网络下载 crate 与 ONNX Runtime。</td></tr>
+  <tr><td>Fcitx5</td><td>≥ 5.1.23，运行中；<code>fcitx5-configtool</code> 用于配置 <code>Mode</code> / <code>Backend</code> / <code>Hotkey</code>；没有模型路径选择项。</td></tr>
+  <tr><td>Rust</td><td>stable ≥ 1.92（<code>ort 2.0.0-rc.14</code> 的 MSRV）；首次构建需要网络下载 crate 与 ONNX Runtime。</td></tr>
   <tr><td>Linux 构建依赖</td><td>ALSA 开发头文件；Arch：<code>alsa-lib</code>；Debian / Ubuntu：<code>libasound2-dev</code>。</td></tr>
   <tr><td>addon 构建依赖</td><td>C++20、CMake、<code>Fcitx5Core</code> 开发头文件；Arch：<code>fcitx5</code>；Debian / Ubuntu：<code>libfcitx5core-dev</code> 等，按发行版为准。</td></tr>
   <tr><td>Windows 构建依赖</td><td>Rust MSVC 工具链、Visual Studio / Windows SDK、CMake（TSF 可选阶段）。<code>x86_64-pc-windows-gnu</code> 没有 ONNX Runtime 预编译包；daemon / CLI 的构建与验收以 MSVC 为准。</td></tr>
   <tr><td>模型安装期</td><td>Python 3.10+、网络；默认 VAD + SenseVoice 约 229 MiB，<code>--gpu</code> 另加 FireRed FP16 约 2.2 GB 与 Punc；只用于 <code>scripts/install_models.*</code> 与 <code>tools/</code>。</td></tr>
-  <tr><td>GPU 可选依赖</td><td>Linux AMD：ROCm 7.2.1 + MIGraphX（P0）；Windows AMD：DirectML；NVIDIA：独立 CUDA / TensorRT runtime 包。基础安装与 CPU 路径不需要这些依赖。</td></tr>
+  <tr><td>GPU 可选依赖</td><td>Arch Linux：见 <a href="#b1-1">§1.1</a>（AMD 用 <code>migraphx</code>，NVIDIA 用 <code>cuda</code> + <code>cudnn</code>）；Windows：DirectML 或 CUDA 运行库。基础安装与 CPU 路径不需要这些依赖。</td></tr>
   <tr><td>运行期</td><td>平台前端加载、<code>voimed</code> 运行中、可用录音设备；<code>voime</code> TUI 需要 TTY；daemon 不需要 TTY。</td></tr>
   <tr><td>运行期不需要</td><td>网络、Python 或独立输入法前端；默认不需要 GPU。Windows 设置窗口使用 OpenGL（glow）渲染。</td></tr>
 </table>
+
+<h3 id="b1-1">1.1 GPU runtime 包</h3>
+<p><a href="#top">↑</a></p>
+
+<p>
+CPU 与 GPU worker 都使用 <code>ort</code> 自带的预编译 ONNX Runtime，版本随 <code>ort</code> 锁定。
+GPU worker 的 provider 动态库由 <code>ort</code> 的 <code>copy-dylibs</code> 产出，<code>scripts/install_runtime.sh</code>
+会把它与 worker 放在同一目录。Arch 只需要安装 GPU 厂商运行时，不需要安装 <code>onnxruntime-*</code>。
+</p>
+
+<table>
+  <tr><th>平台 / EP</th><th>需要安装</th></tr>
+  <tr><td>Arch Linux + AMD MIGraphX</td><td><code>sudo pacman -S --needed migraphx</code>。包含 ROCm / MIGraphX 运行库；只有开发时才需要 <code>rocm-hip-sdk</code>。<code>ort</code> 自带 <code>libonnxruntime_providers_migraphx.so</code>，不需要 <code>onnxruntime-rocm</code>。</td></tr>
+  <tr><td>Arch Linux + NVIDIA CUDA</td><td><code>sudo pacman -S --needed cuda cudnn</code>（Arch 当前 CUDA 13.x / cuDNN 9.x）。<code>ort</code> 自带 cuda13 provider，不需要 <code>onnxruntime-cuda</code>。</td></tr>
+  <tr><td>Arch Linux CPU</td><td>不需要系统 ONNX Runtime；CPU ORT 已静态链接到 <code>voimed</code>，<code>voime</code> TUI 不加载模型。</td></tr>
+  <tr><td>Windows + AMD DirectML</td><td>DirectML 是 Windows 10 1903+ 的系统组件；旧系统安装 <code>Microsoft.AI.DirectML</code>（NuGet）。<code>ort</code> 的 Windows 预编译包自带 DirectML provider。</td></tr>
+  <tr><td>Windows + NVIDIA CUDA</td><td>NVIDIA 驱动 + CUDA 13 + cuDNN 9；<code>ort</code> 的 Windows 预编译包自带 CUDA provider。</td></tr>
+</table>
+<ul class="note">
+  <li>版本固定：<code>ort 2.0.0-rc.14</code> 对应 ONNX Runtime 1.31.0；CPU ORT、GPU ORT 与 provider 都来自同一发布版本的预编译产物，避免 core/provider 版本错配。</li>
+  <li>自包含不等于零系统依赖：AMD 仍需要 <code>migraphx</code> / ROCm 与驱动，NVIDIA 仍需要 CUDA / cuDNN 与驱动，Windows 仍需要 DirectML。</li>
+  <li>CPU 与 GPU 是两个独立进程，各自静态链接自己的 ORT；同一台机器同时保留 CPU 与 GPU runtime 不会冲突。</li>
+  <li>体积代价：<code>voime-gpu</code> 约 33 MB，provider 约 0.6 MB；静态 ORT 比系统包方案多约 6–8 MB，换取 runtime 版本固定与 core/provider 同源。</li>
+  <li>升级代价：ORT / provider 的安全更新必须重新发布 worker；CPU daemon 与 GPU worker 各带一份 ORT，磁盘上会有重复；这是固定版本的直接成本。</li>
+  <li>手动下载 Windows 包时从 <a href="https://github.com/microsoft/onnxruntime/releases">ONNX Runtime Releases</a> 取 <code>onnxruntime-win-x64-gpu_cuda13-*.zip</code>；DirectML 用 NuGet <code>Microsoft.ML.OnnxRuntime.DirectML</code>。Linux 默认安装不建议再使用 <code>onnxruntime-*</code> 包。</li>
+  <li>只有显式选择“动态链接系统 ONNX Runtime”的高级构建才需要 <code>onnxruntime-rocm</code> / <code>onnxruntime-cuda</code>；默认安装不使用。</li>
+</ul>
 
 <h2 id="b2">2. 构建根与命令</h2>
 <p><a href="#top">↑</a></p>
@@ -47,7 +74,7 @@ cargo build --release -p voimed -p voime -p voime-gpu
 cargo test -p voime-core -p voime-ipc -p voime-log -p voime-transport -p voimed -p voime -p voime-gpu
 
 # GPU 构建单元必须与 daemon 隔离；不要启用会并入 daemon 的 GPU feature
-cargo build --release -p voime-gpu --features migraphx   # Linux AMD（示例）
+cargo build --release -p voime-gpu --features migraphx   # Arch AMD；静态 ORT + provider
 
 # Linux 前端（frontends/fcitx）
 cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr
@@ -88,7 +115,7 @@ cmake --build build/tsf-x86 --config Release</code></pre>
 
 <p>
 以下步骤从干净检出的仓库开始，安装 <code>voimed</code>、<code>voime</code>、Fcitx5 addon、
-systemd 用户服务与固定模型目录。默认把二进制安装到 <code>~/.local/bin</code>，把 addon 安装到
+systemd 用户服务与资源包。默认把二进制安装到 <code>~/.local/bin</code>，把 addon 安装到
 <code>/usr</code> 前缀；所有命令在仓库根目录执行。
 </p>
 
@@ -121,6 +148,7 @@ scripts/install_voime.sh --no-build</code></pre>
   <tr><th>脚本</th><th>默认行为</th></tr>
   <tr><td><code>scripts/install_voimed.sh</code></td><td>安装 <code>voimed</code> 到 <code>~/.local/bin</code>，并从 <code>packaging/linux/voime.service</code> 生成 systemd 用户服务。</td></tr>
   <tr><td><code>scripts/install_voime.sh</code></td><td>安装 <code>voime</code>（TUI / ctl / doctor）到 <code>~/.local/bin</code>。</td></tr>
+  <tr><td><code>scripts/install_runtime.sh</code></td><td>从源码构建自包含的 <code>voime-gpu</code> 与 provider 动态库，安装到 <code>~/.local/lib/voime-gpu/&lt;runtime&gt;</code>，并写 systemd drop-in。</td></tr>
 </table>
 
 <ul class="note">
@@ -133,38 +161,50 @@ scripts/install_voime.sh --no-build</code></pre>
 <h3 id="b3-3">3.3 构建并安装 Fcitx5 addon</h3>
 <p><a href="#top">↑</a></p>
 
-<pre><code>cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr
-cmake --build build/fcitx
-sudo cmake --install build/fcitx</code></pre>
+<pre><code>scripts/install_fcitx_addon.sh</code></pre>
 
 <p>
-安装结果包含 <code>voime.so</code> 与 addon 描述文件；addon 不注册 inputmethod 条目，
-因此不需要把 Voime 加入输入法组。
+脚本配置并构建 <code>build/fcitx</code>，安装 <code>voime.so</code>、addon 描述文件与图标；
+默认前缀为 <code>/usr</code>，需要写权限时只对安装步骤使用 <code>sudo</code>。addon 不注册
+inputmethod 条目，因此不需要把 Voime 加入输入法组。
 </p>
 
+<table>
+  <tr><th>选项</th><th>行为</th></tr>
+  <tr><td><code>--prefix DIR</code></td><td>安装前缀，默认 <code>/usr</code>；使用 <code>/usr/local</code> 时确认 Fcitx5 会搜索该前缀下的 addon 与库。</td></tr>
+  <tr><td><code>--build-dir DIR</code></td><td>CMake 构建目录，默认 <code>build/fcitx</code>。</td></tr>
+  <tr><td><code>--no-build</code></td><td>使用已有构建产物，不重新编译。</td></tr>
+</table>
+
 <ul class="note">
+  <li>等价手动步骤：<code>cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr</code>、<code>cmake --build build/fcitx</code>、<code>sudo cmake --install build/fcitx</code>。</li>
   <li>只重新编译、不安装：<code>cmake --build build/fcitx</code>；产物为 <code>build/fcitx/voime.so</code>。</li>
-  <li>使用 <code>/usr/local</code> 前缀时，确认 Fcitx5 会搜索该前缀下的 addon 与库。</li>
 </ul>
 
 <h3 id="b3-4">3.4 安装模型</h3>
 <p><a href="#top">↑</a></p>
 
-<pre><code># 默认：VAD + SenseVoice；Final 走 CPU
+<pre><code># 默认：安装 default 资源包（VAD + SenseVoice），CPU 后端可用
 scripts/install_models.sh
 
-# 额外安装 FireRed AED + Punc；重启 voimed 后自动尝试 GPU Final
+# 额外安装 firered 资源包（FireRedASR-AED + Punc）；在设置中选择 GPU 后端
 scripts/install_models.sh --gpu --punc-source-dir /path/to/fireredpunc
 
-# 可选 GPU runtime（Linux AMD 首选）
+# 可选 GPU runtime（Arch AMD）；先安装 migraphx（§1.1），再构建自包含 worker
 scripts/install_runtime.sh --runtime linux-migraphx</code></pre>
 
 <p>
 模型默认写入 <code>$XDG_DATA_HOME/voime/models</code>（未设置时
-<code>~/.local/share/voime/models</code>），固定为 <code>vad</code> / <code>sense-voice</code> /
-<code>fire-red-aed</code> / <code>punc</code> 四个目录；模型目录、SHA-256 与离线安装选项见
+<code>~/.local/share/voime/models</code>），分为 <code>default/</code> 与可选的
+<code>firered/</code> 两个资源包目录；模型目录、SHA-256 与离线安装选项见
 <a href="#b4">§4</a>。模型权重不随仓库或 release 包提交。
 </p>
+
+<ul class="note">
+  <li><code>scripts/install_runtime.sh</code> 从源码构建自包含 worker：静态 ONNX Runtime + 同目录 provider 动态库；不需要外部 archive / URL，也不需要 Arch 的 <code>onnxruntime-*</code> 包。</li>
+  <li>Arch Linux 先按 <a href="#b1-1">§1.1</a> 安装 <code>migraphx</code>（AMD）或 <code>cuda</code> + <code>cudnn</code>（NVIDIA）；这些只是 GPU 厂商运行时。</li>
+  <li>worker 与 provider 安装到 <code>~/.local/lib/voime-gpu/&lt;runtime&gt;</code>；<code>~/.local/bin/voime-gpu</code> 是符号链接，systemd drop-in 设置 <code>VOIME_GPU_BIN</code>。</li>
+</ul>
 
 <h3 id="b3-5">3.5 启动服务并验证</h3>
 <p><a href="#top">↑</a></p>
@@ -191,11 +231,11 @@ voime</code></pre>
 <h3 id="b3-6">3.6 Windows 从源码安装</h3>
 <p><a href="#top">↑</a></p>
 
-<pre><code># 每用户安装：构建 voimed / voime / voime-tray / voime-gpu，写入登录启动，安装默认模型
+<pre><code># 每用户安装：构建 voimed / voime / voime-tray / voime-gpu，写入登录启动，安装 default 资源包
 powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 
-# 默认只安装 VAD + SenseVoice；追加 FireRed AED + Punc 时加 -Gpu
-powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -Gpu -PuncSourceDir D:\fireredpunc -Runtime windows-directml
+# 默认只安装 default/（VAD + SenseVoice）；追加 firered/（FireRedASR-AED + Punc）时加 -Gpu
+powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -Gpu -PuncSourceDir D:\fireredpunc -Runtime windows-directml -RuntimeArchive D:\voime-gpu-windows-directml.zip
 
 # 只安装二进制
 powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoModels -NoStartup
@@ -209,8 +249,8 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoModels
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>前缀</td><td>默认 <code>%LOCALAPPDATA%\Programs\Voime</code>；<code>-Prefix</code> 可覆盖。</td></tr>
   <tr><td>登录启动</td><td>写入 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>；<code>-NoStartup</code> 跳过。</td></tr>
-  <tr><td>模型</td><td>默认调用 <code>scripts/install_models.ps1</code> 安装 VAD + SenseVoice；<code>-Gpu</code> 追加 FireRed + Punc（<code>-PuncSourceDir</code>）、<code>-Runtime</code>、<code>-NoModels</code>、<code>-ModelDir</code> / <code>-CacheDir</code>。</td></tr>
-  <tr><td>GPU runtime</td><td><code>-Runtime windows-directml|windows-cuda</code>；独立安装、显式 opt-in；只安装签名 runtime。</td></tr>
+  <tr><td>模型</td><td>默认调用 <code>scripts/install_models.ps1</code> 安装 <code>default/</code>；<code>-Gpu</code> 追加 <code>firered/</code>（<code>-PuncSourceDir</code>）；<code>-NoModels</code>、<code>-ModelDir</code> / <code>-CacheDir</code> 控制模型安装。</td></tr>
+  <tr><td>GPU runtime</td><td><code>-Runtime windows-directml|windows-cuda</code> 配合 <code>-RuntimeArchive</code> 或 <code>-RuntimeUrl</code>；独立安装、显式 opt-in；只安装签名 runtime。</td></tr>
   <tr><td>卸载</td><td><code>packaging/windows/uninstall.ps1</code>；<code>-RemoveSettings</code> / <code>-RemoveModels</code> / <code>-RemoveRuntime</code> 按需删除配置、模型与 GPU runtime。</td></tr>
 </table>
 <ul class="note">
@@ -221,10 +261,10 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoModels
 <h2 id="b4">4. 安装模型</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code># Linux：默认 VAD + SenseVoice
+<pre><code># Linux：默认安装 default/（VAD + SenseVoice）
 scripts/install_models.sh
 
-# 追加 FireRed AED + Punc；重启 voimed 后自动尝试 GPU Final
+# 追加 firered/（FireRedASR-AED + Punc）；随后在设置中选择 GPU 后端
 scripts/install_models.sh --gpu --punc-source-dir /path/to/fireredpunc
 scripts/install_models.sh --gpu --punc-source-dir /path/to/fireredpunc \
     --source-dir /path/to/exported/aed --aed-version v2
@@ -234,37 +274,37 @@ scripts/install_models.sh --model-root /path/to/models
 scripts/install_models.sh --gpu --model-root /path/to/models \
     --punc-source-dir /path/to/fireredpunc
 
-# 可选 GPU runtime
+# 可选 GPU runtime；Arch 先安装 migraphx（§1.1）
 scripts/install_runtime.sh --runtime linux-migraphx
 
 # Windows
 powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1
 powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -ModelDir D:\voime\models
 powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -Gpu -PuncSourceDir D:\fireredpunc
-powershell -ExecutionPolicy Bypass -File scripts\install_models.ps1 -Runtime windows-directml</code></pre>
+powershell -ExecutionPolicy Bypass -File scripts\install_runtime.ps1 -Runtime windows-directml -Archive D:\voime-gpu-windows-directml.zip</code></pre>
 
 <table>
   <tr><th>行为</th><th>契约</th></tr>
-  <tr><td>固定目录</td><td>模型根目录下只有四个固定子目录：<code>vad</code>、<code>sense-voice</code>、<code>fire-red-aed</code>、<code>punc</code>。每个目录一份 <code>manifest.json</code>；没有 <code>active</code> 文件、package_id 或“模型包”目录层。</td></tr>
-  <tr><td>默认安装</td><td><code>tools/install_models.py</code> 只写入 <code>vad</code> + <code>sense-voice</code>，对应 CPU Final。Linux 入口 <code>scripts/install_models.sh</code>；Windows 入口 <code>scripts/install_models.ps1</code>。</td></tr>
-  <tr><td>GPU 安装</td><td><code>--gpu</code>（Windows <code>-Gpu</code>）额外写入 <code>fire-red-aed</code> 与 <code>punc</code>。Linux 需要 <code>--punc-source-dir</code> 指向导出的 FireRedPunc 目录；<code>--source-dir</code> 可指定本地导出的 AED v2。</td></tr>
+  <tr><td>资源包目录</td><td>模型根目录下只有两个资源包目录：<code>default/</code>（<code>vad</code>、<code>sense-voice</code>）与 <code>firered/</code>（<code>fire-red-aed</code>、<code>punc</code>）。每个模型子目录一份 <code>manifest.json</code>；没有 <code>active</code> 文件或 package_id。</td></tr>
+  <tr><td>默认安装</td><td><code>tools/install_models.py</code> 只写入 <code>default/</code>，对应 CPU 后端。Linux 入口 <code>scripts/install_models.sh</code>；Windows 入口 <code>scripts/install_models.ps1</code>。</td></tr>
+  <tr><td>GPU 安装</td><td><code>--gpu</code>（Windows <code>-Gpu</code>）额外写入 <code>firered/</code>。Linux 需要 <code>--punc-source-dir</code> 指向导出的 FireRedPunc 目录；<code>--source-dir</code> 可指定本地导出的 AED v2；<code>--punc-max-tokens</code>（Windows <code>-PuncMaxTokens</code>）默认 400。安装不改变后端设置。</td></tr>
   <tr><td>默认目录</td><td>Linux：<code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>）；Windows：<code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
   <tr><td>Windows 缓存</td><td><code>scripts/install_models.ps1</code> 在 <code>%LOCALAPPDATA%\voime\cache</code> 创建 Python venv，并按 requirements 文件的 SHA-256 哈希复用已安装依赖；<code>-CacheDir</code> 可覆盖。</td></tr>
-  <tr><td>VAD</td><td><code>vad/manifest.json</code> + <code>vad/stream-vad.onnx</code>；kind 为 <code>vad</code>。</td></tr>
-  <tr><td>SenseVoice</td><td><code>sense-voice/manifest.json</code> + <code>sense-voice/model.int8.onnx</code> + <code>sense-voice/tokens.txt</code>；kind 为 <code>sense-voice</code>；固定 <code>use_itn=true</code>、内置标点。</td></tr>
-  <tr><td>FireRed AED</td><td><code>fire-red-aed/manifest.json</code> + <code>encoder.fp16.onnx</code> + <code>decoder.fp16.onnx</code> + <code>tokens.txt</code>；kind 为 <code>fire-red-aed</code>。临时默认官方 v1 FP16 包 <code>sherpa-onnx-fire-red-asr-large-zh_en-fp16-2025-02-16</code>（7832 tokens，decoder self KV cache 固定 1024）；v2 FP16 为 8667 tokens，可通过 <code>--aed-version v2</code> / <code>-AedVersion v2</code> 选择。</td></tr>
-  <tr><td>Punc</td><td><code>punc/manifest.json</code> + <code>model.onnx</code> + <code>vocab.txt</code> + <code>labels.json</code>；kind 为 <code>punc</code>；只服务 GPU Final。</td></tr>
+  <tr><td>VAD</td><td><code>default/vad/manifest.json</code> + <code>default/vad/stream-vad.onnx</code>；kind 为 <code>vad</code>。</td></tr>
+  <tr><td>SenseVoice</td><td><code>default/sense-voice/manifest.json</code> + <code>default/sense-voice/model.int8.onnx</code> + <code>default/sense-voice/tokens.txt</code>；kind 为 <code>sense-voice</code>；固定 <code>use_itn=true</code>、内置标点。</td></tr>
+  <tr><td>FireRedASR-AED</td><td><code>firered/fire-red-aed/manifest.json</code> + <code>encoder.fp16.onnx</code> + <code>decoder.fp16.onnx</code> + <code>tokens.txt</code>；kind 为 <code>fire-red-aed</code>。临时默认官方 v1 FP16 包 <code>sherpa-onnx-fire-red-asr-large-zh_en-fp16-2025-02-16</code>（7832 tokens，decoder self KV cache 固定 1024）；v2 FP16 为 8667 tokens，可通过 <code>--aed-version v2</code> / <code>-AedVersion v2</code> 选择。</td></tr>
+  <tr><td>Punc</td><td><code>firered/punc/manifest.json</code> + <code>model.onnx</code> + <code>vocab.txt</code> + <code>labels.json</code>；kind 为 <code>punc</code>；只服务 GPU 后端。</td></tr>
   <tr><td>Manifest</td><td>schema 3；kind 必须与目录名对应；每份清单只描述本目录的文件、SHA-256、张量与参数；没有跨目录的 <code>requires</code> 或 <code>backend</code>。</td></tr>
-  <tr><td>加载选择</td><td><code>vad</code> 与 <code>sense-voice</code> 始终加载；<code>fire-red-aed</code> 与 <code>punc</code> 两个目录都存在时尝试 GPU Final；只存在一个时启动失败并报告安装不完整；两个都不存在时使用 CPU Final。</td></tr>
-  <tr><td>GPU runtime</td><td>按 OS + EP 拆分：<code>voime-gpu-linux-migraphx</code> / <code>voime-gpu-windows-directml</code> / <code>voime-gpu-linux-cuda</code> / <code>voime-gpu-windows-cuda</code>；独立目录、版本与 SHA，安装需显式 opt-in。</td></tr>
+  <tr><td>加载选择</td><td><code>default/</code> 始终加载；后端设置为 <code>gpu</code> 时再加载完整 <code>firered/</code>。firered 缺少任一模型时启动失败并报告安装不完整；CPU 后端不读取 firered。</td></tr>
+  <tr><td>GPU runtime</td><td>按 OS + EP 拆分：<code>voime-gpu-linux-migraphx</code> / <code>voime-gpu-windows-directml</code> / <code>voime-gpu-linux-cuda</code> / <code>voime-gpu-windows-cuda</code>；独立目录与版本。Linux 用 <code>scripts/install_runtime.sh --runtime ...</code> 构建自包含 worker + provider；Windows 用 <code>scripts/install_runtime.ps1 -Runtime ... -Archive/-Url</code>。</td></tr>
   <tr><td>磁盘</td><td>VAD + SenseVoice 约 229 MiB；FireRed FP16 约 2.2 GB，Punc 另计；runtime 包单独计量；空间不足时安装失败。</td></tr>
   <tr><td>原子安装</td><td>在模型根目录下的临时目录准备文件、计算 SHA-256、写 manifest，再替换目标子目录；模型目录不允许自带可执行文件。</td></tr>
 </table>
 <ul class="note">
   <li>模型权重不提交到仓库；安装脚本只写入用户数据目录。</li>
-  <li>仓库内 <code>models/*/manifest.json</code> 是结构模板，SHA-256 为全零且模型文件不完整；必须先运行安装脚本生成真实模型文件。</li>
-  <li><code>tools/install_models.py</code> 组合调用 <code>install_vad.py</code>、<code>install_sensevoice.py</code>、<code>install_firered.py</code> 与 <code>install_punc.py</code>；<code>tools/verify_models.py</code> 按固定目录校验 schema / kind / SHA / token_count。</li>
-  <li>安装不写任何选择指针；重启 <code>voimed</code> 才会重新扫描目录并决定 CPU / GPU Final。GPU 初始化失败时 daemon 自动回退 CPU SenseVoice。</li>
+  <li>仓库内 <code>models/default/*/manifest.json</code> 与 <code>models/firered/*/manifest.json</code> 是结构模板，SHA-256 为全零且模型文件不完整；必须先运行安装脚本生成真实模型文件。</li>
+  <li><code>tools/install_models.py</code> 组合调用 <code>install_vad.py</code>、<code>install_sensevoice.py</code>、<code>install_firered.py</code> 与 <code>install_punc.py</code>；<code>tools/verify_models.py</code> 按资源包目录校验 schema / kind / SHA / token_count。</li>
+  <li>安装不改变后端设置；默认 <code>models/backend</code> 缺失即 CPU。安装 <code>--gpu</code> 后需在平台设置中选择 GPU，或在空闲时运行 <code>voime ctl backend gpu</code>。GPU 初始化失败时 daemon 自动回退 CPU 并写入 <code>backend=cpu</code>。</li>
   <li>模型目录内容与张量契约见 <a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a> 与 <a href="crates/voime-gpu/PROVIDER.html#p4-2">voime-gpu PROVIDER §4.2</a>。</li>
 </ul>
 
@@ -286,8 +326,9 @@ voime
 voime ctl status
 voime doctor
 
-# 5. 安装 / 替换模型后重启 daemon，重新加载固定目录
+# 5. 安装 / 替换模型后重启 daemon；后端设置保存在 models/backend
 systemctl --user restart voime.service
+voime ctl backend cpu   # 或 gpu；空闲时立即切换并持久化
 
 # Windows：托盘以子进程托管 daemon，启动托盘即可；手动启动仅用于无托盘排障
 # （托盘启动时会停止已有 daemon 并替换为自己的子进程）
@@ -302,14 +343,14 @@ systemctl --user restart voime.service
   <tr><td>没有临时文本窗口</td><td>确认 Fcitx UI addon 正在运行；当前 UI 可能不渲染 preedit；不影响最终提交。</td></tr>
   <tr><td>最终文本没有上屏</td><td>确认目标输入框在录音期间没有失焦；查看 <code>voime doctor</code> 与 Fcitx 日志。</td></tr>
   <tr><td>daemon 未启动</td><td><code>systemctl --user status voime.service</code>；检查模型、音频与端点错误。</td></tr>
-  <tr><td>模型错误</td><td>重新运行安装脚本；确认 <code>vad</code> 与 <code>sense-voice</code> 目录各有 <code>manifest.json</code> 与模型文件；GPU 安装后 <code>fire-red-aed</code> 与 <code>punc</code> 必须同时存在。</td></tr>
-  <tr><td>GPU Final 不可用</td><td>确认 GPU runtime、驱动与显存；<code>voime doctor</code> 查看 worker 状态；Final 会自动回退 CPU SenseVoice。</td></tr>
+  <tr><td>模型错误</td><td>重新运行安装脚本；确认 <code>default/vad</code> 与 <code>default/sense-voice</code> 目录各有 <code>manifest.json</code> 与模型文件；GPU 安装后 <code>firered/fire-red-aed</code> 与 <code>firered/punc</code> 必须同时存在。</td></tr>
+  <tr><td>GPU 后端不可用</td><td>确认 GPU runtime、驱动与显存；<code>voime doctor</code> 查看资源包与 worker 状态；daemon 会回退 CPU 并写入 <code>backend=cpu</code>。</td></tr>
   <tr><td>没有录音设备</td><td>检查系统录音设备；<code>--input-device</code> 必须精确匹配设备名。</td></tr>
 </table>
 <ul class="note">
   <li><code>voimed</code> 不需要 <code>WAYLAND_DISPLAY</code> 或 <code>DISPLAY</code>；平台前端负责输入集成。</li>
   <li><code>scripts/install_voimed.sh</code> 生成 <code>~/.config/systemd/user/voime.service</code>，并把 <code>ExecStart</code> 替换为实际 <code>$BINDIR/voimed</code>。</li>
-  <li><code>voime doctor</code> 默认检查模型根目录下的四个固定目录与 <code>/usr</code>、<code>/usr/local</code> 下的 addon；目录缺失、SHA 不匹配或 FireRed / Punc 不成对都会报告。</li>
+  <li><code>voime doctor</code> 默认检查模型根目录下的两个资源包与后端设置、<code>/usr</code>、<code>/usr/local</code> 下的 addon；目录缺失、SHA 不匹配或 firered 包不完整都会报告。</li>
   <li>TUI 的 <code>q</code> / <code>Ctrl+C</code> 只 detach；停止 daemon：Linux 使用 <code>voime ctl quit</code> 或 systemd，Windows 退出托盘即停止。</li>
   <li>Windows 不使用 Session 0 服务；命名管道按当前会话与用户隔离，托盘以子进程托管 daemon，退出托盘即停止。</li>
 </ul>
@@ -331,13 +372,13 @@ cargo clippy --workspace --all-targets
 cargo clippy --manifest-path frontends\windows\Cargo.toml --all-targets</code></pre>
 
 <ul class="note">
-  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束、最大段长与预卷；<code>tests/ipc.rs</code> 覆盖握手 / 角色 / Mode / framing / 协议 4；<code>tests/state.rs</code> 覆盖快照默认值、清空历史与 status；<code>tests/daemon.rs</code> 覆盖 socket 存活、断线角色与 GPU 回退；<code>tests/asr_sense_voice.rs</code> 覆盖 CMVN / token id / greedy；10–60 s 真实解码仅在设置 <code>VOIME_ASR_MODEL_DIR</code> 时执行。</li>
-  <li>清单测试覆盖 schema 3、四个固定目录的 kind、SHA 与 token_count；GPU / worker 测试用专用 runner 启用。</li>
-  <li><code>frontends/fcitx/tests</code> 覆盖 mode / 热键字符串 / IPC 枚举 / target 空引用；不覆盖真实 Fcitx keymatch 或 preview 渲染。</li>
+  <li><code>tests/segmenter.rs</code> 覆盖端点、静音自动结束、最大段长与预卷；<code>tests/ipc.rs</code> 覆盖握手 / 角色 / Mode / SetBackend / framing / 协议 5；<code>tests/state.rs</code> 覆盖快照默认值、清空历史与 status；<code>tests/daemon.rs</code> 覆盖 socket 存活、断线角色与 GPU 回退；<code>tests/asr_sense_voice.rs</code> 覆盖 CMVN / token id / greedy；10–60 s 真实解码仅在设置 <code>VOIME_ASR_MODEL_DIR</code> 时执行。</li>
+  <li>清单测试覆盖 schema 3、资源包目录的 kind、SHA 与 token_count；GPU / worker 测试用专用 runner 启用。</li>
+  <li><code>frontends/fcitx/tests</code> 覆盖 mode / backend / 热键字符串 / IPC 枚举 / target 空引用；不覆盖真实 Fcitx keymatch 或 preview 渲染。</li>
   <li>RTF 验收参考（2 threads）：10 s ≤ 1.0 s、20 s ≤ 2.0 s、30 s ≤ 3.0 s；GPU 验收另见第 7 节。</li>
   <li>手工验收需同时在原生 Wayland、XWayland / XIM 与支持 text-input 的终端中测试热键、临时窗口与提交；Toggle 无语音时应出现空白窗口并保持到 toggle off 或目标失焦。</li>
   <li>Windows 验收矩阵见 <a href="frontends/windows/BUILD.html#b4">windows BUILD §4</a>；<code>frontends/windows</code> 单测覆盖热键解析、配置、UTF-16 分块、UIA 目标标识与命名管道客户端握手。</li>
-  <li>CPU 隔离验收：在无 GPU runtime 的机器上启动，<code>ldd</code> / Process Explorer / <code>/proc/&lt;pid&gt;/maps</code> 不出现 GPU 库；移除 runtime 后 SenseVoice Preview 与 CPU Final 仍可用。</li>
+  <li>CPU 隔离验收：在无 GPU runtime 的机器上启动，<code>ldd</code> / Process Explorer / <code>/proc/&lt;pid&gt;/maps</code> 不出现 GPU 库；选择 GPU 但移除 runtime 后 SenseVoice Preview 与 CPU 回退仍可用。</li>
 </ul>
 
 <h2 id="b7">7. 发布</h2>
@@ -362,12 +403,12 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoBuild<
   <tr><th>平台</th><th>产物</th></tr>
   <tr><td>Linux</td><td><code>voimed</code>、<code>voime</code>、可选 <code>voime-gpu</code>、<code>voime.so</code>、addon 描述文件、systemd unit、模型安装脚本、<code>voime-gpu-*</code> runtime 包</td></tr>
   <tr><td>Windows</td><td><code>voimed.exe</code>、<code>voime.exe</code>、<code>voime-tray.exe</code>、可选 <code>voime-gpu.exe</code>、安装 / 卸载脚本、登录启动项、模型下载 / 校验、<code>voime-gpu-*</code> runtime 包；<code>onnxruntime</code> 当前静态链接，动态链接构建时附带 <code>onnxruntime.dll</code>；TSF DLL 为可选 P4</td></tr>
-  <tr><td>共享</td><td>模型 manifest、固定模型目录、协议金样、文档、许可证 / attribution</td></tr>
+  <tr><td>共享</td><td>模型 manifest、资源包目录、协议金样、文档、许可证 / attribution</td></tr>
 </table>
 <ul class="note">
   <li>发布包包含 <code>voimed</code>、<code>voime</code>、<code>voime.so</code>、addon 描述文件、systemd unit 与模型安装脚本；不包含 inputmethod 条目。GPU 相关二进制与 runtime 包只随 GPU 安装选项发布。</li>
   <li>模型权重由安装脚本按需下载；发布包不包含模型权重。FireRed AED 临时默认官方 v1 FP16（7832 tokens，decoder 固定 1024 self KV cache）；v2 FP16 为可选导出（8667 tokens）；int8 仅用于 CPU SenseVoice。</li>
-  <li>Linux 验收：addon 被 Fcitx 后台加载且不出现在输入法组；Mode 三态与 Hotkey；默认 CPU Final；<code>--gpu</code> 安装后重启 daemon 自动选择 GPU Final，GPU 不可用时回退 CPU；Toggle 空白窗口；普通打字不受影响；原生 Wayland / XWayland XIM 提交；目标失焦不误提交；TUI detach；daemon 重启重连；SenseVoice / FireRed Final 文本正常、RTF 达标；CPU 路径不加载 GPU 库。</li>
+  <li>Linux 验收：addon 被 Fcitx 后台加载且不出现在输入法组；Mode 三态、Backend 两态与 Hotkey；CPU 后端；<code>--gpu</code> 安装后选择 GPU 后端并拉起 <code>voime-gpu</code>，GPU 不可用时回退 CPU；Toggle 空白窗口；普通打字不受影响；原生 Wayland / XWayland XIM 提交；目标失焦不误提交；TUI detach；daemon 重启重连；SenseVoice / FireRedASR Final 文本正常、RTF 达标；CPU 路径不加载 GPU 库。</li>
 </ul>
 
 <h2 id="b8">8. 升级 / 卸载</h2>
@@ -377,11 +418,11 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1 -NoBuild<
   <tr><th>操作</th><th>步骤</th></tr>
   <tr><td>升级 Fcitx</td><td>重新编译并安装 <code>voime.so</code>；重启 Fcitx；确认 addon ABI，且输入法组中没有 Voime。</td></tr>
   <tr><td>升级 Voime（Linux）</td><td>停止 daemon；重新运行 <code>scripts/install_voimed.sh</code> / <code>scripts/install_voime.sh</code>；重新安装 addon 后重启 daemon 与 Fcitx。</td></tr>
-  <tr><td>模型升级</td><td>默认 clean install：重新运行 <code>scripts/install_models.sh</code>（GPU 目录再加 <code>--gpu</code>），然后重启 <code>voimed</code>；旧 schema / 旧目录布局直接拒绝。上一版本可手工运行一次性 <a href="MIGRATION-asr-v2.html"><code>scripts/migrate-asr-v2.sh</code></a>，安装器不检测、不调用。</td></tr>
-  <tr><td>配置迁移</td><td>旧版本无后缀的 <code>~/.config/fcitx5/conf/voime</code> 会在 addon 启动时迁移到 <code>voime.conf</code>，然后删除旧文件。模型由固定目录决定，不依赖旧配置。</td></tr>
+  <tr><td>模型升级</td><td>默认 clean install：重新运行 <code>scripts/install_models.sh</code>（GPU 资源包再加 <code>--gpu</code>），然后重启 <code>voimed</code>；旧 schema / 旧目录布局直接拒绝。上一版本可手工运行一次性 <a href="MIGRATION-asr-v2.html"><code>scripts/migrate-asr-v2.sh</code></a>，安装器不检测、不调用。</td></tr>
+  <tr><td>配置迁移</td><td>旧版本无后缀的 <code>~/.config/fcitx5/conf/voime</code> 会在 addon 启动时迁移到 <code>voime.conf</code>，然后删除旧文件。后端设置位于 <code>models/backend</code>，缺失时按 CPU 启动。</td></tr>
   <tr><td>卸载（Linux）</td><td><code>systemctl --user disable --now voime.service</code>；删除 addon 描述文件、<code>voime.so</code>、<code>~/.local/bin/voimed</code>、<code>~/.local/bin/voime</code>、可选 <code>voime-gpu</code> 与 <code>~/.config/systemd/user/voime.service</code>；模型目录与 GPU runtime 按需保留或删除。</td></tr>
   <tr><td>升级 / 卸载（Windows）</td><td>重新运行 <code>packaging/windows/install.ps1</code> 覆盖二进制；卸载运行 <code>uninstall.ps1</code>，按需附加 <code>-RemoveSettings</code> / <code>-RemoveModels</code> / <code>-RemoveRuntime</code>。TSF 若启用需重新注册。</td></tr>
-  <tr><td>停止顺序</td><td>Linux 先停止 daemon，再重启 / 关闭平台前端；Windows 停止服务即退出托盘。卸载后宿主不保留 Voime 条目；旧 <code>active</code> / legacy 布局不再读取。</td></tr>
+  <tr><td>停止顺序</td><td>Linux 先停止 daemon，再重启 / 关闭平台前端；Windows 停止服务即退出托盘。卸载后宿主不保留 Voime 条目；资源包目录与 <code>backend</code> 设置按需保留或删除。</td></tr>
 </table>
 
 </body>

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::{bail, Context};
 use ort::environment::Environment;
 use ort::session::builder::GraphOptimizationLevel;
@@ -11,7 +9,7 @@ use crate::model::{Artifact, TensorSpec};
 #[derive(Clone)]
 pub struct SessionFactory {
     threads: usize,
-    env: Arc<Environment>,
+    env: Environment,
 }
 
 impl SessionFactory {
@@ -19,17 +17,16 @@ impl SessionFactory {
         if threads == 0 {
             bail!("线程数必须大于 0");
         }
-        let _ = ort::init()
+        let env = ort::init()
             .with_name("voime")
             .with_telemetry(false)
-            .commit();
-        let env = Environment::current().context("获取 ONNX Runtime 环境失败")?;
+            .build()
+            .context("创建 ONNX Runtime 环境失败")?;
         Ok(Self { threads, env })
     }
 
     pub fn create(&self, model: &std::path::Path) -> anyhow::Result<Session> {
-        let _environment = &self.env;
-        let mut builder = Session::builder()
+        let mut builder = Session::builder(&self.env)
             .context("创建 ONNX 会话构建器失败")?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|error| anyhow::anyhow!("设置图优化级别失败：{error}"))?

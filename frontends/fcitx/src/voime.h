@@ -55,6 +55,8 @@ private:
     bool recording_ = false;
     bool finalizing_ = false;
     bool toggleActive_ = false;
+    bool backendPending_ = false;
+    std::optional<Backend> daemonBackend_;
     uint32_t holdCode_ = 0;
     uint32_t toggleCode_ = 0;
     uint64_t nextLocalId_ = 1;

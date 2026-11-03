@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the fixed SenseVoice model directory (`models/sense-voice`)."""
+"""Install the SenseVoice model into the default resource pack (`models/default/sense-voice`)."""
 
 from __future__ import annotations
 
@@ -151,7 +151,7 @@ def manifest(model: Path, tokens: Path, count: int) -> dict:
 
 def install(*, model_root: Path, cache_dir: Path) -> int:
     root = model_root.expanduser().resolve()
-    target = root / PACKAGE_ID
+    target = root / "default" / PACKAGE_ID
     target.mkdir(parents=True, exist_ok=True)
     cache_dir = cache_dir.expanduser().resolve()
 

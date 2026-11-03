@@ -5,22 +5,22 @@ hide footbox
 
 participant "voimed" as Daemon
 participant "voime-gpu" as Worker
-participant "模型包" as Package
+participant "资源包" as Package
 
 Daemon -> Daemon : 保留 SenseVoice Preview / VAD / Punc
-Daemon -> Package : 读取 Final manifest / 校验 SHA
-alt Final 是 CPU SenseVoice
+Daemon -> Package : 读取 backend 与资源包 manifest / 校验 SHA
+alt Backend = cpu
   Daemon -> Daemon : 不启动 worker
-else Final 是 GPU FireRed
+else Backend = gpu
   Daemon -> Worker : spawn + Hello
-  Worker -> Worker : 加载 FireRed AED FP16
+  Worker -> Worker : 加载 FireRedASR FP16
   Worker --> Daemon : Ready
   Daemon -> Worker : Transcribe(final segment)
   Worker --> Daemon : text
 end
 alt worker 崩溃 / 超时 / 显存不足
   Daemon -> Worker : 退避重启（1 / 2 / 5 s）
-  Daemon -> Daemon : 仍失败则回退 CPU SenseVoice
+  Daemon -> Daemon : 仍失败则 Final 回退 CPU SenseVoice
 end
 Daemon -> Worker : Shutdown（如已启动）
 @enduml

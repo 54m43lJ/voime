@@ -9,7 +9,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if (-not $Archive -and -not $Url) {
-    throw 'install_runtime.ps1: pass -Archive or -Url; GPU runtimes are explicit opt-in'
+    throw 'install_runtime.ps1: GPU runtime packages are distributed separately; pass -Archive <zip> or -Url <url>'
 }
 $base = if ($env:VOIME_RUNTIME_DIR) {
     $env:VOIME_RUNTIME_DIR

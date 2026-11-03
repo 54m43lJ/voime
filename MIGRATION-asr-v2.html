@@ -30,8 +30,8 @@
 <table>
   <tr><th>项目</th><th>约定</th></tr>
   <tr><td>支持来源</td><td>只支持上一版本 + 当前开发机环境；不覆盖源码构建、其他发行版或其他机器。</td></tr>
-  <tr><td>目标</td><td>schema 3 固定模型目录（<code>vad</code> / <code>sense-voice</code>，可选 <code>fire-red-aed</code> / <code>punc</code>）与 Fcitx 配置备份。</td></tr>
-  <tr><td>不处理</td><td>不转换旧 CTC / SenseVoice-punc / AED CPU 包；不建立运行期兼容层；不迁移模型选择指针（新架构没有）；不改音频等无关用户数据。</td></tr>
+  <tr><td>目标</td><td>schema 3 的两个资源包目录：<code>default/</code>（VAD + SenseVoice）与可选 <code>firered/</code>（FireRed AED + Punc）；保留 Fcitx 配置备份。</td></tr>
+  <tr><td>不处理</td><td>不转换旧 CTC / SenseVoice-punc / AED CPU 包；不建立运行期兼容层；不迁移后端设置；不改音频等无关用户数据。</td></tr>
   <tr><td>生命周期</td><td>临时脚本，只随 ASR v2 首次发布提供；下一个大版本移除。</td></tr>
 </table>
 
@@ -39,7 +39,7 @@
 <p><a href="#top">↑</a></p>
 
 <ul>
-  <li>先安装新版本二进制；迁移脚本备份旧模型目录与 Fcitx 配置，然后调用安装器写入新的固定模型目录。</li>
+  <li>先安装新版本二进制；迁移脚本备份旧模型目录与 Fcitx 配置，然后调用安装器写入新的资源包目录。</li>
   <li>停止 <code>voimed</code>；脚本不会在 daemon 运行时执行。</li>
   <li>确认模型根目录可写，且磁盘空间足够保存时间戳备份。</li>
   <li>阅读发布说明；确认当前环境属于“上一版本 + 当前开发机”，其他环境直接 clean install。</li>
@@ -51,20 +51,26 @@
 <pre><code># 只输出计划，不修改文件
 scripts/migrate-asr-v2.sh --dry-run
 
-# 默认安装 VAD + SenseVoice；GPU 目录再加 --gpu
+# 默认安装 default/（VAD + SenseVoice）；需要 firered/ 时再加 --gpu
 scripts/migrate-asr-v2.sh --apply
-scripts/migrate-asr-v2.sh --apply --gpu
+scripts/migrate-asr-v2.sh --apply --gpu --punc-source-dir /path/to/fireredpunc
 
-# 指定模型根目录
-scripts/migrate-asr-v2.sh --dry-run --model-root /path/to/models</code></pre>
+# 指定模型根目录 / 缓存 / 本地导出的 FireRed 包
+scripts/migrate-asr-v2.sh --dry-run --model-root /path/to/models
+scripts/migrate-asr-v2.sh --apply --cache-dir /path/to/cache \
+    --source-dir /path/to/exported/aed --aed-version v2</code></pre>
 
 <table>
   <tr><th>选项</th><th>行为</th></tr>
-  <tr><td><code>--dry-run</code></td><td>默认模式；列出将备份、安装与写入的项。</td></tr>
+  <tr><td><code>--dry-run</code></td><td>默认模式；列出将备份、安装、清理与写入的项。</td></tr>
   <tr><td><code>--apply</code></td><td>执行迁移；执行前要求 daemon 已停止。</td></tr>
-  <tr><td><code>--gpu</code></td><td>除默认 VAD + SenseVoice 外，额外安装 FireRed AED + Punc；对应安装步骤需要可用的 Punc 源目录。</td></tr>
+  <tr><td><code>--gpu</code></td><td>除默认 <code>default/</code>（VAD + SenseVoice）外，额外安装 <code>firered/</code>（FireRed AED + Punc）；对应安装步骤需要可用的 Punc 源目录。</td></tr>
+  <tr><td><code>--punc-source-dir</code></td><td>传给安装器的 FireRedPunc 源目录；不提供时复用已安装的 <code>firered/punc</code>。</td></tr>
+  <tr><td><code>--source-dir</code></td><td>传给安装器的本地导出模型目录；可用于 VAD / FireRed AED / Punc。</td></tr>
+  <tr><td><code>--cache-dir</code></td><td>传给安装器的下载缓存目录。</td></tr>
+  <tr><td><code>--aed-version</code></td><td><code>v1</code> / <code>v2</code> / <code>auto</code>；传给 FireRed 安装步骤。</td></tr>
   <tr><td><code>--force</code></td><td>忽略已存在的迁移标记；仅用于明确知道后果的重复运行。</td></tr>
-  <tr><td><code>--model-root</code></td><td>覆盖模型根目录。</td></tr>
+  <tr><td><code>--model-root</code></td><td>覆盖模型根目录；不能为空或 <code>/</code>。</td></tr>
 </table>
 
 <h2 id="m4">4. 迁移内容</h2>
@@ -72,9 +78,10 @@ scripts/migrate-asr-v2.sh --dry-run --model-root /path/to/models</code></pre>
 
 <table>
   <tr><th>步骤</th><th>行为</th></tr>
-  <tr><td>备份</td><td>把旧模型目录与 <code>~/.config/fcitx5/conf/voime.conf</code> 复制到带时间戳的备份目录；失败时停止。</td></tr>
-  <tr><td>安装</td><td>调用 <code>install_models.sh</code> 写入固定目录：默认 <code>vad</code> + <code>sense-voice</code>；<code>--gpu</code> 追加 <code>fire-red-aed</code> + <code>punc</code>。</td></tr>
-  <tr><td>配置</td><td>保留 Fcitx 的 <code>Mode</code> / <code>Hotkey</code>；旧模型选择字段不再读取，未知字段保留在备份中。</td></tr>
+  <tr><td>备份</td><td>把旧模型目录复制到 <code>&lt;backup&gt;/models/</code>，把 <code>~/.config/fcitx5/conf/voime.conf</code> 复制到 <code>&lt;backup&gt;/config/voime.conf</code>；失败时停止。</td></tr>
+  <tr><td>安装</td><td>调用 <code>install_models.sh</code> 写入资源包：默认 <code>default/</code>（<code>vad</code> + <code>sense-voice</code>）；<code>--gpu</code> 追加 <code>firered/</code>（<code>fire-red-aed</code> + <code>punc</code>）。</td></tr>
+  <tr><td>清理</td><td>安装成功后删除模型根目录下旧的 <code>vad</code> / <code>sense-voice</code> / <code>fire-red-aed</code> / <code>punc</code> / <code>fire-red-aed-v1</code> 目录与旧 <code>active</code> 文件；备份仍保留。</td></tr>
+  <tr><td>配置</td><td>保留 Fcitx 的 <code>Mode</code> / <code>Hotkey</code>；<code>Backend</code> 缺失时按 cpu 处理。旧模型选择字段不再读取，未知字段保留在备份中。</td></tr>
   <tr><td>收尾</td><td>写迁移标记 <code>.migrate-asr-v2</code>；输出模型根目录与备份路径。</td></tr>
 </table>
 
@@ -82,8 +89,8 @@ scripts/migrate-asr-v2.sh --dry-run --model-root /path/to/models</code></pre>
 <p><a href="#top">↑</a></p>
 
 <ul>
-  <li>失败时脚本自动恢复备份，并保留迁移日志。</li>
-  <li>手工回滚：停止 daemon，把备份目录中的模型 / 配置复制回原位置，再启动旧版本；新架构没有 <code>active</code> 需要恢复。</li>
+  <li>失败时脚本自动删除未完成的新模型目录并恢复备份；已备份的配置保持不变。</li>
+  <li>手工回滚：停止 daemon，把 <code>&lt;backup&gt;/models/</code> 与 <code>&lt;backup&gt;/config/voime.conf</code> 复制回原位置，再启动旧版本；新架构没有 <code>active</code> 需要恢复。</li>
   <li>迁移不是运行期兼容承诺；回滚后旧版本仍按旧规则运行。</li>
 </ul>
 
@@ -93,7 +100,7 @@ scripts/migrate-asr-v2.sh --dry-run --model-root /path/to/models</code></pre>
 <ul>
   <li>不安装或替换二进制；不启动 / 停止 systemd 或托盘。</li>
   <li>不下载模型；模型安装仍由安装脚本完成。</li>
-  <li>不转换旧模型包，不保留旧 schema、<code>active=legacy</code> 或旧目录布局；新 daemon 只读取四个固定目录。</li>
+  <li>不转换旧模型包，不保留旧 schema、<code>active=legacy</code> 或旧目录布局；安装成功后清理旧根级模型目录，新 daemon 只读取 <code>default/</code> 与 <code>firered/</code> 资源包。</li>
   <li>不修改与升级无关的音频、按键或识别历史。</li>
 </ul>
 

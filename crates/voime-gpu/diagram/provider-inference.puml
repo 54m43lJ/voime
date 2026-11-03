@@ -4,11 +4,11 @@ skinparam shadowing false
 hide footbox
 
 participant "voime-gpu" as Worker
-participant "模型包" as Model
+participant "资源包" as Model
 participant "GPU runtime 包" as Runtime
 participant "ONNX Runtime GPU" as Ort
 
-Worker -> Model : 读取 manifest.json
+Worker -> Model : 读取 firered/fire-red-aed/manifest.json
 Worker -> Model : SHA-256 + 张量 / metadata 校验
 Worker -> Runtime : 加载 ORT / EP
 Worker -> Ort : 创建 encoder / decoder 会话

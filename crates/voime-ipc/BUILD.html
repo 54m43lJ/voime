@@ -51,8 +51,8 @@ cargo fmt -p voime-ipc --check</code></pre>
 
 <table>
   <tr><th>测试</th><th>覆盖</th></tr>
-  <tr><td>单元测试</td><td>Hello 往返、外部标签与小写值、超长消息、缺少换行、协议 4 版本拒绝。</td></tr>
-  <tr><td><code>tests/ipc.rs</code></td><td>握手 / 角色 / Mode / framing / 协议 4 的跨组件集成测试；不包含模型选择或重启消息。</td></tr>
+  <tr><td>单元测试</td><td>Hello 往返、SetBackend 往返、外部标签与小写值、超长消息、缺少换行、协议 5 版本。</td></tr>
+  <tr><td><code>tests/ipc.rs</code></td><td>握手 / 角色 / Mode / SetBackend / framing / 协议 5 的跨组件集成测试；不包含模型列表或 package_id。</td></tr>
   <tr><td>协议金样</td><td>C++ 前端与 Rust 客户端共用同一组 JSON 样例；新增消息字段时必须同步并提升 <code>PROTOCOL_VERSION</code>。</td></tr>
 </table>
 <ul class="note">

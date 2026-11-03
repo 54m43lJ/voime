@@ -16,7 +16,12 @@
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
 <a href="BUILD.html">BUILD</a>
-｜ 状态：待评审 · 未实现 · 2026-11-01
+｜ 状态：已归档 · 当前契约以 <a href="README.html">README</a> / <a href="USER.html">USER</a> / <a href="CORE.html">CORE</a> / <a href="BUILD.html">BUILD</a> 为准
+</p>
+
+<p class="note">
+  本文保留为 ASR v2 的设计记录；其中的 <code>active</code> / package_id 与“重启后端”方案已被当前的后端设置
+  <code>models/backend</code> 取代。实现与验收请以根文档和组件文档为准。
 </p>
 
 <p>
@@ -1580,7 +1585,7 @@ Final 直接输入、不做呈现变化；Fcitx 动态枚举不可用时模型�
   <tr><td>新增 <code>crates/voime-gpu/CORE.html</code> · <code>PROVIDER.html</code></td><td>全文</td><td>增</td><td>CORE：文件树 / SBOM / 类型 / 调用栈（spawn / handshake / transcribe / shutdown）；PROVIDER：GPU ORT / EP、FireRed AED 张量 / metadata、FP16、错误、许可证；GPU 只接受 FP16，int8 只用于 CPU SenseVoice。</td></tr>
   <tr><td>新增 <code>crates/voime-gpu/BUILD.html</code> · 组件图表</td><td>全文</td><td>增</td><td>BUILD：构建、runtime 打包、测试、升级；diagrams：<code>protocol.puml</code>、<code>provider-map.puml</code>、<code>provider-inference.puml</code>；生命周期图归 voimed。</td></tr>
   <tr><td>新增 <code>MIGRATION-asr-v2.html</code></td><td>全文</td><td>增</td><td><code>scripts/migrate-asr-v2.sh</code> 的可选一次性迁移说明：只覆盖上一版本 + 当前开发机；先装新版本；<code>--dry-run</code> / <code>--apply</code>；停止 daemon；时间戳备份 / 恢复；只迁模型 / <code>active</code> / 白名单配置；不转换 CTC / punc / AED CPU；下一大版本删除。</td></tr>
-  <tr><td>图表源与导出</td><td><code>diagram/general-architecture</code> · <code>diagram/provider-map</code> · <code>diagram/provider-inference</code> · <code>diagram/windows-mvp</code> · <code>diagram/windows-tsf</code> · <code>crates/voime-core/diagram/inference-boundary</code> · <code>crates/voime-ipc/diagram/model-switch</code> · <code>crates/voimed/diagram/backend-restart</code> · <code>crates/voimed/diagram/gpu-worker</code> · <code>crates/voime-gpu/diagram/protocol</code> · <code>crates/voime-gpu/diagram/provider-map</code> · <code>crates/voime-gpu/diagram/provider-inference</code></td><td>改 / 增</td><td>更新 CPU daemon + 可选 GPU Final 的架构、provider 边界与模型切换时序；把重启后端 / worker 生命周期图落到 voimed，把 worker 协议图落到 voime-gpu；改 <code>.puml</code> 后重新导出 <code>.svg</code>，源与图一起提交。</td></tr>
+  <tr><td>图表源与导出</td><td><code>diagram/general-architecture</code> · <code>diagram/provider-map</code> · <code>diagram/provider-inference</code> · <code>diagram/windows-mvp</code> · <code>diagram/windows-tsf</code> · <code>crates/voime-core/diagram/inference-boundary</code> · <code>crates/voime-ipc/diagram/backend-select</code> · <code>crates/voimed/diagram/backend-restart</code> · <code>crates/voimed/diagram/gpu-worker</code> · <code>crates/voime-gpu/diagram/protocol</code> · <code>crates/voime-gpu/diagram/provider-map</code> · <code>crates/voime-gpu/diagram/provider-inference</code></td><td>改 / 增</td><td>更新 CPU daemon + 可选 GPU Final 的架构、provider 边界与模型切换时序；把重启后端 / worker 生命周期图落到 voimed，把 worker 协议图落到 voime-gpu；改 <code>.puml</code> 后重新导出 <code>.svg</code>，源与图一起提交。</td></tr>
 </table>
 
 <ul class="note">

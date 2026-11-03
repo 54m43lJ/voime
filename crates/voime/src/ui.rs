@@ -145,7 +145,10 @@ fn build_lines<'a>(app: &App, area_width: u16) -> Vec<Line<'a>> {
 fn footer_text(app: &App) -> String {
     let mode = app.mode.map(|mode| mode.as_str()).unwrap_or("-");
     let hotkey = app.hotkey.as_deref().unwrap_or("-");
-    format!("Mode: {mode}  Hotkey: {hotkey}  Ctrl+X 清空  q 退出")
+    format!(
+        "Mode: {mode}  Hotkey: {hotkey}  Backend: {}  Ctrl+X 清空  q 退出",
+        app.backend
+    )
 }
 
 fn push_wrapped<'a>(lines: &mut Vec<Line<'a>>, text: &str, content_width: usize, marker: bool) {
@@ -237,9 +240,10 @@ mod tests {
         let mut app = App::new();
         app.mode = Some(voime_ipc::Mode::Ptt);
         app.hotkey = Some("Super+F2".to_string());
+        app.backend = voime_ipc::Backend::Gpu;
         assert_eq!(
             footer_text(&app),
-            "Mode: ptt  Hotkey: Super+F2  Ctrl+X 清空  q 退出"
+            "Mode: ptt  Hotkey: Super+F2  Backend: gpu  Ctrl+X 清空  q 退出"
         );
     }
 }

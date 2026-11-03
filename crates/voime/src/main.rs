@@ -109,15 +109,35 @@ fn run_ctl_inner(endpoint: &Endpoint, action: CtlAction) -> anyhow::Result<()> {
                 match client.next_event_timeout(CTL_TIMEOUT)? {
                     ServerMessage::Status { status } => {
                         println!(
-                            "recording={} finalizing={} segment={:?} mode={} hotkey={} addon={} transcript={}",
+                            "recording={} finalizing={} segment={:?} mode={} hotkey={} addon={} backend={} transcript={}",
                             status.recording,
                             status.finalizing,
                             status.segment_id,
                             status.mode.map(|mode| mode.as_str()).unwrap_or("-"),
                             status.hotkey.as_deref().unwrap_or("-"),
                             frontend_state(status.addon),
+                            status.backend,
                             status.transcript_count
                         );
+                        break;
+                    }
+                    ServerMessage::Error { code, message } => {
+                        anyhow::bail!("daemon 错误（{code:?}）：{message}");
+                    }
+                    ServerMessage::Bye {} => anyhow::bail!("daemon 已退出"),
+                    _ => {}
+                }
+            }
+        }
+        CtlAction::Backend { backend } => {
+            let backend = backend
+                .parse::<voime_ipc::Backend>()
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            client.send(&ClientMessage::SetBackend { backend })?;
+            loop {
+                match client.next_event_timeout(CTL_TIMEOUT)? {
+                    ServerMessage::BackendChanged { backend: applied } => {
+                        println!("backend={applied}");
                         break;
                     }
                     ServerMessage::Error { code, message } => {

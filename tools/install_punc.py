@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the optional FireRedPunc model directory (`models/punc`).
+"""Install FireRedPunc into the firered resource pack (`models/firered/punc`).
 
 The source can be a directory containing model.onnx / vocab.txt / labels.json,
 or an older package with a `punc` section in its manifest.json.
@@ -94,7 +94,7 @@ def manifest(model: Path, vocab: Path, labels: Path, max_tokens: int) -> dict:
 
 def install(*, model_root: Path, source_dir: Path, max_tokens: int) -> int:
     root = model_root.expanduser().resolve()
-    target = root / "punc"
+    target = root / "firered" / "punc"
     target.mkdir(parents=True, exist_ok=True)
     source = source_dir.expanduser().resolve()
     model, vocab, labels = find_punc(source)

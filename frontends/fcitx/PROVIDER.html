@@ -61,7 +61,7 @@
   <tr><td>目标输入框</td><td>语音段开始时聚焦的 <code>InputContext</code>；提交前重新检查存在与 <code>hasFocus()</code>。</td></tr>
   <tr><td>提交</td><td><code>commitString</code> 无返回值；不保证客户端接受。Fcitx commit filter 与长文本分块由 Fcitx 负责。</td></tr>
   <tr><td>addon ABI</td><td><code>voime.so</code> 与 Fcitx5 头文件绑定；Fcitx 大版本升级后重新编译。</td></tr>
-  <tr><td>配置</td><td><code>Mode</code> / <code>Hotkey</code> 只来自 addon 配置；socket 使用默认路径。</td></tr>
+  <tr><td>配置</td><td><code>Mode</code> / <code>Backend</code> / <code>Hotkey</code> 只来自 addon 配置；socket 使用默认路径。</td></tr>
   <tr><td>本地性</td><td>运行期所有边界调用在本机完成；模型目录、音频与 IPC 不经过网络。</td></tr>
 </table>
 
@@ -103,7 +103,7 @@
   <tr><td>临时窗口</td><td><code>InputPanel::setPreedit(Text)</code></td><td>写入当前 <code>Partial</code>。</td></tr>
   <tr><td>刷新 UI</td><td><code>InputContext::updateUserInterface(UserInterfaceComponent::InputPanel)</code></td><td>让 Fcitx UI 重绘输入面板。</td></tr>
   <tr><td>焦点检查</td><td><code>InputContext::hasFocus()</code></td><td>提交前确认目标仍聚焦。</td></tr>
-  <tr><td>配置</td><td><code>Option&lt;Mode&gt;</code> / <code>KeyListOption</code> / <code>AddonInstance::getConfig</code></td><td><code>Mode</code> / <code>Hotkey</code>。</td></tr>
+  <tr><td>配置</td><td><code>Option&lt;Mode&gt;</code> / <code>Option&lt;Backend&gt;</code> / <code>KeyListOption</code> / <code>AddonInstance::getConfig</code></td><td><code>Mode</code> / <code>Backend</code> / <code>Hotkey</code>。</td></tr>
 </table>
 <ul class="note">
   <li>临时窗口只使用 Fcitx preedit，不调用 <code>setClientPreedit</code> / <code>updatePreedit</code>。</li>
@@ -139,7 +139,7 @@ Configurable=True
 Mode=ptt
 Hotkey=Super+F2</code></pre>
 <ul class="note">
-  <li>配置只有 <code>Mode</code> / <code>Hotkey</code>；没有 <code>Model</code> 字段，也没有模型枚举。模型由 daemon 从固定目录加载。</li>
+  <li>配置包含 <code>Mode</code> / <code>Backend</code> / <code>Hotkey</code>；没有 <code>Model</code> 字段或模型枚举。模型由 daemon 从资源包加载。</li>
   <li><code>OnDemand=False</code> 让 addon 在 Fcitx 启动时后台加载，从而在其他输入法活动时也能收到按键。</li>
   <li><code>Library=voime</code> 对应 <code>$PREFIX/lib/fcitx5/voime.so</code>；CMake 关闭 <code>lib</code> 前缀，不能生成 <code>libvoime.so</code>。</li>
   <li><code>readAsIni</code> / <code>safeSaveAsIni</code> 不会自动补 <code>.conf</code>，配置文件路径必须写全 <code>conf/voime.conf</code>。</li>
@@ -160,7 +160,7 @@ Hotkey=Super+F2</code></pre>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>端点</td><td>当前 Unix socket：<code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>，未设置时 <code>/tmp/voime-&lt;uid&gt;/voimed.sock</code>。</td></tr>
   <tr><td>权限</td><td>目录 0700、socket 0600；只允许同 UID 连接。</td></tr>
-  <tr><td>协议</td><td>换行 JSON；<code>PROTOCOL_VERSION=4</code>；消息与错误码见 <a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>。</td></tr>
+  <tr><td>协议</td><td>换行 JSON；<code>PROTOCOL_VERSION=5</code>；消息与错误码见 <a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>。</td></tr>
   <tr><td>读写</td><td>非阻塞 fd；<code>EventLoop::addIOEvent</code> 驱动读写；最大行 1 MiB。</td></tr>
   <tr><td>目标形态</td><td>端点语义由 <a href="../../crates/voime-transport/USER.html">voime-transport USER</a> 定义；C++ 前端按同一路径 / 权限契约实现。</td></tr>
 </table>

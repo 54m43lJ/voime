@@ -91,7 +91,7 @@ impl WorkerBackend {
     /// Spawns `voime-gpu` for a Final package directory.
     pub fn spawn(manifest: &Path, device: &str) -> anyhow::Result<Self> {
         let binary = worker_binary()
-            .context("找不到 voime-gpu；请安装 GPU Final 二进制或设置 VOIME_GPU_BIN")?;
+            .context("找不到 voime-gpu；请安装 GPU 后端二进制或设置 VOIME_GPU_BIN")?;
         let mut command = Command::new(&binary);
         command
             .arg("--manifest")

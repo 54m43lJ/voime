@@ -39,6 +39,7 @@ fn main() -> ExitCode {
     }
 
     let args = Args {
+        backend: cli.backend,
         input_device: cli.input_device,
         threads: cli.threads,
         verbose: cli.verbose,
@@ -56,19 +57,18 @@ fn run(args: Args, endpoint: Endpoint) -> anyhow::Result<()> {
     let verbose = args.verbose;
     let config = config::resolve(args.clone()).context("初始化配置失败")?;
     vlog!(
-        "voimed 启动 endpoint={endpoint} models={} gpu_final={} threads={}",
+        "voimed 启动 endpoint={endpoint} models={} backend={} threads={}",
         config.model_root.display(),
-        config.gpu_final(),
+        config.backend,
         config.threads
     );
     if verbose {
         eprintln!(
-            "voimed: 模型根目录 {}，Final={}，端点 {}，线程 {}",
+            "voimed: 模型根目录 {}，后端={}，端点 {}，线程 {}",
             config.model_root.display(),
-            if config.gpu_final() {
-                "FireRed AED (GPU)"
-            } else {
-                "SenseVoice (CPU)"
+            match config.backend {
+                voime_ipc::Backend::Cpu => "CPU (VAD + SenseVoice)",
+                voime_ipc::Backend::Gpu => "GPU (CPU VAD/SenseVoice/Punc + GPU FireRedASR)",
             },
             endpoint,
             config.threads

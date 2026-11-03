@@ -132,6 +132,7 @@ mod tests {
                     transcript: Vec::new(),
                     addon: FrontendState::Connected,
                     hotkey: Some("Ctrl+Alt+Space".to_string()),
+                    backend: voime_ipc::Backend::Cpu,
                 },
             )
             .unwrap();

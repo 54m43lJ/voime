@@ -12,6 +12,16 @@ const char *modeName(Mode mode) {
     return "ptt";
 }
 
+const char *backendName(Backend backend) {
+    switch (backend) {
+    case Backend::Cpu:
+        return "cpu";
+    case Backend::Gpu:
+        return "gpu";
+    }
+    return "cpu";
+}
+
 std::string hotkeyString(const fcitx::KeyList &keys) {
     std::string result;
     for (const auto &key : keys) {

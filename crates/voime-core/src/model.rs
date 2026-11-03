@@ -11,12 +11,23 @@ pub const MANIFEST_FILE: &str = "manifest.json";
 pub const SCHEMA_VERSION: u32 = 3;
 pub const SAMPLES_PER_SECOND: u32 = 16_000;
 
-/// Fixed model directories below the model root. The loader and installers
-/// use the same names; there is no package id / active pointer layer.
+/// Resource pack directories below the model root. A pack owns one directory
+/// and the model directories below it; installers and the loader share the
+/// names.
+pub const DEFAULT_PACK_DIR: &str = "default";
+pub const FIRERED_PACK_DIR: &str = "firered";
 pub const VAD_DIR: &str = "vad";
 pub const SENSE_VOICE_DIR: &str = "sense-voice";
 pub const FIRE_RED_AED_DIR: &str = "fire-red-aed";
 pub const PUNC_DIR: &str = "punc";
+
+pub fn default_pack_root(model_root: &Path) -> PathBuf {
+    model_root.join(DEFAULT_PACK_DIR)
+}
+
+pub fn firered_pack_root(model_root: &Path) -> PathBuf {
+    model_root.join(FIRERED_PACK_DIR)
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct TensorSpec {

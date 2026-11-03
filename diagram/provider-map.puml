@@ -15,7 +15,7 @@ package "本机资源" {
   component "音频设备\ncpal / ALSA / WASAPI" as Audio
   component "ONNX Runtime\nCPU" as OrtCpu
   component "ONNX Runtime\nGPU / EP" as OrtGpu
-  component "模型包\nSenseVoice / FireRedVAD\nFireRedPunc / 可选 FireRed AED" as Models
+  component "模型包\n默认: VAD / SenseVoice\nFireRed: FireRedASR-AED / FireRedPunc" as Models
   component "GPU runtime 包\nMIGraphX / DirectML / CUDA" as Runtime
 }
 

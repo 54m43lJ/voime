@@ -116,10 +116,16 @@ void VoimeAddon::deactivate(const fcitx::InputMethodEntry &entry,
 const fcitx::Configuration *VoimeAddon::getConfig() const { return &config_; }
 
 void VoimeAddon::setConfig(const fcitx::RawConfig &config) {
+    const auto previousBackend = config_.backend.value();
     config_.load(config, true);
     fcitx::safeSaveAsIni(config_, CONFIG_FILE);
     const auto current = currentConfig();
     client_.configure(current.mode, current.hotkey);
+    if (current.backend != previousBackend ||
+        (daemonBackend_ && *daemonBackend_ != current.backend)) {
+        backendPending_ = true;
+        client_.setBackend(current.backend);
+    }
 }
 
 void VoimeAddon::reloadConfig() {
@@ -135,6 +141,7 @@ void VoimeAddon::reloadConfig() {
 IpcConfig VoimeAddon::currentConfig() const {
     return IpcConfig{
         config_.mode.value(),
+        config_.backend.value(),
         hotkeyString(config_.hotkey.value()),
     };
 }
@@ -365,13 +372,42 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             segmentId_.reset();
             clearPreview();
         }
+        backendPending_ = false;
         break;
     case ServerMessageType::Bye:
         client_.disconnect();
         break;
     case ServerMessageType::Snapshot:
-    case ServerMessageType::HistoryCleared:
+        if (message.backend) {
+            daemonBackend_ = message.backend;
+            backendPending_ = false;
+            if (config_.backend.value() != *message.backend) {
+                config_.backend.setValue(*message.backend);
+                fcitx::safeSaveAsIni(config_, CONFIG_FILE);
+            }
+        }
+        break;
+    case ServerMessageType::BackendChanged:
+        if (message.backend) {
+            daemonBackend_ = message.backend;
+            backendPending_ = false;
+            if (config_.backend.value() != *message.backend) {
+                config_.backend.setValue(*message.backend);
+                fcitx::safeSaveAsIni(config_, CONFIG_FILE);
+            }
+        }
+        break;
     case ServerMessageType::Status:
+        if (message.backend) {
+            daemonBackend_ = message.backend;
+            if (!backendPending_ &&
+                config_.backend.value() != *message.backend) {
+                config_.backend.setValue(*message.backend);
+                fcitx::safeSaveAsIni(config_, CONFIG_FILE);
+            }
+        }
+        break;
+    case ServerMessageType::HistoryCleared:
     case ServerMessageType::Unknown:
         break;
     }

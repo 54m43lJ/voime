@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use voime_ipc::{FrontendConfig, Mode};
+use voime_ipc::{Backend, FrontendConfig, Mode};
 use windows::core::w;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::{
@@ -23,6 +23,8 @@ pub struct Config {
     pub start_at_login: bool,
     #[serde(default = "default_true")]
     pub overlay_enabled: bool,
+    #[serde(default = "default_backend")]
+    pub backend: Backend,
 }
 
 impl Default for Config {
@@ -32,6 +34,7 @@ impl Default for Config {
             hotkey: default_hotkey(),
             start_at_login: default_true(),
             overlay_enabled: default_true(),
+            backend: default_backend(),
         }
     }
 }
@@ -141,6 +144,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_backend() -> Backend {
+    Backend::Cpu
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +159,7 @@ mod tests {
         assert_eq!(config.hotkey.to_string(), "Ctrl+Alt+Space");
         assert!(config.start_at_login);
         assert!(config.overlay_enabled);
+        assert_eq!(config.backend, Backend::Cpu);
     }
 
     #[test]
@@ -161,5 +169,6 @@ mod tests {
         let decoded: Config = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(decoded.hotkey, config.hotkey);
         assert_eq!(decoded.mode, config.mode);
+        assert_eq!(decoded.backend, config.backend);
     }
 }

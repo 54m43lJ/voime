@@ -70,6 +70,11 @@ impl Mode {
     pub fn as_str(self) -&gt; &amp;'static str;
 }
 
+pub enum Backend { /* 见 USER §4.4 */ }
+impl Backend {
+    pub fn as_str(self) -&gt; &amp;'static str;
+}
+
 pub enum Role { /* 见 USER §4.4 */ }
 pub enum TriggerSource { /* 见 USER §4.4 */ }
 pub enum Phase { /* 见 USER §4.4 */ }

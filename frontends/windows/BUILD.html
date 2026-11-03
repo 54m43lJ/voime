@@ -88,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\uninstall.ps1 -Remove
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>安装</td><td>每用户安装到 <code>%LOCALAPPDATA%\Programs\Voime</code>；不要求管理员，除非启用 TSF 注册。</td></tr>
   <tr><td>登录启动</td><td>写入 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>；登录后启动托盘；托盘以子进程托管 daemon，退出托盘即停止。</td></tr>
-  <tr><td>模型</td><td><code>%LOCALAPPDATA%\voime\models</code> 下的 <code>vad</code> + <code>sense-voice</code>；<code>-Gpu</code> 追加 <code>fire-red-aed</code> + <code>punc</code>；由 <code>scripts/install_models.ps1</code> 生成。</td></tr>
+  <tr><td>模型</td><td><code>%LOCALAPPDATA%\voime\models</code> 下的 <code>default/</code>（<code>vad</code> + <code>sense-voice</code>）；<code>-Gpu</code> 追加 <code>firered/</code>（<code>fire-red-aed</code> + <code>punc</code>）；由 <code>scripts/install_models.ps1</code> 生成。</td></tr>
 
   <tr><td>日志</td><td>启动托盘前设 <code>VOIME_LOG=1</code>（或目录路径）；托盘、设置窗口与 daemon 分别写 <code>%LOCALAPPDATA%\voime\logs\voime-tray.log</code> / <code>voime-settings.log</code> / <code>voimed.log</code>。</td></tr>
   <tr><td>TSF 注册</td><td>可选 P4；COM / TSF profile 注册通常需要管理员，按用户启用。</td></tr>
@@ -121,8 +121,8 @@ cargo test -p voime-ipc -p voime-transport -p voime-log
   <tr><td>应用</td><td>Notepad、Word、Outlook、Chrome、Edge、Firefox、VS Code、Windows Terminal、PowerShell、WPF / WinForms、UWP Notepad、管理员控制台、RDP 客户端。</td></tr>
   <tr><td>目标</td><td>前台窗口稳定、窗口内切换焦点、目标关闭、提权窗口、锁屏。</td></tr>
   <tr><td>输入</td><td>中文 / 英文 / emoji / 长文本；IME 开启状态；SendInput 失败。</td></tr>
-  <tr><td>传输</td><td>命名管道 ACL、拒绝远程、daemon 重启、慢读、协议 4。</td></tr>
-  <tr><td>模型</td><td>设置窗口没有模型选择；默认安装下 CPU Final；<code>-Gpu</code> 安装后重启 daemon 自动尝试 GPU Final，失败回退 CPU。</td></tr>
+  <tr><td>传输</td><td>命名管道 ACL、拒绝远程、daemon 重启、慢读、协议 5。</td></tr>
+  <tr><td>模型</td><td>设置窗口没有模型路径选择；默认安装下 CPU 后端；<code>-Gpu</code> 安装后选择 GPU 后端，失败回退 CPU。</td></tr>
   <tr><td>TSF（可选）</td><td>Notepad 单应用提交、多应用、x86 / x64、注册 / 升级、组合 / 预览。</td></tr>
 </table>
 
@@ -135,7 +135,7 @@ cargo test -p voime-ipc -p voime-transport -p voime-log
   <tr><td><code>onnxruntime</code></td><td>静态链接进 <code>voimed.exe</code>；动态链接构建时改为随包分发 <code>onnxruntime.dll</code>。</td></tr>
   <tr><td>安装器 / 登录启动项</td><td>每用户安装；托盘以子进程托管 daemon。</td></tr>
   <tr><td>可选 TSF DLL</td><td>x86 / x64 + 注册脚本；版本化，升级需重启应用。</td></tr>
-  <tr><td>模型下载 / 校验</td><td>与 Linux 共用四个固定模型目录、每目录 <code>manifest.json</code> 与 SHA-256。</td></tr>
+  <tr><td>模型下载 / 校验</td><td>与 Linux 共用 <code>default/</code> / <code>firered/</code> 资源包、每目录 <code>manifest.json</code> 与 SHA-256。</td></tr>
 </table>
 <ul class="note">
   <li>发布前检查：托盘单实例、热键注册、目标失焦不误提交、提权窗口不注入、命名管道 ACL、无按键 / 音频 / 文本落盘。</li>

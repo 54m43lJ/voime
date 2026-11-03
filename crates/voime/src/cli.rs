@@ -37,6 +37,10 @@ pub enum CtlAction {
     Toggle,
     Status,
     Clear,
+    /// 切换 Final 后端（cpu / gpu）并持久化
+    Backend {
+        backend: String,
+    },
     Quit,
 }
 

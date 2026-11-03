@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the optional FireRed AED model directory (`models/fire-red-aed`).
+"""Install FireRed AED into the firered resource pack (`models/firered/fire-red-aed`).
 
 By default this downloads the official FireRedASR v1 FP16 ONNX package.
 `--source-dir` can point to a locally exported v2 FP16 package instead.
@@ -223,7 +223,7 @@ def install(
     variant: str,
 ) -> int:
     root = model_root.expanduser().resolve()
-    target = root / PACKAGE_ID
+    target = root / "firered" / PACKAGE_ID
     target.mkdir(parents=True, exist_ok=True)
     cache_dir = cache_dir.expanduser().resolve()
 

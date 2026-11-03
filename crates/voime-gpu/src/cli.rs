@@ -6,7 +6,7 @@ use clap::Parser;
 #[command(
     name = "voime-gpu",
     version,
-    about = "Voime 可选 GPU Final worker（FireRed AED）",
+    about = "Voime 可选 GPU 后端 worker（FireRedASR）",
     max_term_width = 100
 )]
 pub struct Args {

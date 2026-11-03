@@ -49,7 +49,7 @@
     └── <a href="#c4-19">pipeline.rs</a></code></pre>
 <ul class="note">
   <li>模块入口文件只做 <code>pub mod</code> 导出；具体实现与签名在对应子文件。</li>
-  <li>文档与图表不属于源码结构；固定模型目录在运行时由 <code>config::resolve</code> 解析。</li>
+  <li>文档与图表不属于源码结构；资源包与后端设置在运行时由 <code>config::resolve</code> 解析。</li>
 </ul>
 
 <ul class="note">
@@ -67,8 +67,8 @@
   <tr><td>SenseVoice 解码状态</td><td>每帧更新 <code>prev</code>（包括 blank）；仅当 <code>id != 0 &amp;&amp; id != prev</code> 时输出；Final 与尾部 Partial 复用同一会话，不跨段保留状态。</td></tr>
   <tr><td>Partial 门槛</td><td>最小间隔、最小新增音频与尾部长度由 pipeline 模块常量拥有；一次慢推理会推迟下一次 Partial，避免立即重跑。</td></tr>
   <tr><td>分段与预卷</td><td><code>MIN_SPEECH_MS</code> / <code>MIN_SILENCE_MS</code> / <code>PTT_AUTO_END_MS</code> / <code>PRE_ROLL_MS</code> 由 segmenter 模块拥有；达到 <code>max_segment_ms</code> 时强制结束。预卷只扩展 ASR 输入窗口，不改变 VAD 判定。</td></tr>
-  <tr><td>FinalBackend</td><td><code>FinalBackend</code> 是 pipeline 的唯一 Final 入口；CPU 实现为 SenseVoice，worker 实现由 daemon 注入；core 不依赖 GPU / worker crate。</td></tr>
-  <tr><td>模型校验</td><td>加载清单时校验 schema 3、kind、fbank 参数、张量声明、token_count 与参数范围；<code>verify</code> 校验文件存在、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。四个目录各自独立校验。</td></tr>
+  <tr><td>FinalBackend</td><td><code>FinalBackend</code> 是 pipeline 的唯一 Final 入口；CPU 实现为 SenseVoice，worker 实现由 daemon 注入；core 不依赖 GPU / worker crate。后端切换通过 <code>ReplaceFinal</code> 只替换 Final 路径。</td></tr>
+  <tr><td>模型校验</td><td>加载清单时校验 schema 3、kind、fbank 参数、张量声明、token_count 与参数范围；<code>verify</code> 校验文件存在、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。两个资源包内的模型目录各自独立校验。</td></tr>
   <tr><td>错误边界</td><td>库内部使用 <code>anyhow::Result</code> + 上下文；音频错误类型保留 <code>AudioError</code>；pipeline 把可恢复错误转为 <code>SegmentDropped</code>，worker 不可用由 daemon 回退。</td></tr>
   <tr><td>无 OS 依赖</td><td>不直接使用 Unix socket、named pipe、Fcitx、Win32 或 TUI API；<code>config</code> 只保留模型根目录的平台默认值回退（Windows 读 <code>LOCALAPPDATA</code>，Unix 走 XDG / HOME）。</td></tr>
 </table>
@@ -109,20 +109,33 @@ pub mod vad;</code></pre>
 
 <h3 id="c4-2">4.2 config.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub const DEFAULT_THREADS: usize;
+pub const DEFAULT_PRE_ROLL_MS: u32;
+pub const BACKEND_FILE: &amp;str;
 
 pub struct Config { /* 见 USER §4.1 */ }
 pub struct Args { /* 见 USER §4.1 */ }
 pub fn resolve(args: Args) -&gt; anyhow::Result&lt;Config&gt;;      // 见 USER §4.1
+pub fn resolve_at(root: &amp;Path, args: Args) -&gt; anyhow::Result&lt;Config&gt;;
+pub fn load_firered_pack(root: &amp;Path)
+    -&gt; anyhow::Result&lt;(FireRedConfig, PuncConfig)&gt;;
+pub fn backend_file(root: &amp;Path) -&gt; PathBuf;
+pub fn read_backend(root: &amp;Path) -&gt; anyhow::Result&lt;Option&lt;Backend&gt;&gt;;
+pub fn write_backend(root: &amp;Path, backend: Backend) -&gt; anyhow::Result&lt;()&gt;;
 pub fn default_model_root() -&gt; PathBuf;                    // 见 USER §4.1</code></pre>
 
 <h3 id="c4-3">4.3 model.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub const MANIFEST_FILE: &amp;str;
 pub const SCHEMA_VERSION: u32;
 pub const SAMPLES_PER_SECOND: u32;
+pub const DEFAULT_PACK_DIR: &amp;str;
+pub const FIRERED_PACK_DIR: &amp;str;
 pub const VAD_DIR: &amp;str;
 pub const SENSE_VOICE_DIR: &amp;str;
 pub const FIRE_RED_AED_DIR: &amp;str;
 pub const PUNC_DIR: &amp;str;
+
+pub fn default_pack_root(model_root: &amp;Path) -&gt; PathBuf;
+pub fn firered_pack_root(model_root: &amp;Path) -&gt; PathBuf;
 
 pub struct TensorSpec { /* 见 USER §4.3 */ }
 pub struct Artifact { /* 见 USER §4.3 */ }
@@ -393,7 +406,7 @@ fn fix_ascii_punctuation(text: &amp;str) -&gt; String;
 fn fix_english_text(text: &amp;str) -&gt; String;</code></pre>
 <ul class="note">
   <li><code>punctuate</code> 按 token 上限切块，逐块推理并按字符偏移插入标签；最后修正 ASCII / 英文标点。</li>
-  <li>FireRedPunc 只服务 GPU Final；SenseVoice 使用模型内置标点，不加载本模块。</li>
+  <li>FireRedPunc 只服务 GPU 后端；SenseVoice 使用模型内置标点，不加载本模块。</li>
   <li>模型类别数小于标签表、输出长度不足或输入类型不支持时返回错误。</li>
 </ul>
 
@@ -484,24 +497,24 @@ fn keeps_collecting_after_end(mode: Mode, reason: SegmentEndReason) -&gt; bool;<
 <h3 id="c5-1">5.1 启动与模型加载</h3>
 <pre><code>voimed::main()
 └── voime_core::config::resolve(args)
-    ├── VadManifest::load/verify/rebase(model_root/vad)
-    ├── SenseVoiceManifest::load/verify/rebase(model_root/sense-voice)
-    ├── 判断 fire-red-aed/manifest.json 与 punc/manifest.json 是否同时存在
-    │   ├── 都存在 → FireRedManifest + PuncManifest load/verify/rebase
-    │   ├── 只存在一个 → 返回安装不完整错误
-    │   └── 都不存在 → CPU Final
-    └── 得到 Config { vad, sense_voice, fire_red?, punc? }
+    ├── read_backend(model_root/backend) → cpu 或 gpu（缺省 cpu）
+    ├── VadManifest::load/verify/rebase(model_root/default/vad)
+    ├── SenseVoiceManifest::load/verify/rebase(model_root/default/sense-voice)
+    ├── 判断 backend == gpu
+    │   ├── 是 → FireRed / Punc load/verify/rebase(model_root/firered/...)
+    │   └── 否 → 跳过 firered 资源包
+    └── 得到 Config { backend, default_pack, firered_pack, vad, sense_voice, fire_red?, punc? }
 
 voime_core::pipeline::spawn(&amp;config, factory, final_backend, audio_rx)
 ├── std::thread::Builder::spawn(Worker::run)
 └── Worker::new(&amp;config, &amp;factory, final_backend, events)
     ├── FireRedVad::new(&amp;config.vad_manifest.model, factory, VadConfig)
     ├── SenseVoice::new_with_factory(&amp;config.sense_voice_manifest, factory)
-    ├── 判断 config.punc.is_some() → FireRedPunc::new_with_factory(...)
+    ├── 判断 config.backend == gpu → load_punc(config.punc)
     └── Segmenter::new(config.max_segment_ms(), PRE_ROLL_MS)</code></pre>
 <ul class="note">
   <li>模型校验、会话创建与 worker 启动在 <code>pipeline::spawn</code> 返回前完成；任一步失败直接返回错误。</li>
-  <li>GPU Final 的 worker 后端由 <code>voimed</code> 创建并注入；<code>voime-core</code> 不加载 GPU 会话。</li>
+  <li>GPU 后端的 worker 由 <code>voimed</code> 创建并注入；<code>voime-core</code> 不加载 GPU 会话。</li>
   <li>音频设备在 pipeline 成功后才打开；见 <a href="../../crates/voimed/CORE.html#c5-1">voimed CORE §5.1</a>。</li>
 </ul>
 

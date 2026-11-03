@@ -39,7 +39,7 @@
 桌面语音输入通常依赖云服务、独立输入法或 GPU 推理环境。Voime 把语音识别放在本机：
 一个常驻 daemon 持有音频、VAD、ASR、标点与会话历史，平台前端只负责热键、目标输入位置、
 临时文本与最终提交。Linux 前端运行在 Fcitx5 内；Windows 前端以独立桌面进程提供后台听写。
-运行时不联网、不上传音频；默认不需要 GPU 或 Python，只有可选的 GPU Final 才使用
+运行时不联网、不上传音频；默认不需要 GPU 或 Python，只有选择 GPU 后端时才使用
 <code>voime-gpu</code>。
 </p>
 
@@ -49,10 +49,10 @@
   <li>前端配置一个模式：<code>ptt</code>（按住说话）、<code>toggle</code>（按一下切换）或 <code>continuous</code>（VAD 自动分段）。</li>
   <li>前端配置一个热键；<code>ptt</code> 按住说话，<code>toggle</code> 切换录音，<code>continuous</code> 忽略热键。</li>
   <li>说话期间显示当前段的临时文本；最终结果提交到语音段开始时聚焦的输入位置，失焦时不向其他窗口注入。</li>
-  <li>音频、模型、VAD、SenseVoice、FireRedPunc 与会话历史由独立 <code>voimed</code> 守护进程持有；GPU Final 由可选的 <code>voime-gpu</code> 处理。</li>
-  <li>可选 TUI 连接 daemon，显示模式、热键、临时结果与历史；关闭 TUI 不影响热键、临时窗口与上屏。</li>
-  <li>模型安装使用固定目录：默认安装 VAD + SenseVoice；<code>--gpu</code> 额外安装 FireRed AED + Punc。</li>
-  <li>运行时不需要网络与 Python；默认纯 CPU，只有 <code>fire-red-aed</code> 与 <code>punc</code> 两个目录都存在且 GPU 初始化成功时才使用 GPU Final，否则使用 CPU SenseVoice。</li>
+  <li>音频、模型、VAD、SenseVoice、FireRedPunc 与会话历史由独立 <code>voimed</code> 守护进程持有；GPU 后端的 FireRedASR 由可选的 <code>voime-gpu</code> 处理。</li>
+  <li>可选 TUI 连接 daemon，显示模式、热键、后端、临时结果与历史；关闭 TUI 不影响热键、临时窗口与上屏。</li>
+  <li>资源包按目录安装：默认资源包 <code>default/</code> 包含 VAD + SenseVoice；<code>--gpu</code> 额外安装 <code>firered/</code> 资源包，包含 FireRedASR-AED + FireRedPunc。</li>
+  <li>设置中选择 CPU 或 GPU 后端；CPU 后端只运行 VAD + SenseVoice，GPU 后端由 CPU 运行 VAD / SenseVoice / Punc，由 <code>voime-gpu</code> 运行 FireRedASR。运行期不需要网络与 Python。</li>
 </ul>
 
 <h3 id="r1-3">1.3 非目标</h3>
@@ -61,7 +61,7 @@
   <li>不实现跨平台统一 UI 抽象；各平台前端保留自己的热键、目标、预览与提交实现。</li>
   <li>不保证锁屏、安全桌面、提权窗口、游戏或未使用受支持输入协议的应用。</li>
   <li>不使用客户端 preedit 作为 Linux 临时文本；Fcitx 输入面板由宿主渲染。</li>
-  <li>不把 GPU 用于 Preview，不并行运行多个 Final，不引入第二推理引擎；不做 CPU AED。</li>
+  <li>不把 GPU 用于 Preview，不并行运行多个后端，不引入第二推理引擎；不做 CPU AED。</li>
   <li>不实现规则纠错、文本改写、摘要或翻译；不增加 <code>--rewrite</code> 或文本后处理阶段。</li>
   <li>不保存音频、按键或识别历史到磁盘。</li>
 </ul>
@@ -78,12 +78,12 @@
   </tr>
   <tr>
     <td>配置</td>
-    <td>Linux 在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 中设置 <code>Mode</code> 与 <code>Hotkey</code>；Windows 在托盘右键菜单或设置窗口中配置，热键通过按键录制。</td>
+    <td>Linux 在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 中设置 <code>Mode</code>、<code>Backend</code> 与 <code>Hotkey</code>；Windows 在托盘右键菜单或设置窗口中配置模式、CPU / GPU 后端与热键，热键通过按键录制。</td>
     <td><a href="frontends/fcitx/USER.html#u4-1">fcitx-addon USER §4.1</a> · <a href="frontends/windows/USER.html#u4-1">windows USER §4.1</a></td>
   </tr>
   <tr>
-    <td>GPU Final 自动选择</td>
-    <td>模型根目录固定包含 <code>vad</code>、<code>sense-voice</code>，可选 <code>fire-red-aed</code> 与 <code>punc</code>。启动时 VAD 与 SenseVoice 总是加载；FireRed 与 Punc 两个目录都存在时尝试 GPU Final，GPU 初始化失败自动回退 CPU SenseVoice。没有模型选择、待重启或重启后端操作；更换模型后重启 <code>voimed</code> 进程。</td>
+    <td>后端选择</td>
+    <td><code>Backend=cpu</code>：VAD + SenseVoice 全部在 CPU。选择 <code>Backend=gpu</code>：CPU 继续运行 VAD、SenseVoice 与 FireRedPunc，<code>voimed</code> 按需拉起 <code>voime-gpu</code> 运行 FireRedASR。GPU 不可用时回退 CPU 并记录原因。</td>
     <td><a href="USER.html#u4-1">根 USER §4.1</a> · <a href="crates/voimed/USER.html#u3-3">voimed USER §3.3</a> · <a href="BUILD.html#b4">根 BUILD §4</a></td>
   </tr>
   <tr>
@@ -163,7 +163,7 @@
   <li>根 <code>README / USER / CORE / PROVIDER / BUILD</code> 是父文档；每个组件目录下的同名文档是子树。</li>
   <li>父文档只定义产品级边界与组件关系；组件内部类型、签名和调用栈只出现在组件 <code>CORE</code>。</li>
   <li><code>voime-transport</code> 与 <code>frontends/windows</code> 已落地；TSF 保持可选，未启用时不构建。</li>
-  <li><code>voime-gpu</code> 是可选的 GPU Final 进程；基础安装不包含它，CPU 路径不加载任何 GPU 库。</li>
+  <li><code>voime-gpu</code> 是可选的 GPU 后端进程；基础安装不包含它，CPU 后端不加载任何 GPU 库。</li>
   <li>Fcitx 文档与源码均位于 <code>frontends/fcitx</code>。</li>
   <li>源码结构见 <a href="CORE.html#c1">根 CORE §1</a>。</li>
 </ul>
@@ -175,7 +175,7 @@
   <tr><th>内容</th><th>唯一所有者</th><th>其他文档的做法</th></tr>
   <tr><td>消息类型、JSON 编码、framing、协议版本、错误码</td><td><a href="crates/voime-ipc/USER.html">voime-ipc USER</a></td><td>只链接，不复制定义</td></tr>
   <tr><td>daemon 会话、<code>segment_id</code> 分配、广播、背压、历史</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
-  <tr><td>固定模型目录、启动时 Final 选择、GPU 回退、worker 生命周期</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
+  <tr><td>资源包布局、后端设置、GPU 回退、worker 生命周期</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
   <tr><td>音频、VAD、SenseVoice、<code>FinalBackend</code>、标点、pipeline 的公开 API</td><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>只链接，不复制类型与语义</td></tr>
   <tr><td>模型 manifest、SHA-256、VAD / SenseVoice / Punc 张量</td><td><a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a></td><td>只链接，不复制张量定义</td></tr>
   <tr><td>voime-gpu 协议、GPU runtime、FireRed AED 张量与 EP</td><td><a href="crates/voime-gpu/PROVIDER.html">voime-gpu PROVIDER</a></td><td>只链接，不复制协议与张量定义</td></tr>
@@ -258,7 +258,7 @@
     <td><a href="crates/voime-gpu/CORE.html">CORE</a></td>
     <td><a href="crates/voime-gpu/PROVIDER.html">PROVIDER</a></td>
     <td><a href="crates/voime-gpu/BUILD.html">BUILD</a></td>
-    <td>根 Cargo workspace · 可选 GPU Final（Linux / Windows）</td>
+    <td>根 Cargo workspace · 可选 GPU 后端（Linux / Windows）</td>
   </tr>
   <tr>
     <td><code>frontends/fcitx</code></td>
@@ -291,10 +291,10 @@
 <table>
   <tr><th>项目</th><th>在本项目中的角色</th><th>技术栈 / 许可</th></tr>
   <tr><td><a href="https://github.com/fcitx/fcitx5">Fcitx5</a></td><td>Linux 输入法框架、addon 宿主、键盘与文本提交</td><td>C++ · LGPL-2.1+</td></tr>
-  <tr><td><a href="https://github.com/FunAudioLLM/SenseVoice">FunAudioLLM/SenseVoice</a></td><td>SenseVoiceSmall 语音识别模型（常驻 Preview / CPU Final）</td><td>ONNX · FunASR Model License</td></tr>
-  <tr><td><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam/FireRedASR2S</a></td><td>FireRedASR2-AED 语音识别模型（可选 GPU Final）</td><td>ONNX · Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/FunAudioLLM/SenseVoice">FunAudioLLM/SenseVoice</a></td><td>SenseVoiceSmall 语音识别模型（常驻 Preview / CPU 后端 Final）</td><td>ONNX · FunASR Model License</td></tr>
+  <tr><td><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam/FireRedASR2S</a></td><td>FireRedASR2-AED 语音识别模型（GPU 后端 Final）</td><td>ONNX · Apache-2.0</td></tr>
   <tr><td><a href="https://github.com/FireRedTeam/FireRedVAD">FireRedTeam/FireRedVAD</a></td><td>FireRedVAD 流式语音活动检测</td><td>ONNX · Apache-2.0</td></tr>
-  <tr><td><a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedTeam/FireRedPunc</a></td><td>FireRedPunc 中英文标点预测（GPU Final）</td><td>BERT / ONNX · Apache-2.0</td></tr>
+  <tr><td><a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedTeam/FireRedPunc</a></td><td>FireRedPunc 中英文标点预测（GPU 后端，CPU 推理）</td><td>BERT / ONNX · Apache-2.0</td></tr>
   <tr><td><a href="https://onnxruntime.ai/">ONNX Runtime</a></td><td>CPU / GPU 推理运行时（GPU 仅 voime-gpu）</td><td>C++ · MIT</td></tr>
   <tr><td><a href="https://github.com/huggingface/tokenizers">tokenizers</a></td><td>FireRedPunc 的 BERT 分词</td><td>Rust · Apache-2.0</td></tr>
   <tr><td><a href="https://github.com/ratatui/ratatui">ratatui</a> / <a href="https://github.com/crossterm-rs/crossterm">crossterm</a></td><td>可选 TUI</td><td>Rust · MIT</td></tr>

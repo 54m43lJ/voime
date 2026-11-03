@@ -8,26 +8,23 @@ participant "前端\n(Fcitx / 托盘)" as Frontend
 participant "voimed" as Daemon
 participant "Final 路径 / voime-gpu" as Pipeline
 
-UI -> Frontend : 选择 Final / 点击重启后端
-Frontend -> Daemon : SetModel(package_id)
-Daemon -> Daemon : 校验 Final + SenseVoice 基础包 / 写 active
-Daemon --> Frontend : ModelSelected
-Frontend -> Daemon : RestartBackend
+UI -> Frontend : 选择 CPU / GPU 后端
+Frontend -> Daemon : SetBackend { cpu | gpu }
 alt 空闲
   Daemon -> Daemon : 保留 SenseVoice Preview
-  Daemon -> Pipeline : shutdown Final
-  Daemon -> Daemon : resolve + verify active
-  Daemon -> Daemon : Final 是 GPU 时 spawn voime-gpu / handshake
-  Daemon -> Pipeline : 重建 Final（CPU / GPU）
-  Daemon --> Frontend : BackendState(Ready)
+  Daemon -> Pipeline : shutdown 旧 worker（GPU → CPU）
+  Daemon -> Daemon : GPU 时加载 firered 资源包 / spawn voime-gpu
+  Daemon -> Pipeline : replace_final(CPU SenseVoice / GPU FireRedASR)
+  Daemon -> Daemon : write_backend(models/backend)
+  Daemon --> Frontend : BackendChanged { cpu | gpu }
 else 录音 / 识别中
-  Daemon --> Frontend : Error(Busy)
+  Daemon --> Frontend : Error { Busy }
 else 加载失败
-  Daemon -> Daemon : 回滚 active + 旧 Final
-  Daemon --> Frontend : BackendState(Failed)
+  Daemon -> Daemon : 保留旧 Final；GPU 启动失败则回退 CPU
+  Daemon --> Frontend : Error { inference } / BackendChanged { cpu }
 end
 note over Daemon
-  重启后端 = 只重建 Final；
+  SetBackend = 只重建 Final；
   Preview 始终 SenseVoice；
   不重启 daemon、不换二进制。
 end note

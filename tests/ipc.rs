@@ -22,6 +22,9 @@ fn framing_round_trips_all_documented_client_messages() {
             mode: Mode::Continuous,
             hotkey: "Super+F3".to_string(),
         },
+        ClientMessage::SetBackend {
+            backend: voime_ipc::Backend::Gpu,
+        },
         ClientMessage::Start {
             segment_id: 7,
             source: TriggerSource::Hold,

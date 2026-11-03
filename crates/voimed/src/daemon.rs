@@ -4,12 +4,14 @@ use std::time::Duration;
 use anyhow::Context;
 use voime_core::asr::r#final::{FinalBackend, SenseVoiceBackend};
 use voime_core::audio::capture::CaptureHandle;
-use voime_core::config::Config;
+use voime_core::config::{self, Config};
 use voime_core::infer::session::SessionFactory;
 use voime_core::model::PuncPolicy;
 use voime_core::pipeline::{self, FinalUpdate, Pipeline, PipelineEvent};
+use voime_core::punc::firered::FireRedPunc;
 use voime_ipc::{
-    ClientMessage, ErrorCode, FrontendState, Mode, Phase, Role, ServerMessage, TriggerSource,
+    Backend, ClientMessage, ErrorCode, FrontendState, Mode, Phase, Role, ServerMessage,
+    TriggerSource,
 };
 use voime_log::vlog;
 
@@ -52,8 +54,8 @@ pub fn build_runtime(
 ) -> anyhow::Result<(Config, FinalRuntime, Option<FinalHandle>)> {
     let (backend, worker, fallback) = match build_final(config, &factory) {
         Ok((backend, worker)) => (backend, worker, false),
-        Err(error) if config.gpu_final() => {
-            vlog!("GPU Final 初始化失败，回退 CPU SenseVoice：{error:#}");
+        Err(error) if config.backend == Backend::Gpu => {
+            vlog!("GPU 后端初始化失败，回退 CPU：{error:#}");
             let backend = build_cpu_final(config, &factory)
                 .context("GPU 不可用且 CPU SenseVoice 回退失败")?;
             (backend, None, true)
@@ -62,8 +64,12 @@ pub fn build_runtime(
     };
     let runtime_config = if fallback {
         let mut runtime_config = config.clone();
+        runtime_config.backend = Backend::Cpu;
         runtime_config.fire_red = None;
         runtime_config.punc = None;
+        if let Err(error) = config::write_backend(&runtime_config.model_root, Backend::Cpu) {
+            vlog!("记录 CPU 回退失败：{error:#}");
+        }
         runtime_config
     } else {
         config.clone()
@@ -95,18 +101,27 @@ fn build_cpu_final(
 }
 
 fn build_final(config: &Config, factory: &SessionFactory) -> anyhow::Result<FinalBuild> {
-    if !config.gpu_final() {
+    if config.backend == Backend::Cpu {
         return Ok((build_cpu_final(config, factory)?, None));
     }
     let fire_red = config.fire_red.as_ref().context("FireRed 目录缺失")?;
-    let mut worker =
-        WorkerBackend::spawn(&fire_red.dir, "auto").context("启动 GPU Final worker 失败")?;
-    worker.handshake().context("GPU Final worker 握手失败")?;
+    let mut worker = WorkerBackend::spawn(&fire_red.dir, "auto").context("启动 GPU worker 失败")?;
+    worker.handshake().context("GPU worker 握手失败")?;
     let handle = Arc::new(Mutex::new(worker));
     Ok((Box::new(WorkerFinal(Arc::clone(&handle))), Some(handle)))
 }
 
 struct WorkerFinal(FinalHandle);
+
+struct PreparedBackend {
+    backend: Box<dyn FinalBackend>,
+    worker: Option<FinalHandle>,
+    punc: Option<FireRedPunc>,
+    punc_policy: PuncPolicy,
+    max_segment_ms: u32,
+    fire_red: Option<config::FireRedConfig>,
+    punc_config: Option<config::PuncConfig>,
+}
 
 impl FinalBackend for WorkerFinal {
     fn transcribe(
@@ -143,9 +158,13 @@ impl Daemon {
         ipc: IpcServer,
     ) -> Self {
         let gpu_fallback = final_runtime.fallback;
+        let state = State {
+            backend: config.backend,
+            ..State::default()
+        };
         Self {
             config,
-            state: State::default(),
+            state,
             final_runtime,
             worker,
             audio,
@@ -331,6 +350,9 @@ impl Daemon {
                 }
                 self.broadcast_snapshot();
             }
+            ClientMessage::SetBackend { backend } => {
+                self.request_backend(client_id, backend);
+            }
             ClientMessage::Start { segment_id, source } => {
                 self.request_start(client_id, segment_id, source);
             }
@@ -453,6 +475,107 @@ impl Daemon {
         self.sync_audio();
     }
 
+    fn request_backend(&mut self, client_id: u64, backend: Backend) {
+        let role = self.ipc.role(client_id);
+        if !matches!(role, Some(Role::Frontend) | Some(Role::Control)) {
+            self.send_error(
+                client_id,
+                ErrorCode::InvalidMessage,
+                "只有前端或 Control 可以切换后端",
+            );
+            return;
+        }
+        if self.state.phase != Phase::Idle {
+            self.send_error(client_id, ErrorCode::Busy, "录音或识别中不能切换后端");
+            return;
+        }
+        if backend == self.config.backend {
+            self.ipc
+                .send_to(client_id, &ServerMessage::BackendChanged { backend });
+            return;
+        }
+        let result = self.switch_backend(backend);
+        match result {
+            Ok(()) => {
+                self.state.backend = backend;
+                self.gpu_fallback = false;
+                if let Err(error) = config::write_backend(&self.config.model_root, backend) {
+                    vlog!("保存后端设置失败：{error:#}");
+                }
+                vlog!("后端切换完成 backend={backend}");
+                self.ipc
+                    .broadcast(&ServerMessage::BackendChanged { backend });
+                self.broadcast_snapshot();
+            }
+            Err(error) => {
+                vlog!("后端切换失败 backend={backend}：{error:#}");
+                self.send_error(
+                    client_id,
+                    ErrorCode::Inference,
+                    &format!("切换后端失败：{error:#}"),
+                );
+            }
+        }
+    }
+
+    fn prepare_backend(&self, backend: Backend) -> anyhow::Result<PreparedBackend> {
+        let factory = &self.final_runtime.factory;
+        match backend {
+            Backend::Cpu => Ok(PreparedBackend {
+                backend: build_cpu_final(&self.config, factory)?,
+                worker: None,
+                punc: None,
+                punc_policy: PuncPolicy::Builtin,
+                max_segment_ms: self.config.sense_voice_manifest.max_segment_ms,
+                fire_red: None,
+                punc_config: None,
+            }),
+            Backend::Gpu => {
+                let (fire_red, punc_config) = config::load_firered_pack(&self.config.model_root)?;
+                let mut worker =
+                    WorkerBackend::spawn(&fire_red.dir, "auto").context("启动 GPU worker 失败")?;
+                worker.handshake().context("GPU worker 握手失败")?;
+                let handle = Arc::new(Mutex::new(worker));
+                let punc = pipeline::load_punc(Some(&punc_config.manifest), factory)?
+                    .context("创建 FireRedPunc 失败")?;
+                Ok(PreparedBackend {
+                    backend: Box::new(WorkerFinal(Arc::clone(&handle))),
+                    worker: Some(handle),
+                    punc: Some(punc),
+                    punc_policy: PuncPolicy::External,
+                    max_segment_ms: fire_red.manifest.max_segment_ms,
+                    fire_red: Some(fire_red),
+                    punc_config: Some(punc_config),
+                })
+            }
+        }
+    }
+
+    fn switch_backend(&mut self, backend: Backend) -> anyhow::Result<()> {
+        let prepared = self.prepare_backend(backend)?;
+        let Some(pipeline) = self.final_runtime.pipeline.as_ref() else {
+            anyhow::bail!("pipeline 未运行");
+        };
+        pipeline
+            .replace_final(FinalUpdate {
+                backend: prepared.backend,
+                punc: prepared.punc,
+                punc_policy: prepared.punc_policy,
+                max_segment_ms: prepared.max_segment_ms,
+            })
+            .context("替换 Final 路径失败")?;
+        let old_worker = std::mem::replace(&mut self.worker, prepared.worker);
+        self.config.backend = backend;
+        self.config.fire_red = prepared.fire_red;
+        self.config.punc = prepared.punc_config;
+        if let Some(worker) = old_worker {
+            if let Ok(mut worker) = worker.lock() {
+                let _ = worker.shutdown();
+            }
+        }
+        Ok(())
+    }
+
     fn on_pipeline(&mut self, event: PipelineEvent) {
         match event {
             PipelineEvent::Recording(true) => {
@@ -524,7 +647,7 @@ impl Daemon {
         }
     }
 
-    /// GPU Final failure drops the current segment. The next segment runs on
+    /// GPU backend failure drops the current segment. The next segment runs on
     /// CPU SenseVoice without reloading Preview or restarting the daemon.
     fn try_gpu_fallback(&mut self, reason: &str) {
         if self.gpu_fallback || self.worker.is_none() {
@@ -539,18 +662,18 @@ impl Daemon {
         if let Ok(mut worker) = worker.lock() {
             let _ = worker.shutdown();
         }
-        let backend = match build_cpu_final(&self.config, &self.final_runtime.factory) {
-            Ok(backend) => backend,
+        let prepared = match self.prepare_backend(Backend::Cpu) {
+            Ok(prepared) => prepared,
             Err(error) => {
                 vlog!("GPU 回退 CPU 失败：{error:#}");
                 return;
             }
         };
         let update = FinalUpdate {
-            backend,
-            punc: None,
-            punc_policy: PuncPolicy::Builtin,
-            max_segment_ms: self.config.sense_voice_manifest.max_segment_ms,
+            backend: prepared.backend,
+            punc: prepared.punc,
+            punc_policy: prepared.punc_policy,
+            max_segment_ms: prepared.max_segment_ms,
         };
         let Some(pipeline) = self.final_runtime.pipeline.as_ref() else {
             return;
@@ -558,11 +681,20 @@ impl Daemon {
         match pipeline.replace_final(update) {
             Ok(()) => {
                 self.gpu_fallback = true;
+                self.config.backend = Backend::Cpu;
                 self.config.fire_red = None;
                 self.config.punc = None;
-                vlog!("GPU Final 不可用，已回退 CPU SenseVoice");
+                self.state.backend = Backend::Cpu;
+                if let Err(error) = config::write_backend(&self.config.model_root, Backend::Cpu) {
+                    vlog!("记录 CPU 回退失败：{error:#}");
+                }
+                vlog!("GPU 后端不可用，已回退 CPU");
+                self.ipc.broadcast(&ServerMessage::BackendChanged {
+                    backend: Backend::Cpu,
+                });
+                self.broadcast_snapshot();
             }
-            Err(error) => vlog!("切换 CPU Final 失败：{error:#}"),
+            Err(error) => vlog!("切换 CPU 后端失败：{error:#}"),
         }
     }
 

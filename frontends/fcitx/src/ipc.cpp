@@ -49,6 +49,16 @@ std::optional<Mode> parseMode(const std::string &name) {
 
 } // namespace
 
+std::optional<Backend> parseBackend(const std::string &name) {
+    if (name == "cpu") {
+        return Backend::Cpu;
+    }
+    if (name == "gpu") {
+        return Backend::Gpu;
+    }
+    return std::nullopt;
+}
+
 std::string defaultSocketPath() {
     const char *runtime = std::getenv("XDG_RUNTIME_DIR");
     if (runtime && *runtime) {
@@ -148,7 +158,7 @@ bool IpcClient::connect(const std::string &socket) {
     nlohmann::json hello = {
         {"Hello",
          {{"role", "frontend"},
-          {"version", 4},
+          {"version", 5},
           {"config", config}}},
     };
     sendJson(hello.dump());
@@ -173,12 +183,24 @@ void IpcClient::disconnect() {
 }
 
 void IpcClient::configure(Mode mode, const std::string &hotkey) {
-    config_ = IpcConfig{mode, hotkey};
+    config_.mode = mode;
+    config_.hotkey = hotkey;
     if (fd_ < 0) {
         return;
     }
     nlohmann::json message = {
         {"Configure", {{"mode", modeName(mode)}, {"hotkey", hotkey}}},
+    };
+    sendJson(message.dump());
+}
+
+void IpcClient::setBackend(Backend backend) {
+    config_.backend = backend;
+    if (fd_ < 0) {
+        return;
+    }
+    nlohmann::json message = {
+        {"SetBackend", {{"backend", backendName(backend)}}},
     };
     sendJson(message.dump());
 }
@@ -307,6 +329,8 @@ void IpcClient::handleLine(const std::string &line) {
         message.type = ServerMessageType::Snapshot;
         auto mode = parseMode(jsonString(body, "mode"));
         message.mode = mode;
+        auto backend = parseBackend(jsonString(body, "backend"));
+        message.backend = backend;
         auto hotkey = jsonString(body, "hotkey");
         if (!hotkey.empty()) {
             message.hotkey = hotkey;
@@ -315,6 +339,9 @@ void IpcClient::handleLine(const std::string &line) {
         if (!partial.empty()) {
             message.text = partial;
         }
+    } else if (tag == "BackendChanged") {
+        message.type = ServerMessageType::BackendChanged;
+        message.backend = parseBackend(jsonString(body, "backend"));
     } else if (tag == "SegmentStarted") {
         message.type = ServerMessageType::SegmentStarted;
         message.segmentId = jsonUint64(body, "segment_id");
@@ -346,6 +373,7 @@ void IpcClient::handleLine(const std::string &line) {
             if (!hotkey.empty()) {
                 message.hotkey = hotkey;
             }
+            message.backend = parseBackend(jsonString(status, "backend"));
             message.recording = status.value("recording", false);
             message.finalizing = status.value("finalizing", false);
             message.segmentId = jsonUint64(status, "segment_id");

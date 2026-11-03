@@ -10,7 +10,7 @@ use anyhow::{bail, Context};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 /// Incremented whenever an existing message changes shape.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// One JSON line may not exceed this many bytes.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -39,6 +39,41 @@ pub enum Role {
     Frontend,
     Tui,
     Control,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    #[default]
+    Cpu,
+    Gpu,
+}
+
+impl Backend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Gpu => "gpu",
+        }
+    }
+}
+
+impl std::fmt::Display for Backend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for Backend {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "cpu" => Ok(Self::Cpu),
+            "gpu" => Ok(Self::Gpu),
+            other => Err(format!("后端必须是 cpu 或 gpu，实际 {other}")),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -94,6 +129,7 @@ pub struct Status {
     pub mode: Option<Mode>,
     pub hotkey: Option<String>,
     pub addon: FrontendState,
+    pub backend: Backend,
     pub transcript_count: usize,
 }
 
@@ -108,6 +144,9 @@ pub enum ClientMessage {
     Configure {
         mode: Mode,
         hotkey: String,
+    },
+    SetBackend {
+        backend: Backend,
     },
     Start {
         segment_id: u64,
@@ -135,6 +174,10 @@ pub enum ServerMessage {
         transcript: Vec<String>,
         addon: FrontendState,
         hotkey: Option<String>,
+        backend: Backend,
+    },
+    BackendChanged {
+        backend: Backend,
     },
     SegmentStarted {
         segment_id: u64,
@@ -233,7 +276,7 @@ mod tests {
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.starts_with(r#"{"Hello":"#));
         assert!(text.contains(r#""role":"frontend""#));
-        assert!(text.contains(r#""version":4"#));
+        assert!(text.contains(r#""version":5"#));
         assert!(text.ends_with("}\n"));
     }
 
@@ -264,7 +307,34 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_four() {
-        assert_eq!(PROTOCOL_VERSION, 4);
+    fn round_trips_set_backend() {
+        let message = ClientMessage::SetBackend {
+            backend: Backend::Gpu,
+        };
+        let bytes = encode_message(&message).unwrap();
+        let mut reader = Cursor::new(bytes);
+        let decoded: ClientMessage = read_message(&mut reader).unwrap().unwrap();
+        assert_eq!(decoded, message);
+        let text = String::from_utf8(
+            encode_message(&ServerMessage::BackendChanged {
+                backend: Backend::Gpu,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(text.contains(r#""BackendChanged""#));
+        assert!(text.contains(r#""backend":"gpu""#));
+    }
+
+    #[test]
+    fn backend_parses_cpu_and_gpu_only() {
+        assert_eq!("cpu".parse::<Backend>().unwrap(), Backend::Cpu);
+        assert_eq!("GPU".parse::<Backend>().unwrap(), Backend::Gpu);
+        assert!("npu".parse::<Backend>().is_err());
+    }
+
+    #[test]
+    fn protocol_version_is_five() {
+        assert_eq!(PROTOCOL_VERSION, 5);
     }
 }

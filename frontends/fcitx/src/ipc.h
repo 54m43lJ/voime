@@ -18,11 +18,13 @@ enum class TriggerSource { Hold, Toggle, Tui, Cli, Continuous };
 
 struct IpcConfig {
     Mode mode = Mode::Ptt;
+    Backend backend = Backend::Cpu;
     std::string hotkey;
 };
 
 enum class ServerMessageType {
     Snapshot,
+    BackendChanged,
     SegmentStarted,
     State,
     Partial,
@@ -42,6 +44,7 @@ struct ServerMessage {
     bool finalizing = false;
     TriggerSource source = TriggerSource::Hold;
     std::optional<Mode> mode;
+    std::optional<Backend> backend;
     std::optional<std::string> hotkey;
     std::string errorCode;
     std::string errorMessage;
@@ -50,6 +53,7 @@ struct ServerMessage {
 std::string defaultSocketPath();
 const char *triggerSourceName(TriggerSource source);
 std::optional<TriggerSource> parseTriggerSource(const std::string &name);
+std::optional<Backend> parseBackend(const std::string &name);
 
 class IpcClient {
 public:
@@ -60,6 +64,7 @@ public:
     bool connect(const std::string &socket);
     void disconnect();
     void configure(Mode mode, const std::string &hotkey);
+    void setBackend(Backend backend);
     void start(uint64_t segmentId, TriggerSource source);
     void stop(uint64_t segmentId, TriggerSource source);
     void toggle(uint64_t segmentId, TriggerSource source);

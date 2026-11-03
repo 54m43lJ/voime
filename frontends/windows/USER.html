@@ -51,7 +51,7 @@
 
 <table>
   <tr><th>约定</th><th>内容</th></tr>
-  <tr><td>配置所有权</td><td><code>Mode</code> / <code>Hotkey</code> 由前端拥有，通过 Hello / Configure 同步给 daemon；daemon 不提供独立模式设置。</td></tr>
+  <tr><td>配置所有权</td><td><code>Mode</code> / <code>Hotkey</code> 由前端拥有，通过 Hello / Configure 同步给 daemon；<code>Backend</code> 也在前端设置中修改，通过 <code>SetBackend</code> 生效并持久化。daemon 不提供独立模式设置。</td></tr>
   <tr><td>热键默认</td><td>默认使用不占用系统保留键的组合（推荐 <code>Ctrl+Alt+Space</code>）；用户可修改，空值禁用。</td></tr>
   <tr><td>热键语义</td><td><code>RegisterHotKey</code> 只提供按下通知：PTT 按住期间由前端轮询按键状态，松开即结束；按住期间的重复按下通知被过滤，Toggle 一次按下只切换一次。</td></tr>
   <tr><td>一个语音段一个目标</td><td>段开始时绑定前台窗口 + 焦点元素；段内不改变；提交前复核。</td></tr>
@@ -113,14 +113,15 @@
 <table>
   <tr><th>配置项</th><th>取值</th><th>默认</th><th>说明</th></tr>
   <tr><td><code>Mode</code></td><td><code>ptt</code> · <code>toggle</code> · <code>continuous</code></td><td><code>ptt</code></td><td>热键语义与 daemon 自动分段。</td></tr>
+  <tr><td><code>Backend</code></td><td><code>cpu</code> · <code>gpu</code></td><td><code>cpu</code></td><td>CPU 后端为 VAD + SenseVoice；GPU 后端为 CPU VAD / SenseVoice / Punc + GPU FireRedASR。保存后切换到 daemon 的空闲后端；忙碌时提示稍后重试。</td></tr>
   <tr><td><code>Hotkey</code></td><td>Windows 组合键</td><td><code>Ctrl+Alt+Space</code></td><td>PTT 按住、Toggle 切换、Continuous 忽略；空值禁用。设置窗口通过按键录制，不要求用户输入字符串。</td></tr>
   <tr><td><code>StartAtLogin</code></td><td>布尔</td><td><code>true</code></td><td>登录后启动托盘与 daemon。</td></tr>
   <tr><td><code>OverlayEnabled</code></td><td>布尔</td><td><code>true</code></td><td>关闭后仍正常提交，仅不显示浮层。</td></tr>
 </table>
 <ul class="note">
   <li>设置载体为 <code>%APPDATA%\voime\config.json</code>；字段名与语义固定，托盘右键菜单与设置窗口负责修改。</li>
-  <li>设置窗口没有模型选择；模型由 daemon 从固定模型根目录加载，前端配置与 IPC 都不传递模型信息。</li>
-  <li>修改 Mode / Hotkey 后立即通过 Configure 同步；新模式在下一段生效。</li>
+  <li>设置窗口提供 CPU / GPU 后端选择；模型由 daemon 从资源包加载，前端配置与 IPC 都不传递模型路径。</li>
+  <li>修改 Mode / Hotkey 后立即通过 Configure 同步；修改 Backend 后通过 SetBackend 同步；新模式在下一段生效。</li>
   <li>热键必须包含至少一个修饰键（Ctrl / Alt / Shift / Win）。录制使用设置窗口的键盘事件，覆盖字母、数字、F1–F24、方向键、导航键与常用标点键；配置层仍兼容 <code>VK_0xXX</code> 扩展键。系统保留组合在保存时由 <code>RegisterHotKey</code> 拒绝并提示。</li>
   <li>设置窗口在独立进程运行；打开时托盘注销全局热键，设置进程退出后托盘重新加载 <code>config.json</code> 并恢复热键，避免配置时误触发听写。</li>
 </ul>
@@ -144,8 +145,10 @@
 
 <table>
   <tr><th>消息</th><th>前端行为</th></tr>
-  <tr><td><code>Hello { role: Frontend, version, config }</code></td><td>连接命名管道后发送；版本 4。</td></tr>
+  <tr><td><code>Hello { role: Frontend, version, config }</code></td><td>连接命名管道后发送；版本 5。</td></tr>
   <tr><td><code>Configure</code></td><td>托盘菜单 / 设置窗口的 Mode / Hotkey 变化时发送。</td></tr>
+  <tr><td><code>SetBackend</code></td><td>设置窗口保存 CPU / GPU 选择时发送；成功后等待 <code>BackendChanged</code>。</td></tr>
+  <tr><td><code>BackendChanged</code></td><td>更新托盘 / 设置状态并写回 <code>config.json</code>；GPU 回退时也会收到。</td></tr>
   <tr><td><code>Start</code> / <code>Stop</code> / <code>Toggle</code></td><td>PTT / Toggle 热键触发；携带目标提示与 Hold / Toggle 来源。</td></tr>
   <tr><td><code>SegmentStarted</code></td><td>记录最终 <code>segment_id</code>；Continuous 续段绑定当前前台焦点；Toggle 续段仅在原目标仍聚焦时继续，否则停止会话。</td></tr>
   <tr><td><code>State</code></td><td>更新浮层与录音标记。</td></tr>
@@ -157,7 +160,7 @@
 <h3 id="u4-4">4.4 诊断</h3>
 <table>
   <tr><th>检查</th><th>契约</th></tr>
-  <tr><td>托盘状态</td><td>显示 daemon 连接、当前 Mode / Hotkey 与最近错误码；模型目录与 GPU 检查由 <code>voime doctor</code> 输出；不显示识别文本。</td></tr>
+  <tr><td>托盘状态</td><td>显示 daemon 连接、当前 Mode / Hotkey / Backend 与最近错误码；模型目录与 GPU 检查由 <code>voime doctor</code> 输出；不显示识别文本。</td></tr>
   <tr><td>日志</td><td>记录连接、热键、daemon 消息、浮层显隐与段事件；默认关闭，设 <code>VOIME_LOG=1</code> 或目录路径启用，取值见 <a href="../../crates/voime-log/USER.html#u4-1">voime-log USER §4.1</a>。不记录按键内容或识别文本。</td></tr>
   <tr><td>doctor（目标）</td><td>Windows 版检查命名管道、麦克风隐私、设备、前端进程、模型与 TSF 注册（若启用）。</td></tr>
   <tr><td>托盘诊断</td><td>托盘菜单的“诊断”调用 <code>voime doctor</code> 并在消息框显示结果；设置窗口在窗口内的诊断面板显示同一输出。</td></tr>
@@ -197,7 +200,7 @@ Windows 前端使用系统托盘与一个无激活浮层。设置窗口使用 eg
 <table>
   <tr><th>元素</th><th>契约</th></tr>
   <tr><td>托盘图标</td><td>常驻通知区域；左键打开设置窗口，右键菜单包含设置、Mode、当前热键（点击进入录制）、Overlay、StartAtLogin、连接状态、启动 / 停止服务、诊断、退出。热键菜单不再提供固定预设列表。托盘进程以 GUI 子系统构建，启动不弹出控制台窗口。</td></tr>
-  <tr><td>设置窗口</td><td>标题“Voime 设置”；逻辑尺寸约 500×640，可缩放，最小约 460×540；egui 布局；包含模式分段选择、热键录制按钮、浮层 / 登录启动复选框、服务状态与启停 / 诊断按钮、保存 / 取消。没有模型下拉、模型选择或重启后端按钮；热键字段不接受手工字符串输入。</td></tr>
+  <tr><td>设置窗口</td><td>标题“Voime 设置”；逻辑尺寸约 500×640，可缩放，最小约 460×540；egui 布局；包含模式分段选择、CPU / GPU 后端选择、热键录制按钮、浮层 / 登录启动复选框、服务状态与启停 / 诊断按钮、保存 / 取消。没有模型下拉或 package_id；热键字段不接受手工字符串输入。</td></tr>
   <tr><td>热键录制</td><td>点击热键按钮后直接按下组合键；只读取设置窗口的键盘事件，不安装全局钩子、不吞掉其他应用的按键。录制期间显示实时修饰键，Esc 取消，窗口失焦自动停止。点击“清除热键”禁用热键，“恢复默认”恢复 <code>Ctrl+Alt+Space</code>。</td></tr>
   <tr><td>设置窗口主题</td><td>跟随系统明暗主题；系统 UI 字体（Segoe UI / Microsoft YaHei）；强调色 <code>#527DFF</code>；圆角卡片与分段按钮；深色主题下自动使用对应背景与文字色。</td></tr>
   <tr><td>浮层</td><td>无激活、置顶、点击穿透（<code>WS_EX_NOACTIVATE</code> / <code>WS_EX_TOOLWINDOW</code> / <code>WS_EX_TRANSPARENT</code> / <code>WS_EX_TOPMOST</code>）；不进入 Alt+Tab；不抢焦点。</td></tr>

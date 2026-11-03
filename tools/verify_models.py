@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Validate the fixed Voime model directory layout."""
+"""Validate the Voime resource pack layout.
+
+`default/` contains vad + sense-voice. `firered/` contains fire-red-aed +
+punc and is optional; when present both models must be complete.
+"""
 
 from __future__ import annotations
 
@@ -71,12 +75,13 @@ def count_tokens(path: Path) -> int:
 
 
 def verify(root: Path) -> None:
-    vad_dir = root / "vad"
+    default = root / "default"
+    vad_dir = default / "vad"
     vad = load(vad_dir, "vad")
     artifact(vad_dir, vad.get("model"), "vad.model")
-    print("[verify] OK vad")
+    print("[verify] OK default/vad")
 
-    sense_dir = root / "sense-voice"
+    sense_dir = default / "sense-voice"
     sense = load(sense_dir, "sense-voice")
     artifact(sense_dir, sense.get("model"), "sense-voice.model")
     tokens = resolve(sense_dir, sense.get("tokens", ""))
@@ -84,16 +89,21 @@ def verify(root: Path) -> None:
         fail("sense-voice tokens 缺失")
     if count_tokens(tokens) != sense.get("token_count"):
         fail("sense-voice token_count 不匹配")
-    print("[verify] OK sense-voice")
+    print("[verify] OK default/sense-voice")
 
-    fire_dir = root / "fire-red-aed"
-    punc_dir = root / "punc"
+    firered = root / "firered"
+    if not firered.exists():
+        print("[verify] OK 未安装 firered 资源包（CPU 后端可用）")
+        return
+
+    fire_dir = firered / "fire-red-aed"
+    punc_dir = firered / "punc"
     fire_present = (fire_dir / MANIFEST).is_file()
     punc_present = (punc_dir / MANIFEST).is_file()
     if fire_present != punc_present:
-        fail("fire-red-aed 与 punc 必须同时存在或同时缺失")
+        fail("firered/fire-red-aed 与 firered/punc 必须同时存在或同时缺失")
     if not fire_present:
-        print("[verify] OK CPU-only layout (no GPU directories)")
+        print("[verify] OK 未安装 firered 资源包（CPU 后端可用）")
         return
 
     fire = load(fire_dir, "fire-red-aed")

@@ -70,7 +70,7 @@
   <tr><td><code>clap</code></td><td>命令行参数与子命令。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>IPC reader 线程到 TUI 的事件通道。</td></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
-  <tr><td><code>voime-core</code></td><td>doctor 的默认模型根目录、四个固定模型目录的清单与音频设备列表。</td></tr>
+  <tr><td><code>voime-core</code></td><td>doctor 的默认模型根目录、两个资源包的清单、后端设置与音频设备列表。</td></tr>
   <tr><td><code>voime-transport</code></td><td>本机端点与字节流。</td></tr>
   <tr><td><code>anyhow</code></td><td>命令 / 终端 / 连接错误。</td></tr>
 </table>
@@ -95,7 +95,7 @@ fn print_state(message: ServerMessage);</code></pre>
 
 pub enum Command { Ctl(CtlArgs), Doctor }
 pub struct CtlArgs { pub action: CtlAction }
-pub enum CtlAction { Start, Stop, Toggle, Status, Clear, Quit }
+pub enum CtlAction { Start, Stop, Toggle, Status, Clear, Backend { backend: String }, Quit }
 
 pub fn parse() -&gt; Cli;</code></pre>
 
@@ -127,6 +127,7 @@ impl Drop for Client { /* Stream::shutdown */ }</code></pre>
 pub struct App {
     pub mode: Option&lt;Mode&gt;,
     pub hotkey: Option&lt;String&gt;,
+    pub backend: Backend,
     pub transcript: Vec&lt;String&gt;,
     pub partial: String,
     pub recording: bool,
@@ -241,7 +242,8 @@ fn worker_binary() -&gt; Option&lt;PathBuf&gt;;</code></pre>
 
 <h3 id="c5-3">5.3 TUI 事件与绘制</h3>
 <pre><code>App::on_event(event)
-├── Snapshot → 覆盖 mode / hotkey / transcript / partial / addon / phase
+├── Snapshot → 覆盖 mode / hotkey / backend / transcript / partial / addon / phase
+├── BackendChanged → 更新 backend
 ├── SegmentStarted → recording=true + partial.clear() + scroll.end()
 ├── State → 更新 recording / finalizing；Idle 时清空 partial
 ├── Partial → App::set_partial(text)
@@ -281,8 +283,9 @@ Tui::draw(&amp;mut app)
     │   └── Client::connect_as(Control) + Snapshot / Status
     ├── doctor::check_models(&amp;mut ok)
     │   ├── voime_core::config::default_model_root()
-    │   ├── 检查 vad / sense-voice 目录与 manifest
-    │   └── 检查可选 fire-red-aed / punc 目录是否配对
+    │   ├── voime_core::config::read_backend()
+    │   ├── 检查 default/vad、default/sense-voice 目录与 manifest
+    │   └── backend=gpu 时检查 firered/fire-red-aed + punc
     ├── doctor::check_gpu(&amp;mut ok) → voime-gpu / runtime / 驱动 / 显存
     ├── doctor::check_audio(&amp;mut ok)
     │   └── list_input_devices / default_input_device_name

@@ -5,7 +5,7 @@ skinparam componentStyle rectangle
 left to right direction
 
 component "voime-gpu" as Worker
-component "FireRed AED 模型包\nencoder / decoder / tokens / punc" as Model
+component "FireRedASR-AED 模型目录\nfirered/fire-red-aed\nencoder / decoder / tokens" as Model
 component "GPU runtime 包\nMIGraphX / DirectML / CUDA" as Runtime
 component "ONNX Runtime GPU\nExecution Provider" as Ort
 

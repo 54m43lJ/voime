@@ -22,8 +22,8 @@ use voime_ipc::{
     ClientMessage, ErrorCode, FrontendState, Mode, Phase, Role, ServerMessage, TriggerSource,
     PROTOCOL_VERSION,
 };
-use windows::core::{w, PCWSTR};
 use voime_log::vlog;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Threading::{CreateMutexW, Sleep, CREATE_NO_WINDOW};
@@ -79,7 +79,11 @@ fn main() -> windows::core::Result<()> {
         return Ok(());
     }
     let config = config::load().map_err(to_windows)?;
-    vlog!("托盘启动 mode={:?} hotkey={}", config.mode.as_str(), config.hotkey);
+    vlog!(
+        "托盘启动 mode={:?} hotkey={}",
+        config.mode.as_str(),
+        config.hotkey
+    );
     run(Frontend::new(config)).map_err(to_windows)
 }
 
@@ -193,6 +197,7 @@ pub struct Frontend {
     hotkey_down: bool,
     hotkey_suspended: bool,
     toggle_active: bool,
+    backend_pending: bool,
     next_connect: Instant,
     last_focus_check: Instant,
     daemon: Option<control::Daemon>,
@@ -217,6 +222,7 @@ impl Frontend {
             hotkey_down: false,
             hotkey_suspended: false,
             toggle_active: false,
+            backend_pending: false,
             next_connect: Instant::now(),
             last_focus_check: Instant::now(),
             daemon: None,
@@ -326,6 +332,7 @@ impl Frontend {
                 phase,
                 addon,
                 partial,
+                backend,
                 ..
             } => {
                 self.apply_phase(phase);
@@ -335,6 +342,22 @@ impl Frontend {
                 if partial.is_some() {
                     self.target = None;
                 }
+                if !self.backend_pending && self.config.backend != backend {
+                    self.config.backend = backend;
+                    if let Err(error) = self.config.save() {
+                        vlog!("保存后端设置失败：{error:#}");
+                    }
+                }
+            }
+            ServerMessage::BackendChanged { backend } => {
+                self.backend_pending = false;
+                if self.config.backend != backend {
+                    self.config.backend = backend;
+                    if let Err(error) = self.config.save() {
+                        vlog!("保存后端设置失败：{error:#}");
+                    }
+                }
+                vlog!("daemon 后端 {backend}");
             }
             ServerMessage::SegmentStarted { segment_id, source } => {
                 self.on_segment_started(segment_id, source);
@@ -378,7 +401,10 @@ impl Frontend {
                     return;
                 };
                 if target.segment_id != segment_id {
-                    vlog!("Final seg={segment_id} 与目标段 {:?} 不匹配", target.segment_id);
+                    vlog!(
+                        "Final seg={segment_id} 与目标段 {:?} 不匹配",
+                        target.segment_id
+                    );
                     if self.config.mode == Mode::Toggle && !self.toggle_active {
                         self.target = None;
                         if let Some(overlay) = self.overlay.as_mut() {
@@ -415,24 +441,27 @@ impl Frontend {
                     }
                 }
             }
-            ServerMessage::Error { code, message } => match code {
-                ErrorCode::VersionMismatch
-                | ErrorCode::RoleConflict
-                | ErrorCode::DaemonUnavailable => {
-                    vlog!("daemon 拒绝连接（{code:?}）：{message}");
-                    self.on_disconnect();
+            ServerMessage::Error { code, message } => {
+                self.backend_pending = false;
+                match code {
+                    ErrorCode::VersionMismatch
+                    | ErrorCode::RoleConflict
+                    | ErrorCode::DaemonUnavailable => {
+                        vlog!("daemon 拒绝连接（{code:?}）：{message}");
+                        self.on_disconnect();
+                    }
+                    ErrorCode::Busy | ErrorCode::NoInputContext | ErrorCode::Unavailable => {
+                        vlog!("daemon 错误（{code:?}）：{message}");
+                        self.toggle_active = false;
+                        self.clear_segment();
+                    }
+                    ErrorCode::Inference => {
+                        vlog!("daemon 错误（{code:?}）：{message}");
+                        self.clear_segment();
+                    }
+                    _ => vlog!("daemon 错误（{code:?}）：{message}"),
                 }
-                ErrorCode::Busy | ErrorCode::NoInputContext | ErrorCode::Unavailable => {
-                    vlog!("daemon 错误（{code:?}）：{message}");
-                    self.toggle_active = false;
-                    self.clear_segment();
-                }
-                ErrorCode::Inference => {
-                    vlog!("daemon 错误（{code:?}）：{message}");
-                    self.clear_segment();
-                }
-                _ => vlog!("daemon 错误（{code:?}）：{message}"),
-            },
+            }
             ServerMessage::Bye {} => self.on_disconnect(),
             ServerMessage::HistoryCleared {} | ServerMessage::Status { .. } => {}
         }
@@ -616,6 +645,7 @@ impl Frontend {
         self.ptt_active = false;
         self.hotkey_down = false;
         self.toggle_active = false;
+        self.backend_pending = false;
         self.status = FrontendStatus::Disconnected;
         self.next_connect = Instant::now() + RECONNECT_INTERVAL;
     }
@@ -791,9 +821,11 @@ impl Frontend {
         let previous = self.config.clone();
         self.config.mode = config.mode;
         self.config.hotkey = config.hotkey;
+        self.config.backend = config.backend;
         if let Err(error) = self.sync_hotkey() {
             self.config.mode = previous.mode;
             self.config.hotkey = previous.hotkey;
+            self.config.backend = previous.backend;
             let _ = self.sync_hotkey();
             return Err(error);
         }
@@ -811,6 +843,24 @@ impl Frontend {
         self.config.start_at_login = config.start_at_login;
         self.persist()?;
         self.configure()?;
+        if let Err(error) = self.apply_backend() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn apply_backend(&mut self) -> Result<()> {
+        if self.ipc.is_none() {
+            return Ok(());
+        }
+        self.backend_pending = true;
+        let message = ClientMessage::SetBackend {
+            backend: self.config.backend,
+        };
+        if !self.send(&message) {
+            self.backend_pending = false;
+            anyhow::bail!("daemon 连接已断开");
+        }
         Ok(())
     }
 

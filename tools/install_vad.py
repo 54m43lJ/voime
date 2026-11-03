@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the FireRedVAD model directory (`models/vad`)."""
+"""Install the FireRedVAD model into the default resource pack (`models/default/vad`)."""
 
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ def install(
     source_dir: Path | None = None,
 ) -> int:
     root = model_root.expanduser().resolve()
-    target = root / "vad"
+    target = root / "default" / "vad"
     cache_dir = cache_dir.expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
 

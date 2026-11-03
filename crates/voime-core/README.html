@@ -44,7 +44,7 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
 <ul>
   <li>Linux 与 Windows 使用同一份音频、VAD、SenseVoice、标点与 pipeline 代码。</li>
-  <li><code>voimed</code> 只需要提供模型根目录、设备与线程数，就能获得 Partial / Final 事件；模型根目录按固定四目录布局解析。</li>
+  <li><code>voimed</code> 只需要提供模型根目录、后端、设备与线程数，就能获得 Partial / Final 事件；模型根目录按 <code>default/</code> 与 <code>firered/</code> 两个资源包解析。</li>
   <li>核心通过 <code>FinalBackend</code> 接受 CPU SenseVoice 或外部注入的 worker 后端，不直接依赖 GPU 库。</li>
   <li>模型清单是唯一的模型契约；启动时校验 SHA-256、张量与词表，运行期不重新加载权重。</li>
   <li>核心不依赖 Fcitx、Win32、Unix socket、named pipe、TUI 或 daemon 状态。</li>
@@ -72,7 +72,7 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
 <table>
   <tr><th>调用方</th><th>交互</th><th>契约</th></tr>
   <tr><td><code>voimed</code></td><td>构造 <code>Config</code>、启动音频与 pipeline、消费 <code>PipelineEvent</code>。</td><td><a href="USER.html#u4">USER §4</a></td></tr>
-  <tr><td><code>voime doctor</code></td><td>读取默认模型根目录、四个固定模型目录的清单与音频设备列表。</td><td><a href="USER.html#u4-1">USER §4.1</a> · <a href="USER.html#u4-2">USER §4.2</a></td></tr>
+  <tr><td><code>voime doctor</code></td><td>读取默认模型根目录、两个资源包的清单、后端设置与音频设备列表。</td><td><a href="USER.html#u4-1">USER §4.1</a> · <a href="USER.html#u4-2">USER §4.2</a></td></tr>
   <tr><td>根集成测试</td><td>直接调用分段器、SenseVoice 解析与 pipeline 事件。</td><td><a href="CORE.html#c5">CORE §5</a></td></tr>
 </table>
 
@@ -83,14 +83,14 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
   <tr><th>拥有</th><th>不拥有</th></tr>
   <tr><td>16 kHz / 单声道 / <code>f32</code> 音频归一化与重采样</td><td>设备选择策略、平台隐私 / 通信设备策略</td></tr>
   <tr><td>FireRedVAD 流式推理与分段器</td><td>热键、模式切换、目标输入位置</td></tr>
-  <tr><td>SenseVoice Preview / CPU Final、fbank、CMVN、greedy 解码</td><td>GPU 模型、GPU EP、worker 生命周期</td></tr>
-  <tr><td>FireRedPunc 标点（GPU Final）</td><td>模型下载 / 安装 / 版本发布</td></tr>
+  <tr><td>SenseVoice Preview / CPU 后端 Final、fbank、CMVN、greedy 解码</td><td>GPU 模型、GPU EP、worker 生命周期</td></tr>
+  <tr><td>FireRedPunc 标点（GPU 后端，CPU 推理）</td><td>模型下载 / 安装 / 版本发布</td></tr>
   <tr><td>pipeline 线程、Partial 节流、完成段队列、<code>FinalBackend</code></td><td>平台路径、日志、systemd / 登录启动</td></tr>
   <tr><td>模型清单解析、SHA-256、张量校验</td><td>OS 传输端点、GPU runtime</td></tr>
 </table>
 <ul class="note">
   <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；核心内部约定见 <a href="CORE.html#c2">本组件 CORE §2</a>。</li>
-  <li>固定模型目录与推理运行时的外部契约见 <a href="PROVIDER.html">PROVIDER</a>，不要在 README 或 USER 中复制张量形状。</li>
+  <li>资源包目录与推理运行时的外部契约见 <a href="PROVIDER.html">PROVIDER</a>，不要在 README 或 USER 中复制张量形状。</li>
 </ul>
 
 <h2 id="r4">4. Credits</h2>
@@ -103,7 +103,7 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
   <tr><td><a href="https://github.com/RustedBytes/kaldi-native-fbank">kaldi-native-fbank</a></td><td>与 SenseVoice / VAD 一致的 fbank 特征</td><td>Rust · Apache-2.0</td></tr>
   <tr><td><a href="https://onnxruntime.ai/">ONNX Runtime</a> / <code>ort</code></td><td>CPU 推理会话</td><td>C++ / Rust · MIT</td></tr>
   <tr><td><a href="https://github.com/huggingface/tokenizers">tokenizers</a></td><td>FireRedPunc 的 BERT 分词</td><td>Rust · Apache-2.0</td></tr>
-  <tr><td><a href="https://github.com/FunAudioLLM/SenseVoice">SenseVoice</a> · <a href="https://github.com/FireRedTeam/FireRedVAD">FireRedVAD</a> · <a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedPunc</a></td><td>常驻识别、端点检测与 GPU Final 标点</td><td>ONNX · FunASR Model License / Apache-2.0</td></tr>
+  <tr><td><a href="https://github.com/FunAudioLLM/SenseVoice">SenseVoice</a> · <a href="https://github.com/FireRedTeam/FireRedVAD">FireRedVAD</a> · <a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedPunc</a></td><td>常驻识别、端点检测与 GPU 后端标点</td><td>ONNX · FunASR Model License / Apache-2.0</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>音频与命令通道</td><td>Rust · MIT / Apache-2.0</td></tr>
 </table>
 

@@ -3,8 +3,10 @@
 /frontends/windows/target
 /models/**/*.onnx
 /models/**/tokens.txt
-/models/punc/vocab.txt
-/models/punc/labels.json
+/models/firered/punc/vocab.txt
+/models/firered/punc/labels.json
+/models/backend
+/models/.backend.tmp-*
 *.part
 
 __pycache__/

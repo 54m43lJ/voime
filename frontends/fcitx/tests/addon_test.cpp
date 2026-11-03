@@ -12,6 +12,11 @@ int main() {
     assert(std::string(modeName(Mode::Ptt)) == "ptt");
     assert(std::string(modeName(Mode::Toggle)) == "toggle");
     assert(std::string(modeName(Mode::Continuous)) == "continuous");
+    assert(std::string(backendName(Backend::Cpu)) == "cpu");
+    assert(std::string(backendName(Backend::Gpu)) == "gpu");
+    assert(parseBackend("cpu") == Backend::Cpu);
+    assert(parseBackend("gpu") == Backend::Gpu);
+    assert(!parseBackend("npu").has_value());
 
     fcitx::KeyList keys{fcitx::Key("Super+F2")};
     const auto text = hotkeyString(keys);
@@ -22,8 +27,11 @@ int main() {
     config.save(raw);
     const auto *mode = raw.valueByPath("Mode");
     assert(mode && *mode == "ptt");
+    const auto *backend = raw.valueByPath("Backend");
+    assert(backend && *backend == "cpu");
     config.load(raw, true);
     assert(config.mode.value() == Mode::Ptt);
+    assert(config.backend.value() == Backend::Cpu);
 
     assert(std::string(triggerSourceName(TriggerSource::Hold)) == "hold");
     assert(parseTriggerSource("continuous") == TriggerSource::Continuous);

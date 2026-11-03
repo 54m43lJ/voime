@@ -5,6 +5,7 @@ param(
     [string]$CacheDir = (Join-Path $env:LOCALAPPDATA 'voime\cache'),
     [string]$SourceDir = '',
     [string]$PuncSourceDir = '',
+    [int]$PuncMaxTokens = 400,
     [ValidateSet('v1', 'v2', 'auto')]
     [string]$AedVersion = 'v1',
     [string]$Python = ''
@@ -42,6 +43,9 @@ if ($SourceDir) {
 }
 if ($PuncSourceDir) {
     $arguments += @('--punc-source-dir', $PuncSourceDir)
+}
+if ($PuncMaxTokens -ne 400) {
+    $arguments += @('--punc-max-tokens', $PuncMaxTokens)
 }
 
 & $Python @arguments

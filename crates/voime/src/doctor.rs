@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use voime_core::audio::capture;
 use voime_core::config;
-use voime_core::model::{FIRE_RED_AED_DIR, MANIFEST_FILE, PUNC_DIR};
-use voime_ipc::{FrontendState, Role, ServerMessage};
+use voime_core::model::{default_pack_root, firered_pack_root, FIRE_RED_AED_DIR, MANIFEST_FILE};
+use voime_ipc::{Backend, FrontendState, Role, ServerMessage};
 use voime_transport::Endpoint;
 
 use crate::client::Client;
@@ -103,7 +103,23 @@ fn check_models(ok: &mut bool) {
     let root = config::default_model_root();
     println!("model: {}", root.display());
 
-    let vad_dir = root.join(voime_core::model::VAD_DIR);
+    let backend = match config::read_backend(&root) {
+        Ok(Some(backend)) => backend,
+        Ok(None) => Backend::Cpu,
+        Err(error) => {
+            println!("  FAIL 无法读取后端设置：{error:#}");
+            *ok = false;
+            Backend::Cpu
+        }
+    };
+    println!(
+        "  OK   backend={backend}（{}）",
+        config::backend_file(&root).display()
+    );
+
+    let pack = default_pack_root(&root);
+    println!("default pack: {}", pack.display());
+    let vad_dir = pack.join(voime_core::model::VAD_DIR);
     match voime_core::model::VadManifest::load(&vad_dir.join(MANIFEST_FILE)) {
         Ok(manifest) => match manifest.verify(&vad_dir) {
             Ok(()) => println!("  OK   VAD {}", vad_dir.display()),
@@ -118,7 +134,7 @@ fn check_models(ok: &mut bool) {
         }
     }
 
-    let sense_dir = root.join(voime_core::model::SENSE_VOICE_DIR);
+    let sense_dir = pack.join(voime_core::model::SENSE_VOICE_DIR);
     match voime_core::model::SenseVoiceManifest::load(&sense_dir.join(MANIFEST_FILE)) {
         Ok(manifest) => match manifest.verify(&sense_dir) {
             Ok(()) => println!("  OK   SenseVoice {}", sense_dir.display()),
@@ -133,52 +149,42 @@ fn check_models(ok: &mut bool) {
         }
     }
 
-    let fire_red_dir = root.join(FIRE_RED_AED_DIR);
-    let punc_dir = root.join(PUNC_DIR);
-    let fire_red_present = fire_red_dir.join(MANIFEST_FILE).is_file();
-    let punc_present = punc_dir.join(MANIFEST_FILE).is_file();
-    match (fire_red_present, punc_present) {
-        (false, false) => println!("  OK   Final = CPU SenseVoice；未安装 GPU 组件"),
-        (true, true) => {
-            let mut fire_ok = true;
-            match voime_core::model::FireRedManifest::load(&fire_red_dir.join(MANIFEST_FILE)) {
-                Ok(manifest) => match manifest.verify(&fire_red_dir) {
-                    Ok(()) => println!("  OK   FireRed AED {}", fire_red_dir.display()),
-                    Err(error) => {
-                        println!("  FAIL FireRed AED 校验失败：{error:#}");
-                        fire_ok = false;
-                    }
-                },
-                Err(error) => {
-                    println!("  FAIL 无法读取 FireRed 清单：{error:#}");
-                    fire_ok = false;
-                }
-            }
-            match voime_core::model::PuncManifest::load(&punc_dir.join(MANIFEST_FILE)) {
-                Ok(manifest) => match manifest.verify(&punc_dir) {
-                    Ok(()) => println!("  OK   Punc {}", punc_dir.display()),
-                    Err(error) => {
-                        println!("  FAIL Punc 校验失败：{error:#}");
-                        *ok = false;
-                    }
-                },
-                Err(error) => {
-                    println!("  FAIL 无法读取 Punc 清单：{error:#}");
-                    *ok = false;
-                }
-            }
-            if fire_ok {
-                println!("  OK   Final = FireRed AED (GPU)");
-            } else {
+    let firered = firered_pack_root(&root);
+    println!("firered pack: {}", firered.display());
+    if backend == Backend::Cpu {
+        if firered.is_dir() {
+            println!("  OK   已安装；当前 backend=cpu 不加载");
+        } else {
+            println!("  OK   未安装；CPU 后端不需要");
+        }
+        return;
+    }
+
+    let fire_red_dir = firered.join(FIRE_RED_AED_DIR);
+    let punc_dir = firered.join(voime_core::model::PUNC_DIR);
+    match voime_core::model::FireRedManifest::load(&fire_red_dir.join(MANIFEST_FILE)) {
+        Ok(manifest) => match manifest.verify(&fire_red_dir) {
+            Ok(()) => println!("  OK   FireRed AED {}", fire_red_dir.display()),
+            Err(error) => {
+                println!("  FAIL FireRed AED 校验失败：{error:#}");
                 *ok = false;
             }
-        }
-        (true, false) => {
-            println!("  FAIL FireRed 已安装但缺少 punc 目录");
+        },
+        Err(error) => {
+            println!("  FAIL 无法读取 FireRed 清单：{error:#}");
             *ok = false;
         }
-        (false, true) => {
-            println!("  FAIL punc 已安装但缺少 fire-red-aed 目录");
+    }
+    match voime_core::model::PuncManifest::load(&punc_dir.join(MANIFEST_FILE)) {
+        Ok(manifest) => match manifest.verify(&punc_dir) {
+            Ok(()) => println!("  OK   Punc {}", punc_dir.display()),
+            Err(error) => {
+                println!("  FAIL Punc 校验失败：{error:#}");
+                *ok = false;
+            }
+        },
+        Err(error) => {
+            println!("  FAIL 无法读取 Punc 清单：{error:#}");
             *ok = false;
         }
     }
@@ -187,9 +193,12 @@ fn check_models(ok: &mut bool) {
 fn check_gpu(_ok: &mut bool) {
     println!("gpu:");
     let root = config::default_model_root();
-    let installed = root.join(FIRE_RED_AED_DIR).join(MANIFEST_FILE).is_file();
+    let installed = firered_pack_root(&root)
+        .join(FIRE_RED_AED_DIR)
+        .join(MANIFEST_FILE)
+        .is_file();
     if !installed {
-        println!("  WARN 未安装 GPU Final；Final 使用 CPU SenseVoice");
+        println!("  WARN 未安装 firered 资源包；只能使用 CPU 后端");
         return;
     }
     if worker_binary().is_some() {
@@ -204,6 +213,11 @@ fn check_gpu(_ok: &mut bool) {
     } else {
         println!("  WARN 未设置 VOIME_RUNTIME_DIR / VOIME_GPU_RUNTIME_DIR");
     }
+    println!(
+        "  OK   后端设置文件 {}",
+        config::backend_file(&root).display()
+    );
+    println!("  提示 运行 voime ctl backend gpu 可在空闲时切换");
 }
 
 fn check_audio(ok: &mut bool) {
@@ -297,15 +311,17 @@ fn print_snapshot(snapshot: Option<&ServerMessage>, label: &str) {
         mode,
         hotkey,
         addon,
+        backend,
         ..
     }) = snapshot
     else {
         return;
     };
     println!(
-        "  OK   Mode={} Hotkey={} addon={}",
+        "  OK   Mode={} Hotkey={} Backend={} addon={}",
         mode.map(|mode| mode.as_str()).unwrap_or("-"),
         hotkey.as_deref().unwrap_or("-"),
+        backend,
         match addon {
             FrontendState::Connected => "connected",
             FrontendState::Disconnected => "disconnected",

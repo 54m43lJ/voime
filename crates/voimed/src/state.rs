@@ -1,4 +1,4 @@
-use voime_ipc::{FrontendState, Mode, Phase, ServerMessage, Status};
+use voime_ipc::{Backend, FrontendState, Mode, Phase, ServerMessage, Status};
 
 pub struct State {
     pub mode: Option<Mode>,
@@ -7,6 +7,7 @@ pub struct State {
     pub partial: Option<String>,
     pub transcript: Vec<String>,
     pub addon: FrontendState,
+    pub backend: Backend,
 }
 
 impl Default for State {
@@ -18,6 +19,7 @@ impl Default for State {
             partial: None,
             transcript: Vec::new(),
             addon: FrontendState::Disconnected,
+            backend: Backend::Cpu,
         }
     }
 }
@@ -39,6 +41,7 @@ impl State {
             transcript: self.transcript.clone(),
             addon: self.addon,
             hotkey: self.hotkey.clone(),
+            backend: self.backend,
         }
     }
 
@@ -50,6 +53,7 @@ impl State {
             mode: self.mode,
             hotkey: self.hotkey.clone(),
             addon: self.addon,
+            backend: self.backend,
             transcript_count: self.transcript.len(),
         }
     }
@@ -82,11 +86,13 @@ mod tests {
                 mode,
                 addon,
                 hotkey,
+                backend,
                 ..
             } => {
                 assert_eq!(mode, Some(Mode::Continuous));
                 assert_eq!(addon, FrontendState::Connected);
                 assert_eq!(hotkey.as_deref(), Some("Super+F2"));
+                assert_eq!(backend, Backend::Cpu);
             }
             other => panic!("unexpected snapshot: {other:?}"),
         }

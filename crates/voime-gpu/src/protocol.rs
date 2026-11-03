@@ -54,6 +54,7 @@ pub enum Response {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ErrorCode {
     RuntimeMissing,
+    #[allow(dead_code)]
     DeviceUnavailable,
     LoadFailed,
     InferenceFailed,

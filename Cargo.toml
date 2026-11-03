@@ -24,7 +24,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.92"
 license = "Apache-2.0"
 
 [workspace.dependencies]
@@ -34,7 +34,7 @@ crossbeam-channel = "0.5"
 cpal = "0.15.3"
 crossterm = "0.28.1"
 kaldi-native-fbank = "0.1"
-ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+ort = { version = "=2.0.0-rc.14", default-features = false, features = [
     "std",
     "ndarray",
     "download-binaries",

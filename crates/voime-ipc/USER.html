@@ -39,12 +39,12 @@
   <tr><td>触发来源（TriggerSource）</td><td>段开始 / 停止的来源：<code>hold</code>、<code>toggle</code>、<code>tui</code>、<code>cli</code>、<code>continuous</code>。</td></tr>
   <tr><td>阶段（Phase）</td><td>daemon 当前状态：<code>idle</code>、<code>recording</code>、<code>finalizing</code>。</td></tr>
   <tr><td>前端状态（FrontendState）</td><td>平台前端是否连接到 daemon：<code>connected</code> / <code>disconnected</code>。</td></tr>
-  <tr><td>模型目录</td><td>协议不传递模型列表或选择；daemon 从固定模型根目录加载 <code>vad</code>、<code>sense-voice</code> 与可选 <code>fire-red-aed</code> + <code>punc</code>。前端只收到 Final 文本。</td></tr>
+  <tr><td>模型目录</td><td>协议只传递后端选择，不传递模型列表；daemon 从资源包目录加载 <code>default/</code> 与可选 <code>firered/</code>。前端只收到 Final 文本。</td></tr>
   <tr><td><code>segment_id</code></td><td>daemon 为语音段分配的唯一整数；客户端发送的 ID 只是提示，最终以 <code>SegmentStarted</code> 为准。</td></tr>
-  <tr><td>Snapshot</td><td>连接时的全量状态：模式、热键、phase、partial、历史、前端连接状态。</td></tr>
+  <tr><td>Snapshot</td><td>连接时的全量状态：模式、热键、后端、phase、partial、历史、前端连接状态。</td></tr>
   <tr><td>Partial / Final</td><td>临时结果 / 最终结果；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
   <tr><td>错误码（ErrorCode）</td><td>稳定的 snake_case 标识；客户端按码处理，不解析文案。</td></tr>
-  <tr><td>协议版本</td><td><code>PROTOCOL_VERSION</code>；当前为 4；消息形状变化时提升。协议 4 删除了模型选择与后端阶段消息。</td></tr>
+  <tr><td>协议版本</td><td><code>PROTOCOL_VERSION</code>；当前为 5；消息形状变化时提升。协议 5 增加后端选择与状态消息。</td></tr>
 </table>
 
 <h2 id="u2">2. CONVENTIONS</h2>
@@ -59,7 +59,7 @@
   <tr><td>握手顺序</td><td>连接后第一条消息必须是 <code>Hello</code>；版本或角色不合法时 daemon 发送 <code>Error</code> 并断开。</td></tr>
   <tr><td>角色</td><td>只允许一个 <code>frontend</code> 连接；<code>configure</code> 只接受 <code>frontend</code>；<code>quit</code> 只接受 <code>control</code>。</td></tr>
   <tr><td>配置</td><td><code>Hello.config</code> 可选；只有平台前端携带 <code>mode</code> / <code>hotkey</code>。daemon 不解析命令行模式。</td></tr>
-  <tr><td>模型不在协议内</td><td>没有模型列表、选择或后端重启消息。模型由 daemon 启动时按固定目录决定；安装或替换模型后重启 <code>voimed</code>，前端只重连。</td></tr>
+  <tr><td>后端不在 Hello 内</td><td>后端由 daemon 设置持有，通过 <code>SetBackend</code> 修改；Hello 只携带 Mode / Hotkey。daemon 用 <code>BackendChanged</code> 与 Snapshot / Status 广播当前后端。</td></tr>
   <tr><td><code>segment_id</code></td><td>daemon 分配；<code>Start</code> / <code>Toggle</code> 的 ID 只是提示；<code>Stop</code> 的非零 ID 在 PTT / Continuous 下需匹配当前段，0 表示当前段（Toggle 例外）。</td></tr>
   <tr><td>背压</td><td><code>Final</code> / <code>State</code> 不丢弃；<code>Partial</code> 可在队列满时丢弃；慢客户端由 daemon 断开。</td></tr>
   <tr><td>版本</td><td>只有消息形状变化才提升 <code>PROTOCOL_VERSION</code>；新增平台前端不提升版本。</td></tr>
@@ -84,19 +84,20 @@
   <li>Continuous 的段开始由 daemon 自动广播，无需客户端 Start。</li>
 </ul>
 
-<h3 id="u3-3">3.3 固定模型目录与协议边界</h3>
+<h3 id="u3-3">3.3 资源包与后端选择</h3>
+<div class="diagram"><img src="diagram/backend-select.svg" alt="前端设置选择 CPU / GPU 后端并触发 SetBackend 的时序图"></div>
 <ul class="note">
-  <li>模型选择不是 IPC 消息：daemon 从固定模型根目录加载 <code>vad</code> + <code>sense-voice</code>，可选 <code>fire-red-aed</code> + <code>punc</code>。</li>
-  <li>协议 4 没有 <code>ListModels</code> / <code>SetModel</code> / <code>RestartBackend</code>，也没有 <code>Models</code> / <code>ModelSelected</code> / <code>BackendState</code>。</li>
-  <li>安装、替换或删除模型目录后，重启 <code>voimed</code> 进程；客户端只需按正常断线重连处理。</li>
-  <li>GPU 初始化失败时 daemon 内部回退 CPU SenseVoice，前端看到的仍是同一种 <code>Final</code> 消息。</li>
+  <li>模型目录不是 IPC 消息：daemon 从 <code>default/</code> 与 <code>firered/</code> 资源包加载模型。</li>
+  <li>协议 5 只提供后端选择：<code>SetBackend { cpu | gpu }</code> 与 <code>BackendChanged</code>；没有模型列表或 package_id。</li>
+  <li>安装、替换或删除资源包后重启 <code>voimed</code>；运行中切换后端只重建 Final 路径，客户端连接保持。</li>
+  <li>GPU 初始化失败时 daemon 内部回退 CPU SenseVoice 并广播 <code>BackendChanged { cpu }</code>，前端看到的仍是同一种 <code>Final</code> 消息。</li>
 </ul>
 
 <h2 id="u4">4. INTERFACES</h2>
 <p><a href="#top">↑</a></p>
 
 <h3 id="u4-1">4.1 常量与编解码</h3>
-<pre><code>pub const PROTOCOL_VERSION: u32 = 4;
+<pre><code>pub const PROTOCOL_VERSION: u32 = 5;
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 pub fn encode_message&lt;T: Serialize&gt;(message: &amp;T) -&gt; anyhow::Result&lt;Vec&lt;u8&gt;&gt;;
@@ -106,7 +107,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
-  <tr><td><code>PROTOCOL_VERSION</code></td><td>当前为 4；旧版本 / 旧前端拒绝连接，返回 <code>version_mismatch</code>。</td></tr>
+  <tr><td><code>PROTOCOL_VERSION</code></td><td>当前为 5；旧版本 / 旧前端拒绝连接，返回 <code>version_mismatch</code>。</td></tr>
   <tr><td><code>MAX_MESSAGE_BYTES</code></td><td>单行最大 1 MiB；编码与解码都检查。</td></tr>
   <tr><td><code>encode_message</code></td><td>序列化为 JSON，检查长度，追加 <code>\n</code>。</td></tr>
   <tr><td><code>write_message</code></td><td>编码后写入并 flush。</td></tr>
@@ -123,6 +124,9 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
     Configure {
         mode: Mode,
         hotkey: String,
+    },
+    SetBackend {
+        backend: Backend,
     },
     Start {
         segment_id: u64,
@@ -150,6 +154,10 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
         transcript: Vec&lt;String&gt;,
         addon: FrontendState,
         hotkey: Option&lt;String&gt;,
+        backend: Backend,
+    },
+    BackendChanged {
+        backend: Backend,
     },
     SegmentStarted {
         segment_id: u64,
@@ -181,6 +189,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
 
 <h3 id="u4-4">4.4 辅助类型</h3>
 <pre><code>pub enum Mode { Ptt, Toggle, Continuous }
+pub enum Backend { Cpu, Gpu }
 pub enum Role { Frontend, Tui, Control }
 pub enum TriggerSource { Hold, Toggle, Tui, Cli, Continuous }
 pub enum Phase { Idle, Recording, Finalizing }
@@ -210,6 +219,7 @@ pub struct Status {
     pub mode: Option&lt;Mode&gt;,
     pub hotkey: Option&lt;String&gt;,
     pub addon: FrontendState,
+    pub backend: Backend,
     pub transcript_count: usize,
 }</code></pre>
 
@@ -218,11 +228,13 @@ pub struct Status {
   <tr><th>消息</th><th>方向</th><th>语义</th><th>建议动作</th></tr>
   <tr><td><code>Hello</code></td><td>client → daemon</td><td>声明角色与版本；前端额外携带 Mode / Hotkey。</td><td>daemon 校验版本与角色；失败发 Error 并断开。</td></tr>
   <tr><td><code>Configure</code></td><td>前端 → daemon</td><td>配置重载时更新 Mode / Hotkey；新模式在下一段生效。</td><td>daemon 更新快照并广播。</td></tr>
+  <tr><td><code>SetBackend</code></td><td>Frontend / Control → daemon</td><td>请求切换 <code>cpu</code> / <code>gpu</code>；仅空闲时执行并持久化。</td><td>成功广播 <code>BackendChanged</code> + Snapshot；忙碌返回 <code>busy</code>，失败返回 <code>inference</code>。</td></tr>
   <tr><td><code>Start</code> / <code>Stop</code> / <code>Toggle</code></td><td>client → daemon</td><td>手动或热键触发；带提示 <code>segment_id</code> 与来源。</td><td>daemon 返回 <code>State</code> / <code>SegmentStarted</code> 或 <code>Error</code>。</td></tr>
   <tr><td><code>ClearHistory</code></td><td>client → daemon</td><td>清空已完成历史；保留当前段与 partial。</td><td>daemon 广播 <code>HistoryCleared</code>。</td></tr>
   <tr><td><code>Status</code></td><td>client → daemon</td><td>请求一次性状态。</td><td>daemon 返回 <code>Status</code>。</td></tr>
   <tr><td><code>Quit</code></td><td>Control → daemon</td><td>停止 daemon。</td><td>daemon 广播 <code>Bye</code> 后退出。</td></tr>
-  <tr><td><code>Snapshot</code></td><td>daemon → client</td><td>连接时全量状态。</td><td>客户端初始化视图。</td></tr>
+  <tr><td><code>Snapshot</code></td><td>daemon → client</td><td>连接时全量状态，含当前后端。</td><td>客户端初始化视图。</td></tr>
+  <tr><td><code>BackendChanged</code></td><td>daemon → clients</td><td>当前生效后端变化；切换或 GPU 回退时广播。</td><td>更新设置页与状态显示。</td></tr>
   <tr><td><code>SegmentStarted</code></td><td>daemon → clients</td><td>段开始；携带最终 <code>segment_id</code> 与来源。</td><td>前端绑定 / 跟随目标。</td></tr>
   <tr><td><code>State</code></td><td>daemon → clients</td><td>录音 / 收尾状态变化。</td><td>更新录音标记与临时窗口。</td></tr>
   <tr><td><code>Partial</code></td><td>daemon → clients</td><td>临时文本；可丢弃。</td><td>显示，不提交。</td></tr>
@@ -235,11 +247,13 @@ pub struct Status {
 
 <h3 id="u4-6">4.6 JSON 示例</h3>
 <pre><code>// client → daemon
-{"Hello":{"role":"frontend","version":4,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
+{"Hello":{"role":"frontend","version":5,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
+{"SetBackend":{"backend":"gpu"}}
 {"Start":{"segment_id":1,"source":"hold"}}
 {"Stop":{"segment_id":1,"source":"hold"}}
 
 // daemon → client
+{"BackendChanged":{"backend":"gpu"}}
 {"SegmentStarted":{"segment_id":1,"source":"hold"}}
 {"Partial":{"segment_id":1,"text":"明天的日程"}}
 {"Final":{"segment_id":1,"text":"明天的日程帮我确认一下。"}}
@@ -252,7 +266,7 @@ pub struct Status {
   <tr><td><code>version_mismatch</code></td><td><code>Hello.version</code> 与 daemon 不一致。</td><td>升级客户端或 daemon；重新连接。</td></tr>
   <tr><td><code>role_conflict</code></td><td>已有 <code>frontend</code> 连接。</td><td>关闭重复前端；定时重试。</td></tr>
   <tr><td><code>busy</code></td><td>已有语音段、正在识别，或 <code>segment_id</code> 不匹配。</td><td>等待 Idle 后重试；不要强制提交。</td></tr>
-  <tr><td><code>unavailable</code></td><td>所需模型或后端暂不可用。</td><td>daemon 保持运行；GPU 不可用时内部继续使用 CPU Final。</td></tr>
+  <tr><td><code>unavailable</code></td><td>所需模型或后端暂不可用。</td><td>daemon 保持运行；GPU 不可用时内部继续使用 CPU 后端。</td></tr>
   <tr><td><code>no_input_context</code></td><td>没有可用的输入目标。</td><td>前端不开始语音段；提示用户聚焦输入框。</td></tr>
   <tr><td><code>daemon_unavailable</code></td><td>客户端无法连接 daemon。</td><td>放行热键；定时重连。</td></tr>
   <tr><td><code>inference</code></td><td>单段识别 / 标点失败。</td><td>丢弃该段；继续监听。</td></tr>
@@ -262,12 +276,12 @@ pub struct Status {
 <h3 id="u4-8">4.8 版本与兼容</h3>
 <table>
   <tr><th>变化</th><th>版本策略</th></tr>
-  <tr><td>新增消息类型</td><td>协议 4 内新增消息必须同步升级 daemon 与前端；不依赖旧客户端忽略未知标签。</td></tr>
+  <tr><td>新增消息类型</td><td>协议 5 内新增消息必须同步升级 daemon 与前端；不依赖旧客户端忽略未知标签。</td></tr>
   <tr><td>修改现有消息字段 / 类型</td><td>必须提升 <code>PROTOCOL_VERSION</code>；daemon 拒绝旧版本并返回 <code>version_mismatch</code>。</td></tr>
   <tr><td>新增角色或平台前端</td><td>不改变现有消息形状时保持版本；新增角色需 daemon 与客户端同时支持。</td></tr>
-  <tr><td>模型加载</td><td>模型目录与加载顺序不属于协议；协议 4 没有模型选择、候选列表或后端阶段消息。更换模型后重启 daemon，不改变消息形状。</td></tr>
+  <tr><td>后端选择</td><td><code>SetBackend</code> / <code>BackendChanged</code> 与 Snapshot / Status 的 <code>backend</code> 字段属于协议 5；模型目录与加载顺序仍不属于协议。</td></tr>
   <tr><td>worker 协议</td><td>voime-gpu 协议版本独立管理，不因 worker 变化提升 <code>voime-ipc</code> 的 <code>PROTOCOL_VERSION</code>。</td></tr>
-  <tr><td>兼容窗口</td><td>协议 4 是 clean break：协议 3 客户端收到 <code>version_mismatch</code>；不保留旧模型消息或旧角色值。</td></tr>
+  <tr><td>兼容窗口</td><td>协议 5 是 clean break：协议 4 客户端收到 <code>version_mismatch</code>；不保留旧模型消息或旧角色值。</td></tr>
 </table>
 
 </body>

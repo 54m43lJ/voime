@@ -70,13 +70,13 @@
 <p><a href="#top">↑</a></p>
 
 <h3 id="p4-1">4.1 模型目录</h3>
-<pre><code>models/fire-red-aed/
+<pre><code>models/firered/fire-red-aed/
 ├── manifest.json          kind = "fire-red-aed"
 ├── encoder.fp16.onnx
 ├── decoder.fp16.onnx
 └── tokens.txt
 
-models/punc/               # 由 daemon 加载，不属于 worker
+models/firered/punc/       # 由 daemon 加载，不属于 worker
 ├── manifest.json          kind = "punc"
 ├── model.onnx
 ├── vocab.txt
@@ -96,7 +96,7 @@ models/punc/               # 由 daemon 加载，不属于 worker
 
 <ul class="note">
   <li>临时默认使用官方 v1 FP16 包 <code>sherpa-onnx-fire-red-asr-large-zh_en-fp16-2025-02-16</code>（7832 tokens，decoder 固定 1024 self KV cache）；v2 FP16 为 8667 tokens。</li>
-  <li>没有 <code>requires</code>、<code>backend</code>、<code>vad</code> 或 <code>punc</code> 字段；GPU Final 是否启用由 daemon 检查两个目录是否同时存在。</li>
+  <li>没有 <code>requires</code>、<code>backend</code>、<code>vad</code> 或 <code>punc</code> 字段；GPU 后端是否启用由 daemon 的后端设置与资源包完整性决定。</li>
 </ul>
 
 <h3 id="p4-2">4.2 AED 张量与 metadata</h3>
@@ -110,28 +110,28 @@ models/punc/               # 由 daemon 加载，不属于 worker
   <tr><td>解码</td><td>自回归贪心；<code>sos</code> 起步，<code>eos</code> / <code>max_len</code> / <code>max_token_per_second=8</code> 停止。</td></tr>
   <tr><td>Metadata</td><td><code>num_decoder_layers</code>、<code>num_head</code>、<code>head_dim</code>、<code>sos</code>、<code>eos</code>、<code>max_len</code>、CMVN；KV cache 形状必须来自 metadata。v1 decoder 图内固定 self KV cache 长度 1024，worker 从 decoder 输入形状检测并使用。</td></tr>
   <tr><td>Partial</td><td>worker 不产生 Partial；Preview 由 daemon 的 SenseVoice 提供。</td></tr>
-  <tr><td>标点</td><td>由 daemon 的 <code>punc</code> 目录（FireRedPunc）处理，worker 不加载 Punc。</td></tr>
-  <tr><td>目录配对</td><td><code>fire-red-aed</code> 必须与 <code>punc</code> 目录同时存在；daemon 在启动时检查，只存在一个则拒绝启动。</td></tr>
+  <tr><td>标点</td><td>由 daemon 的 <code>firered/punc</code>（FireRedPunc）处理，worker 不加载 Punc。</td></tr>
+  <tr><td>资源包完整性</td><td><code>firered/fire-red-aed</code> 必须与 <code>firered/punc</code> 同时存在；daemon 在 GPU 后端加载时检查，不完整则回退 CPU。</td></tr>
 </table>
 
 <h3 id="p4-3">4.3 GPU runtime 与 EP</h3>
 <table>
   <tr><th>平台 / 硬件</th><th>runtime 包</th><th>EP</th><th>说明</th></tr>
-  <tr><td>Linux + AMD</td><td><code>voime-gpu-linux-migraphx</code></td><td>MIGraphX</td><td>ROCm 7.2.1 + ORT 1.23.2；P0 第一实现平台。</td></tr>
+  <tr><td>Linux + AMD</td><td><code>voime-gpu-linux-migraphx</code></td><td>MIGraphX</td><td>ROCm 7.2 + MIGraphX；ORT 1.31.0（<code>ort 2.0.0-rc.14</code> 预编译）；P0 第一实现平台。</td></tr>
   <tr><td>Windows + AMD</td><td><code>voime-gpu-windows-directml</code></td><td>DirectML</td><td>P1；DirectML 已进入 sustained engineering，新功能转向 WinML。</td></tr>
   <tr><td>Linux + NVIDIA</td><td><code>voime-gpu-linux-cuda</code></td><td>CUDA / TensorRT</td><td>P1；独立 runtime 包，不带 AMD 依赖。</td></tr>
   <tr><td>Windows + NVIDIA</td><td><code>voime-gpu-windows-cuda</code></td><td>CUDA / TensorRT</td><td>P2；独立 runtime 包。</td></tr>
-  <tr><td>无 GPU / driver 不匹配</td><td>—</td><td>—</td><td>不启动 worker；Final 走 CPU SenseVoice。</td></tr>
+  <tr><td>无 GPU / driver 不匹配</td><td>—</td><td>—</td><td>不启动 worker；Final 使用 CPU SenseVoice。</td></tr>
 </table>
 <ul class="note">
-  <li>每个 runtime 包只带本环境 ORT / EP 库，单独目录、版本、SHA 与签名；安装需显式 opt-in。</li>
-  <li>worker 设置自己的 <code>ORT_DYLIB_PATH</code>，不继承 daemon 的 CPU ORT 路径。</li>
+  <li>每个 bundle 带本环境的静态 ORT 与同目录 provider 动态库；worker、ORT 与 provider 必须同版本，安装需显式 opt-in。</li>
+  <li>worker 使用自己的静态 ORT，provider 从 worker 同目录加载；不继承 daemon 的 CPU ORT 路径。ROCm / CUDA / DirectML 仍是系统依赖。</li>
 </ul>
 
 <h3 id="p4-4">4.4 错误与失败策略</h3>
 <table>
   <tr><th>错误</th><th>触发条件</th><th>处理</th></tr>
-  <tr><td><code>RuntimeMissing</code></td><td>runtime 目录缺失、版本不匹配或动态库加载失败。</td><td>worker 退出；daemon 标记 GPU Final 不可用；最终回退 CPU。</td></tr>
+  <tr><td><code>RuntimeMissing</code></td><td>runtime 目录缺失、版本不匹配或动态库加载失败。</td><td>worker 退出；daemon 标记 GPU 后端不可用；最终回退 CPU。</td></tr>
   <tr><td><code>DeviceUnavailable</code></td><td>无 GPU、驱动不匹配、显存不足。</td><td>worker 退出；不加载 CPU AED；Preview 继续。</td></tr>
   <tr><td><code>LoadFailed</code></td><td>encoder / decoder / metadata / SHA 校验失败。</td><td>worker 不进入 Ready；daemon 回退 CPU SenseVoice。</td></tr>
   <tr><td><code>InferenceFailed</code></td><td>运行期推理失败。</td><td>当前段丢弃；daemon 重启 worker；连续失败回退 CPU。</td></tr>

@@ -34,7 +34,7 @@
 ├── Cargo.toml                    独立 workspace
 └── src/
     ├── <a href="#c4-1">main.rs</a>              进程入口、事件循环、单实例、设置进程分流
-    ├── <a href="#c4-2">config.rs</a>            Mode / Hotkey / 设置持久化
+    ├── <a href="#c4-2">config.rs</a>            Mode / Backend / Hotkey / 设置持久化
     ├── <a href="#c4-9">control.rs</a>            daemon 子进程与 Job Object
     ├── diagnostics.rs         voime doctor 输出
     ├── <a href="#c4-3">ipc.rs</a>               命名管道客户端 + ServerMessage 分发
@@ -105,11 +105,12 @@ fn ensure_single_instance() -&gt; bool;</code></pre>
     pub hotkey: Hotkey,
     pub start_at_login: bool,
     pub overlay_enabled: bool,
+    pub backend: Backend,
 }
 
 pub fn load() -&gt; anyhow::Result&lt;Config&gt;;
 pub fn save(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
-pub fn to_ipc_config(&amp;self) -&gt; IpcConfig;</code></pre>
+pub fn to_ipc_config(&amp;self) -&gt; FrontendConfig;</code></pre>
 <ul class="note">
   <li>保存先写 <code>config.json.tmp</code> 再 <code>rename</code> 覆盖目标；Windows 上 <code>std::fs::rename</code> 使用 <code>MOVEFILE_REPLACE_EXISTING</code>，替换一步完成。</li>
 </ul>
@@ -218,7 +219,7 @@ fn run_window(config: Config, status: FrontendStatus,
               focus_hotkey: bool) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 <ul class="note">
   <li><code>--settings</code> 启动独立设置进程，<code>run_process</code> 在该进程主线程运行唯一的 egui 事件循环；保存由动作线程执行（校验热键可用性后写盘），结果经 <code>ack</code> 返回窗口，冲突在窗口内显示。</li>
-  <li>设置窗口只保存 Mode / Hotkey / 浮层 / 登录启动；没有模型选择或后端重启动作，模型由 daemon 从固定模型根目录加载。</li>
+  <li>设置窗口保存 Mode / Backend / Hotkey / 浮层 / 登录启动；没有模型路径选择，模型由 daemon 从资源包加载。保存后托盘重载配置并发送 Configure / SetBackend。</li>
   <li>设置窗口的“启动服务 / 停止服务并退出”经 <code>tray::send_command</code>（<code>WM_APP</code> 命令消息）转交托盘执行；托盘未运行时只在窗口内提示，不自行拉起 daemon。</li>
   <li>托盘打开设置前注销全局热键；设置子进程退出后托盘重新加载配置并恢复热键。</li>
 </ul>

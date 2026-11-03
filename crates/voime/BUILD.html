@@ -68,7 +68,7 @@ voime doctor</code></pre>
   <tr><th>场景</th><th>契约</th></tr>
   <tr><td>TUI 退出</td><td><code>q</code> / <code>Ctrl+C</code> detach；daemon 与前端继续运行。</td></tr>
   <tr><td>停止 daemon</td><td><code>voime ctl quit</code>；不要依赖 TUI 退出。</td></tr>
-  <tr><td>模型</td><td>ctl 不提供模型选择；模型由 daemon 启动时从固定目录加载，替换后重启 <code>voimed</code>。</td></tr>
+  <tr><td>模型</td><td>ctl 不提供模型选择；daemon 从资源包加载，替换后重启 <code>voimed</code>。ctl 提供 <code>backend cpu|gpu</code> 切换后端。</td></tr>
   <tr><td>诊断</td><td><code>voime doctor</code> 只读；失败项以 FAIL 输出；GPU runtime 不可用为 WARN。</td></tr>
   <tr><td>端点</td><td><code>--endpoint</code> 全局选项；<code>--socket</code> 为兼容别名。</td></tr>
 </table>

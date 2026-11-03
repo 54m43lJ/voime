@@ -1,0 +1,25 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "配置界面" as UI
+participant "平台前端" as Frontend
+participant "voimed" as Daemon
+participant "Final 路径 / voime-gpu" as Final
+
+UI -> Frontend : 选择 CPU / GPU 后端
+Frontend -> Daemon : SetBackend { cpu | gpu }
+alt 空闲
+  Daemon -> Daemon : 保留 SenseVoice Preview
+  Daemon -> Daemon : GPU 时加载 firered 资源包 / spawn voime-gpu
+  Daemon -> Final : replace_final(CPU SenseVoice / GPU FireRedASR)
+  Daemon -> Daemon : write_backend(models/backend)
+  Daemon --> Frontend : BackendChanged { cpu | gpu }
+else 录音 / 识别中
+  Daemon --> Frontend : Error { Busy }
+else 加载失败
+  Daemon -> Daemon : 保留旧 Final；GPU 启动失败则回退 CPU
+  Daemon --> Frontend : Error { inference } / BackendChanged { cpu }
+end
+@enduml

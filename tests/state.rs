@@ -1,4 +1,4 @@
-use voime_ipc::{FrontendState, Mode, Phase, ServerMessage};
+use voime_ipc::{Backend, FrontendState, Mode, Phase, ServerMessage};
 use voimed::state::State;
 
 #[test]
@@ -12,6 +12,7 @@ fn snapshot_defaults_are_idle_and_empty() {
             transcript,
             addon,
             hotkey,
+            backend,
         } => {
             assert_eq!(mode, None);
             assert_eq!(phase, Phase::Idle);
@@ -19,6 +20,7 @@ fn snapshot_defaults_are_idle_and_empty() {
             assert!(transcript.is_empty());
             assert_eq!(addon, FrontendState::Disconnected);
             assert_eq!(hotkey, None);
+            assert_eq!(backend, Backend::Cpu);
         }
         other => panic!("unexpected snapshot: {other:?}"),
     }
@@ -53,5 +55,6 @@ fn status_reports_addon_mode_hotkey_and_history_count() {
     assert_eq!(status.mode, Some(Mode::Toggle));
     assert_eq!(status.hotkey.as_deref(), Some("Super+F2"));
     assert_eq!(status.addon, FrontendState::Connected);
+    assert_eq!(status.backend, Backend::Cpu);
     assert_eq!(status.transcript_count, 1);
 }

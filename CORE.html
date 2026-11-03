@@ -36,15 +36,17 @@
 │   ├── voime-transport/               → <a href="crates/voime-transport/CORE.html#c1">voime-transport CORE §1</a>
 │   ├── voimed/                        → <a href="crates/voimed/CORE.html#c1">voimed CORE §1</a>
 │   ├── voime/                         → <a href="crates/voime/CORE.html#c1">voime CORE §1</a>
-│   └── voime-gpu/                     → <a href="crates/voime-gpu/CORE.html#c1">voime-gpu CORE §1</a>（可选 GPU Final）
+│   └── voime-gpu/                     → <a href="crates/voime-gpu/CORE.html#c1">voime-gpu CORE §1</a>（可选 GPU 后端）
 ├── frontends/
 │   ├── fcitx/                         → <a href="frontends/fcitx/CORE.html#c1">fcitx-addon CORE §1</a>
 │   └── windows/                       → <a href="frontends/windows/CORE.html#c1">windows CORE §1</a>（P3；TSF 为可选 P4）
 ├── models/
-│   ├── vad/manifest.json              固定模型目录（各目录一份清单，权重不提交）
-│   ├── sense-voice/manifest.json
-│   ├── fire-red-aed/manifest.json
-│   └── punc/manifest.json
+│   ├── default/
+│   │   ├── vad/manifest.json          默认资源包（各目录一份清单，权重不提交）
+│   │   └── sense-voice/manifest.json
+│   └── firered/
+│       ├── fire-red-aed/manifest.json firered 资源包（--gpu 安装）
+│       └── punc/manifest.json
 ├── scripts/                           安装入口 / 模型辅助脚本
 ├── tools/                             模型导出 / 安装 / 校验
 ├── packaging/
@@ -74,7 +76,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
     <td>依赖方向</td>
-    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport + log；<code>voime</code> → core + ipc + transport + log（doctor）；前端 → ipc + transport + log；<code>voime-gpu</code> 是独立二进制，只依赖 log 与自己的协议 / 模型代码。前端不依赖 core，core 不依赖 transport / daemon / 前端，daemon 不依赖 GPU crate；<code>voime-log</code> 是零依赖叶子 crate，被 daemon、CLI doctor 与 Windows 前端消费。</td>
+    <td><code>voime-core</code> → <code>voime-ipc</code>（<code>Mode</code> / <code>Backend</code>）；<code>voimed</code> → core + ipc + transport + log；<code>voime</code> → core + ipc + transport + log（doctor）；前端 → ipc + transport + log；<code>voime-gpu</code> 是独立二进制，只依赖 log 与自己的协议 / 模型代码。前端不依赖 core，core 不依赖 transport / daemon / 前端，daemon 不依赖 GPU crate；<code>voime-log</code> 是零依赖叶子 crate，被 daemon、CLI doctor 与 Windows 前端消费。</td>
   </tr>
   <tr>
     <td>OS API 位置</td>
@@ -86,11 +88,11 @@
   </tr>
   <tr>
     <td>进程边界</td>
-    <td><code>fcitx5</code> 进程加载 addon；<code>voimed</code> 是独立进程；<code>voime-gpu</code> 是仅在 GPU Final 时启动的独立进程；<code>voime</code> TUI 是独立客户端；Windows 前端是独立桌面进程，TSF DLL 加载到目标应用进程。</td>
+    <td><code>fcitx5</code> 进程加载 addon；<code>voimed</code> 是独立进程；<code>voime-gpu</code> 是仅在 GPU 后端时启动的独立进程；<code>voime</code> TUI 是独立客户端；Windows 前端是独立桌面进程，TSF DLL 加载到目标应用进程。</td>
   </tr>
   <tr>
     <td>线程边界</td>
-    <td>addon 的 Fcitx 调用在 Fcitx 事件循环线程；daemon 由事件循环 + accept / reader / writer 线程组成；pipeline 只有一个工作线程串行执行 VAD / SenseVoice / 标点，GPU Final 通过 worker 通道等待；TUI 使用自己的输入线程。</td>
+    <td>pipeline 只有一个工作线程串行执行 VAD / SenseVoice / 标点，GPU 后端通过 worker 通道等待；TUI 使用自己的输入线程。</td>
   </tr>
   <tr>
     <td>协议单一来源</td>
@@ -98,7 +100,7 @@
   </tr>
   <tr>
     <td>模型单一来源</td>
-    <td>四个固定模型目录（<code>vad</code> / <code>sense-voice</code> / <code>fire-red-aed</code> / <code>punc</code>）的 manifest、SHA-256 与 CPU 张量契约只在 <a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a> 定义；GPU AED 张量、runtime 与 worker 协议只在 <a href="crates/voime-gpu/PROVIDER.html">voime-gpu PROVIDER</a> 定义；安装脚本与运行时校验共用同一目录布局。</td>
+    <td>两个资源包目录（<code>default/</code> 的 <code>vad</code> + <code>sense-voice</code>，<code>firered/</code> 的 <code>fire-red-aed</code> + <code>punc</code>）的 manifest、SHA-256 与 CPU 张量契约只在 <a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a> 定义；GPU AED 张量、runtime 与 worker 协议只在 <a href="crates/voime-gpu/PROVIDER.html">voime-gpu PROVIDER</a> 定义；安装脚本与运行时校验共用同一目录布局。</td>
   </tr>
   <tr>
     <td>GPU 隔离</td>
@@ -118,7 +120,7 @@
   </tr>
   <tr>
     <td>无持久化</td>
-    <td>不写音频、按键或识别历史到磁盘；daemon 退出后会话历史丢失。</td>
+    <td>不写音频、按键或识别历史到磁盘；除 <code>models/backend</code> 后端设置外不持久化运行状态，daemon 退出后会话历史丢失。</td>
   </tr>
 </table>
 
@@ -131,7 +133,7 @@
   <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>Rust workspace</td><td>错误传播与边界错误类型。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>Rust workspace</td><td>音频、pipeline、daemon 与客户端之间的有界通道。</td></tr>
   <tr><td><code>serde</code> / <code>serde_json</code></td><td>Rust workspace</td><td>IPC、manifest 与标签表。</td></tr>
-  <tr><td><code>voime-gpu</code></td><td>Rust workspace</td><td>可选 GPU Final 二进制；只由独立的 GPU runtime 包分发。</td></tr>
+  <tr><td><code>voime-gpu</code></td><td>Rust workspace</td><td>可选 GPU 后端二进制；只由独立的 GPU runtime 包分发。</td></tr>
   <tr><td>ONNX Runtime GPU EP</td><td>GPU runtime 包</td><td>DirectML / MIGraphX / CUDA；只链接到 <code>voime-gpu</code>，不进入基础安装。</td></tr>
   <tr><td><code>tempfile</code></td><td>dev-dependencies</td><td>临时目录 / socket 测试。</td></tr>
   <tr><td>CMake / C++20</td><td><code>fcitx-addon</code></td><td>编译 <code>voime.so</code> 与安装描述文件。</td></tr>
@@ -165,7 +167,7 @@ pub fn spawn(config: &amp;Config, factory: SessionFactory,
              audio_rx: Receiver&lt;AudioChunk&gt;) -&gt; anyhow::Result&lt;Pipeline&gt;; // 见 voime-core USER §4.4
 // 内部类型与调用栈见 voime-core CORE §4 / §5</code></pre>
 <ul class="note">
-  <li><code>FinalBackend</code> 的 CPU 实现与 daemon 注入的 worker 实现都不改变 pipeline 事件；模型目录选择在启动时完成。</li>
+  <li><code>FinalBackend</code> 的 CPU 实现与 daemon 注入的 worker 实现都不改变 pipeline 事件；后端在启动或空闲切换时选定。</li>
 </ul>
 
 <h3 id="c4-2">4.2 crates/voime-ipc <a class="backlink" href="#c1">文件树</a></h3>
@@ -198,7 +200,7 @@ impl Daemon {
 pub struct IpcServer { /* ... */ }               // 内部类型，见 voimed CORE §4.6
 // 会话状态与事件处理见 voimed CORE §4 / §5</code></pre>
 <ul class="note">
-  <li><code>FinalRuntime</code> 代表启动时构建的 Final 后端 / pipeline 与可选 worker；完整签名见 <a href="crates/voimed/CORE.html#c4-4">voimed CORE §4.4</a>。</li>
+  <li><code>FinalRuntime</code> 代表 pipeline、会话工厂与当前 Final 路径；空闲时可通过 <code>replace_final</code> 只替换 Final，完整签名见 <a href="crates/voimed/CORE.html#c4-4">voimed CORE §4.4</a>。</li>
 </ul>
 
 <h3 id="c4-5">4.5 crates/voime <a class="backlink" href="#c1">文件树</a></h3>
@@ -247,11 +249,12 @@ pub enum Response { /* ... */ }                 // 见 voime-gpu USER §4.2
 └── voimed::main()
     ├── voimed::cli::parse()
     ├── voime_core::config::resolve()
-    │   ├── 加载 models/vad 与 models/sense-voice（始终）
-    │   └── 判断 models/fire-red-aed + models/punc 是否同时存在 → 可选 GPU Final
+    │   ├── 读取 models/backend（缺省 cpu）
+    │   ├── 加载 models/default/vad 与 models/default/sense-voice（始终）
+    │   └── 判断 backend=gpu → 加载 models/firered/fire-red-aed + punc
     ├── voime_core::infer::session::SessionFactory::new()
-    ├── 判断 fire-red-aed + punc 都存在 → voimed::worker::WorkerBackend::spawn()
-    ├── 判断 GPU 初始化失败 → 自动改用 CPU SenseVoice
+    ├── 判断 backend=gpu → voimed::worker::WorkerBackend::spawn()
+    ├── 判断 GPU 初始化失败 → 回退 CPU 并写入 backend=cpu
     ├── voime_core::pipeline::spawn(config, factory, final_backend, audio_rx)
     ├── voime_core::audio::capture::start()
     ├── voimed::ipc_server::IpcServer::bind()
@@ -286,7 +289,7 @@ voime_ipc::read_message(Final) / voime_transport::Stream::read()
     └── fcitx::InputContext::commitString() / frontends_windows::commit::commit()</code></pre>
 <ul class="note">
   <li>PTT / Toggle 的目标绑定与提交顺序见 <a href="frontends/fcitx/CORE.html#c5-2">fcitx-addon CORE §5.2</a> 与 <a href="frontends/windows/CORE.html#c5-2">windows CORE §5.2</a>。</li>
-  <li>Partial 始终由常驻 SenseVoice 产生；Final 走 <code>FinalBackend</code> 分支（CPU SenseVoice 或 voime-gpu），前端只消费同一 <code>Final</code> 消息。</li>
+  <li>Partial 始终由常驻 SenseVoice 产生；Final 走 <code>FinalBackend</code> 分支（CPU SenseVoice 或 GPU FireRedASR），前端只消费同一 <code>Final</code> 消息。</li>
   <li>daemon 内部的分段、背压与广播见 <a href="crates/voimed/CORE.html#c5-5">voimed CORE §5.5</a>。</li>
 </ul>
 
@@ -299,14 +302,14 @@ voime_ipc::read_message(Final) / voime_transport::Stream::read()
 └── fcitx_addon::VoimeAddon::onIpcMessage(SegmentStarted / Partial / Final) / frontends_windows::Frontend::on_message(...)</code></pre>
 <ul class="note">
   <li><code>Segmenter</code> 在语音起点前保留预卷音频；VAD 判定与端点参数不变。</li>
-  <li>GPU Final 失败时该段回退 CPU SenseVoice，Continuous 继续；不改变前端可见消息。</li>
+  <li>GPU 后端失败时该段回退 CPU SenseVoice，Continuous 继续；不改变前端可见消息。</li>
 </ul>
 
 <h3 id="c5-4">5.4 TUI、控制与退出</h3>
 <pre><code>voime::main()
 ├── 判断无子命令 → voime::client::Client::connect(Endpoint)
 ├── 判断 ctl → voimed 控制命令
-│   └── start / stop / toggle / status / clear / quit
+│   └── start / stop / toggle / status / clear / backend / quit
 └── 判断 doctor → 只读检查
 
 voime ctl quit
@@ -318,7 +321,7 @@ voime ctl quit
     └── voime_transport::Listener::shutdown()</code></pre>
 <ul class="note">
   <li><code>voimed::ipc_server::IpcServer::shutdown()</code> 调用 <code>Listener::shutdown()</code>，由 transport 删除端点。</li>
-  <li>模型在 daemon 启动时加载；更换模型目录后必须重启 <code>voimed</code> 进程。ctl 没有 <code>models</code> / <code>use</code> / <code>restart-backend</code> 子命令。</li>
+  <li>资源包与后端设置在 daemon 启动时读取；运行中切换后端只重建 Final 路径，不重启 daemon。ctl 没有 <code>models</code> / <code>use</code> / <code>restart-backend</code> 子命令；使用 <code>voime ctl backend cpu|gpu</code>。</li>
   <li>TUI 的 <code>q</code> 只 detach，不发送 Quit；Linux 停止 daemon 使用 <code>ctl quit</code> 或 systemd；Windows 由托盘以子进程托管 daemon，退出托盘即停止（见 <a href="frontends/windows/CORE.html#c4-9">windows CORE §4.9</a>）。</li>
 </ul>
 

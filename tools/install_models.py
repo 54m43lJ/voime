@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Install Voime model directories.
+"""Install Voime resource packs.
 
-Default: FireRedVAD + SenseVoice (`models/vad`, `models/sense-voice`).
-With --gpu: also install FireRed AED + FireRedPunc
-(`models/fire-red-aed`, `models/punc`).
+Default: the default pack owns `models/default/` and contains FireRedVAD +
+SenseVoice (`default/vad`, `default/sense-voice`).
+With --gpu: also install the firered pack in `models/firered/`, containing
+FireRed AED + FireRedPunc (`firered/fire-red-aed`, `firered/punc`).
 
-The daemon always loads VAD and SenseVoice; the GPU pair is used as Final only
-when both directories exist.
+The daemon always loads the default pack. The firered pack is only used when
+the CPU/GPU backend setting selects GPU.
 """
 
 from __future__ import annotations
@@ -52,7 +53,11 @@ def default_cache_dir() -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gpu", action="store_true", help="also install FireRed AED + Punc")
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="also install the firered pack (FireRed AED + Punc)",
+    )
     parser.add_argument(
         "--model-root",
         "--model-dir",
@@ -68,6 +73,12 @@ def main(argv: list[str] | None = None) -> int:
         dest="punc_source_dir",
         type=Path,
         help="directory containing punc/model.onnx, vocab.txt, labels.json",
+    )
+    parser.add_argument(
+        "--punc-max-tokens",
+        type=int,
+        default=400,
+        help="FireRedPunc max_tokens written to manifest (default 400)",
     )
     parser.add_argument(
         "--aed-version",
@@ -86,13 +97,13 @@ def main(argv: list[str] | None = None) -> int:
 
     install_vad(model_root=root, cache_dir=args.cache_dir, source_dir=args.source_dir)
     install_sensevoice(model_root=root, cache_dir=args.cache_dir)
-    log("默认模型安装完成：VAD + SenseVoice（CPU Final）")
+    log("默认资源包安装完成：default/ = VAD + SenseVoice（CPU 后端）")
 
     if not args.gpu:
         return 0
 
     punc_source = args.punc_source_dir or args.source_dir
-    have_punc = (root / "punc" / "manifest.json").is_file()
+    have_punc = (root / "firered" / "punc" / "manifest.json").is_file()
     if punc_source is None and not have_punc:
         fail(
             "--gpu 需要 --punc-source-dir 指向导出的 FireRedPunc 目录"
@@ -112,11 +123,12 @@ def main(argv: list[str] | None = None) -> int:
         install_punc(
             model_root=root,
             source_dir=punc_source,
+            max_tokens=args.punc_max_tokens,
         )
     else:
-        log("复用已安装的 models/punc")
-    log("GPU 模型安装完成：fire-red-aed + punc")
-    log("重启 voimed 后生效；启动时会自动选择 GPU Final")
+        log("复用已安装的 firered/punc")
+    log("firered 资源包安装完成：firered/ = FireRed AED + Punc")
+    log("在设置中选择 GPU 后端后生效")
     return 0
 
 

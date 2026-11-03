@@ -37,9 +37,12 @@
 <h2 id="b2">2. 构建与安装</h2>
 <p><a href="#top">↑</a></p>
 
-<pre><code>cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr
-cmake --build build/fcitx
-sudo cmake --install build/fcitx</code></pre>
+<pre><code>scripts/install_fcitx_addon.sh</code></pre>
+
+<p>
+脚本从仓库根配置并构建 <code>build/fcitx</code>，默认安装到 <code>/usr</code>；需要写权限时
+只对安装步骤使用 <code>sudo</code>。
+</p>
 
 <table>
   <tr><th>产物</th><th>说明</th></tr>
@@ -49,6 +52,8 @@ sudo cmake --install build/fcitx</code></pre>
   <tr><td>inputmethod 条目</td><td>不安装；Voime 不出现在输入法列表。</td></tr>
 </table>
 <ul class="note">
+  <li>等价手动步骤：<code>cmake -S frontends/fcitx -B build/fcitx -DCMAKE_INSTALL_PREFIX=/usr</code>、<code>cmake --build build/fcitx</code>、<code>sudo cmake --install build/fcitx</code>。</li>
+  <li>脚本选项：<code>--prefix DIR</code>、<code>--build-dir DIR</code>、<code>--no-build</code>；使用非 <code>/usr</code> 前缀时确认 Fcitx5 会搜索该前缀下的 addon 与库。</li>
   <li>CMake 设置 <code>PREFIX ""</code>，产物是 <code>voime.so</code>（不是 <code>libvoime.so</code>），与 <code>Library=voime</code> 对应。</li>
   <li>构建根为 <code>frontends/fcitx/</code>；文件树保持相对结构。</li>
   <li>根构建编排见 <a href="../../BUILD.html#b2">根 BUILD §2</a>。</li>
@@ -70,7 +75,7 @@ fcitx5-configtool</code></pre>
   <tr><td>旧配置迁移</td><td>无后缀的 <code>~/.config/fcitx5/conf/voime</code> 在启动时迁移到 <code>voime.conf</code>，然后删除旧文件。</td></tr>
 </table>
 <ul class="note">
-  <li>修改 <code>Mode</code> / <code>Hotkey</code> 后重新加载 addon 配置或重启 Fcitx。</li>
+  <li>修改 <code>Mode</code> / <code>Backend</code> / <code>Hotkey</code> 后重新加载 addon 配置或重启 Fcitx。</li>
   <li>如果 Addons 页面没有 Voime，检查描述文件前缀、<code>voime.so</code> 的 ABI 与依赖。</li>
 </ul>
 
@@ -83,7 +88,7 @@ ctest --test-dir build/fcitx --output-on-failure</code></pre>
 <table>
   <tr><th>测试</th><th>覆盖</th></tr>
   <tr><td><code>tests/addon_test.cpp</code></td><td>Mode / 热键字符串 / IPC 枚举 / target 空引用；不测试模型配置。</td></tr>
-  <tr><td>手工验收</td><td>Addons 页面加载、不出现在输入法组、Mode 三态、热键冲突、临时窗口、Final 提交、目标失焦、daemon 重启重连、默认 CPU Final、GPU 目录安装后自动选择 / 回退。</td></tr>
+  <tr><td>手工验收</td><td>Addons 页面加载、不出现在输入法组、Mode 三态、Backend 两态、热键冲突、临时窗口、Final 提交、目标失焦、daemon 重启重连、CPU 后端、GPU 资源包安装后选择 / 回退。</td></tr>
   <tr><td>frontend 覆盖</td><td>原生 Wayland、XWayland / XIM、支持 text-input 的终端；不支持输入法协议的窗口不承诺。</td></tr>
 </table>
 

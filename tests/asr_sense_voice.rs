@@ -4,7 +4,7 @@ use voime_core::asr::r#final::{FinalBackend, SenseVoiceBackend};
 use voime_core::asr::sense_voice::{greedy_decode, parse_cmvn};
 use voime_core::asr::tokenizer::AsrTokenizer;
 use voime_core::infer::session::SessionFactory;
-use voime_core::model::{SenseVoiceManifest, MANIFEST_FILE, SENSE_VOICE_DIR};
+use voime_core::model::{SenseVoiceManifest, DEFAULT_PACK_DIR, MANIFEST_FILE, SENSE_VOICE_DIR};
 use voime_core::pipeline::fbank_config;
 
 #[test]
@@ -48,6 +48,8 @@ fn sense_voice_decodes_10_to_60_seconds_when_model_available() {
     };
     let dir = if root.join(MANIFEST_FILE).is_file() {
         root
+    } else if root.join(DEFAULT_PACK_DIR).join(SENSE_VOICE_DIR).is_dir() {
+        root.join(DEFAULT_PACK_DIR).join(SENSE_VOICE_DIR)
     } else {
         root.join(SENSE_VOICE_DIR)
     };

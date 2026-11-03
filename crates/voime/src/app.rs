@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use voime_ipc::{ClientMessage, FrontendState, Mode, Phase, ServerMessage, Status, TriggerSource};
+use voime_ipc::{
+    Backend, ClientMessage, FrontendState, Mode, Phase, ServerMessage, Status, TriggerSource,
+};
 
 use crate::client::Client;
 use crate::ui::Tui;
@@ -14,6 +16,7 @@ pub enum Control {
 pub struct App {
     pub mode: Option<Mode>,
     pub hotkey: Option<String>,
+    pub backend: Backend,
     pub transcript: Vec<String>,
     pub partial: String,
     pub recording: bool,
@@ -30,6 +33,7 @@ impl App {
         Self {
             mode: None,
             hotkey: None,
+            backend: Backend::Cpu,
             transcript: Vec::new(),
             partial: String::new(),
             recording: false,
@@ -142,13 +146,18 @@ impl App {
                 transcript,
                 addon,
                 hotkey,
+                backend,
             } => {
                 self.mode = mode;
                 self.hotkey = hotkey;
+                self.backend = backend;
                 self.transcript = transcript;
                 self.partial = partial.unwrap_or_default();
                 self.addon = addon;
                 self.set_phase(phase);
+            }
+            ServerMessage::BackendChanged { backend } => {
+                self.backend = backend;
             }
             ServerMessage::SegmentStarted { .. } => {
                 self.recording = true;
@@ -212,6 +221,7 @@ impl App {
         self.mode = status.mode;
         self.hotkey = status.hotkey;
         self.addon = status.addon;
+        self.backend = status.backend;
         self.recording = status.recording;
         self.finalizing = status.finalizing;
     }
@@ -305,9 +315,11 @@ mod tests {
             transcript: vec!["历史".to_string()],
             addon: FrontendState::Connected,
             hotkey: Some("Super+F2".to_string()),
+            backend: Backend::Gpu,
         });
         assert_eq!(app.mode, Some(Mode::Ptt));
         assert!(app.recording);
+        assert_eq!(app.backend, Backend::Gpu);
         assert_eq!(app.transcript, vec!["历史".to_string()]);
         assert_eq!(app.partial, "临时");
     }

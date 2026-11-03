@@ -5,32 +5,39 @@ left to right direction
 hide stereotype
 
 actor "用户" as User
-component "Fcitx / Windows 前端" as Frontend
+component "Fcitx / Windows 前端\nMode / Backend / Hotkey" as Frontend
 component "voimed\ndaemon" as Daemon
 component "voime-core\nCPU pipeline\nORT CPU" as Core
-component "SenseVoice\n常驻 Preview\n+ CPU Final" as SenseVoice
-component "voime-gpu\n可选 Final 进程" as GpuWorker
-component "FireRedPunc\nGPU Final 标点" as Punc
+component "SenseVoice\n常驻 Preview\n+ CPU 后端 Final" as SenseVoice
+component "voime-gpu\n可选 GPU 后端进程" as GpuWorker
+component "FireRedPunc\nGPU 后端的 CPU 标点" as Punc
 
-database "models/active" as Active
-folder "模型包" as Packages {
-  artifact "sense-voice-2024-int8" as SvPackage
-  artifact "fire-red-aed-gpu" as AedPackage
+database "models/backend" as Backend
+folder "资源包" as Packs {
+  folder "default/" as DefaultPack {
+    artifact "vad" as Vad
+    artifact "sense-voice" as SvPackage
+  }
+  folder "firered/" as FireredPack {
+    artifact "fire-red-aed" as AedPackage
+    artifact "punc" as PuncPackage
+  }
 }
 
 User --> Frontend
 Frontend --> Daemon : IPC
-Daemon --> Active : 解析 Final 包
-Active --> Packages
+Daemon --> Backend : 读取 / 写回 cpu | gpu
+Backend --> Packs : 选择加载
 Daemon --> Core : PCM / 分段
-Core --> SenseVoice : Preview + CPU Final
-Core --> Punc : GPU Final 标点
-Daemon --> GpuWorker : Final only\nGPU 模型
+Core --> SenseVoice : Preview + CPU 后端 Final
+Core --> Punc : GPU 后端标点
+Daemon --> GpuWorker : Final only\nFireRedASR
 GpuWorker --> Daemon : Final 文本
 Daemon --> Frontend : Partial / Final
 
 note right of Daemon
-  Preview 固定 SenseVoice；
-  GPU 只替换 Final
+  Partial 固定 SenseVoice；
+  GPU 只替换 Final，CPU 继续跑
+  VAD / SenseVoice / Punc
 end note
 @enduml

@@ -9,6 +9,7 @@ param(
     [string]$RuntimeUrl = '',
     [string]$SourceDir = '',
     [string]$PuncSourceDir = '',
+    [int]$PuncMaxTokens = 400,
     [ValidateSet('v1', 'v2', 'auto')]
     [string]$AedVersion = 'v1',
     [switch]$NoBuild,
@@ -123,6 +124,7 @@ else {
     }
     if ($SourceDir) { $modelArgs.SourceDir = $SourceDir }
     if ($PuncSourceDir) { $modelArgs.PuncSourceDir = $PuncSourceDir }
+    if ($PuncMaxTokens -ne 400) { $modelArgs.PuncMaxTokens = $PuncMaxTokens }
     & (Join-Path $Root 'scripts\install_models.ps1') @modelArgs
     Assert-Success 'install_models.ps1'
     if ($Runtime) {

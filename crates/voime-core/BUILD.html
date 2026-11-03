@@ -31,7 +31,7 @@
   <tr><td>Rust</td><td>stable 工具链（<code>rust-toolchain.toml</code>）；workspace 版本与依赖见根 <code>Cargo.toml</code>。</td></tr>
   <tr><td>Linux</td><td>ALSA 开发头文件（Arch：<code>alsa-lib</code>；Debian / Ubuntu：<code>libasound2-dev</code>）。</td></tr>
   <tr><td>Windows</td><td>Rust MSVC 工具链；cpal 使用 WASAPI，不需要 ALSA。</td></tr>
-  <tr><td>模型</td><td>运行期需要固定的 <code>vad</code> + <code>sense-voice</code> 目录；GPU Final 还需 <code>fire-red-aed</code> + <code>punc</code>。编译与纯算法单测不需要权重。</td></tr>
+  <tr><td>模型</td><td>运行期需要 <code>default/vad</code> + <code>default/sense-voice</code>；GPU 后端还需 <code>firered/fire-red-aed</code> + <code>firered/punc</code>。编译与纯算法单测不需要权重。</td></tr>
 </table>
 
 <h2 id="b2">2. 构建</h2>
@@ -59,14 +59,14 @@ cargo fmt -p voime-core --check</code></pre>
 
 <table>
   <tr><th>测试</th><th>覆盖</th></tr>
-  <tr><td>单元测试</td><td>重采样下混 / 降采样、fbank 帧数、greedy 解码、CMVN 解析、模型路径逃逸、分段端点、预卷。</td></tr>
+  <tr><td>单元测试</td><td>重采样下混 / 降采样、fbank 帧数、greedy 解码、CMVN 解析、模型路径逃逸、分段端点、预卷、backend 文件、CPU / GPU 资源包解析。</td></tr>
   <tr><td><code>tests/asr_sense_voice.rs</code></td><td>CMVN / token id / greedy；真实 10–60 s 解码仅在设置 <code>VOIME_ASR_MODEL_DIR</code> 时执行。</td></tr>
   <tr><td><code>tests/segmenter.rs</code></td><td>端点、静音自动结束、最大段长与预卷；通过根 <code>voime-tests</code> 运行。</td></tr>
-  <tr><td>模型校验</td><td>schema 3、四个目录的 kind、SHA-256、张量名称 / 类型 / 形状、token_count 与 FireRed / Punc 目录配对；不校验音频内容。</td></tr>
+  <tr><td>模型校验</td><td>schema 3、资源包内各目录的 kind、SHA-256、张量名称 / 类型 / 形状、token_count 与 firered 包完整性；不校验音频内容。</td></tr>
 </table>
 <ul class="note">
   <li>跨组件集成测试从根目录运行 <code>cargo test</code>；单 crate 测试不覆盖 daemon / 前端。</li>
-  <li>真实 SenseVoice 测试需要安装固定模型目录；默认目录与安装命令见根 <a href="../../BUILD.html#b4">BUILD §4</a>。</li>
+  <li>真实 SenseVoice 测试需要安装 default 资源包；默认目录与安装命令见根 <a href="../../BUILD.html#b4">BUILD §4</a>。</li>
   <li>GPU / worker 测试不在本 crate；由 <code>voime-gpu</code> 与 <code>voimed</code> 的专用 runner 覆盖。</li>
 </ul>
 
