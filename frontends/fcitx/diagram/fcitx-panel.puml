@@ -21,6 +21,7 @@ end
 
 note over Addon, Panel
   Toggle 会话在 Final 后写单个空格，
-  保留空白面板直到 toggle off 或目标失焦。
+  保留空白面板直到 toggle off 或目标失焦；
+  PTT 每段 Final 后关闭面板，按住期间下一段重新显示。
 end note
 @enduml

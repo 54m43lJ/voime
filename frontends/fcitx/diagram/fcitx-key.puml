@@ -11,7 +11,7 @@ Addon -> Addon : 按 Mode + Hotkey 匹配
 
 alt 命中 Hotkey
   Addon -> Fcitx : filterAndAccept()\n消费按键
-  Addon -> Addon : Start / Stop 语音段
+  Addon -> Addon : 开启会话 / 硬切分
 else 未命中 / Mode=continuous
   Addon -> Fcitx : 返回，不消费
 end

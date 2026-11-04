@@ -283,7 +283,7 @@ frontend.shutdown()
 └── frontend::on_hotkey()
     ├── 判断 hotkey_down → 按住期间的重复通知直接忽略
     ├── 判断 Mode == Ptt
-    │   └── 判断 !finalizing &amp;&amp; !recording → start_segment(Hold)
+    │   └── 判断 !ptt_active &amp;&amp; !finalizing &amp;&amp; !recording → start_segment(Hold)
     └── 判断 Mode == Toggle
         ├── 判断 toggle_active → stop_segment(Toggle)
         └── 判断 !finalizing → start_segment(Toggle)
@@ -297,11 +297,14 @@ start_segment(source)
 └── IpcClient::send(Start { segment_id: 0, source })
 
 stop_segment(source)
-├── Overlay::hide()
-└── IpcClient::send(Stop { segment_id, source })
+├── 判断 source == Hold → ptt_active = false
+├── 判断 source == Toggle → toggle_active = false
+├── IpcClient::send(Stop { segment_id, source })
+└── 判断 !recording &amp;&amp; !finalizing → Overlay::hide()
 
 frontend::on_message(State)
-└── 判断 finalizing → 停止预览更新，保留最后一条 Partial
+├── 判断 finalizing → 停止预览更新，保留最后一条 Partial
+└── 判断 !recording &amp;&amp; !finalizing &amp;&amp; !ptt_active &amp;&amp; !toggle_active → 清理目标 / 浮层
 
 frontend::on_message(Partial)
 └── 判断 segment_id 匹配目标且非 finalizing → Overlay::show(text, &amp;target)
@@ -313,21 +316,22 @@ frontend::on_message(Final)
 ├── 其他模式 → Overlay::hide()
 └── commit::commit(&amp;target, &amp;text)</code></pre>
 <ul class="note">
-  <li>PTT 的 key-up 不依赖低级键盘钩子，由主循环用 <code>GetAsyncKeyState</code> 轮询；进入 finalizing 后忽略新的热键启动，避免与 daemon 的 <code>Busy</code> 竞争。</li>
+  <li>PTT 的 key-up 不依赖低级键盘钩子，由主循环用 <code>GetAsyncKeyState</code> 轮询；松开是硬切分，即使当前处于 Finalizing 也发送 Stop 关闭会话。</li>
+  <li>会话内 VAD 软切分续段不重新发送 Start；<code>SegmentStarted</code> 更新段 ID，目标沿用会话目标。进入 finalizing 后忽略新的热键启动，避免与 daemon 的 <code>Busy</code> 竞争。</li>
   <li>Finalizing 期间保留最后一条 Partial，不再更新；Final 或丢弃结果到达后清空浮层，Final 按模式提交。Final 的来源是 CPU 还是 GPU 不影响本路径。</li>
+  <li>Configure 改变 Mode 时，前端清除 <code>ptt_active</code> / <code>toggle_active</code> / 热键按下标志；目标保留到旧段 Final / Error 后再清理，避免旧会话残留空白浮层或吞掉下一次热键。</li>
 </ul>
 
 <h3 id="c5-3">5.3 Continuous 与目标失效</h3>
 <pre><code>frontend::on_message(SegmentStarted)
-├── 判断 source == Continuous / Toggle 续段
-├── 判断 Toggle 续段且原 target 失焦 → on_target_lost()
-├── target::capture()
-└── 判断 target::focused → 绑定；否则 on_target_lost()
+├── 判断 source == Continuous → target::capture()
+├── 判断 PTT / Toggle 续段且原 target 失焦 → on_target_lost()
+└── 判断 target::focused → 保留会话目标；否则 on_target_lost()
 
 frontend::on_focus_change()
 ├── 判断 !target::focused → Overlay::hide()
-├── 判断 Mode == Toggle &amp;&amp; (toggle_active || recording)
-│   └── IpcClient::send(Stop { segment_id, Toggle })
+├── 判断 Mode == Ptt / Toggle &amp;&amp; (ptt_active || toggle_active || recording || finalizing)
+│   └── stop_segment(Hold / Toggle)
 └── 放弃当前段提交</code></pre>
 
 <h3 id="c5-4">5.4 断线与重连</h3>

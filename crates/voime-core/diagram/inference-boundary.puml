@@ -14,7 +14,7 @@ Ort -> Core : Session
 loop 每个语音段
   Core -> Ort : VAD run(fbank, state)
   Ort -> Core : speech_prob + state
-  Core -> Core : SenseVoice fbank + LFR + CMVN
+  Core -> Core : SenseVoice fbank → LFR（一次）→ CMVN
   Core -> Ort : SenseVoice run(x, x_length, language, text_norm)
   Ort -> Core : logits
   Core -> Core : 解码 + 内置标点 / ITN

@@ -91,7 +91,7 @@ Fcitx 启动时先读取系统描述文件并从系统 addon 目录加载库；�
 <div class="diagram"><img src="diagram/fcitx-panel.svg" alt="Fcitx InputPanel 临时文本窗口的时序图"></div>
 <ul class="note">
   <li><code>Partial</code> 写入 <code>InputPanel::setPreedit</code>，由 Fcitx UI 渲染；Voime 不创建窗口。</li>
-  <li>Finalizing 期间保留最后一条 Partial，不再写入新的 Partial；Final / 目标丢失 / 断线时清空，Toggle 会话在 Final 后写入空白 preedit。</li>
+  <li>Finalizing 期间保留最后一条 Partial，不再写入新的 Partial；Final / 目标丢失 / 断线时清空，Toggle 会话在 Final 后写入空白 preedit，PTT 在每段 Final 后清空。</li>
 </ul>
 
 <h3 id="p3-3">3.3 提交边界</h3>

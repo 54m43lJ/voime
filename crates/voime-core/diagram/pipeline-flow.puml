@@ -4,7 +4,7 @@ skinparam shadowing false
 
 |voimed|
 start
-:发送 Start / Stop / CancelPreview / 音频块;
+:发送 StartSegment / FinishSegment / CancelPreview / 音频块;
 
 |pipeline worker|
 repeat
@@ -18,7 +18,9 @@ repeat
     :preview_gate = true;
   endif
   if (FinishSegment?) then (是)
+    :硬切分;
     :排空音频;
+    :collecting = false;
     :preview_gate = false;
     :取消未开始的 Preview;
     :force_end 当前段;
@@ -31,7 +33,17 @@ repeat
   if (音频块?) then (是)
     :重采样;
     :VAD 批处理;
-    :preview_gate 开启时节流发送 Partial;
+    if (VAD SpeechEnd?) then (是)
+      :发送 SegmentReady;
+      if (PTT / Toggle?) then (是)
+        :软切分：保持 collecting;
+        :重置分段器，开始下一段;
+      else (Continuous)
+        :完成段入队;
+      endif
+    else (否)
+      :preview_gate 开启时节流发送 Partial;
+    endif
   endif
   :drain_queue;
 repeat while (继续)

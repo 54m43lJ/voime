@@ -1,12 +1,6 @@
 /target
 /build
 /frontends/windows/target
-/models/*.onnx
-/models/*.data
-/models/asr/
-/models/vad/
-/models/punc/
-!models/manifest.json
 *.part
 
 __pycache__/

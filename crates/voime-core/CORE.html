@@ -58,10 +58,12 @@
   <tr><td>音频通道</td><td>容量由 <code>audio::capture::AUDIO_CHANNEL_CAPACITY</code> 拥有；回调使用 <code>try_send</code>，满时丢弃当前块，不阻塞设备线程。</td></tr>
   <tr><td>命令通道</td><td>有界；worker 使用 <code>select_biased!</code>，命令优先于音频，保证 Stop / CancelPreview 不被积压音频阻塞。</td></tr>
   <tr><td>Fbank 生命周期</td><td><code>StreamingFbank</code> 只服务 VAD，保留滑动窗口与未消费样本；<code>Fbank::compute</code> 每次从完整段独立计算，服务 SenseVoice。两者不共享实例。</td></tr>
-  <tr><td>SenseVoice 预处理</td><td>80-bin fbank、25 / 10 ms、LFR 7 / 6、560 维 CMVN、<code>use_itn=true</code>；参数由模型 manifest 固定，代码不硬编码替代值。</td></tr>
-  <tr><td>Preview 门禁</td><td>pipeline 持有 <code>preview_gate</code>；<code>FinishSegment</code> / <code>CancelPreview</code> 关闭门禁并丢弃未开始的预览任务；<code>StartSegment</code> 重新打开。</td></tr>
+  <tr><td>SenseVoice 预处理</td><td>80-bin fbank、25 / 10 ms、默认 LFR 7 / 6 与 560 维 CMVN、<code>use_itn=true</code>；fbank 参数取 <code>FbankConfig</code> 默认值，LFR / CMVN / ITN token id / 语言 id 与 <code>vocab_size</code> 取 ONNX metadata（缺失时回退常量）。manifest 只声明身份、文件与 runtime，不承载这些参数。</td></tr>
+  <tr><td>LFR 唯一应用</td><td>LFR 只能应用一次：正常链路只传 80-bin fbank，由 <code>SenseVoice::transcribe_features</code> 恰好展开为 <code>80 * lfr_window</code> 维（默认 560）；输入已是该维度时视为已 LFR，跳过展开。该方法是 LFR + CMVN 的唯一入口，调用方与 <code>transcribe</code> 都不得再应用 LFR。</td></tr>
+  <tr><td>Preview 门禁</td><td>pipeline 持有 <code>preview_gate</code>；<code>FinishSegment</code> / <code>CancelPreview</code> 关闭门禁并丢弃未开始的预览任务；<code>StartSegment</code> 与软切分后的 <code>reset_after_segment</code> 重新打开。</td></tr>
+  <tr><td>模式切换清理</td><td><code>SetMode</code> 只在旧段 Final / 丢弃后由 daemon 调用，到达时不得有活动段。Worker 设置新 mode 后，无论目标模式都清空 <code>collecting</code>、<code>resample_pending</code>、<code>frame_audio</code> 与 partial 调度；旧段的 VAD / 分段器由 <code>FinishSegment</code> 的 <code>reset_after_segment</code> 重置。不得把旧模式的 Partial、待处理音频、完成段或会话标志带入新会话。</td></tr>
   <tr><td>Partial 门槛</td><td>最小间隔、最小新增音频与尾部长度由 pipeline 模块常量拥有；一次慢推理会推迟下一次 Partial，避免立即重跑。</td></tr>
-  <tr><td>分段</td><td><code>MIN_SPEECH_MS</code> / <code>MIN_SILENCE_MS</code> / <code>PTT_AUTO_END_MS</code> 由 segmenter 模块拥有；达到 <code>MAX_SEGMENT_MS</code> 时强制结束。</td></tr>
+  <tr><td>分段</td><td><code>MIN_SPEECH_MS</code> / <code>MIN_SILENCE_MS</code> / <code>PTT_AUTO_END_MS</code> 由 segmenter 模块拥有；<code>max_segment_ms</code> 来自模型 manifest，达到上限时强制结束。</td></tr>
   <tr><td>最长段</td><td><code>MAX_SEGMENT_MS</code> 固定 30 s 上限，推荐值 <code>30_000</code>；manifest 的 <code>max_segment_ms</code> 与长段测试使用同一上限。</td></tr>
   <tr><td>模型校验</td><td>加载 manifest 时校验 schema 5、id 等于目录名、kind 匹配；<code>verify</code> 校验文件存在、大小、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。</td></tr>
   <tr><td>错误边界</td><td>库内部使用 <code>anyhow::Result</code> + 上下文；音频错误类型保留 <code>AudioError</code>；pipeline 把可恢复错误转为 <code>SegmentDropped</code>。</td></tr>
@@ -218,7 +220,9 @@ fn zero_state(spec: &amp;TensorSpec) -&gt; anyhow::Result&lt;StateTensor&gt;;
 fn shape_usize(shape: &amp;[i64]) -&gt; anyhow::Result&lt;Vec&lt;usize&gt;&gt;;</code></pre>
 <ul class="note">
   <li>状态张量必须声明固定形状；动态维会在初始化时拒绝。</li>
+  <li>输入 / 输出张量名、dtype 与 shape 由会话 introspection 读取；manifest 只提供 ONNX 文件路径，不提供张量声明。</li>
   <li>每次 <code>push</code> 用上一帧状态输入，并用模型输出更新状态；<code>reset</code> 重建流式 fbank 并清零状态。</li>
+  <li>VAD CMVN 参数取自 manifest 文件列表中的可选 <code>cmvn.ark</code>；manifest 只记录该文件的路径、大小与 SHA-256。</li>
 </ul>
 
 <h3 id="c4-9">4.9 vad/segmenter.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -226,7 +230,6 @@ fn shape_usize(shape: &amp;[i64]) -&gt; anyhow::Result&lt;Vec&lt;usize&gt;&gt;;<
 pub const MIN_SPEECH_MS: u32;
 pub const MIN_SILENCE_MS: u32;
 pub const PTT_AUTO_END_MS: u32;
-pub const MAX_SEGMENT_MS: u32;                 // 推荐值 30_000
 
 pub struct Segment {
     pub samples: Vec&lt;f32&gt;,
@@ -253,8 +256,7 @@ impl Segmenter {
 }</code></pre>
 <ul class="note">
   <li>SpeechStart 前的短暂语音样本保存在 <code>pending</code>，达到 <code>MIN_SPEECH_MS</code> 后并入活动段。</li>
-  <li>Continuous 使用 <code>MIN_SILENCE_MS</code> 结束；PTT / Toggle 使用 <code>PTT_AUTO_END_MS</code>。</li>
-  <li><code>max_segment_ms</code> 来自模型 manifest，且不得超过 <code>MAX_SEGMENT_MS</code>；超长段按 30 s 强制切分。</li>
+  <li>Continuous 使用 <code>MIN_SILENCE_MS</code> 结束；PTT / Toggle 使用 <code>PTT_AUTO_END_MS</code> 软切分当前段，会话不结束。</li>
 </ul>
 
 <h3 id="c4-10">4.10 asr.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -298,7 +300,8 @@ pub fn apply_cmvn(features: &amp;mut [Vec&lt;f32&gt;],
                   mean: &amp;[f32], inv_stddev: &amp;[f32]) -&gt; anyhow::Result&lt;()&gt;;
 fn fbank_options(config: FbankConfig) -&gt; FbankOptions;</code></pre>
 <ul class="note">
-  <li>输入统一乘 <code>SAMPLE_SCALE</code>；SenseVoice 使用 LFR 7 / 6，输出 560 维后再做 CMVN。</li>
+  <li>输入统一乘 <code>SAMPLE_SCALE</code>；SenseVoice 默认使用 LFR 7 / 6，输出 560 维后再做 CMVN；LFR 与 CMVN 均由 <code>transcribe_features</code> 统一处理，且每条特征流最多一次（见 §4.12）。</li>
+  <li>fbank 参数由 <code>FbankConfig</code> 默认值固定；LFR / CMVN 参数从 SenseVoice ONNX metadata 读取，不来自 manifest。</li>
   <li><code>Fbank::compute</code> 会 flush 最后一个窗口；<code>StreamingFbank</code> 只输出完整窗口。</li>
 </ul>
 
@@ -315,13 +318,17 @@ impl SenseVoice {
                config: FbankConfig) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn transcribe(&amp;mut self, samples: &amp;[f32])
         -&gt; anyhow::Result&lt;AsrOutput&gt;;
+    pub fn transcribe_features(&amp;mut self, features: &amp;[Vec&lt;f32&gt;])
+        -&gt; anyhow::Result&lt;AsrOutput&gt;;
     pub fn reset(&amp;mut self);
 }
 
 fn read_cmvn(session: &amp;Session) -&gt; anyhow::Result&lt;(Vec&lt;f32&gt;, Vec&lt;f32&gt;)&gt;;
 fn validate_features(features: &amp;[Vec&lt;f32&gt;]) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 <ul class="note">
-  <li><code>transcribe</code> 校验 CMVN 维度与 560 维 LFR 特征，执行推理、greedy / 模型内置解码与词表还原。</li>
+  <li><code>transcribe</code> 对完整样本计算 fbank 后调用 <code>transcribe_features</code>，不得在自身内再调用 <code>apply_lfr</code> 或 <code>apply_cmvn</code>；<code>transcribe_features</code> 最多应用一次 LFR 7 / 6，再做 CMVN、推理、greedy / 模型内置解码与词表还原。</li>
+  <li><code>transcribe_features</code> 是 LFR + CMVN 的唯一入口，按首帧维度区分输入：80-bin fbank 执行一次 LFR 展开为 <code>80 * lfr_window</code> 维（默认 560）；该维度输入视为已 LFR，跳过 LFR 直接做 CMVN。调用方不得自己再展开，避免累计两次。</li>
+  <li>LFR / CMVN / ITN token id / 语言 id 与 <code>vocab_size</code> 来自 SenseVoice ONNX metadata；<code>tokens.txt</code> 由 manifest 文件列表定位；manifest 本身不携带这些参数（见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>）。</li>
   <li>固定 <code>use_itn=true</code>；标点由 SenseVoice 输出自带，不加载 FireRedPunc。</li>
   <li>空音频或空文本返回空结果；由调用方按空段处理。</li>
 </ul>
@@ -349,6 +356,7 @@ impl Final {
 }</code></pre>
 <ul class="note">
   <li><code>Final</code> 与 Preview 共用同一个 <code>SenseVoice</code>；pipeline 在 Finalizing 门禁关闭后不会启动 Preview 推理。</li>
+  <li><code>Final::transcribe</code> 只接收原始 PCM；fbank、LFR 与 CMVN 各执行一次，LFR 不再由调用方预处理。</li>
   <li><code>transcribe</code> 不做二次标点、不做文本润色；空结果原样返回。</li>
 </ul>
 
@@ -367,13 +375,21 @@ impl SessionFactory {
     pub fn build(&amp;self, manifest: &amp;ModelManifest) -&gt; anyhow::Result&lt;Session&gt;;
 }
 
-fn validate(session: &amp;Session, manifest: &amp;ModelManifest) -&gt; anyhow::Result&lt;()&gt;;
-fn validate_side(label: &amp;str, outlets: &amp;[Outlet], expected: &amp;[TensorSpec])
-    -&gt; anyhow::Result&lt;()&gt;;
+pub struct TensorSpec {
+    pub name: String,
+    pub dtype: String,
+    pub shape: Vec&lt;i64&gt;,
+}
+
+pub fn input_specs(session: &amp;Session) -&gt; anyhow::Result&lt;Vec&lt;TensorSpec&gt;&gt;;
+pub fn output_specs(session: &amp;Session) -&gt; anyhow::Result&lt;Vec&lt;TensorSpec&gt;&gt;;
 pub fn dtype_is_f32(dtype: &amp;str) -&gt; bool;
 pub fn dtype_is_i64(dtype: &amp;str) -&gt; bool;
+pub fn dtype_is_i32(dtype: &amp;str) -&gt; bool;
+pub fn element_type_of(spec: &amp;TensorSpec) -&gt; anyhow::Result&lt;TensorElementType&gt;;
 fn normalize_dtype(dtype: &amp;str) -&gt; String;</code></pre>
 <ul class="note">
+  <li>输入 / 输出张量由 <code>input_specs</code> / <code>output_specs</code> 从 ONNX 图读取；manifest 只提供 ONNX 文件路径，不提供张量声明。</li>
   <li>只创建 CPU Execution Provider 会话；不注册 GPU / NPU 后端。</li>
 </ul>
 
@@ -432,7 +448,8 @@ impl Worker {
     fn samples_for_ms(&amp;self, ms: u64) -&gt; usize;
 }
 
-fn keeps_collecting_after_end(mode: Mode, reason: SegmentEndReason) -&gt; bool;</code></pre>
+fn keeps_collecting_after_end(mode: Mode, reason: SegmentEndReason) -&gt; bool; // PTT / Toggle 为 true</code></pre>
+
 <ul class="note">
   <li><code>preview_gate</code> 是 Finalizing 计算门禁：关闭后 <code>emit_partial</code> 直接返回，已排队的预览任务被丢弃。</li>
   <li><code>emit_segment</code> 只发送 <code>SegmentReady</code>，不调用 SenseVoice Final；CPU Final 由 daemon 通过 <code>Final::transcribe</code> 触发。</li>
@@ -465,7 +482,7 @@ voime_core::pipeline::spawn(&amp;config, factory, audio_rx)
   <li>音频设备在 pipeline 成功后才打开；见 <a href="../../crates/voimed/CORE.html#c5-1">voimed CORE §5.1</a>。</li>
 </ul>
 
-<h3 id="c5-2">5.2 音频、VAD 与 Continuous</h3>
+<h3 id="c5-2">5.2 音频、VAD、软切分与 Continuous</h3>
 <pre><code>Worker::run(audio_rx, commands)
 └── loop
     ├── crossbeam_channel::select_biased!
@@ -485,19 +502,24 @@ Worker::handle_audio(chunk)
             └── Segmenter::push(frame, samples, mode)
                 ├── 判断 SpeechStart → PipelineEvent::Recording(true)
                 ├── 判断 preview_gate 开启且达到 Partial 门槛 → Worker::emit_partial()
-                └── 判断 SpeechEnd → Worker::emit_segment(segment) / enqueue(segment)</code></pre>
+                └── 判断 SpeechEnd
+                    ├── Worker::emit_segment(segment) / enqueue(segment)
+                    └── 判断 keeps_collecting_after_end(mode, reason)
+                        └── Worker::reset_after_segment() + PipelineEvent::Recording(true)</code></pre>
 <ul class="note">
-  <li>Continuous 的 <code>SpeechEnd</code> 进入容量有限的完成段队列；PTT / Toggle 立即 <code>emit_segment</code>。</li>
-  <li>Toggle 在 SpeechEnd 后保持 <code>collecting=true</code> 并再次发送 <code>Recording(true)</code>；PTT 仅在 MaxDuration 时继续收集。</li>
+  <li>PTT / Toggle 的 <code>SpeechEnd</code> 是软切分：<code>keeps_collecting_after_end</code> 为 true，立即交付当前段并发送下一段的 <code>Recording(true)</code>；<code>FinishSegment</code> 才结束采集。</li>
+  <li>软切分后的下一次 <code>SpeechStart</code> 会再次发送 <code>Recording(true)</code>，属于幂等重复；daemon 已有当前段时不再分配新段。</li>
+  <li>Continuous 的 <code>SpeechEnd</code> 进入容量有限的完成段队列，下一次 <code>SpeechStart</code> 自动开始新段。</li>
 </ul>
 
-<h3 id="c5-3">5.3 PTT / Toggle 命令与 Finalizing</h3>
+<h3 id="c5-3">5.3 会话采集、软切分与硬切分</h3>
 <pre><code>Pipeline::start_segment()
 └── PipelineCommand::StartSegment
     └── Worker::handle_command(StartSegment)
         ├── 判断 mode != Continuous &amp;&amp; !collecting &amp;&amp; !segmenter.is_active()
         ├── FireRedVad::reset()
         ├── Segmenter::reset()
+        ├── collecting = true
         ├── preview_gate = true
         └── PipelineEvent::Recording(true)
 
@@ -510,17 +532,29 @@ Pipeline::finish_segment()
         ├── Worker::cancel_preview()
         │   ├── preview_gate = false
         │   └── 丢弃未开始的预览任务
+        ├── collecting = false
         ├── Segmenter::force_end()
-        ├── PipelineEvent::Recording(false)
-        └── Worker::emit_segment(segment) / SegmentDropped
+        ├── Worker::emit_segment(segment) / SegmentDropped
+        └── PipelineEvent::Recording(false)
 
 Pipeline::cancel_preview()
 └── PipelineCommand::CancelPreview
     └── Worker::handle_command(CancelPreview)
-        └── Worker::cancel_preview()</code></pre>
+        └── Worker::cancel_preview()
+
+Pipeline::set_mode(mode)
+└── PipelineCommand::SetMode(mode)
+    └── Worker::handle_command(SetMode)
+        ├── mode = mode
+        ├── collecting = false
+        ├── resample_pending.clear()
+        ├── frame_audio.clear()
+        └── Worker::reset_partial_schedule()</code></pre>
 <ul class="note">
   <li><code>FinishSegment</code> 与 <code>CancelPreview</code> 都幂等；重复取消不会产生新事件。</li>
-  <li>Finalizing 期间 <code>emit_partial</code> 直接返回；下一个 <code>StartSegment</code> 重新打开门禁。</li>
+  <li>软切分不调用 <code>FinishSegment</code>：<code>reset_after_segment</code> 保持 <code>collecting=true</code>，重置当前段状态并重新打开 Preview 门禁。</li>
+  <li>当前段 Finalizing 期间 <code>emit_partial</code> 直接返回；硬切分后直到下一次 <code>StartSegment</code> 才重新打开。</li>
+  <li>存在旧段时，<code>SetMode</code> 到达前 daemon 已通过 <code>FinishSegment</code> 结束旧段；<code>FinishSegment</code> 的 <code>prepare_command</code> 先排空音频并 <code>drain_queue</code>，VAD / 分段器由 <code>reset_after_segment</code> 重置。此路径不再截断活动段，但必须完成上述清理，避免旧音频、完成段或 Partial 进入新会话。</li>
 </ul>
 
 <h3 id="c5-4">5.4 Preview</h3>
@@ -529,11 +563,11 @@ Pipeline::cancel_preview()
 ├── 判断 !segmenter.is_active() → reset_partial_schedule()
 ├── 截取 active_samples() 末尾 PARTIAL_MAX_MS
 ├── Fbank::new(fbank).compute(tail)
-├── apply_lfr(features, 7, 6)
-├── SenseVoice::transcribe(features)
+├── SenseVoice::transcribe_features(features)   // LFR + CMVN 各执行一次
 ├── 判断 text 非空 → PipelineEvent::Partial(text)
 └── Worker::finish_partial_schedule(started)</code></pre>
 <ul class="note">
+  <li>pipeline 只计算 fbank，不预做 LFR；LFR 与 CMVN 由 <code>transcribe_features</code> 统一执行一次。</li>
   <li>尾部被截断时文本前加省略号；Partial 不进入历史、不提交。</li>
   <li>慢推理会按耗时推迟下一次 Partial；具体调度见 <code>finish_partial_schedule</code>。</li>
 </ul>
@@ -542,14 +576,15 @@ Pipeline::cancel_preview()
 <pre><code>voimed::daemon::Daemon::finalize(segment)
 ├── 判断 backend == Cpu → Final::transcribe(segment.samples)
 │   ├── 判断 samples.is_empty() → 返回空字符串
-│   ├── Fbank::new(fbank).compute(segment.samples)
-│   ├── 判断 features.is_empty() → 返回空字符串
-│   ├── apply_lfr(features, 7, 6)
-│   ├── SenseVoice::transcribe(features)
+│   ├── SenseVoice::transcribe(segment.samples)
+│   │   ├── Fbank::new(fbank).compute(segment.samples)
+│   │   ├── 判断 features.is_empty() → 返回空字符串
+│   │   └── SenseVoice::transcribe_features(features)  // LFR + CMVN 各执行一次
 │   └── 返回 asr.text
 ├── 判断 text.trim().is_empty() → SegmentDropped
 └── IpcServer::broadcast(Final { segment_id, text })</code></pre>
 <ul class="note">
+  <li>LFR 只在本路径应用一次：<code>Final::transcribe</code> 接收 PCM，<code>SenseVoice::transcribe</code> 计算 fbank 后交给 <code>transcribe_features</code>，调用方不预做 LFR。</li>
   <li>CPU Final 只执行一次；GPU Final 不调用本路径，只有 GPU 失败回退时才调用。</li>
   <li><code>Final</code> 与 Preview 共用 SenseVoice 会话；核心推理锁保证 Finalizing 期间没有并行 Preview。</li>
 </ul>

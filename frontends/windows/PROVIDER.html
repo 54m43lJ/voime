@@ -36,7 +36,7 @@
   <tr><td>RuntimeId</td><td>UIA 焦点元素的稳定标识；同一窗口内切换控件时变化。</td></tr>
   <tr><td><code>SendInput</code></td><td>Win32 合成输入 API；使用 <code>KEYEVENTF_UNICODE</code> 注入 UTF-16 单元。</td></tr>
   <tr><td><code>RegisterHotKey</code></td><td>注册系统范围热键；只提供按下，不提供 PTT 所需的 key-up。</td></tr>
-  <tr><td><code>GetAsyncKeyState</code></td><td>轮询主键状态；PTT 松开检测使用此方式，同时用于读取录制时的实时修饰键。</td></tr>
+  <tr><td><code>GetAsyncKeyState</code></td><td>轮询主键状态；PTT 会话硬切分的松开检测使用此方式，同时用于读取录制时的实时修饰键。</td></tr>
   <tr><td>UIPI</td><td>用户界面特权隔离；阻止普通完整性进程向高完整性窗口注入。</td></tr>
   <tr><td>DACL</td><td>命名管道的访问控制列表；只授予当前用户。</td></tr>
   <tr><td>TSF</td><td>Text Services Framework；Windows 输入法框架。</td></tr>
@@ -57,7 +57,7 @@
   <tr><td>进程模型</td><td>每用户桌面进程；不使用 Session 0 Windows 服务采集音频或注入文本；GPU worker 由 <code>voimed</code> 拉起的独立进程，前端不管理。</td></tr>
   <tr><td>安装与权限</td><td>核心安装脚本 <code>scripts/install-core.ps1</code> 负责托盘、daemon 与核心模型，并写入登录启动；GPU 安装脚本 <code>scripts/install-gpu.ps1</code> 负责 worker、runtime 与 GPU 模型。每用户安装；不装 Session 0 服务；不绕过 UIPI。</td></tr>
   <tr><td>GPU runtime 边界</td><td>DirectML / Vulkan / CUDA 只属于 GPU 模块；前端只链接 Win32 / UIA / TSF 与命名管道，不链接、不探测、不选择 GPU runtime。</td></tr>
-  <tr><td>热键</td><td>全局热键用 <code>RegisterHotKey</code>；PTT 的 key-up 用 <code>GetAsyncKeyState</code> 轮询；录制使用设置窗口的 winit 键盘事件，不安装低级钩子，不记录其他按键。</td></tr>
+  <tr><td>热键</td><td>全局热键用 <code>RegisterHotKey</code>；PTT 会话硬切分的 key-up 用 <code>GetAsyncKeyState</code> 轮询；录制使用设置窗口的 winit 键盘事件，不安装低级钩子，不记录其他按键。</td></tr>
   <tr><td>目标</td><td>前台窗口 + UIA 焦点元素；提交前复核 HWND 与 RuntimeId。</td></tr>
   <tr><td>编码</td><td>UTF-8 内部字符串转 UTF-16；emoji 代理对不拆分；长文本分批。</td></tr>
   <tr><td>UIPI</td><td>不尝试绕过；提权窗口默认不支持。</td></tr>
@@ -101,7 +101,7 @@
   <tr><th>调用 / 类型</th><th>用途</th></tr>
   <tr><td><code>RegisterHotKey</code> / <code>UnregisterHotKey</code></td><td>PTT / Toggle 全局热键注册；设置窗口打开时注销，关闭后重注册。</td></tr>
   <tr><td>设置窗口键盘事件（winit）</td><td>热键录制；只在窗口聚焦时读取，Esc 取消，窗口失焦停止。</td></tr>
-  <tr><td><code>GetAsyncKeyState</code></td><td>PTT 主键松开检测；录制时读取实时修饰键。</td></tr>
+  <tr><td><code>GetAsyncKeyState</code></td><td>PTT 会话硬切分的主键松开检测；录制时读取实时修饰键。</td></tr>
   <tr><td><code>GetForegroundWindow</code> / <code>GetGUIThreadInfo</code></td><td>取得前台窗口与焦点 HWND。</td></tr>
   <tr><td><code>CoInitializeEx</code>（STA）</td><td>托盘与设置进程各自在主线程以 STA 初始化 COM；UIA 调用的前提。</td></tr>
   <tr><td>UIA <code>GetFocusedElement</code> / RuntimeId</td><td>取得焦点控件并复核目标；<code>GetRuntimeId</code> 返回 SAFEARRAY，按 LBound / UBound 读取后 <code>SafeArrayUnaccessData</code>，最后 <code>SafeArrayDestroy</code>；UIA 不可用时退化为只绑定 HWND。</td></tr>

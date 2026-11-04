@@ -51,20 +51,32 @@
     <td>平台无关的识别库；提供 FireRedVAD、SenseVoice Preview、CPU Final 与模型校验，不接触键盘、输入上下文、OS 传输或 worker 管理。</td>
   </tr>
   <tr>
+    <td>会话（session）</td>
+    <td>从 PTT 按下或 Toggle 开启，到 PTT 松开、Toggle 关闭、目标失效或断线为止的一段用户交互；一个会话可以包含多个语音段。</td>
+  </tr>
+  <tr>
     <td>语音段（segment）</td>
-    <td>一次从开始到结束的采集区间；由 PTT 按下 / 松开、Toggle 开始 / 停止或 VAD 端点划分。一个语音段只有一个目标输入位置。</td>
+    <td>一次从开始到结束的采集区间；由 VAD 端点的软切分或会话结束的硬切分划分。一个语音段只有一个目标输入位置。</td>
+  </tr>
+  <tr>
+    <td>软切分（soft split）</td>
+    <td>PTT / Toggle 会话内 VAD 报告语音终点：结束当前语音段并开始下一段，会话保持活动。</td>
+  </tr>
+  <tr>
+    <td>硬切分（hard split）</td>
+    <td>PTT 松开或 Toggle 关闭：结束当前语音段并关闭会话，不再开始下一段。</td>
   </tr>
   <tr>
     <td>目标输入位置（target）</td>
-    <td>语音段开始时聚焦的输入位置。Linux 上是 Fcitx <code>InputContext</code>；Windows 上是前台窗口 + 焦点元素，或 TSF <code>ITfContext</code>。</td>
+    <td>语音段开始时聚焦的输入位置；PTT / Toggle 在会话开始时绑定并沿用到会话结束。Linux 上是 Fcitx <code>InputContext</code>；Windows 上是前台窗口 + 焦点元素，或 TSF <code>ITfContext</code>。</td>
   </tr>
   <tr>
     <td>模式（Mode）</td>
-    <td>语音段的触发方式：<code>ptt</code>（按住）、<code>toggle</code>（切换）或 <code>continuous</code>（VAD 自动分段）。</td>
+    <td>语音段与会话的触发方式：<code>ptt</code>（按住开启会话）、<code>toggle</code>（切换会话）或 <code>continuous</code>（VAD 自动分段）。</td>
   </tr>
   <tr>
     <td>热键（Hotkey）</td>
-    <td>前端配置的唯一组合键；<code>ptt</code> 按住说话，<code>toggle</code> 切换录音，<code>continuous</code> 忽略。</td>
+    <td>前端配置的唯一组合键；<code>ptt</code> 按住开启会话、松开结束，<code>toggle</code> 按一下开启、再按一下结束，<code>continuous</code> 忽略。</td>
   </tr>
   <tr>
     <td>Final 后端（Final backend）</td>
@@ -135,7 +147,7 @@
   </tr>
   <tr>
     <td>一个语音段一个目标</td>
-    <td>语音段开始时绑定目标；段内不改变；最终提交前复核目标仍然有效且聚焦。</td>
+    <td>语音段开始时绑定目标；PTT / Toggle 续段沿用会话目标，Continuous 每段绑定当时聚焦的目标；段内不改变；最终提交前复核目标仍然有效且聚焦。</td>
   </tr>
   <tr>
     <td>Partial 只显示</td>
@@ -146,8 +158,12 @@
     <td>只提交与当前目标 <code>segment_id</code> 匹配的 Final；先清空临时文本，再提交。</td>
   </tr>
   <tr>
+    <td>PTT / Toggle 会话</td>
+    <td>两种模式共用会话状态：开始后持续监听，VAD 端点软切分多个段；PTT 松开或 Toggle 再按执行硬切分，结束当前段并停止监听。</td>
+  </tr>
+  <tr>
     <td>失焦不误提交</td>
-    <td>目标失焦或销毁时不提交；Toggle 会话停止录音；最终文本保留在 daemon 历史与 TUI。</td>
+    <td>目标失焦或销毁时不提交；PTT / Toggle 会话停止录音；最终文本保留在 daemon 历史与 TUI。</td>
   </tr>
   <tr>
     <td>daemon 不可用</td>
@@ -182,10 +198,11 @@
 <h3 id="u3-2">3.2 PTT / Toggle 输入流程</h3>
 <div class="diagram"><img src="diagram/seq-ptt.svg" alt="PTT / Toggle 从热键到 Finalizing、CPU / GPU Final 与回退的端到端时序图"></div>
 <ul class="note">
-  <li><code>ptt</code> 按下开始、松开结束；<code>toggle</code> 按一下开始、再按一下结束。</li>
+  <li><code>ptt</code> 按下开启会话、松开硬切分；<code>toggle</code> 按一下开启、再按一下硬切分。</li>
+  <li>会话保持期间，VAD 每次语音终点都是软切分：当前段进入 Finalizing 并提交，同时开始监听下一段；会话不结束。</li>
   <li>录音期间 SenseVoice 产生 Partial；Final 触发后停止产生新的 Partial 并取消未开始的 Preview 推理，保留最后一条 Partial。</li>
   <li>所选 Final 后端完成识别；GPU 失败时当前段回退 CPU SenseVoice。Final 产生后先清空临时文本，再提交。</li>
-  <li>Toggle 会话在提交后保留空白临时窗口，直到 toggle off、目标失焦或断线；PTT / Continuous 在 Final 后清空。</li>
+  <li>Toggle 会话在提交后保留空白临时窗口，直到 Toggle 关闭、目标失焦或断线；PTT 每段 Final 后清空，按住期间可继续下一段；Continuous 在 Final 后清空。</li>
   <li>目标失焦时最终结果不提交，保留在 daemon / TUI。</li>
 </ul>
 
@@ -207,13 +224,13 @@
   <tr>
     <td><code>Mode</code></td>
     <td><code>ptt</code> · <code>toggle</code> · <code>continuous</code></td>
-    <td>决定热键语义与 daemon 是否自动连续分段。</td>
+    <td>决定热键会话语义；PTT / Toggle 会话内 VAD 自动软切分，Continuous 无会话。</td>
     <td><a href="frontends/fcitx/USER.html#u4-1">fcitx-addon USER §4.1</a> · <a href="frontends/windows/USER.html#u4-1">windows USER §4.1</a></td>
   </tr>
   <tr>
     <td><code>Hotkey</code></td>
     <td>平台前端支持的组合键</td>
-    <td><code>ptt</code> 按住、<code>toggle</code> 切换、<code>continuous</code> 忽略；设为空可禁用。</td>
+    <td><code>ptt</code> 按住开启、松开结束；<code>toggle</code> 切换会话；<code>continuous</code> 忽略；设为空可禁用。</td>
     <td>同上</td>
   </tr>
 </table>
@@ -250,13 +267,13 @@
   <tr><th>阶段 / 场景</th><th>契约</th><th>实现所有者</th></tr>
   <tr><td>默认 Final</td><td><code>final.backend = cpu</code>；只装核心或安装 GPU 模块后都保持该默认值。</td><td><a href="crates/voimed/USER.html#u4-4">voimed USER §4.4</a> · <a href="crates/voime/USER.html#u4-1">voime USER §4.1</a></td></tr>
   <tr><td>显式 GPU</td><td>通过安装脚本 <code>--backend</code> 或 <code>voime ctl backend</code> 写 <code>firered</code> / <code>qwen3</code>；重启 daemon 生效，不提供 IPC 热切换。</td><td><a href="crates/voime/USER.html#u4-1">voime USER §4.1</a></td></tr>
-  <tr><td>触发</td><td>PTT / Toggle 在按键事件中绑定目标并发 Start / Stop；Continuous 由 VAD 自动开始 / 结束。</td><td>平台前端 · <a href="crates/voimed/USER.html#u2">voimed USER §2</a></td></tr>
+  <tr><td>触发</td><td>PTT / Toggle 在按键事件中开启 / 关闭会话；会话内 VAD 软切分多个段；Continuous 由 VAD 自动开始 / 结束段。</td><td>平台前端 · <a href="crates/voimed/USER.html#u2">voimed USER §2</a></td></tr>
   <tr><td>临时文本</td><td>收到 Partial 显示；为空时保留上一行；不提交。Final 触发后 Preview 中断，保留最后一条 Partial。</td><td>平台前端 · <a href="frontends/fcitx/USER.html#u3-3">fcitx-addon USER §3.3</a> · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td></tr>
   <tr><td>Finalizing 计算</td><td>停止产生 Partial 并取消未开始的 Preview 推理；<code>cpu</code> Final 只执行一次 CPU 推理，GPU Final 不再调用 SenseVoice ASR。</td><td><a href="crates/voimed/USER.html#u2">voimed USER §2</a> · <a href="crates/voime-core/USER.html#u4-4">voime-core USER §4.4</a></td></tr>
   <tr><td>GPU 失败</td><td>worker 加载失败、超时、崩溃、显存不足或模型缺失时，当前段回退 CPU SenseVoice；Preview 不中断。</td><td><a href="crates/voimed/USER.html#u4-5">voimed USER §4.5</a></td></tr>
-  <tr><td>Toggle 会话</td><td>首次按下显示临时窗口并保持；每个 Final / 空段 / ASR 错误后清空文本但保留空白窗口，直到再次按下、目标失效或断线。</td><td>平台前端 · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td></tr>
+  <tr><td>PTT / Toggle 会话</td><td>开始后持续监听，每个 Final / 空段 / ASR 错误后继续下一段；PTT 松开或 Toggle 再按执行硬切分。Toggle 在结果后保留空白窗口，PTT 每段 Final 后清空。</td><td>平台前端 · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td></tr>
   <tr><td>最终文本</td><td>只接受当前段 <code>segment_id</code> 的 Final；先清空临时文本（Toggle 会话保留空白窗口），再提交。</td><td>平台前端 · <a href="crates/voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a></td></tr>
-  <tr><td>目标失效</td><td>不提交；清空临时文本；Toggle 停止；文本保留在 daemon 历史。</td><td>平台前端 · <a href="crates/voimed/USER.html#u3">voimed USER §3</a></td></tr>
+  <tr><td>目标失效</td><td>不提交；清空临时文本；PTT / Toggle 停止会话；文本保留在 daemon 历史。</td><td>平台前端 · <a href="crates/voimed/USER.html#u3">voimed USER §3</a></td></tr>
   <tr><td>daemon 断线</td><td>放行热键、清空临时文本、定时重连；不阻塞普通输入。</td><td>平台前端 · <a href="crates/voime-transport/USER.html">voime-transport USER</a></td></tr>
 </table>
 

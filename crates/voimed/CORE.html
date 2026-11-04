@@ -50,12 +50,15 @@
   <tr><td>角色表</td><td><code>clients: HashMap&lt;u64, ClientEntry&gt;</code> 由互斥锁保护；<code>set_role</code> 只允许一个 <code>Frontend</code>（线协议仍接受 <code>fcitx</code> 兼容别名）。</td></tr>
   <tr><td>状态机</td><td><code>State.phase</code> 只由 daemon 主线程修改；pipeline 事件与客户端命令都在同一线程串行处理。</td></tr>
   <tr><td>段 ID</td><td><code>next_segment</code> 单调递增，wrapping 后跳过 0；当前段在 Final / 丢弃后清空。</td></tr>
-  <tr><td>模式生效</td><td>Idle 时立即 <code>pipeline.set_mode</code>；非 Idle 时暂存到 <code>pending_mode</code>，段结束后应用。</td></tr>
+  <tr><td>模式生效</td><td>Configure 检测到 Mode 变化：Idle 且无活动会话时立即 <code>pipeline.set_mode</code>；否则暂存 <code>pending_mode</code> 并立即 <code>finish_segment</code>，当前段 Final / 丢弃后应用。</td></tr>
+  <tr><td>模式切换清理</td><td>应用前无条件清空 <code>pending_stop</code> 与 <code>session_active</code>；<code>current_segment</code> 与 <code>state.partial</code> 由 Final / 丢弃清空；<code>pipeline.set_mode</code> 再清 <code>collecting</code>、<code>resample_pending</code>、<code>frame_audio</code> 与 partial 调度。旧模式的段、临时文本、完成段队列、音频或 Toggle 会话不得带入新模式。</td></tr>
+  <tr><td>会话状态</td><td><code>session_active</code> 由 Start / Toggle 开启，由硬切分、模式切换、目标失焦（前端 Stop）或断线清除；VAD 软切分不清除。</td></tr>
+  <tr><td>软切分 / 硬切分</td><td>软切分只结束当前段，后续 <code>Recording(true)</code> 继续分配下一段；硬切分调用 <code>finish_segment</code> 并停止续段。PTT / Toggle 共用该状态机。</td></tr>
   <tr><td>Final 后端</td><td><code>Config::load</code> 在启动时读取一次 <code>[final].backend</code>；运行期不重新读取，不提供 IPC 热切换。</td></tr>
   <tr><td>worker 生命周期</td><td>只启动选中的 worker；默认 <code>cpu</code> 时 <code>worker = None</code>。spawn → Hello / Ready → 常驻 → Transcribe → Shutdown。</td></tr>
-  <tr><td>Finalizing 门禁</td><td>Stop / VAD 终点后调用 <code>pipeline.finish_segment()</code> 与 <code>pipeline.cancel_preview()</code>；在 <code>SegmentReady</code> 之前不再接受 Start。</td></tr>
+  <tr><td>Finalizing 门禁</td><td>当前段结束（VAD 软切分或会话硬切分）后进入 Finalizing：停止该段 Partial、取消未开始的 Preview，只允许一次 Final；软切分不关闭会话，下一段由 <code>Recording(true)</code> 续段。</td></tr>
   <tr><td>Final 调度</td><td><code>SegmentReady</code> 后由 <code>Daemon::finalize</code> 选择 CPU / GPU；GPU 失败当前段回退 CPU；一次只执行一个 Final。</td></tr>
-  <tr><td>前端断开</td><td>前端状态置 disconnected；Continuous 退 PTT；结束当前段；广播 Snapshot。</td></tr>
+  <tr><td>前端断开</td><td>前端状态置 disconnected；结束会话与当前段；Continuous 退 PTT；广播 Snapshot。</td></tr>
   <tr><td>退出顺序</td><td>worker shutdown → 广播 Bye → IPC shutdown → pipeline shutdown → audio stop → 删除端点。</td></tr>
   <tr><td>传输边界</td><td><code>ipc_server.rs</code> 只使用 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Listener</code> / <code>Stream</code>；daemon 不 import <code>std::os::unix</code> 或 Win32。</td></tr>
   <tr><td>GPU 边界</td><td>daemon 只通过 <a href="../voime-gpu-common/CORE.html">voime-gpu-common</a> 的帧类型与 io 函数与 worker 通信；不链接 ORT / llama.cpp，不读取 GPU runtime 细节。</td></tr>
@@ -352,7 +355,7 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
   <li>GPU worker 握手失败只标记不可用，不阻止 daemon 启动；核心模型失败才阻止启动。</li>
 </ul>
 
-<h3 id="c5-2">5.2 连接、Hello 与角色</h3>
+<h3 id="c5-2">5.2 连接、Hello、Configure 与角色</h3>
 <pre><code>IpcServer accept thread
 └── voime_transport::Listener::accept()
     └── ipc_server::spawn_client(stream, client_id, clients, events)
@@ -372,47 +375,86 @@ Daemon::run()
         ├── State::apply_mode(config.mode)
         ├── Daemon::apply_pipeline_mode()
         ├── Daemon::sync_audio_result()
-        └── IpcServer::broadcast(Snapshot)</code></pre>
+        └── IpcServer::broadcast(Snapshot)
+
+Daemon::on_client(client_id, Configure { mode, hotkey })
+├── 判断 role != Frontend → send Error(invalid_message)
+├── 判断 state.mode != mode → mode_changed = true
+├── State::apply_mode(mode)
+├── state.hotkey = hotkey
+├── pending_stop = false
+├── 判断 state.phase == Idle
+│   ├── Daemon::apply_pipeline_mode()
+│   └── session_active = false
+└── 判断 state.phase != Idle
+    ├── pending_mode = mode
+    ├── session_active = false
+    ├── 判断 mode_changed → state.phase = Finalizing + Pipeline::finish_segment()
+    └── Daemon::broadcast_state()</code></pre>
+<ul class="note">
+  <li><code>finish_segment</code> 交付旧段的 <code>SegmentReady</code> / <code>SegmentDropped</code>；<code>finalize</code> / <code>drop_current</code> 清 <code>current_segment</code>、<code>state.partial</code> 并回到 Idle，随后 <code>apply_pending_mode</code> 清 <code>session_active</code> 并调用 <code>pipeline.set_mode</code>。</li>
+  <li>模式切换不等待旧模式的第二次热键，也不把旧段的音频、Partial、Preview 或 Toggle 会话带入新模式。</li>
+</ul>
 
 <h3 id="c5-3">5.3 Start 与 SegmentStarted</h3>
 <pre><code>Daemon::on_client(client_id, Start { segment_id, source })
 └── Daemon::request_start(client_id, segment_id, source)
-    ├── 判断 state.phase != Idle → send Error(busy)
+    ├── 判断 state.phase != Idle || session_active → send Error(busy)
     ├── CaptureHandle::play()
+    ├── session_active = true
+    ├── pending_stop = false
     ├── Daemon::allocate_segment()
     ├── Pipeline::start_segment()
-    ├── session_active = true
     ├── IpcServer::broadcast(SegmentStarted { segment_id, source })
     └── Daemon::broadcast_state()</code></pre>
 
-<h3 id="c5-4">5.4 Stop、Toggle 与 Continuous</h3>
+<h3 id="c5-4">5.4 会话开始、软切分与硬切分</h3>
 <pre><code>Daemon::on_client(client_id, Stop { segment_id, source })
 └── Daemon::request_stop(client_id, segment_id)
-    ├── 判断 phase != Recording
-    │   ├── 判断 mode == Toggle → pending_stop = true
-    │   ├── 判断 mode != Continuous → session_active = false
+    ├── 判断 mode == Continuous
+    │   ├── 判断 segment_id != 0 &amp;&amp; segment_id != current_segment → send Error(busy)
+    │   ├── 判断 current_segment.is_none() → return
+    │   ├── state.phase = Finalizing
+    │   ├── Daemon::broadcast_state()
+    │   ├── Pipeline::finish_segment()
+    │   ├── Pipeline::cancel_preview()
     │   └── Daemon::sync_audio()
-    ├── 判断 segment_id != 0 &amp;&amp; segment_id != current
-    │   └── 判断 mode != Toggle → send Error(busy)
-    ├── 判断 mode != Continuous → session_active = false
-    ├── state.phase = Finalizing
-    ├── Pipeline::finish_segment()
-    ├── Pipeline::cancel_preview()
-    └── Daemon::sync_audio()
+    └── 判断 mode == Ptt / Toggle
+        ├── 判断 !session_active → return
+        ├── session_active = false
+        ├── pending_stop = true
+        ├── 判断 state.phase == Recording
+        │   ├── state.phase = Finalizing
+        │   ├── Pipeline::finish_segment()
+        │   └── Pipeline::cancel_preview()
+        ├── Daemon::broadcast_state()
+        ├── 判断 state.phase == Idle → Daemon::apply_pending_mode()
+        └── Daemon::sync_audio()
 
 Daemon::on_client(client_id, Toggle { segment_id, source })
-├── 判断 phase == Idle → Daemon::request_start(...)
-├── 判断 phase == Recording → Daemon::request_stop(...)
-└── 判断 phase == Finalizing → send Error(busy)
+├── 判断 mode != Ptt / Toggle → send Error(busy)
+├── 判断 !session_active &amp;&amp; state.phase == Idle → Daemon::request_start(...)
+├── 判断 session_active → Daemon::request_stop(...)
+└── 判断 state.phase == Finalizing → send Error(busy)
 
 pipeline::PipelineEvent::Recording(true)
-├── 判断 current_segment.is_none() → allocate_segment + broadcast SegmentStarted
+├── 判断 !listens(mode, session_active) || pending_stop
+│   ├── pending_stop = false
+│   ├── Pipeline::finish_segment() + Pipeline::cancel_preview()
+│   └── return
+├── 判断 current_segment.is_none()
+│   ├── Daemon::allocate_segment()
+│   └── IpcServer::broadcast(SegmentStarted { segment_id, source })
 ├── state.phase = Recording
-├── broadcast_state()
-└── 判断 pending_stop → Pipeline::finish_segment() + Pipeline::cancel_preview()
+└── Daemon::broadcast_state()
 
 pipeline::PipelineEvent::SegmentReady(segment)
 └── Daemon::finalize(segment)</code></pre>
+<ul class="note">
+  <li>首段 <code>SegmentStarted</code> 使用 Start / Toggle 的 source；续段使用 <code>continuation_source(mode)</code>，PTT 为 <code>Hold</code>、Toggle 为 <code>Toggle</code>、Continuous 为 <code>Continuous</code>。</li>
+  <li><code>listens(mode, session_active)</code> 对 Continuous 恒为 true，对 PTT / Toggle 等于 <code>session_active</code>；<code>sync_audio</code> 据此播放 / 暂停音频。</li>
+  <li>硬切分后 <code>session_active = false</code>；pipeline 已排队的下一段 <code>Recording(true)</code> 由 <code>listens</code> / <code>pending_stop</code> 拦下，不再分配段。</li>
+</ul>
 
 <h3 id="c5-5">5.5 Finalizing 与 Final 调度</h3>
 <pre><code>Daemon::finalize(segment)
@@ -431,12 +473,14 @@ pipeline::PipelineEvent::SegmentReady(segment)
 ├── 判断 text.trim().is_empty() → SegmentDropped("空识别结果")
 ├── state.transcript.push(text)
 ├── IpcServer::broadcast(Final { segment_id, text })
+├── current_segment = None
 ├── state.phase = Idle
 ├── Daemon::broadcast_state()
-└── Daemon::apply_pending_mode()</code></pre>
+└── 判断 !session_active → Daemon::apply_pending_mode()</code></pre>
 <ul class="note">
   <li>GPU Final 路径不调用 <code>Final::transcribe</code>；只有失败回退时调用一次。</li>
-  <li><code>cpu</code> Final 只执行一次；Finalizing 期间 pipeline 的 Preview 门禁保持关闭。</li>
+  <li><code>cpu</code> Final 只执行一次；当前段 Finalizing 期间不产生该段 Partial。</li>
+  <li><code>finalize</code> 不主动开始下一段；会话仍活动时，pipeline 已排队的 <code>Recording(true)</code> 触发续段。上一段 Final 先于下一段 <code>SegmentStarted</code> 广播。</li>
   <li>GPU 错误只记录错误码、后端名与耗时；不记录识别文本。</li>
 </ul>
 
@@ -446,6 +490,7 @@ pipeline::PipelineEvent::SegmentReady(segment)
     └── Daemon::on_server_event(Disconnected)
         ├── 判断 role == Frontend → state.addon = Disconnected
         ├── session_active = false
+        ├── pending_stop = false
         ├── 判断 state.mode == Continuous → Pipeline::set_mode(Ptt)
         ├── 判断 current_segment.is_some() → Pipeline::finish_segment() + Pipeline::cancel_preview()
         ├── Daemon::sync_audio()

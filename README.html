@@ -62,7 +62,7 @@
   <li>不做 CPU FireRedASR2-AED / CPU Qwen3-ASR；GPU 失败不加载任何 CPU 大模型。</li>
   <li>不为 Qwen 提供 ROCm / HIP runtime；AMD Linux 的 Qwen 只支持 Vulkan。</li>
   <li>不做运行中 Final 后端热切换；切换配置后需重启 daemon。</li>
-  <li>不兼容旧 CTC、旧 CPU 标点、旧模型包布局与旧 <code>models/active</code> 指针。</li>
+  <li>不兼容旧 CTC、旧 CPU 标点与旧模型包布局。</li>
   <li>不做拼音、形码、候选词或通用键盘输入法；Voime 只负责语音文本的提交。</li>
   <li>不实现跨平台统一 UI 抽象；各平台前端保留自己的热键、目标、预览与提交实现。</li>
   <li>不保证锁屏、安全桌面、提权窗口、游戏或未使用受支持输入协议的应用。</li>
@@ -76,7 +76,7 @@
   <tr><th>场景</th><th>行为</th><th>详细契约</th></tr>
   <tr>
     <td>安装核心</td>
-    <td>Linux 运行 <code>scripts/install-core.sh</code>，Windows 运行 <code>scripts/install-core.ps1</code>；安装 daemon、CLI、平台前端、FireRedVAD、SenseVoice 与 CPU 运行时。Linux 通过 sudo 把 Fcitx addon 写入系统目录；<code>--no-addon</code> 可跳过 addon 安装。</td>
+    <td>Linux 运行 <code>scripts/install-core.sh</code>，Windows 运行 <code>scripts/install-core.ps1</code>；安装 daemon、CLI、平台前端、FireRedVAD、SenseVoice 与 CPU 运行时。模型写入平台数据目录（Linux <code>$XDG_DATA_HOME/voime/models</code>，Windows <code>%LOCALAPPDATA%\voime\models</code>），与项目根目录无关。Linux 通过 sudo 把 Fcitx addon 写入系统目录；<code>--no-addon</code> 可跳过 addon 安装。</td>
     <td><a href="crates/voimed/USER.html#u4-1">voimed USER §4.1</a> · <a href="frontends/fcitx/README.html#r2">fcitx README §2</a></td>
   </tr>
   <tr>
@@ -96,12 +96,12 @@
   </tr>
   <tr>
     <td>PTT 模式</td>
-    <td><code>Mode=ptt</code>：按住 <code>Hotkey</code> 开始，松开结束；按住期间可被静音自动结束。</td>
+    <td><code>Mode=ptt</code>：按住 <code>Hotkey</code> 开启会话；会话内 VAD 软切分多个段；松开硬切分，结束当前段并停止监听。</td>
     <td><a href="frontends/fcitx/USER.html#u3-1">fcitx-addon USER §3.1</a> · <a href="frontends/windows/USER.html#u3-1">windows USER §3.1</a></td>
   </tr>
   <tr>
     <td>Toggle 模式</td>
-    <td><code>Mode=toggle</code>：按一下 <code>Hotkey</code> 开始，再按一下结束；每个 Final 后清空文本但保留空白临时窗口；目标失焦或断线时自动结束。</td>
+    <td><code>Mode=toggle</code>：按一下 <code>Hotkey</code> 开启会话，再按一下硬切分结束；会话内 VAD 连续软切分多个段；每个 Final 后清空文本但保留空白临时窗口；目标失焦或断线时自动结束。</td>
     <td><a href="frontends/fcitx/USER.html#u3-1">fcitx-addon USER §3.1</a> · <a href="frontends/windows/USER.html#u3-1">windows USER §3.1</a></td>
   </tr>
   <tr>
@@ -111,12 +111,12 @@
   </tr>
   <tr>
     <td>临时文本窗口</td>
-    <td>说话期间显示当前段的 <code>Partial</code>；Final 触发后不再更新并保留最后一条 Partial，直到 Final 或丢弃结果到达。Toggle 会话在结果后保持空白窗口，直到再次按热键关闭、目标失焦或断线；PTT / Continuous 在 Final 后清空。</td>
+    <td>说话期间显示当前段的 <code>Partial</code>；Final 触发后不再更新并保留最后一条 Partial，直到 Final 或丢弃结果到达。Toggle 会话在结果后保持空白窗口，直到再次按热键关闭、目标失焦或断线；PTT 每段 Final 后清空，按住期间继续监听下一段；Continuous 在 Final 后清空。</td>
     <td><a href="frontends/fcitx/USER.html#u3-3">fcitx-addon USER §3.3</a> · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td>
   </tr>
   <tr>
     <td>最终结果</td>
-    <td>语音段结束后由所选 Final 后端识别：<code>cpu</code> 为 SenseVoice，<code>firered</code> 为 AED + FireRedPunc，<code>qwen3</code> 为 Qwen3-ASR；GPU 失败回退 CPU。文本提交到语音段开始时聚焦的输入位置；失焦则不提交。</td>
+    <td>语音段结束后由所选 Final 后端识别：<code>cpu</code> 为 SenseVoice，<code>firered</code> 为 AED + FireRedPunc，<code>qwen3</code> 为 Qwen3-ASR；GPU 失败回退 CPU。文本提交到语音段或 PTT / Toggle 会话开始时聚焦的输入位置；失焦则不提交。</td>
     <td><a href="USER.html#u4-4">根 USER §4.4</a> · <a href="frontends/fcitx/USER.html#u4-2">fcitx-addon USER §4.2</a> · <a href="frontends/windows/USER.html#u4-2">windows USER §4.2</a></td>
   </tr>
   <tr>
@@ -172,13 +172,6 @@
 │   ├── fcitx/                 README · USER · CORE · PROVIDER
 │   └── windows/               README · USER · CORE · PROVIDER（TSF 为可选子工程）
 │
-├── models/                    一模型一目录（权重不提交）
-│   ├── firered-vad/
-│   ├── sensevoice-small/
-│   ├── fireredasr2-aed/
-│   ├── fireredpunc/
-│   └── qwen3-asr-1.7b/
-│
 ├── scripts/
 │   ├── install-core.sh        核心安装（Linux）
 │   ├── install-gpu.sh         GPU 模块安装（Linux）
@@ -191,6 +184,7 @@
   <li>父文档只定义产品级边界与组件关系；组件内部类型、签名和调用栈只出现在组件 <code>CORE</code>。</li>
   <li>三个 GPU crate 各自独立构建、独立进程、独立 runtime；<code>voime-gpu-common</code> 只提供共享协议。</li>
   <li>Windows 与 Linux 使用同一套核心 / GPU 组件树；平台差异只体现在安装脚本与前端。</li>
+  <li>模型不放在仓库内；默认安装到 <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>），Windows 使用 <code>%LOCALAPPDATA%\voime\models</code>。</li>
   <li>源码结构见 <a href="CORE.html#c1">根 CORE §1</a>。</li>
 </ul>
 

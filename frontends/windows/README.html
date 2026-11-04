@@ -82,8 +82,8 @@ GPU 推理模块独立安装，只增加 Final 识别路径，不是前端的一
   <tr><td>安装 GPU 模块</td><td>运行独立脚本 <code>scripts/install-gpu.ps1</code>：安装 GPU worker、对应 runtime 与 GPU 模型；GPU 模块不是前端的一部分，前端不参与安装。后端选择见 <a href="../../USER.html#u2">根 USER §2</a> / <a href="../../USER.html#u4-4">§4.4</a>。</td><td><a href="../../USER.html#u4-4">根 USER §4.4</a></td></tr>
   <tr><td>配置</td><td>托盘右键菜单或设置窗口设置 Mode / 浮层 / 登录启动；热键在设置窗口直接按键录制，默认组合避开系统保留键。Final 后端不是前端配置项。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
   <tr><td>daemon 生命周期</td><td>登录启动托盘，托盘以子进程托管 daemon（唯一所有者）；托盘菜单与设置窗口提供启动、停止、诊断，退出托盘即停止 daemon。GPU worker 由 <code>voimed</code> 按配置加载，托盘不启动 worker。</td><td><a href="USER.html#u4-6">USER §4.6</a></td></tr>
-  <tr><td>PTT</td><td>按住热键开始，松开结束；需要 key-up。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
-  <tr><td>Toggle</td><td>按一下开始，再按一下结束；目标失焦自动结束；会话期间预览浮层保持可见。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
+  <tr><td>PTT</td><td>按住热键开启会话；会话内 VAD 软切分多个段；松开硬切分，结束当前段并停止监听；需要 key-up。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
+  <tr><td>Toggle</td><td>按一下开启会话，再按一下硬切分结束；会话内 VAD 连续软切分多个段；目标失焦自动结束；会话期间预览浮层保持可见。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
   <tr><td>Continuous</td><td>VAD 自动分段；热键不参与。</td><td><a href="USER.html#u3-2">USER §3.2</a></td></tr>
   <tr><td>临时浮层</td><td>显示当前 Partial；Final 触发后保留最后一条 Partial，不再更新；Final 或丢弃结果到达后清空（Toggle 会话保留空白浮层）。不抢焦点、可点击穿透。</td><td><a href="USER.html#u3-4">USER §3.4</a></td></tr>
   <tr><td>最终提交</td><td>SendInput 注入 UTF-16 文本；提交前校验目标。</td><td><a href="USER.html#u4-2">USER §4.2</a></td></tr>

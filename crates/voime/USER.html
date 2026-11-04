@@ -51,7 +51,7 @@
   <tr><td>detach 语义</td><td><code>q</code>（无修饰键）与 <code>Ctrl+C</code> 只退出 TUI；daemon、前端、热键与临时窗口继续工作。</td></tr>
   <tr><td>停止 daemon</td><td>只使用 <code>voime ctl quit</code> 或平台服务管理，不用 TUI 退出键。</td></tr>
   <tr><td>清空历史</td><td><code>Ctrl+X</code> 发送 <code>ClearHistory</code>；不清空当前段与 partial。</td></tr>
-  <tr><td>手动录音</td><td><code>Space</code> 在非 finalizing 时发送 Start；recording 时发送 Stop；来源为 <code>tui</code>。</td></tr>
+  <tr><td>手动录音</td><td><code>Space</code> 在 <code>ptt</code> / <code>toggle</code> 下发送 <code>Toggle</code>，按当前会话状态开启或硬切分；<code>continuous</code> 下 recording 时发送 Stop，否则发送 Start；来源为 <code>tui</code>。</td></tr>
   <tr><td>滚动</td><td><code>PageUp</code> / <code>PageDown</code> / <code>Home</code> / <code>End</code>；上翻停止跟随，<code>End</code> 恢复。</td></tr>
   <tr><td>内容清洗</td><td>Final / Partial 中的 <code>\r</code> / <code>\n</code> 替换为空格并 trim；空文本不进入历史。</td></tr>
   <tr><td>断线</td><td>daemon 断开时 TUI 以错误退出（退出码 1）；<code>Bye</code> 视为正常 detach。</td></tr>
@@ -86,9 +86,9 @@ voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
 <table>
   <tr><th>命令 / 选项</th><th>契约</th></tr>
   <tr><td><code>voime</code></td><td>进入 TUI；stdin 与 stdout 必须是 TTY。</td></tr>
-  <tr><td><code>voime ctl start</code></td><td>发送 <code>Start { segment_id: 0, source: Cli }</code>；等待 State 或 Error。</td></tr>
-  <tr><td><code>voime ctl stop</code></td><td>发送 <code>Stop { segment_id: 0, source: Cli }</code>。</td></tr>
-  <tr><td><code>voime ctl toggle</code></td><td>发送 <code>Toggle { segment_id: 0, source: Cli }</code>。</td></tr>
+  <tr><td><code>voime ctl start</code></td><td>发送 <code>Start { segment_id: 0, source: Cli }</code>；PTT / Toggle 下开启会话并持续到 <code>stop</code>，Continuous 下开始手动段；等待 State 或 Error。</td></tr>
+  <tr><td><code>voime ctl stop</code></td><td>发送 <code>Stop { segment_id: 0, source: Cli }</code>；PTT / Toggle 下硬切分会话，Continuous 下停止当前段。</td></tr>
+  <tr><td><code>voime ctl toggle</code></td><td>发送 <code>Toggle { segment_id: 0, source: Cli }</code>，按当前会话状态开启或硬切分。</td></tr>
   <tr><td><code>voime ctl status</code></td><td>发送 <code>Status</code>；打印一行状态；不显示 Final 后端。</td></tr>
   <tr><td><code>voime ctl clear</code></td><td>发送 <code>ClearHistory</code>；等待 <code>HistoryCleared</code>。</td></tr>
   <tr><td><code>voime ctl quit</code></td><td>发送 <code>Quit</code>；等待 <code>Bye</code>。</td></tr>
@@ -110,7 +110,7 @@ voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
   <tr><td><code>q</code></td><td>detach；不停止 daemon。</td></tr>
   <tr><td><code>Ctrl+C</code></td><td>detach；不停止 daemon。</td></tr>
   <tr><td><code>Ctrl+X</code></td><td>发送 <code>ClearHistory</code>。</td></tr>
-  <tr><td><code>Space</code></td><td>recording 时发送 Stop；否则在非 finalizing 时发送 Start。</td></tr>
+  <tr><td><code>Space</code></td><td><code>ptt</code> / <code>toggle</code>：发送 <code>Toggle</code>，无会话时开启，会话活动时硬切分；<code>continuous</code>：recording 时 Stop，否则 Start。</td></tr>
   <tr><td><code>PageUp</code></td><td>向上翻一页；停止跟随。</td></tr>
   <tr><td><code>PageDown</code></td><td>向下翻一页。</td></tr>
   <tr><td><code>Home</code></td><td>跳到顶部；停止跟随。</td></tr>

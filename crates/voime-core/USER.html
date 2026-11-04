@@ -33,17 +33,20 @@
   <tr><td>音频块（<code>AudioChunk</code>）</td><td>设备回调交付的一批 PCM 样本及其采样率 / 声道数；进入核心后统一转换为 16 kHz 单声道 <code>f32</code>。</td></tr>
   <tr><td>流错误哨兵</td><td>零采样率、零声道、空样本的 <code>AudioChunk</code>；由 cpal 错误回调写入音频通道，表示当前音频流失败。</td></tr>
   <tr><td>VAD 帧（<code>VadFrame</code>）</td><td>FireRedVAD 对固定帧移音频给出的语音概率与二值判断；帧移与 fbank 参数见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td></tr>
+  <tr><td>会话采集（collection）</td><td>从 <code>StartSegment</code> 到 <code>FinishSegment</code> 的一段采集；PTT / Toggle 会话对应一个采集区间，可包含多个语音段。</td></tr>
   <tr><td>语音段（<code>Segment</code>）</td><td>分段器输出的一段 16 kHz 单声道样本及起止毫秒；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
+  <tr><td>软切分</td><td>PTT / Toggle 采集期间 VAD 报告终点：交付当前 <code>Segment</code> 后重置分段器，继续采集下一段，不结束会话。</td></tr>
+  <tr><td>硬切分</td><td><code>FinishSegment</code>：排空音频、强制结束当前段并停止采集；之后不再产生下一段，直到新的 <code>StartSegment</code>。</td></tr>
   <tr><td>活动段</td><td>分段器当前正在累积的语音段；Preview 只读取活动段末尾。</td></tr>
   <tr><td>完成段队列</td><td>Continuous 模式下已结束、等待 CPU / GPU Final 的语音段队列；有界，满时丢弃最旧段。</td></tr>
-  <tr><td>模型清单（<code>ModelManifest</code>）</td><td>单个模型目录的权威描述：schema、id、kind、version、license、文件列表与 runtime 声明。</td></tr>
+  <tr><td>模型清单（<code>ModelManifest</code>）</td><td>单个模型目录的权威描述：schema、id、kind、version、license、文件列表与 runtime 声明；不承载 ONNX 张量形状、fbank / LFR / CMVN 参数或词表内容。</td></tr>
   <tr><td>文件条目（<code>FileSpec</code>）</td><td>manifest 中一个文件的相对路径、SHA-256 与字节大小。</td></tr>
   <tr><td>runtime 声明（<code>RuntimeSpec</code>）</td><td>模型要求的 backend、format、precision 与 <code>max_segment_ms</code>；核心只读。</td></tr>
   <tr><td>模型集合（<code>ModelSet</code>）</td><td>模型根目录下的 <code>firered-vad</code> 与 <code>sensevoice-small</code> 两个模型清单。</td></tr>
   <tr><td>会话工厂（<code>SessionFactory</code>）</td><td>创建 CPU ONNX 会话并按模型目录校验输入 / 输出张量。</td></tr>
   <tr><td>fbank</td><td>Kaldi 风格梅尔滤波器组特征；VAD 使用流式窗口，SenseVoice 使用整段独立计算。</td></tr>
-  <tr><td>LFR</td><td>低帧率特征拼接；SenseVoice 使用 7 帧窗、6 帧移，输出 560 维。</td></tr>
-  <tr><td>CMVN</td><td>倒谱均值方差归一化；SenseVoice 对 560 维特征做均值 / 方差归一化。</td></tr>
+  <tr><td>LFR</td><td>低帧率特征拼接；SenseVoice 默认使用 7 帧窗、6 帧移，输出 560 维；每条特征流只应用一次。</td></tr>
+  <tr><td>CMVN</td><td>倒谱均值方差归一化；SenseVoice 对默认 560 维 LFR 特征做均值 / 方差归一化。</td></tr>
   <tr><td>SenseVoice</td><td>核心唯一 ASR 模型；同时服务 Preview 与 CPU Final，固定 <code>use_itn=true</code>，输出自带标点。</td></tr>
   <tr><td>Preview 调度器</td><td>按时间与新增音频节流 SenseVoice 预览推理的组件；Finalizing 后停止并取消。</td></tr>
   <tr><td>CPU Final（<code>Final</code>）</td><td>对完整语音段执行一次 SenseVoice 推理并返回文本；不执行 FireRedPunc 或其它二次标点。</td></tr>
@@ -57,13 +60,13 @@
 <table>
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>音频格式</td><td>进入核心内部后统一为 16 kHz、单声道、<code>f32</code>；设备原生格式在核心内转换。</td></tr>
-  <tr><td>单活动段</td><td>同一时刻只有一个语音段处于采集或收尾状态；<code>StartSegment</code> 在非 Idle 状态被忽略。</td></tr>
+  <tr><td>单活动段</td><td>同一时刻只有一个语音段处于采集或收尾状态；软切分结束当前段后立即开始下一段采集；<code>StartSegment</code> 在已采集时被忽略。</td></tr>
   <tr><td>命令优先</td><td>pipeline 先处理命令，再处理音频；<code>FinishSegment</code> 不会排在已积压的音频块之后。</td></tr>
-  <tr><td>段边界</td><td><code>StartSegment</code> 丢弃按键前已采集的音频；<code>FinishSegment</code> 先排空已采集音频，再强制结束当前段。</td></tr>
+  <tr><td>段边界</td><td><code>StartSegment</code> 丢弃按键前已采集的音频；VAD <code>SpeechEnd</code> 在 PTT / Toggle 中执行软切分；<code>FinishSegment</code> 先排空已采集音频，再强制结束当前段（硬切分）。</td></tr>
   <tr><td>Partial</td><td>按时间与新增音频双重门槛节流，只读取活动段末尾；不进入历史、不提交；可丢弃。</td></tr>
-  <tr><td>Preview 中断</td><td><code>FinishSegment</code> 与 <code>CancelPreview</code> 都立即关闭 Preview 门禁：丢弃未开始的预览任务，不再产生新的 Partial。</td></tr>
+  <tr><td>Preview 中断</td><td><code>FinishSegment</code> 与 <code>CancelPreview</code> 都立即关闭 Preview 门禁：丢弃未开始的预览任务，不再产生新的 Partial；软切分只冻结当前段，下一段重新打开。</td></tr>
   <tr><td>CPU Final</td><td>只对 <code>SegmentReady</code> 的完整段执行一次 SenseVoice；空音频或空文本不产生 Final 文本。</td></tr>
-  <tr><td>模式</td><td><code>Mode</code> 由 <a href="../voime-ipc/USER.html#u4-1">voime-ipc USER §4.1</a> 定义；核心只消费，不解析命令行。</td></tr>
+  <tr><td>模式</td><td><code>Mode</code> 由 <a href="../voime-ipc/USER.html#u4-1">voime-ipc USER §4.1</a> 定义；核心只消费，不解析命令行。PTT / Toggle 使用会话采集，Continuous 由 VAD 自动分段。</td></tr>
   <tr><td>模型生命周期</td><td>启动时按一模型一目录加载并校验 <code>firered-vad</code> / <code>sensevoice-small</code>；会话常驻内存；每段只重置解码状态，不重新加载权重。</td></tr>
   <tr><td>模型目录</td><td>核心只读取模型根目录下的两个固定目录；不扫描其它目录、不做动态发现、不接受别名或符号链接逃逸。</td></tr>
   <tr><td>有界队列</td><td>完成段队列容量有限；慢识别时音频通道也可能丢弃，不承诺零丢失。</td></tr>
@@ -78,7 +81,9 @@
 <div class="diagram"><img src="diagram/pipeline-flow.svg" alt="voime-core pipeline 的命令、音频、VAD、Preview 与 Finalizing 流程"></div>
 <ul class="note">
   <li>调用方只发送命令并消费事件；重采样、VAD、分段与 Preview 在 pipeline worker 内串行执行。</li>
-  <li>PTT / Toggle 由调用方的 Start / Stop 驱动；Continuous 由 VAD 端点自动分段。</li>
+  <li>PTT / Toggle 由调用方的 <code>StartSegment</code> / <code>FinishSegment</code> 划定会话；会话内 VAD 每次终点软切分并继续下一段。</li>
+  <li><code>FinishSegment</code> 是硬切分：结束当前段并停止采集，直到下一次 <code>StartSegment</code>。</li>
+  <li>Continuous 由 VAD 端点自动分段，无会话命令。</li>
   <li>Final 触发后 Preview 中断；完整段通过 <code>SegmentReady</code> 交给 daemon，由 daemon 选择 CPU 或 GPU Final。</li>
   <li>队列、Preview 节流与 Finalizing 门禁的常量 / 状态见 <a href="CORE.html#c2">CORE §2</a>。</li>
 </ul>
@@ -204,6 +209,7 @@ pub fn resolve_inside(dir: &amp;Path, relative: &amp;Path) -&gt; anyhow::Result&
   <tr><td><code>version</code> / <code>license</code></td><td>模型版本与许可证；只用于诊断与安装记录，不参与运行期选择。</td></tr>
   <tr><td><code>files</code></td><td>每个文件相对路径、SHA-256、大小；<code>verify</code> 逐文件校验存在、非空、大小与摘要。</td></tr>
   <tr><td><code>runtime</code></td><td>声明 backend / format / precision / 最长段；核心模型为 <code>onnx</code>，SenseVoice 为 int8，VAD 使用上游精度；核心只读，不写回。</td></tr>
+  <tr><td>推理参数</td><td>manifest 只描述模型身份、文件与 runtime，不包含 ONNX 张量形状、fbank / LFR / CMVN 参数或词表内容；这些参数的来源见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</td></tr>
   <tr><td>权限</td><td>模型目录与文件只读；不允许可执行文件、脚本或系统库；<code>verify</code> 拒绝异常类型。</td></tr>
   <tr><td><code>load_models</code></td><td>只加载 <code>&lt;root&gt;/firered-vad/manifest.json</code> 与 <code>&lt;root&gt;/sensevoice-small/manifest.json</code>，并分别校验 id / kind。</td></tr>
   <tr><td><code>resolve_inside</code></td><td>拒绝绝对路径、<code>..</code> 与空路径，防止模型目录逃逸。</td></tr>
@@ -246,19 +252,21 @@ impl Final {
 
 <table>
   <tr><th>消息 / 方法</th><th>语义</th><th>调用方处理</th></tr>
-  <tr><td><code>StartSegment</code></td><td>开始采集；非 Continuous 模式下重置 VAD / 分段器并打开 Preview 门禁。已在本段时忽略。</td><td>daemon 进入 Recording。</td></tr>
-  <tr><td><code>FinishSegment</code></td><td>排空音频、强制结束当前段、关闭 Preview 门禁并取消未开始的预览；产生 <code>SegmentReady</code> 或 <code>SegmentDropped</code>。</td><td>daemon 进入 Finalizing。</td></tr>
+  <tr><td><code>StartSegment</code></td><td>打开采集会话；非 Continuous 模式下重置 VAD / 分段器并打开 Preview 门禁。已在采集时忽略。</td><td>daemon 进入 Recording。</td></tr>
+  <tr><td><code>FinishSegment</code></td><td>硬切分：排空音频、强制结束当前段、关闭 Preview 门禁并取消未开始的预览；产生 <code>SegmentReady</code> 或 <code>SegmentDropped</code>，之后不再采集下一段。</td><td>daemon 进入 Finalizing。</td></tr>
   <tr><td><code>CancelPreview</code></td><td>立即关闭 Preview 门禁、丢弃未开始的预览任务；幂等。下一个 <code>StartSegment</code> 重新打开。</td><td>daemon 在 Final 触发时调用。</td></tr>
-  <tr><td><code>SetMode</code></td><td>切换 <code>ptt</code> / <code>toggle</code> / <code>continuous</code>；下一段生效。</td><td>daemon 同步配置。</td></tr>
-  <tr><td><code>Recording(true/false)</code></td><td>采集开始 / 结束；Toggle 可在 Final 后再次产生 <code>Recording(true)</code>。</td><td>更新前端录音标记与 daemon phase。</td></tr>
-  <tr><td><code>Partial(text)</code></td><td>活动段末尾的 SenseVoice 临时识别；可丢弃；Finalizing 期间不再产生。</td><td>显示临时文本，不提交。</td></tr>
-  <tr><td><code>SegmentReady(segment)</code></td><td>完整段 PCM 与起止时间；核心不在事件中执行 Final。</td><td>daemon 选择 CPU / GPU Final；CPU 调用 <code>Final::transcribe</code>。</td></tr>
-  <tr><td><code>SegmentDropped</code></td><td>当前段因空音频、音频过短、SenseVoice 失败等原因被丢弃。</td><td>清空临时文本，继续监听。</td></tr>
+  <tr><td><code>SetMode</code></td><td>切换 <code>ptt</code> / <code>toggle</code> / <code>continuous</code>；存在活动段时 daemon 必须先 <code>FinishSegment</code>，旧段 Final / 丢弃后才调用。切换清空旧会话的 <code>collecting</code>、待处理音频与 Partial 调度，不得截断活动段。</td><td>daemon 在旧段收尾后同步配置。</td></tr>
+  <tr><td><code>Recording(true/false)</code></td><td>段开始 / 采集结束；PTT / Toggle 每次软切分后再次产生 <code>Recording(true)</code> 表示下一段，硬切分时产生 <code>Recording(false)</code>。</td><td>更新前端录音标记与 daemon phase。</td></tr>
+  <tr><td><code>Partial(text)</code></td><td>活动段末尾的 SenseVoice 临时识别；可丢弃；当前段 Finalizing 期间不再产生。</td><td>显示临时文本，不提交。</td></tr>
+  <tr><td><code>SegmentReady(segment)</code></td><td>一次软切分或硬切分产生的完整段 PCM 与起止时间；核心不在事件中执行 Final。</td><td>daemon 选择 CPU / GPU Final；CPU 调用 <code>Final::transcribe</code>。</td></tr>
+  <tr><td><code>SegmentDropped</code></td><td>当前段因空音频、音频过短、SenseVoice 失败等原因被丢弃。</td><td>清空临时文本；会话仍活动时继续下一段，否则回到 Idle。</td></tr>
   <tr><td><code>Fatal</code></td><td>音频流连续失败或 worker 不可恢复错误。</td><td>daemon 记录并退出。</td></tr>
-  <tr><td><code>Final::transcribe</code></td><td>对完整段执行一次 SenseVoice CPU 推理；空文本返回空字符串；不做二次标点。</td><td>daemon 生成 Final 或按空段丢弃。</td></tr>
+  <tr><td><code>Final::transcribe</code></td><td>对完整段执行一次 SenseVoice CPU 推理；fbank、LFR、CMVN 各执行一次；空文本返回空字符串；不做二次标点。</td><td>daemon 生成 Final 或按空段丢弃。</td></tr>
   <tr><td><code>shutdown</code></td><td>发送 Shutdown 并等待 worker 退出。</td><td>daemon 停止服务。</td></tr>
 </table>
 <ul class="note">
+  <li>Preview 与 CPU Final 的特征链路都只应用一次 LFR / CMVN；调用方不预先应用 LFR。</li>
+  <li>Mode 切换不截断活动段：daemon 先 <code>FinishSegment</code>，旧段 Final / 丢弃后才调用 <code>SetMode</code>；切换清理旧会话的采样与 Partial 调度，不把旧状态带入新会话。</li>
   <li><code>Final</code> 与 Preview 共用同一 SenseVoice 模型与会话；核心内部串行化推理，Finalizing 期间不会有 Preview 推理并发。</li>
   <li><code>SegmentReady</code> 之后由 daemon 决定走 CPU 还是 GPU；核心不读取 <code>final.backend</code>。</li>
   <li><code>SegmentReady</code> 是完整段的唯一交付点；daemon 不应从 <code>Partial</code> 拼接最终文本。</li>
@@ -287,7 +295,7 @@ impl Final {
   <tr><td>模型目录 / manifest 缺失</td><td><code>firered-vad</code> 或 <code>sensevoice-small</code> 不存在、缺 <code>manifest.json</code>。</td><td>启动失败；重新安装核心模型。</td></tr>
   <tr><td>schema / id / kind 不匹配</td><td>旧 manifest、目录名不符或模型类型错误。</td><td>启动失败；不尝试兼容旧布局。</td></tr>
   <tr><td>文件缺失 / 大小或 SHA-256 不匹配</td><td>模型文件被删除、截断或修改。</td><td>启动失败；重新安装对应模型。</td></tr>
-  <tr><td>张量 / 会话错误</td><td>ONNX 输入输出与核心预期不符或会话创建失败。</td><td>启动失败；检查模型来源与 manifest。</td></tr>
+  <tr><td>张量 / 会话错误</td><td>ONNX 输入输出与核心预期不符或会话创建失败。</td><td>启动失败；检查模型来源与 ONNX 文件。</td></tr>
   <tr><td><code>SegmentDropped</code></td><td>单段音频过短、SenseVoice 推理失败或结果为空。</td><td>丢弃该段；继续监听。</td></tr>
   <tr><td><code>Fatal</code></td><td>不可恢复的 worker / 音频错误。</td><td>daemon 退出并记录日志。</td></tr>
 </table>

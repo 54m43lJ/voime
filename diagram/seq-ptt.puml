@@ -11,25 +11,39 @@ participant "目标应用" as App
 User -> Host : 按下 Hotkey（ptt / toggle）
 Host -> Voime : 热键事件 + 目标
 Voime -> Host : 消费热键
-Voime -> Voime : 内部处理
+Voime -> Voime : 开启会话 / 内部处理
 
-loop 录音期间
-  Voime -> Host : Partial
-  Host -> User : 临时文本
+loop 会话保持（PTT 按住 / Toggle 已开启）
+  loop 当前段
+    Voime -> Host : Partial
+    Host -> User : 临时文本
+  end
+
+  note over Voime
+    VAD 终点 = 软切分：
+    Finalizing 当前段并提交 Final；
+    会话保持，开始下一段监听。
+  end note
+
+  alt 目标仍有效
+    Voime -> Host : Final
+    Host -> App : 提交文本
+  else 目标失焦 / 销毁
+    Voime -> Host : 清空临时文本
+  end
 end
 
-User -> Host : 松开 / 再按 Hotkey
-Host -> Voime : 结束事件
+User -> Host : 松开 PTT / 再按 Toggle
+Host -> Voime : 硬切分事件
 note over Voime
-  Finalizing：停止产生 Partial 并取消未开始的 Preview 推理；
-  保留最后一条 Partial；按 final.backend 执行一次 CPU / GPU Final；
-  GPU 失败回退 CPU SenseVoice。
+  硬切分：结束当前段并进入 Finalizing；
+  不再开始下一段。
 end note
 
-alt 目标仍有效
+alt 当前段在录 / Finalizing
   Voime -> Host : Final
   Host -> App : 提交文本
-else 目标失焦 / 销毁
+else 无当前段且无 Final 在途
   Voime -> Host : 清空临时文本
 end
 @enduml

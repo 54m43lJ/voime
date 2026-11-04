@@ -65,8 +65,9 @@
   <tr><td>线程</td><td>所有 Fcitx API 调用、socket 事件与定时器都在 Fcitx 事件循环线程内；IpcClient 不做后台线程。</td></tr>
   <tr><td>事件监听</td><td>按键使用 <code>watchEvent&lt;InputContextKeyEvent&gt;(PreInputMethod)</code>；焦点失焦使用 <code>watchEvent&lt;InputContextFocusOut&gt;(PreInputMethod)</code>。</td></tr>
   <tr><td>热键消费</td><td>命中热键后调用 <code>filterAndAccept()</code>；未命中立即返回，不影响 Fcitx 普通路由。</td></tr>
-  <tr><td>PTT 状态</td><td><code>holdActive_</code> 表示按住；松开按记录的 keycode 匹配；auto-repeat 消费后忽略。</td></tr>
-  <tr><td>Toggle 状态</td><td><code>toggleActive_</code> 表示会话有效；<code>toggleCode_</code> 防止同一次按键的 press / release 重复切换。</td></tr>
+  <tr><td>PTT 状态</td><td><code>holdActive_</code> 表示会话开启；松开按记录的 keycode 匹配并发送 Stop（硬切分），无论当前是否 recording；auto-repeat 消费后忽略。</td></tr>
+  <tr><td>Toggle 状态</td><td><code>toggleActive_</code> 表示会话开启；第二次按下发送 Stop（硬切分），Finalizing 时也可关闭；<code>toggleCode_</code> 防止同一次按键的 press / release 重复切换。</td></tr>
+  <tr><td>软切分续段</td><td><code>SegmentStarted</code> 更新 <code>segmentId_</code> 与目标段 ID；目标沿用会话目标。PTT / Toggle 不需要重新按键，也不重新发送 Start。</td></tr>
   <tr><td>目标</td><td><code>TargetRef</code> 保存 <code>TrackableObjectReference&lt;InputContext&gt;</code> 与 <code>segment_id</code>；提交前检查 <code>focused()</code>。</td></tr>
   <tr><td>Finalizing 预览</td><td><code>finalizing_</code> 为 true 后忽略新的 Partial，不调用 <code>Preview::show</code> / <code>clear</code>；保留最后一条 Partial，直到 Final 或清空路径。</td></tr>
   <tr><td>不链接 GPU / 模型</td><td>只链接 <code>Fcitx5Core</code> 与 <code>nlohmann/json</code>；不链接 ONNX Runtime / llama.cpp / ROCm / CUDA / Vulkan，不加载模型，不感知 <code>final.backend</code>。</td></tr>
@@ -118,6 +119,7 @@ private:
     void onDaemonDisconnected();
     void connectDaemon();
     void bindTarget(fcitx::InputContext *inputContext);
+    void stopPtt();
     void stopToggle();
     void clearPreview();
     void refreshTogglePreview();
@@ -153,6 +155,7 @@ FCITX_ADDON_FACTORY_V2(voime, VoimeAddonFactory)</code></pre>
   <li><code>starting_</code> 表示已发送 Start 但尚未收到 daemon <code>State.recording=true</code>。</li>
   <li><code>FCITX_ADDON_FACTORY_V2</code> 导出 addon 工厂；Fcitx 通过系统描述文件的 <code>Library=voime</code> 加载系统 addon 目录中的 <code>voime.so</code>。</li>
   <li><code>finalizing_</code> 为 true 时 <code>onIpcMessage(Partial)</code> 直接返回；<code>State.finalizing</code> 只更新标志，不调用 <code>clearPreview()</code>。</li>
+  <li>Configure 改变 Mode 时，<code>setConfig</code> 先清除 <code>holdActive_</code> / <code>toggleActive_</code> / <code>starting_</code> 并停止旧模式的热键路径；<code>recording_</code> / <code>finalizing_</code> 与目标保留到旧段 Final / Error，随后清理，避免旧会话残留空白窗口或吞掉下一次热键。</li>
 </ul>
 
 <h3 id="c4-2">4.2 src/config.h, src/config.cpp <a class="backlink" href="#c1">文件树</a></h3>
@@ -179,7 +182,7 @@ public:
 };</code></pre>
 <ul class="note">
   <li><code>show</code> 调用 <code>InputPanel::setPreedit</code> 与 <code>InputContext::updateUserInterface</code>；<code>finalizing_</code> 为 true 时不调用。</li>
-  <li><code>showEmpty</code> 写入单个空格以保留面板；<code>clear</code> 写空 <code>Text</code> 并刷新，只在 Final 或没有 Final 可等的清空路径（未录音的 Toggle 停止、目标丢失、断线）调用。</li>
+  <li><code>showEmpty</code> 写入单个空格以保留面板；<code>clear</code> 写空 <code>Text</code> 并刷新，只在 Final 或没有 Final 可等的清空路径（未录音的 PTT / Toggle 停止、目标丢失、断线）调用。</li>
   <li>Finalizing 只冻结当前 preedit，不清空、不刷新；最后一条 Partial 保留到 Final 到达。</li>
   <li>只写 Fcitx UI preedit，不调用 <code>setClientPreedit</code>。</li>
 </ul>
@@ -315,9 +318,11 @@ bool checkAddonAbi(std::string *error);</code></pre>
     ├── KeyEvent::checkKeyList(hotkey, MatchAllNormalizedKeys)
     └── VoimeAddon::handlePtt(event, matches)
         ├── 判断 event.isRelease() &amp;&amp; holdActive_ &amp;&amp; code == holdCode_
-        │   ├── holdActive_ = false
-        │   ├── finalizing_ = recording_
-        │   ├── IpcClient::stop(segmentId, Hold)
+        │   ├── VoimeAddon::stopPtt()
+        │   │   ├── holdActive_ = false
+        │   │   ├── 判断 recording_ → finalizing_ = true
+        │   │   ├── IpcClient::stop(segmentId, Hold)
+        │   │   └── 判断 !recording_ &amp;&amp; !finalizing_ → clearPreview()
         │   └── KeyEvent::filterAndAccept()
         ├── 判断 !matches → 返回
         ├── KeyEvent::filterAndAccept()
@@ -326,7 +331,8 @@ bool checkAddonAbi(std::string *error);</code></pre>
         ├── holdActive_ = true; starting_ = true
         └── IpcClient::start(segmentId, Hold)</code></pre>
 <ul class="note">
-  <li>松开后不调用 <code>clearPreview()</code>；进入 Finalizing 时保留最后一条 Partial，等待 Final 到达。</li>
+  <li>松开是硬切分：即使当前处于 Finalizing 或两段之间，也发送 Stop 关闭会话；软切分续段不重新按热键。</li>
+  <li>松开后若当前段在录，不调用 <code>clearPreview()</code>；进入 Finalizing 时保留最后一条 Partial，等待 Final 到达。</li>
 </ul>
 
 <h3 id="c5-3">5.3 Toggle 热键</h3>
@@ -341,16 +347,16 @@ bool checkAddonAbi(std::string *error);</code></pre>
 │   ├── toggleActive_ = true; starting_ = true
 │   ├── VoimeAddon::refreshTogglePreview()
 │   └── IpcClient::start(segmentId, Toggle)
-├── 判断 finalizing_ → 返回
 └── 判断 toggleActive_
     └── VoimeAddon::stopToggle()
         ├── toggleActive_ = false
         ├── 判断 recording_ → finalizing_ = true
         ├── IpcClient::stop(0, Toggle)
-        ├── 判断 !recording_ → clearPreview()
+        ├── 判断 !recording_ &amp;&amp; !finalizing_ → clearPreview()
         └── 判断 !finalizing_ → target_.ref.unwatch() + segmentId_.reset()</code></pre>
 <ul class="note">
-  <li>录音中停止 Toggle 时保留最后一条 Partial，Final 到达后清空并提交；未录音时没有 Final，直接清空。</li>
+  <li>第二次按下即使处于 Finalizing（软切分后的 Final 中）也发送 Stop 关闭会话；Final 到达后不再保留空白窗口。</li>
+  <li>录音中停止 Toggle 时保留最后一条 Partial，Final 到达后清空并提交；无当前段且无 Final 在途时直接清空。</li>
 </ul>
 
 <h3 id="c5-4">5.4 SegmentStarted / Partial</h3>
@@ -361,7 +367,7 @@ bool checkAddonAbi(std::string *error);</code></pre>
         │   ├── segmentId_ = message.segmentId
         │   ├── target_.segment_id = *message.segmentId
         │   ├── 判断 source 非 Hold / Toggle → 绑定 mostRecentInputContext()
-        │   ├── 判断 toggleActive_ &amp;&amp; Toggle &amp;&amp; !target_.focused() → 跟随当前焦点
+        │   ├── 判断 (holdActive_ || toggleActive_) &amp;&amp; !target_.focused() → stopPtt() / stopToggle()
         │   └── 判断 toggleActive_ → refreshTogglePreview()
         └── Partial
             ├── 判断 finalizing_ → 返回
@@ -376,7 +382,7 @@ bool checkAddonAbi(std::string *error);</code></pre>
 ├── 判断 finalizing_ → 保留 Preview（不调用 show / clear）
 ├── 判断 recording_ → starting_ = false
 ├── 判断 !recording_ &amp;&amp; !finalizing_ → 清空 / 空白 / 清理
-└── 判断 !recording_ &amp;&amp; !finalizing_ &amp;&amp; !toggleActive_ → unwatch + reset
+└── 判断 !recording_ &amp;&amp; !finalizing_ &amp;&amp; !toggleActive_ &amp;&amp; !holdActive_ → unwatch + reset
 
 VoimeAddon::onIpcMessage(Final)
 ├── 判断 segmentId 不匹配 → 忽略
@@ -392,6 +398,7 @@ VoimeAddon::onIpcMessage(Final)
 <pre><code>fcitx5::InputContextFocusOut
 └── focusWatcher_ lambda
     ├── 判断 target_.get() != event.inputContext() → 返回
+    ├── 判断 holdActive_ → VoimeAddon::stopPtt()
     ├── 判断 toggleActive_ → VoimeAddon::stopToggle()
     └── 否则 Preview::clear(target_.get())
 
@@ -407,7 +414,9 @@ VoimeAddon::onIpcMessage(Error)
 ├── 判断 role_conflict / version_mismatch / invalid_message
 │   └── IpcClient::disconnect() → 2 s 后重连
 ├── 判断 inference &amp;&amp; toggleActive_
-│   └── 重置状态 + refreshTogglePreview()
+│   └── 重置当前段 + refreshTogglePreview()
+├── 判断 inference &amp;&amp; holdActive_
+│   └── 重置当前段 + clearPreview()
 └── 判断 !recording_ &amp;&amp; !finalizing_
     └── 清理 Toggle / PTT / target / preview</code></pre>
 <ul class="note">

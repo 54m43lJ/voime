@@ -13,8 +13,8 @@ App -> Frontend : HWND + RuntimeId
 App -> Frontend : 焦点变化 / 窗口销毁
 Frontend -> Frontend : 目标失效
 Frontend -> Frontend : 隐藏浮层
-alt Mode = Toggle
-  Frontend -> Daemon : Stop { 0, Toggle }
+alt Mode = Ptt / Toggle
+  Frontend -> Daemon : Stop { 0, Hold / Toggle }
 end
 Daemon -> Frontend : Final
 Frontend -> Frontend : 跳过提交\n保留历史

@@ -6,20 +6,33 @@ hide footbox
 participant "客户端" as Client
 participant "voimed" as Daemon
 
-Client -> Daemon : Start / Toggle { segment_id: hint, source }
-Daemon -> Client : SegmentStarted { segment_id: final, source }
+Client -> Daemon : Start / Toggle（开启会话）
+Daemon -> Client : SegmentStarted { segment_id, source }
 Daemon -> Client : State { recording: true }
 
-loop 录音期间
-  Daemon -> Client : Partial { segment_id, text }
+loop 会话保持（PTT 按住 / Toggle 已开启）
+  loop 当前段
+    Daemon -> Client : Partial { segment_id, text }
+  end
+
+  note over Client, Daemon
+    VAD 终点 = 软切分：当前段 Finalizing；
+    会话保持，daemon 继续下一段。
+  end note
+
+  Daemon -> Client : State { recording: false, finalizing: true }
+  Daemon -> Client : Final { segment_id, text }
+  Daemon -> Client : SegmentStarted { 下一段 }
+  Daemon -> Client : State { recording: true }
 end
 
-Client -> Daemon : Stop { segment_id, source }
+Client -> Daemon : Stop（硬切分）
 Daemon -> Client : State { recording: false, finalizing: true }
 Daemon -> Client : Final { segment_id, text }
 Daemon -> Client : State { recording: false, finalizing: false }
 
 note over Client, Daemon
+  无当前段且无 Final 在途时硬切分不产生 Final；
   Continuous 由 daemon 直接广播 SegmentStarted，
   不需要客户端发送 Start。
 end note

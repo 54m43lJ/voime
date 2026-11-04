@@ -36,13 +36,13 @@
   <tr><td>样本格式（sample format）</td><td>设备原生样本类型；当前只支持 I16 / U16 / F32。</td></tr>
   <tr><td>ONNX Runtime 环境</td><td>进程级推理环境；本项目核心只启用 CPU Execution Provider。</td></tr>
   <tr><td>ONNX 会话（session）</td><td>加载一个 ONNX 模型并可执行推理的运行时对象。</td></tr>
-  <tr><td>metadata</td><td>ONNX 模型自带的键值元数据；用于校验模型版本与预处理参数。</td></tr>
+  <tr><td>metadata</td><td>ONNX 模型自带的键值元数据；提供 LFR / CMVN / ITN / 语言 id 与 <code>vocab_size</code> 等推理参数。</td></tr>
   <tr><td>Execution Provider</td><td>ONNX Runtime 的推理后端；核心只使用 CPU。</td></tr>
-  <tr><td>fbank</td><td>Kaldi 风格梅尔滤波器组特征；VAD 与 SenseVoice 共用 80-bin、25 / 10 ms 参数。</td></tr>
-  <tr><td>LFR</td><td>低帧率特征拼接；SenseVoice 使用 7 帧窗、6 帧移，输出 560 维。</td></tr>
-  <tr><td>CMVN</td><td>倒谱均值方差归一化；SenseVoice 的 560 维特征按模型版本固定参数归一化。</td></tr>
+  <tr><td>fbank</td><td>Kaldi 风格梅尔滤波器组特征；VAD 与 SenseVoice 共用 80-bin、25 / 10 ms 参数，窗函数与其它选项由核心 <code>FbankConfig</code> 默认值固定。</td></tr>
+  <tr><td>LFR</td><td>低帧率特征拼接；SenseVoice 默认使用 7 帧窗、6 帧移，输出 560 维；实际值由 ONNX metadata 提供，缺失时回退该默认值。</td></tr>
+  <tr><td>CMVN</td><td>倒谱均值方差归一化；SenseVoice 使用 ONNX metadata 的 <code>neg_mean</code> / <code>inv_stddev</code>，VAD 使用可选文件 <code>cmvn.ark</code>。</td></tr>
   <tr><td>模型目录</td><td><code>firered-vad/</code> 或 <code>sensevoice-small/</code>；一模型一目录，包含 manifest 与权重。</td></tr>
-  <tr><td>manifest</td><td>模型目录的权威描述：schema 5、id、kind、文件、SHA-256、大小与 runtime。</td></tr>
+  <tr><td>manifest</td><td>模型目录的权威描述：schema 5、id、kind、version、license、文件、SHA-256、大小与 runtime。</td></tr>
   <tr><td><code>FileSpec</code></td><td>manifest 中一个文件条目；含相对路径、SHA-256 与字节大小。</td></tr>
   <tr><td>SHA-256</td><td>模型文件内容摘要；启动时逐文件校验。</td></tr>
 </table>
@@ -57,10 +57,10 @@
   <tr><td>本地性</td><td>音频、模型与推理都在本机完成；运行期不联网。</td></tr>
   <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest、大小与 SHA-256，失败不进入运行态。</td></tr>
   <tr><td>清单一模型一目录</td><td>核心只读取 <code>firered-vad/manifest.json</code> 与 <code>sensevoice-small/manifest.json</code>；不存在共享模型清单或 <code>active</code> 指针。</td></tr>
-  <tr><td>清单权威</td><td>ONNX 输入输出、fbank / LFR / CMVN 参数与词表由模型版本与 manifest 固定；代码不硬编码形状替代 manifest。</td></tr>
+  <tr><td>清单边界</td><td>manifest 只声明模型身份、文件完整性与 runtime（backend / format / precision / max_segment_ms）；不携带 ONNX 张量名 / 形状、fbank / LFR / CMVN 参数或词表内容。推理参数的来源见 §4.2。</td></tr>
   <tr><td>CPU 推理</td><td>只启用 CPU Execution Provider；线程数由命令行决定。</td></tr>
   <tr><td>精度</td><td>SenseVoice 为 int8 ONNX，FireRedVAD 使用上游交付精度；运行期不做动态量化或精度回退。</td></tr>
-  <tr><td>SenseVoice 模式</td><td>单 ONNX；80-bin fbank、LFR 7 / 6、560 维 CMVN；固定 <code>use_itn=true</code>；标点由模型输出自带。</td></tr>
+  <tr><td>SenseVoice 模式</td><td>单 ONNX；80-bin fbank、默认 LFR 7 / 6 与 560 维 CMVN；固定 <code>use_itn=true</code>；标点由模型输出自带。</td></tr>
   <tr><td>VAD 模式</td><td>流式状态张量；状态由模型声明为固定形状，项目侧保存与更新；每个新语音段重置。</td></tr>
   <tr><td>错误映射</td><td>Provider 错误在边界处转换为项目错误并附上下文；启动期写日志 / 返回错误，运行期按 <a href="#p4-5">§4.5</a> 处理。</td></tr>
 </table>
@@ -80,6 +80,7 @@
 <ul class="note">
   <li>启动时读取并校验 <code>firered-vad</code> / <code>sensevoice-small</code>，然后创建 CPU 会话；每个语音段只重置解码状态，不重新加载权重。</li>
   <li>VAD 与 SenseVoice 各自使用独立 ONNX 会话；核心不加载 FireRedPunc 或 GPU EP。</li>
+  <li>ONNX 输入输出与预处理参数在运行时从会话 introspection / metadata 读取；manifest 只负责文件完整性与 runtime 声明。</li>
   <li>具体张量契约见 §4.2；GPU 模型与 runtime 见 <a href="../voime-gpu-firered/PROVIDER.html">voime-gpu-firered PROVIDER</a> / <a href="../voime-gpu-qwen3/PROVIDER.html">voime-gpu-qwen3 PROVIDER</a>。</li>
 </ul>
 
@@ -102,7 +103,8 @@
 <pre><code>~/.local/share/voime/models/
 ├── firered-vad/
 │   ├── manifest.json
-│   └── model.onnx
+│   ├── model.onnx
+│   └── cmvn.ark          # 可选；模型已内置 CMVN 时不存在
 └── sensevoice-small/
     ├── manifest.json
     ├── model.int8.onnx
@@ -128,20 +130,25 @@
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
-  <tr><td>VAD 文件</td><td><code>firered-vad/model.onnx</code> + <code>manifest.json</code>；流式状态张量固定形状。</td></tr>
+  <tr><td>VAD 文件</td><td><code>firered-vad/model.onnx</code> + <code>manifest.json</code>；模型未内置 CMVN 时另有 <code>cmvn.ark</code>；流式状态张量固定形状。</td></tr>
   <tr><td>VAD 输入</td><td>80-bin fbank 特征与上一帧状态张量；状态由模型声明，核心按固定形状保存。</td></tr>
   <tr><td>VAD 输出</td><td>逐帧语音概率与更新后的状态；数量必须等于本批特征帧数。</td></tr>
   <tr><td>SenseVoice 文件</td><td><code>sensevoice-small/model.int8.onnx</code> + <code>tokens.txt</code> + <code>manifest.json</code>。</td></tr>
-  <tr><td>SenseVoice 输入</td><td><code>x</code>: 560 维 LFR fbank；<code>x_length</code>: 帧数；<code>language</code> / <code>text_norm</code> 控制张量；固定 <code>use_itn=true</code>。</td></tr>
+  <tr><td>SenseVoice 输入</td><td><code>x</code>: <code>80 * lfr_window</code> 维 LFR fbank（默认 560）；<code>x_length</code>: 帧数；<code>language</code> / <code>text_norm</code> 控制张量；固定 <code>use_itn=true</code>。</td></tr>
   <tr><td>SenseVoice 输出</td><td>token logits；由模型内置解码与 <code>tokens.txt</code> 还原为带标点文本。</td></tr>
-  <tr><td>CMVN</td><td>SenseVoice 对 560 维特征做均值 / 方差归一化；参数与 LFR 7 / 6 一起由模型版本固定。</td></tr>
-  <tr><td>词表</td><td><code>tokens.txt</code> 每行为 token 与 id；<code>token_count</code> 必须等于输出类别数。</td></tr>
-  <tr><td>manifest</td><td><code>schema=5</code>、<code>id</code> 等于目录名、<code>kind</code> 为 <code>vad</code> / <code>asr</code>、文件 SHA-256 与大小、runtime 声明。</td></tr>
+  <tr><td>ONNX 张量</td><td>输入 / 输出张量名、dtype 与 shape 在会话创建后由 <code>input_specs</code> / <code>output_specs</code> 从 ONNX 图读取并校验；不来自 manifest。</td></tr>
+  <tr><td>fbank 参数</td><td>80-bin、25 / 10 ms 与窗函数由核心 <code>FbankConfig</code> 默认值固定；不来自 manifest。</td></tr>
+  <tr><td>LFR 参数</td><td>窗 / 步移取 ONNX metadata <code>lfr_window_size</code> / <code>lfr_window_shift</code>；缺失时回退 7 / 6；不来自 manifest。</td></tr>
+  <tr><td>SenseVoice CMVN</td><td><code>neg_mean</code> / <code>inv_stddev</code> 取 ONNX metadata；长度必须为 <code>80 * lfr_window</code>；不来自 manifest。</td></tr>
+  <tr><td>VAD CMVN</td><td>模型未内置时读取 manifest 文件列表中的 <code>cmvn.ark</code>；manifest 只记录文件路径 / SHA-256 / 大小，不记录参数值。</td></tr>
+  <tr><td>词表</td><td><code>tokens.txt</code> 由 manifest 文件列表定位并校验；内容不写入 manifest；每行为 token 与 id，<code>token_count</code> 必须等于 ONNX <code>vocab_size</code> 与输出类别数。</td></tr>
+  <tr><td>manifest</td><td><code>schema=5</code>、<code>id</code> 等于目录名、<code>kind</code> 为 <code>vad</code> / <code>asr</code>、文件 SHA-256 与大小、runtime 声明；只描述身份、完整性与运行上限，不包含张量 / 预处理参数或词表内容。</td></tr>
   <tr><td>安装</td><td>核心安装脚本下载固定 revision 的模型文件，写入 manifest；不兼容旧 schema / 旧模型包。</td></tr>
 </table>
 <ul class="note">
   <li>SenseVoice 使用上游 <code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>；模型输出自带标点与 ITN，不加载 FireRedPunc。</li>
   <li>VAD 使用 FireRedVAD Stream-VAD ONNX；所有模式共用同一模型与参数。</li>
+  <li>manifest 只覆盖身份、文件完整性与 runtime；ONNX 张量、fbank / LFR / CMVN 参数与词表内容不写入 manifest，来源见上表。</li>
   <li>模型文件来源、revision 与 SHA-256 由准备阶段冻结并写入安装源；运行期不联网。</li>
 </ul>
 
@@ -150,7 +157,7 @@
   <tr><th>消费项</th><th>签名 / 类型</th><th>用途</th></tr>
   <tr><td>环境</td><td><code>ort::Environment</code></td><td>CPU Execution Provider 与线程配置。</td></tr>
   <tr><td>会话</td><td><code>SessionBuilder::commit_from_file(path) -&gt; Session</code></td><td>加载 VAD / SenseVoice ONNX。</td></tr>
-  <tr><td>元数据</td><td><code>Session::metadata()</code></td><td>校验模型版本与预处理参数。</td></tr>
+  <tr><td>元数据</td><td><code>Session::metadata()</code></td><td>读取 LFR / CMVN / ITN / 语言 id / <code>vocab_size</code> 等推理参数。</td></tr>
   <tr><td>输入</td><td><code>Tensor::from_array((shape, data))</code></td><td>fbank、状态张量与控制张量。</td></tr>
   <tr><td>推理</td><td><code>Session::run(inputs![...])</code></td><td>执行 CPU 推理。</td></tr>
   <tr><td>输出</td><td><code>try_extract_tensor::&lt;T&gt;()</code></td><td>读取 VAD 概率 / SenseVoice logits。</td></tr>

@@ -34,7 +34,9 @@
   <tr><td>外部标签</td><td>消息类型作为 JSON 对象的唯一键，例如 <code>{"Hello": {...}}</code>。</td></tr>
   <tr><td>角色（Role）</td><td>客户端身份：<code>frontend</code>（平台前端，兼容旧值 <code>fcitx</code>）、<code>tui</code>（监视器）或 <code>control</code>（一次性控制）。</td></tr>
   <tr><td>模式（Mode）</td><td><code>ptt</code> / <code>toggle</code> / <code>continuous</code>；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
-  <tr><td>触发来源（TriggerSource）</td><td>段开始 / 停止的来源：<code>hold</code>、<code>toggle</code>、<code>tui</code>、<code>cli</code>、<code>continuous</code>。</td></tr>
+  <tr><td>会话（session）</td><td>PTT / Toggle 从开始到硬切分之间的一段交互；一个会话包含一个或多个语音段。</td></tr>
+  <tr><td>软切分 / 硬切分</td><td>软切分由 VAD 终点触发，结束当前段并继续下一段；硬切分由 <code>Stop</code> / <code>Toggle</code> 关闭会话，结束当前段后不再续段。</td></tr>
+  <tr><td>触发来源（TriggerSource）</td><td>会话 / 段开始与停止的来源：<code>hold</code>、<code>toggle</code>、<code>tui</code>、<code>cli</code>、<code>continuous</code>。</td></tr>
   <tr><td>阶段（Phase）</td><td>daemon 当前状态：<code>idle</code>、<code>recording</code>、<code>finalizing</code>。</td></tr>
   <tr><td>前端状态（FrontendState）</td><td>平台前端是否连接到 daemon：<code>connected</code> / <code>disconnected</code>；旧类型名 <code>AddonState</code> 保留为别名。</td></tr>
   <tr><td><code>segment_id</code></td><td>daemon 为语音段分配的唯一整数；客户端发送的 ID 只是提示，最终以 <code>SegmentStarted</code> 为准。</td></tr>
@@ -56,7 +58,8 @@
   <tr><td>握手顺序</td><td>连接后第一条消息必须是 <code>Hello</code>；版本或角色不合法时 daemon 发送 <code>Error</code> 并断开。</td></tr>
   <tr><td>角色</td><td>只允许一个 <code>frontend</code> 连接；<code>configure</code> 只接受 <code>frontend</code>；<code>quit</code> 只接受 <code>control</code>。</td></tr>
   <tr><td>配置</td><td><code>Hello.config</code> 可选；只有平台前端携带 <code>mode</code> / <code>hotkey</code>。daemon 不解析命令行模式。</td></tr>
-  <tr><td><code>segment_id</code></td><td>daemon 分配；<code>Start</code> / <code>Toggle</code> 的 ID 只是提示；<code>Stop</code> 的非零 ID 在 PTT / Continuous 下需匹配当前段，0 表示当前段（Toggle 例外）。</td></tr>
+  <tr><td><code>segment_id</code></td><td>daemon 分配；<code>Start</code> / <code>Toggle</code> 的 ID 只是提示；<code>Stop</code> 在 PTT / Toggle 下忽略 ID，在 Continuous 下非零 ID 需匹配当前段（0 表示当前段）。</td></tr>
+  <tr><td>会话命令</td><td><code>Start</code> 打开 PTT / Toggle 会话；<code>Stop</code> 硬切分会话；<code>Toggle</code> 按当前状态打开或硬切分。会话内 VAD 软切分多个段，不需要重复 <code>Start</code>。</td></tr>
   <tr><td>背压</td><td><code>Final</code> / <code>State</code> 不丢弃；<code>Partial</code> 可在队列满时丢弃；慢客户端由 daemon 断开。</td></tr>
   <tr><td>版本</td><td>只有消息形状变化才提升 <code>PROTOCOL_VERSION</code>；新增平台前端不提升版本。</td></tr>
   <tr><td>无持久化</td><td>协议消息不写磁盘；历史只存在于 daemon 内存。</td></tr>
@@ -76,6 +79,7 @@
 <div class="diagram"><img src="diagram/segment-flow.svg" alt="Start / SegmentStarted / Partial / Final 的消息顺序"></div>
 <ul class="note">
   <li>Start / Toggle 只是请求；<code>SegmentStarted</code> 携带 daemon 分配的最终 <code>segment_id</code>。</li>
+  <li>PTT / Toggle 会话内每次 VAD 软切分都会再次广播 <code>SegmentStarted</code>；<code>Stop</code> 才硬切分会话。</li>
   <li>Partial 与 Final 都携带 <code>segment_id</code>；前端只处理当前目标的段。</li>
   <li>Continuous 的段开始由 daemon 自动广播，无需客户端 Start。</li>
 </ul>
@@ -205,13 +209,15 @@ pub struct Status {
 <table>
   <tr><th>消息</th><th>方向</th><th>语义</th><th>建议动作</th></tr>
   <tr><td><code>Hello</code></td><td>client → daemon</td><td>声明角色与版本；前端额外携带 Mode / Hotkey。</td><td>daemon 校验版本与角色；失败发 Error 并断开。</td></tr>
-  <tr><td><code>Configure</code></td><td>前端 → daemon</td><td>配置重载时更新 Mode / Hotkey；新模式在下一段生效。</td><td>daemon 更新快照并广播。</td></tr>
-  <tr><td><code>Start</code> / <code>Stop</code> / <code>Toggle</code></td><td>client → daemon</td><td>手动或热键触发；带提示 <code>segment_id</code> 与来源。</td><td>daemon 返回 <code>State</code> / <code>SegmentStarted</code> 或 <code>Error</code>。</td></tr>
+  <tr><td><code>Configure</code></td><td>前端 → daemon</td><td>配置重载时更新 Mode / Hotkey；Mode 变化时，Idle 且无活动会话立即生效，否则立即结束当前段并在 Final / 丢弃后生效。</td><td>daemon 更新快照并广播。</td></tr>
+  <tr><td><code>Start</code></td><td>client → daemon</td><td>PTT / Toggle 下打开会话；Continuous 下开始手动段。带提示 <code>segment_id</code> 与来源。</td><td>daemon 返回 <code>State</code> / <code>SegmentStarted</code> 或 <code>Error</code>。</td></tr>
+  <tr><td><code>Stop</code></td><td>client → daemon</td><td>硬切分：PTT / Toggle 关闭会话并结束当前段；Continuous 停止当前段。带提示 <code>segment_id</code> 与来源。</td><td>daemon 返回 <code>State</code> / <code>Final</code> 或 <code>Error</code>。</td></tr>
+  <tr><td><code>Toggle</code></td><td>client → daemon</td><td>Mode=ptt / toggle 时按当前状态打开或硬切分会话；Finalizing 时也可关闭。</td><td>daemon 返回 <code>State</code> / <code>SegmentStarted</code> / <code>Final</code> 或 <code>Error</code>。</td></tr>
   <tr><td><code>ClearHistory</code></td><td>client → daemon</td><td>清空已完成历史；保留当前段与 partial。</td><td>daemon 广播 <code>HistoryCleared</code>。</td></tr>
   <tr><td><code>Status</code></td><td>client → daemon</td><td>请求一次性状态。</td><td>daemon 返回 <code>Status</code>。</td></tr>
   <tr><td><code>Quit</code></td><td>Control → daemon</td><td>停止 daemon。</td><td>daemon 广播 <code>Bye</code> 后退出。</td></tr>
   <tr><td><code>Snapshot</code></td><td>daemon → client</td><td>连接时全量状态。</td><td>客户端初始化视图。</td></tr>
-  <tr><td><code>SegmentStarted</code></td><td>daemon → clients</td><td>段开始；携带最终 <code>segment_id</code> 与来源。</td><td>前端绑定 / 跟随目标。</td></tr>
+  <tr><td><code>SegmentStarted</code></td><td>daemon → clients</td><td>段开始（含 PTT / Toggle 软切分续段）；携带最终 <code>segment_id</code> 与来源。</td><td>前端绑定 / 沿用目标。</td></tr>
   <tr><td><code>State</code></td><td>daemon → clients</td><td>录音 / 收尾状态变化。</td><td>更新录音标记与临时窗口。</td></tr>
   <tr><td><code>Partial</code></td><td>daemon → clients</td><td>临时文本；可丢弃。</td><td>显示，不提交。</td></tr>
   <tr><td><code>Final</code></td><td>daemon → clients</td><td>最终文本；不丢弃。</td><td>清空临时文本并提交；加入历史。</td></tr>
@@ -240,7 +246,7 @@ pub struct Status {
   <tr><td><code>invalid_message</code></td><td>JSON 非法、字段缺失、角色不允许该命令。</td><td>修正客户端；daemon 可断开。</td></tr>
   <tr><td><code>version_mismatch</code></td><td><code>Hello.version</code> 与 daemon 不一致。</td><td>升级客户端或 daemon；重新连接。</td></tr>
   <tr><td><code>role_conflict</code></td><td>已有 <code>frontend</code> 连接。</td><td>关闭重复前端；定时重试。</td></tr>
-  <tr><td><code>busy</code></td><td>已有语音段、正在识别，或 <code>segment_id</code> 不匹配。</td><td>等待 Idle 后重试；不要强制提交。</td></tr>
+  <tr><td><code>busy</code></td><td>已有活动会话、正在识别，或 Continuous 的 <code>segment_id</code> 不匹配。</td><td>等待会话结束 / Idle 后重试；不要强制提交。</td></tr>
   <tr><td><code>no_input_context</code></td><td>没有可用的输入目标。</td><td>前端不开始语音段；提示用户聚焦输入框。</td></tr>
   <tr><td><code>daemon_unavailable</code></td><td>客户端无法连接 daemon。</td><td>放行热键；定时重连。</td></tr>
   <tr><td><code>unavailable</code></td><td>服务暂时不可用。</td><td>重试或查看日志。</td></tr>

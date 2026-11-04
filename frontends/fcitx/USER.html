@@ -37,13 +37,14 @@
   <tr><td><code>InputContextKeyEvent</code></td><td>Fcitx 的按键事件；addon 在 <code>PreInputMethod</code> 阶段读取并决定是否消费。</td></tr>
   <tr><td><code>PreInputMethod</code></td><td>Fcitx 事件管线中位于输入法处理之前的阶段；Voime 在这里匹配热键。</td></tr>
   <tr><td>模式（Mode）</td><td><code>ptt</code> / <code>toggle</code> / <code>continuous</code>；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
-  <tr><td>热键（Hotkey）</td><td>addon 配置的唯一组合键；PTT 按住、Toggle 切换、Continuous 忽略。</td></tr>
-  <tr><td>PTT 模式</td><td>按下热键开始采集，松开结束；静音可自动结束。</td></tr>
-  <tr><td>Toggle 模式</td><td>第一次按热键开始，第二次按结束；会话期间 VAD 可连续切分多个段，没有语音时也保持空白临时窗口。</td></tr>
+  <tr><td>热键（Hotkey）</td><td>addon 配置的唯一组合键；PTT 按住开启会话、松开结束；Toggle 切换会话；Continuous 忽略。</td></tr>
+  <tr><td>PTT 模式</td><td>按下热键开启会话；会话内 VAD 软切分多个段；松开硬切分，结束当前段并停止监听。</td></tr>
+  <tr><td>Toggle 模式</td><td>第一次按热键开启会话，第二次按硬切分结束；会话期间 VAD 连续软切分多个段，没有语音时也保持空白临时窗口。</td></tr>
+  <tr><td>会话（session）</td><td>PTT 按下或 Toggle 开启到硬切分之间的一段交互；一个会话可以包含多个语音段。</td></tr>
   <tr><td>Continuous 模式</td><td>忽略热键，VAD 自动切分语音段。</td></tr>
   <tr><td>Partial / Final</td><td>临时结果 / 最终结果；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
   <tr><td>Finalizing</td><td>语音段结束、已请求最终文本但尚未到达的阶段；addon 停止刷新临时文本，保留最后一条 Partial，直到 Final 或错误 / 断线到达。</td></tr>
-  <tr><td>目标输入框</td><td>语音段开始时聚焦的 <code>InputContext</code>；最终文本只提交到该输入框。</td></tr>
+  <tr><td>目标输入框</td><td>语音段或 PTT / Toggle 会话开始时聚焦的 <code>InputContext</code>；最终文本只提交到该输入框。</td></tr>
   <tr><td>临时文本窗口</td><td>Fcitx 输入面板显示当前 Partial 的小窗口；由 <code>InputPanel</code> 的 preedit 渲染，不是自绘窗口。</td></tr>
   <tr><td><code>commitString</code></td><td>Fcitx 的文本提交 API；无返回值，不能确认应用接受文本。</td></tr>
 </table>
@@ -57,14 +58,15 @@
   <tr><td>系统级安装</td><td>addon 库与描述文件由核心安装入口写入 Fcitx5 系统 addon 目录；只有 addon 安装 / 卸载需要 sudo。安装入口负责系统路径、提权与失败处理；安装选项见 <a href="../../README.html#r2">根 README §2</a>，路径见 <a href="PROVIDER.html#p4-3">PROVIDER §4.3</a>。</td></tr>
   <tr><td>不降级到用户目录</td><td>不读取用户 addon 目录，不设置 <code>FCITX_ADDON_DIRS</code>；拒绝提权或安装失败时核心安装失败并提示 <code>--no-addon</code>，不静默改写到用户目录。</td></tr>
   <tr><td>模式来源</td><td><code>Mode</code> 只来自 addon 配置；TUI 显示当前生效值，daemon 不提供独立模式设置。</td></tr>
-  <tr><td>热键语义</td><td><code>ptt</code> 按住说话；<code>toggle</code> 按一下切换；<code>continuous</code> 不使用热键。热键由 Fcitx 事件管线捕获并消费。</td></tr>
+  <tr><td>模式切换清理</td><td>Configure 改变 Mode 后立即清除 hold / toggle / starting 等旧模式热键状态；存在旧段时 daemon 会结束它。前端保留目标接收旧段 Final，Final / 丢弃后清空临时窗口与目标，不等旧模式的第二次热键，也不保留旧模式的空白 Toggle 窗口。</td></tr>
+  <tr><td>热键语义</td><td><code>ptt</code> 按住开启会话、松开硬切分；<code>toggle</code> 按一下开启、再按一下硬切分；<code>continuous</code> 不使用热键。会话内 VAD 软切分不需要重新按键。</td></tr>
   <tr><td>普通按键</td><td>未命中热键的按键完全交给 Fcitx；Voime 不转发、不缓存、不改变 keymap。</td></tr>
   <tr><td>输入法切换</td><td>Voime 不出现在输入法列表；Shift、Super+Space 等只影响普通键盘输入法。</td></tr>
   <tr><td>热键冲突</td><td>热键不得与 Fcitx trigger / alt-trigger / enumerate / preedit 切换键或合成器常用绑定重叠。</td></tr>
-  <tr><td>目标绑定</td><td>PTT / Toggle 在按键事件中立即绑定目标；Continuous 与 Toggle 续段在收到 <code>SegmentStarted</code> 时绑定当时聚焦的输入框。段内不再改变。</td></tr>
-  <tr><td>目标失焦</td><td>目标失焦或销毁时不提交；清空临时窗口；Toggle 会话同时停止录音；最终结果保留在 daemon / TUI。</td></tr>
-  <tr><td>Finalizing</td><td>语音段结束、进入 Finalizing 后停止刷新临时文本，保留最后一条 Partial，不清空、不提交；直到 Final 到达才清空并提交。最终文本只来自所选 Final 后端。</td></tr>
-  <tr><td>临时窗口</td><td>录音与 Finalizing 期间显示当前段文本；Finalizing 不再更新。Toggle 会话在 Final、空段或 ASR 错误后显示空白窗口，直到再次按热键关闭；目标失焦与 daemon 断线时清空。</td></tr>
+  <tr><td>目标绑定</td><td>PTT / Toggle 在按键事件中绑定会话目标，续段沿用；原目标失效则停止会话。Continuous 每段绑定当时聚焦的输入框。段内不再改变。</td></tr>
+  <tr><td>目标失焦</td><td>目标失焦或销毁时不提交；清空临时窗口；PTT / Toggle 会话同时停止录音；最终结果保留在 daemon / TUI。</td></tr>
+  <tr><td>Finalizing</td><td>每段结束、进入 Finalizing 后停止刷新临时文本，保留最后一条 Partial，不清空、不提交；直到该段 Final 到达才清空并提交。软切分后继续下一段。最终文本只来自所选 Final 后端。</td></tr>
+  <tr><td>临时窗口</td><td>录音与 Finalizing 期间显示当前段文本；Finalizing 不再更新。Toggle 会话在 Final、空段或 ASR 错误后显示空白窗口，直到再次按热键关闭；PTT 每段 Final 后清空但按住期间继续下一段；目标失焦与 daemon 断线时清空。</td></tr>
   <tr><td>最终提交</td><td>Final 到达后先清空临时窗口，再调用 <code>commitString</code>；提交到目标输入框，不向其他窗口注入。</td></tr>
   <tr><td>不感知 GPU 后端</td><td>addon 不读取 <code>final.backend</code>，不区分 <code>cpu</code> / <code>firered</code> / <code>qwen3</code>，不加载模型或 GPU runtime；只消费 daemon 广播的 Partial / Final。</td></tr>
   <tr><td>Continuous</td><td>VAD 自动开始 / 结束；不需要热键；TUI / ctl 仍可手动 Start / Stop 用于调试。</td></tr>
@@ -79,9 +81,10 @@
 <h3 id="u3-1">3.1 PTT / Toggle 输入流程</h3>
 <div class="diagram"><img src="diagram/ptt-toggle.svg" alt="Fcitx 捕获热键、更新临时文本并提交最终结果的时序图"></div>
 <ul class="note">
-  <li><code>ptt</code> 按下开始、松开结束；<code>toggle</code> 按一下开始、再按一下结束。</li>
-  <li>录音期间 Partial 写入 Fcitx 输入面板；语音段结束后进入 Finalizing，停止 Preview 刷新并保留最后一条 Partial；Final 到达后先关闭窗口，再提交文本。</li>
-  <li>目标输入框失焦时最终结果不提交，保留在 daemon / TUI；Toggle 会话同时停止录音。</li>
+  <li><code>ptt</code> 按下开启会话、松开硬切分；<code>toggle</code> 按一下开启、再按一下硬切分。</li>
+  <li>会话期间 VAD 每次语音终点软切分：当前段进入 Finalizing 并提交，同时开始监听下一段。</li>
+  <li>录音期间 Partial 写入 Fcitx 输入面板；语音段结束后停止 Preview 刷新并保留最后一条 Partial；Final 到达后先关闭窗口，再提交文本。</li>
+  <li>目标输入框失焦时最终结果不提交，保留在 daemon / TUI；PTT / Toggle 会话同时停止录音。</li>
 </ul>
 
 <h3 id="u3-2">3.2 Continuous 输入流程</h3>
@@ -123,13 +126,13 @@ Hotkey=Super+F2</code></pre>
     <td><code>Mode</code></td>
     <td><code>ptt</code> · <code>toggle</code> · <code>continuous</code></td>
     <td><code>ptt</code></td>
-    <td>决定热键语义与 daemon 是否自动连续分段。</td>
+    <td>决定热键会话语义；PTT / Toggle 会话内 VAD 自动软切分。</td>
   </tr>
   <tr>
     <td><code>Hotkey</code></td>
     <td>Fcitx key 语法，例如 <code>Super+F2</code></td>
     <td><code>Super+F2</code></td>
-    <td><code>ptt</code> 按住、<code>toggle</code> 切换、<code>continuous</code> 忽略；设为空可禁用。</td>
+    <td><code>ptt</code> 按住开启、松开结束；<code>toggle</code> 切换会话；<code>continuous</code> 忽略；设为空可禁用。</td>
   </tr>
 </table>
 <ul class="note">
@@ -165,13 +168,13 @@ addon 以 <code>frontend</code> 角色连接；线协议同时兼容旧值 <code
 <table>
   <tr><th>消息</th><th>addon 行为</th></tr>
   <tr><td><code>Hello { role: Frontend, version, config }</code></td><td>连接后发送；携带当前 Mode / Hotkey。新实现写 <code>frontend</code>，线协议兼容旧值 <code>fcitx</code>。</td></tr>
-  <tr><td><code>Configure { mode, hotkey }</code></td><td>配置重载时发送；新模式在下一段生效。</td></tr>
-  <tr><td><code>Start</code> / <code>Stop</code></td><td>PTT / Toggle 热键触发；携带本地提示 ID 与 <code>Hold</code> / <code>Toggle</code> 来源。</td></tr>
-  <tr><td><code>SegmentStarted</code></td><td>记录最终 <code>segment_id</code>；Continuous 与 Toggle 续段跟随当前焦点。</td></tr>
-  <tr><td><code>State</code></td><td>更新 recording / finalizing；进入 Finalizing 后保留最后一条 Partial，不刷新；Idle 时清理目标与临时窗口。</td></tr>
+  <tr><td><code>Configure { mode, hotkey }</code></td><td>配置重载时发送；Mode 变化时 daemon 会立即收尾当前段。前端同时清理旧模式热键状态，保留目标直到旧段 Final / 丢弃后清空。</td></tr>
+  <tr><td><code>Start</code> / <code>Stop</code></td><td>PTT / Toggle 热键开启会话 / 硬切分会话；携带本地提示 ID 与 <code>Hold</code> / <code>Toggle</code> 来源。</td></tr>
+  <tr><td><code>SegmentStarted</code></td><td>记录最终 <code>segment_id</code>；首段与每次 VAD 软切分续段都会到达；PTT / Toggle 续段沿用会话目标。</td></tr>
+  <tr><td><code>State</code></td><td>更新 recording / finalizing；进入 Finalizing 后保留最后一条 Partial，不刷新；PTT / Toggle 两段之间的 Idle 不结束会话。</td></tr>
   <tr><td><code>Partial</code></td><td>只处理当前段；录音期间显示到目标输入面板；<code>finalizing</code> 为 true 时忽略，不再刷新预览。</td></tr>
-  <tr><td><code>Final</code></td><td>只处理当前目标段；Final 到达后清空临时窗口并提交。</td></tr>
-  <tr><td><code>Error</code></td><td>角色 / 版本 / 非法消息时断开重连；推理错误在 Toggle 会话中重置。</td></tr>
+  <tr><td><code>Final</code></td><td>只处理当前目标段；Final 到达后清空临时窗口并提交。PTT 按住期间继续监听，松开后结束；Toggle 会话保留空白窗口。</td></tr>
+  <tr><td><code>Error</code></td><td>角色 / 版本 / 非法消息时断开重连；推理错误在 PTT / Toggle 会话中重置当前段并继续监听。</td></tr>
   <tr><td><code>Bye</code></td><td>断开并等待重连。</td></tr>
 </table>
 <ul class="note">
@@ -184,9 +187,9 @@ addon 以 <code>frontend</code> 角色连接；线协议同时兼容旧值 <code
   <tr><th>情况</th><th>行为</th></tr>
   <tr><td>PTT / Toggle 按下</td><td>立即绑定 <code>event.inputContext()</code>；记录本地 <code>segment_id</code> 提示。</td></tr>
   <tr><td>Continuous 段开始</td><td>使用 <code>mostRecentInputContext()</code>；必须有焦点。</td></tr>
-  <tr><td>Toggle 续段</td><td>仅当会话仍有效且原目标消失时，跟随当前焦点重新绑定。</td></tr>
+  <tr><td>PTT / Toggle 续段</td><td>沿用会话开始时绑定的目标；原目标失效则停止会话，不提交。</td></tr>
   <tr><td>Finalizing</td><td>保留最后一条 Partial，不刷新、不提交；Final 到达后按当前目标重新校验再提交。</td></tr>
-  <tr><td>目标失焦</td><td>Toggle 发送 Stop 并清空；其他模式只清空，不提交。</td></tr>
+  <tr><td>目标失焦</td><td>PTT / Toggle 发送 Stop 并清空；Continuous 只清空，不提交。</td></tr>
   <tr><td>daemon 断线</td><td>清空部分状态、取消目标监听、复位 Toggle / PTT 标志；热键恢复为普通按键。</td></tr>
   <tr><td>重连</td><td>使用定时器重连；未连接时重试，不阻塞 Fcitx 事件循环；具体间隔见 <a href="CORE.html#c2">CORE §2</a>。</td></tr>
 </table>
@@ -199,7 +202,7 @@ addon 以 <code>frontend</code> 角色连接；线协议同时兼容旧值 <code
   <tr><td>角色冲突 / 版本不匹配</td><td>已有 <code>frontend</code> 连接或协议版本不一致。</td><td>断开并重试；日志记录。</td></tr>
   <tr><td>没有目标输入框</td><td>按键时没有焦点。</td><td>不开始语音段；不提交。</td></tr>
   <tr><td>目标丢失</td><td>提交前失焦 / 销毁。</td><td>清空临时窗口；Final 保留历史。</td></tr>
-  <tr><td>ASR 推理错误</td><td>daemon 返回 <code>inference</code>。</td><td>Toggle 会话重置为空白窗口；其他模式清理状态。</td></tr>
+  <tr><td>ASR 推理错误</td><td>daemon 返回 <code>inference</code>。</td><td>PTT / Toggle 会话清空当前段并继续监听；Toggle 保持空白窗口。Continuous 清理状态。</td></tr>
   <tr><td>Final 后端失败</td><td>daemon 的 GPU Final 失败并回退 CPU，或返回错误。</td><td>addon 不感知后端；只处理最终到达的 Final 或 Error，不在前端做回退。</td></tr>
 </table>
 
