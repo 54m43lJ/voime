@@ -49,7 +49,7 @@
   <tr><td>CTC head</td><td>FireRedASR2-AED 的辅助 CTC 输出；<code>ctc.onnx</code> 存在但不加载，不作为产品路径。</td></tr>
   <tr><td>FireRedPunc tokenizer</td><td>BERT WordPiece 分词器；词表为 <code>tokens.txt</code>，中文按字符、英文按子词。</td></tr>
   <tr><td>标点标签</td><td>5 类：<code>&lt;space&gt;</code>、<code>，</code>、<code>。</code>、<code>？</code>、<code>！</code>；由 <code>out_dict</code> / <code>punc.json</code> 固定。</td></tr>
-  <tr><td>manifest</td><td>模型目录的权威描述：schema 5、id、kind、文件 SHA-256 / 大小与 runtime 声明。</td></tr>
+  <tr><td>manifest</td><td>模型目录的权威描述；通用 schema、字段与合法 <code>kind</code> 见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>，FireRed 固定值见 USER §4.1。</td></tr>
   <tr><td>SHA-256</td><td>模型文件内容摘要；启动时逐文件校验，失败不创建会话。</td></tr>
 </table>
 
@@ -76,7 +76,7 @@
 </table>
 <ul class="note">
   <li>模型目录与 runtime 的安装入口见 <a href="USER.html#u4-1">USER §4.1</a> / <a href="USER.html#u4-4">§4.4</a>；本文不重复安装选项。</li>
-  <li>运行期不切换 EP / runtime；切换需要重新安装并重启 daemon。</li>
+  <li>运行期不切换 EP / runtime；切换需要重新安装对应 worker 包并重启 daemon。</li>
 </ul>
 
 <h2 id="p3">3. DIAGRAMS</h2>
@@ -91,7 +91,7 @@
 <div class="diagram"><img src="diagram/runtime-load.svg" alt="voime-gpu-firered 加载模型、创建 ORT GPU 会话并执行推理的边界时序图"></div>
 <ul class="note">
   <li><code>Hello</code> 校验通过后，worker 读取两个 <code>manifest.json</code> 并逐文件校验 SHA-256 与大小；任一失败不加载 runtime、不发送 <code>Ready</code>。</li>
-  <li>加载阶段创建进程级 ORT Environment，注册安装时选定的 GPU EP，然后创建 encoder、decoder 与 FireRedPunc 三个会话；<code>ctc.onnx</code> 不创建会话。</li>
+  <li>加载阶段创建进程级 ORT Environment，注册编译时选定的 GPU EP，然后创建 encoder、decoder 与 FireRedPunc 三个会话；<code>ctc.onnx</code> 不创建会话。</li>
   <li>识别阶段只画一次“运行已加载的会话”调用；encoder / decoder / Punc 的内部阶段与 AED 自回归循环不在图中展开。</li>
   <li>三个会话常驻；每个 Final 只重置解码状态与 cache，不重新加载权重、不重新注册 EP。</li>
   <li>图中没有 CPU EP、没有第二个 runtime；加载失败只返回错误，由 daemon 决定是否回退 CPU。</li>
@@ -101,12 +101,6 @@
 <p><a href="#top">↑</a></p>
 
 <h3 id="p4-1">4.1 FireRedASR2-AED</h3>
-<p>
-来源为 <a href="https://huggingface.co/Ciwiruk/FireRedASR2-AED-onnx">Ciwiruk/FireRedASR2-AED-onnx</a>
-的 FP32 ONNX 导出，上游模型是 <a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam 的 FireRedASR2-AED</a>（1.15B 参数，Apache-2.0）。
-导出包使用 opset 17，权重约 4.5 GB；本产品只在安装时获取一次，运行期只读。
-</p>
-
 <table>
   <tr><th>文件</th><th>作用</th><th>大小（bytes）</th></tr>
   <tr><td><code>encoder.onnx</code></td><td>Conformer encoder 图</td><td>564,553</td></tr>
@@ -132,9 +126,11 @@ cmvn.ark             6efba6105429d1630c05d818d956bfe4edfad37a04b3b27bb5a029b9adb
 config.json          2a38d390e6bde9807466c765d012daca4d5d66d2019890dffafec95f62310e4f</code></pre>
 <ul class="note">
   <li>上面的 SHA-256 取自上游导出清单；安装脚本把它们写入产品 schema 5 manifest，运行期按该清单校验。</li>
-  <li>上游导出包的 <code>manifest.json</code> 只作为安装源；产品模型目录写入 schema 5 清单，字段语义见 <a href="../voime-core/USER.html#u4-3">voime-core USER §4.3</a>。</li>
+  <li>上游导出包的 <code>manifest.json</code> 只作为安装源；产品模型目录写入 schema 5 清单，通用字段语义与合法 <code>kind</code> 见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>。</li>
   <li><code>encoder.data</code> 与 <code>decoder.data</code> 必须与对应 <code>.onnx</code> 同目录；不要单独移动或改名。</li>
   <li><code>ctc.onnx</code> 参与文件校验，但运行期不创建会话；CTC 不作为产品路径。</li>
+  <li>来源为 <a href="https://huggingface.co/Ciwiruk/FireRedASR2-AED-onnx">Ciwiruk/FireRedASR2-AED-onnx</a> 的 FP32 ONNX 导出；上游模型是 <a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam 的 FireRedASR2-AED</a>（1.15B 参数，Apache-2.0）。</li>
+  <li>导出包使用 opset 17，AED 文件合计约 4.7 GB；本产品只在安装时获取一次，运行期只读。</li>
 </ul>
 
 <h4>4.1.1 ONNX 张量</h4>

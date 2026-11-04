@@ -34,7 +34,7 @@
 本地语音输入需要在 GPU 上获得比 CPU 小模型更好的最终识别质量，而 GPU runtime 不能在
 核心进程里加载。Qwen3-ASR 1.7B 以 BF16 GGUF 形式发布，可以由 llama-cpp-rs / llama.cpp
 直接加载；它自带标点与大小写，适合作为一条独立的 Final 后端。在 AMD Linux 上，
-llama.cpp 的 Vulkan 路径使用系统 Vulkan loader 与 GPU 驱动，不需要 ROCm / HIP 栈。
+llama.cpp 的 Vulkan 路径使用系统 Vulkan loader 与 GPU 驱动；不依赖 ROCm / HIP 栈。
 </p>
 
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>

@@ -42,7 +42,7 @@
   <tr><td>LFR</td><td>低帧率特征拼接；SenseVoice 默认使用 7 帧窗、6 帧移，输出 560 维；实际值由 ONNX metadata 提供，缺失时回退该默认值。</td></tr>
   <tr><td>CMVN</td><td>倒谱均值方差归一化；SenseVoice 使用 ONNX metadata 的 <code>neg_mean</code> / <code>inv_stddev</code>，VAD 使用可选文件 <code>cmvn.ark</code>。</td></tr>
   <tr><td>模型目录</td><td><code>firered-vad/</code> 或 <code>sensevoice-small/</code>；一模型一目录，包含 manifest 与权重。</td></tr>
-  <tr><td>manifest</td><td>模型目录的权威描述：schema 5、id、kind、version、license、文件、SHA-256、大小与 runtime。</td></tr>
+  <tr><td>manifest</td><td>模型目录的权威描述；通用 schema、字段与合法 <code>kind</code> 见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>，核心固定值见 USER §4.3。</td></tr>
   <tr><td><code>FileSpec</code></td><td>manifest 中一个文件条目；含相对路径、SHA-256 与字节大小。</td></tr>
   <tr><td>SHA-256</td><td>模型文件内容摘要；启动时逐文件校验。</td></tr>
 </table>
@@ -142,8 +142,8 @@
   <tr><td>SenseVoice CMVN</td><td><code>neg_mean</code> / <code>inv_stddev</code> 取 ONNX metadata；长度必须为 <code>80 * lfr_window</code>；不来自 manifest。</td></tr>
   <tr><td>VAD CMVN</td><td>模型未内置时读取 manifest 文件列表中的 <code>cmvn.ark</code>；manifest 只记录文件路径 / SHA-256 / 大小，不记录参数值。</td></tr>
   <tr><td>词表</td><td><code>tokens.txt</code> 由 manifest 文件列表定位并校验；内容不写入 manifest；每行为 token 与 id，<code>token_count</code> 必须等于 ONNX <code>vocab_size</code> 与输出类别数。</td></tr>
-  <tr><td>manifest</td><td><code>schema=5</code>、<code>id</code> 等于目录名、<code>kind</code> 为 <code>vad</code> / <code>asr</code>、文件 SHA-256 与大小、runtime 声明；只描述身份、完整性与运行上限，不包含张量 / 预处理参数或词表内容。</td></tr>
-  <tr><td>安装</td><td>核心安装脚本下载固定 revision 的模型文件，写入 manifest；不兼容旧 schema / 旧模型包。</td></tr>
+  <tr><td>manifest</td><td>通用 schema、字段与合法 <code>kind</code> 见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>；核心固定值：<code>firered-vad</code> 为 <code>vad</code>，<code>sensevoice-small</code> 为 <code>asr</code>，runtime 见本节目录示例。manifest 不包含张量 / 预处理参数或词表内容。</td></tr>
+  <tr><td>安装</td><td>核心安装脚本下载固定 revision 的模型文件，写入 manifest；只接受当前 schema 5 模型包。</td></tr>
 </table>
 <ul class="note">
   <li>SenseVoice 使用上游 <code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>；模型输出自带标点与 ITN，不加载 FireRedPunc。</li>
@@ -190,7 +190,7 @@
   <tr><td><code>UnsupportedSampleFormat</code></td><td>设备只提供 I16 / U16 / F32 之外的格式。</td><td>daemon 启动失败。</td></tr>
   <tr><td><code>StreamLost</code> / 流错误哨兵</td><td>运行期音频流错误。</td><td>丢弃当前段；连续失败后 daemon 退出。</td></tr>
   <tr><td>模型目录 / manifest 缺失</td><td><code>firered-vad</code> 或 <code>sensevoice-small</code> 不存在、缺 <code>manifest.json</code>。</td><td>核心启动失败；不进入运行态。</td></tr>
-  <tr><td>schema / id / kind 不匹配</td><td>旧 manifest、目录名不符或 kind 错误。</td><td>核心启动失败；不兼容旧布局。</td></tr>
+  <tr><td>schema / id / kind 不匹配</td><td>schema 5 之外的 manifest、目录名不符或 kind 错误。</td><td>核心启动失败；不接受 schema 5 之外的布局。</td></tr>
   <tr><td>文件缺失 / 大小或 SHA-256 不匹配</td><td>模型文件缺失或被修改。</td><td>核心启动失败。</td></tr>
   <tr><td>张量 / 会话错误</td><td>ONNX 输入输出与核心预期不符或会话创建失败。</td><td>核心启动失败。</td></tr>
   <tr><td>SenseVoice 推理失败</td><td>运行期解码 / 会话错误。</td><td>当前段 <code>SegmentDropped</code>；CPU Final 返回错误，由 daemon 丢弃该段。</td></tr>

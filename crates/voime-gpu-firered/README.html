@@ -47,7 +47,7 @@ daemon 只负责选择、发送 PCM、接收文本与在失败时回退 CPU Sens
   <li>接收一个完整语音段的 16 kHz、单声道、<code>f32</code> PCM（单段上限 30 s），返回已加标点文本与耗时；一次只处理一个 Final。</li>
   <li>FireRedASR2-AED 以 FP32 ONNX 运行，使用 Kaldi fbank 80-bin、25 / 10 ms、<code>snip_edges</code>、16-bit 缩放与 CMVN；解码为 AED greedy，从 <code>&lt;sos&gt;</code> 开始、到 <code>&lt;eos&gt;</code> 停止；CTC head 不作为产品路径。</li>
   <li>FireRedPunc 以 FP32 ONNX 在 worker 内做二次推理，把标点插入 AED 文本后返回；不返回半成品。</li>
-  <li>两个模型合计约 4.9 GB（AED 约 4.5 GB + Punc 约 0.4 GB），均为 FP32；不加载 int8 / FP16 变体。</li>
+  <li>两个模型合计约 5.1 GB（AED 约 4.7 GB + Punc 约 0.4 GB），均为 FP32；不加载 int8 / FP16 变体。</li>
   <li>ORT GPU EP 按平台固定：Linux NVIDIA 用 CUDA，Linux AMD 用 MIGraphX，Windows 用 CUDA 或 DirectML；运行期不切换 EP / runtime。</li>
   <li>模型目录固定为 <code>fireredasr2-aed/</code> 与 <code>fireredpunc/</code>，各自带 schema 5 的 <code>manifest.json</code>、SHA-256 与 runtime 声明；运行期只读。</li>
   <li>本组件是独立 crate、独立二进制、独立进程与独立 runtime 目录；不与 Qwen 后端共享 runtime，也不链接 llama.cpp / GGML。</li>
@@ -60,7 +60,7 @@ daemon 只负责选择、发送 PCM、接收文本与在失败时回退 CPU Sens
   <li>不加载 VAD、Preview、分段器或平台前端；不接收活动段增量音频，不做流式识别。</li>
   <li>不与 Qwen 后端共享 runtime、crate、二进制或动态库目录；不引入 llama.cpp / GGML / GGUF。</li>
   <li>不做 CPU FireRedASR2-AED 推理；GPU 失败不加载任何 CPU 大模型，也不把 CPU ORT 作为 worker 内部回退。</li>
-  <li>不做运行期 EP / runtime 切换、模型重载或 EP 回退；一个 worker 进程只使用安装时选定的一个 EP。</li>
+  <li>不做运行期 EP / runtime 切换、模型重载或 EP 回退；一个 worker 进程只使用编译时选定的一个 EP。</li>
   <li>不做 int8 / FP16 量化回退；加载或推理失败即失败，不静默换精度。</li>
   <li>不做模型下载、导出、转换、量化或联网校验；这些只发生在安装脚本与发布流程。</li>
   <li>不做文本润色、纠错、翻译、摘要、大小写改写或规则后处理；只做 ASR 与 FireRedPunc 标点。</li>

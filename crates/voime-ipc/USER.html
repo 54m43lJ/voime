@@ -32,18 +32,18 @@
   <tr><td>消息（message）</td><td>一个 JSON 对象，带唯一外部标签；一行一个消息。</td></tr>
   <tr><td>frame</td><td>消息 JSON + 一个换行符 <code>\n</code>；换行是唯一的消息边界。</td></tr>
   <tr><td>外部标签</td><td>消息类型作为 JSON 对象的唯一键，例如 <code>{"Hello": {...}}</code>。</td></tr>
-  <tr><td>角色（Role）</td><td>客户端身份：<code>frontend</code>（平台前端，兼容旧值 <code>fcitx</code>）、<code>tui</code>（监视器）或 <code>control</code>（一次性控制）。</td></tr>
+  <tr><td>角色（Role）</td><td>客户端身份：<code>frontend</code>（平台前端；线协议同时接受 <code>fcitx</code> 别名）、<code>tui</code>（监视器）或 <code>control</code>（一次性控制）。</td></tr>
   <tr><td>模式（Mode）</td><td><code>ptt</code> / <code>toggle</code> / <code>continuous</code>；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
   <tr><td>会话（session）</td><td>PTT / Toggle 从开始到硬切分之间的一段交互；一个会话包含一个或多个语音段。</td></tr>
   <tr><td>软切分 / 硬切分</td><td>软切分由 VAD 终点触发，结束当前段并继续下一段；硬切分由 <code>Stop</code> / <code>Toggle</code> 关闭会话，结束当前段后不再续段。</td></tr>
   <tr><td>触发来源（TriggerSource）</td><td>会话 / 段开始与停止的来源：<code>hold</code>、<code>toggle</code>、<code>tui</code>、<code>cli</code>、<code>continuous</code>。</td></tr>
   <tr><td>阶段（Phase）</td><td>daemon 当前状态：<code>idle</code>、<code>recording</code>、<code>finalizing</code>。</td></tr>
-  <tr><td>前端状态（FrontendState）</td><td>平台前端是否连接到 daemon：<code>connected</code> / <code>disconnected</code>；旧类型名 <code>AddonState</code> 保留为别名。</td></tr>
+  <tr><td>前端状态（FrontendState）</td><td>平台前端是否连接到 daemon：<code>connected</code> / <code>disconnected</code>；Rust 类型别名 <code>AddonState</code> 与它等价。</td></tr>
   <tr><td><code>segment_id</code></td><td>daemon 为语音段分配的唯一整数；客户端发送的 ID 只是提示，最终以 <code>SegmentStarted</code> 为准。</td></tr>
   <tr><td>Snapshot</td><td>连接时的全量状态：模式、热键、phase、partial、历史、前端连接状态。</td></tr>
   <tr><td>Partial / Final</td><td>临时结果 / 最终结果；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
   <tr><td>错误码（ErrorCode）</td><td>稳定的 snake_case 标识；客户端按码处理，不解析文案。</td></tr>
-  <tr><td>协议版本</td><td><code>PROTOCOL_VERSION</code>；消息形状变化时提升。</td></tr>
+  <tr><td>协议版本</td><td><code>PROTOCOL_VERSION</code>；消息形状、错误码或字段语义变化时提升。</td></tr>
 </table>
 
 <h2 id="u2">2. CONVENTIONS</h2>
@@ -60,8 +60,8 @@
   <tr><td>配置</td><td><code>Hello.config</code> 可选；只有平台前端携带 <code>mode</code> / <code>hotkey</code>。daemon 不解析命令行模式。</td></tr>
   <tr><td><code>segment_id</code></td><td>daemon 分配；<code>Start</code> / <code>Toggle</code> 的 ID 只是提示；<code>Stop</code> 在 PTT / Toggle 下忽略 ID，在 Continuous 下非零 ID 需匹配当前段（0 表示当前段）。</td></tr>
   <tr><td>会话命令</td><td><code>Start</code> 打开 PTT / Toggle 会话；<code>Stop</code> 硬切分会话；<code>Toggle</code> 按当前状态打开或硬切分。会话内 VAD 软切分多个段，不需要重复 <code>Start</code>。</td></tr>
-  <tr><td>背压</td><td><code>Final</code> / <code>State</code> 不丢弃；<code>Partial</code> 可在队列满时丢弃；慢客户端由 daemon 断开。</td></tr>
-  <tr><td>版本</td><td>只有消息形状变化才提升 <code>PROTOCOL_VERSION</code>；新增平台前端不提升版本。</td></tr>
+  <tr><td>背压</td><td><code>Final</code> / <code>State</code> 不丢弃；<code>Partial</code> 可丢弃；客户端落后不阻塞 daemon。</td></tr>
+  <tr><td>版本</td><td>消息形状、错误码或字段语义变化时提升 <code>PROTOCOL_VERSION</code>；新增平台前端不提升版本。</td></tr>
   <tr><td>无持久化</td><td>协议消息不写磁盘；历史只存在于 daemon 内存。</td></tr>
 </table>
 
@@ -88,7 +88,7 @@
 <p><a href="#top">↑</a></p>
 
 <h3 id="u4-1">4.1 常量与编解码</h3>
-<pre><code>pub const PROTOCOL_VERSION: u32 = 1;
+<pre><code>pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 pub fn encode_message&lt;T: Serialize&gt;(message: &amp;T) -&gt; anyhow::Result&lt;Vec&lt;u8&gt;&gt;;
@@ -98,11 +98,11 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
-  <tr><td><code>PROTOCOL_VERSION</code></td><td>当前为 1；消息形状变化时提升。</td></tr>
+  <tr><td><code>PROTOCOL_VERSION</code></td><td>当前为 2；消息形状、错误码或字段语义变化时提升。</td></tr>
   <tr><td><code>MAX_MESSAGE_BYTES</code></td><td>单行最大 1 MiB；编码与解码都检查。</td></tr>
   <tr><td><code>encode_message</code></td><td>序列化为 JSON，检查长度，追加 <code>\n</code>。</td></tr>
   <tr><td><code>write_message</code></td><td>编码后写入并 flush。</td></tr>
-  <tr><td><code>read_message</code></td><td>读取一行；返回 <code>Ok(None)</code> 表示干净 EOF；缺少换行或超长返回错误。</td></tr>
+  <tr><td><code>read_message</code></td><td>读取一行；返回 <code>Ok(None)</code> 表示干净 EOF；缺少换行、超长、未知消息标签或字段类型不合法返回错误。</td></tr>
 </table>
 
 <h3 id="u4-2">4.2 ClientMessage</h3>
@@ -166,6 +166,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
     },
     Error {
         code: ErrorCode,
+        segment_id: Option&lt;u64&gt;,
         message: String,
     },
     Bye,
@@ -186,6 +187,7 @@ pub enum ErrorCode {
     NoInputContext,
     DaemonUnavailable,
     Unavailable,
+    SegmentDropped,
     Inference,
     Internal,
 }
@@ -223,13 +225,13 @@ pub struct Status {
   <tr><td><code>Final</code></td><td>daemon → clients</td><td>最终文本；不丢弃。</td><td>清空临时文本并提交；加入历史。</td></tr>
   <tr><td><code>HistoryCleared</code></td><td>daemon → clients</td><td>历史已清空。</td><td>清空 TUI 历史。</td></tr>
   <tr><td><code>Status</code></td><td>daemon → client</td><td>一次性状态快照。</td><td>打印 / 更新状态。</td></tr>
-  <tr><td><code>Error</code></td><td>daemon → client</td><td>协议、角色、忙碌或推理错误。</td><td>按 <code>code</code> 处理；不解析文案。</td></tr>
+  <tr><td><code>Error</code></td><td>daemon → client</td><td>协议、角色、忙碌、整段丢弃或其它推理错误；<code>segment_dropped</code> 时 <code>segment_id</code> 指向被丢弃的段。</td><td>按 <code>code</code> 处理；<code>segment_dropped</code> 时由前端决定是否清理 / 提示，后端不规定 UI 行为。</td></tr>
   <tr><td><code>Bye</code></td><td>daemon → clients</td><td>daemon 即将退出。</td><td>客户端清理并退出 / 等待重连。</td></tr>
 </table>
 
 <h3 id="u4-6">4.6 JSON 示例</h3>
 <pre><code>// client → daemon
-{"Hello":{"role":"frontend","version":1,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
+{"Hello":{"role":"frontend","version":2,"config":{"mode":"ptt","hotkey":"Super+F2"}}}
 
 // daemon → client
 {"SegmentStarted":{"segment_id":1,"source":"toggle"}}
@@ -238,7 +240,9 @@ pub struct Status {
 
 {"Final":{"segment_id":1,"text":"明天的日程帮我确认一下。"}}
 
-{"Error":{"code":"role_conflict","message":"已有前端连接"}}</code></pre>
+{"Error":{"code":"segment_dropped","segment_id":1,"message":"识别结果为空"}}
+
+{"Error":{"code":"role_conflict","segment_id":null,"message":"已有前端连接"}}</code></pre>
 
 <h3 id="u4-7">4.7 错误码</h3>
 <table>
@@ -250,17 +254,19 @@ pub struct Status {
   <tr><td><code>no_input_context</code></td><td>没有可用的输入目标。</td><td>前端不开始语音段；提示用户聚焦输入框。</td></tr>
   <tr><td><code>daemon_unavailable</code></td><td>客户端无法连接 daemon。</td><td>放行热键；定时重连。</td></tr>
   <tr><td><code>unavailable</code></td><td>服务暂时不可用。</td><td>重试或查看日志。</td></tr>
-  <tr><td><code>inference</code></td><td>单段识别 / 标点失败。</td><td>丢弃该段；继续监听。</td></tr>
+  <tr><td><code>segment_dropped</code></td><td>单段因空音频、空识别结果或识别失败被丢弃；<code>segment_id</code> 必须为 <code>Some(id)</code>。</td><td>前端自行决定是否清理临时文本 / 提示；后端不规定 UI 行为。</td></tr>
+  <tr><td><code>inference</code></td><td>不属于单段丢弃的推理 / 标点错误。</td><td>查看日志；按需要停止当前路径。</td></tr>
   <tr><td><code>internal</code></td><td>daemon 内部错误。</td><td>查看日志；必要时重启 daemon。</td></tr>
 </table>
 
 <h3 id="u4-8">4.8 版本与兼容</h3>
 <table>
   <tr><th>变化</th><th>版本策略</th></tr>
-  <tr><td>新增消息类型</td><td>旧客户端忽略未知标签；提升 <code>PROTOCOL_VERSION</code> 仅在旧客户端无法安全忽略时。</td></tr>
-  <tr><td>修改现有消息字段 / 类型</td><td>必须提升 <code>PROTOCOL_VERSION</code>；daemon 拒绝旧版本并返回 <code>version_mismatch</code>。</td></tr>
+  <tr><td>当前版本</td><td><code>PROTOCOL_VERSION = 2</code>；包含 <code>Error.segment_id</code> 与 <code>segment_dropped</code> 错误码。</td></tr>
+  <tr><td>新增消息类型</td><td>必须提升 <code>PROTOCOL_VERSION</code>；未知消息标签是协议错误，客户端必须断开而不是跳过。</td></tr>
+  <tr><td>修改现有消息字段 / 类型 / 错误码</td><td>必须提升 <code>PROTOCOL_VERSION</code>；daemon 拒绝版本不匹配的连接并返回 <code>version_mismatch</code>。</td></tr>
   <tr><td>新增角色或平台前端</td><td>不改变现有消息形状时保持版本；新增角色需 daemon 与客户端同时支持。</td></tr>
-  <tr><td>兼容窗口</td><td>线协议同时接受旧值 <code>fcitx</code> 与新值 <code>frontend</code>；Rust 旧类型名通过别名保留。消息形状未变化，<code>PROTOCOL_VERSION</code> 保持 1。</td></tr>
+  <tr><td>角色别名</td><td>线协议同时接受 <code>frontend</code> 与 <code>fcitx</code>；Rust 类型名 <code>FrontendState</code> 与 <code>AddonState</code> 等价。</td></tr>
 </table>
 
 </body>

@@ -94,7 +94,7 @@ voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
   <tr><td><code>voime ctl quit</code></td><td>发送 <code>Quit</code>；等待 <code>Bye</code>。</td></tr>
   <tr><td><code>voime ctl backend &lt;id&gt;</code></td><td>原子写入 <code>[final].backend</code>；不连接 daemon；输出重启提示；非法值退出码 2。</td></tr>
   <tr><td><code>voime doctor</code></td><td>只读检查；退出码 0 表示全部通过，1 表示存在 FAIL。</td></tr>
-  <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名；<code>ctl backend</code> 不接受该选项。</td></tr>
+  <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名；同时接受 <code>--socket</code> 别名。<code>ctl backend</code> 不接受该选项。</td></tr>
 </table>
 
 <table>
@@ -174,16 +174,17 @@ fcitx:
   <tr><th>检查</th><th>契约</th></tr>
   <tr><td>端点</td><td>检查默认端点 / <code>--endpoint</code> 指定端点；Unix 上检查权限是否 0600。</td></tr>
   <tr><td>daemon</td><td>以 <code>control</code> 角色连接并读取 Snapshot。</td></tr>
-  <tr><td>Final 后端</td><td>读取 <code>~/.config/voime/config.toml</code>，显示 <code>cpu</code> / <code>firered</code> / <code>qwen3</code> 的选择结果；不修改配置。</td></tr>
+  <tr><td>Final 后端</td><td>读取 <code>~/.config/voime/config.toml</code>（Windows 为 <code>%APPDATA%\voime\config.toml</code>），显示 <code>cpu</code> / <code>firered</code> / <code>qwen3</code> 的选择结果；不修改配置。</td></tr>
   <tr><td>worker</td><td>分别检查 CPU / FireRed / Qwen 的可用性、worker 可执行文件与模型目录；从 daemon 日志读取 ready / running；未选择的后端不要求运行，不计为 FAIL。</td></tr>
   <tr><td>模型</td><td>固定检查默认模型根目录的核心模型 manifest 与 SHA-256；已安装的 GPU 模型只校验 manifest，不加载权重。</td></tr>
   <tr><td>音频</td><td>枚举输入设备并显示默认设备名；不打开流。</td></tr>
   <tr><td>日志</td><td>报告 <code>VOIME_LOG</code> 启用状态与日志文件位置；未启用时给出默认目录，不计为 FAIL。</td></tr>
-  <tr><td>平台前端</td><td>Linux 检查 fcitx5 进程、系统 addon 描述、<code>voime.so</code> 与系统 ABI、用户配置；不检查旧 inputmethod 条目；不检查 <code>FCITX_ADDON_DIRS</code>。</td></tr>
+  <tr><td>平台前端（Linux）</td><td>检查 fcitx5 进程、系统 addon 描述、<code>voime.so</code> 与系统 ABI、用户配置；不检查inputmethod 条目；不检查 <code>FCITX_ADDON_DIRS</code>。</td></tr>
+  <tr><td>平台前端（Windows）</td><td>检查命名管道、麦克风隐私、输入设备、<code>voime-tray.exe</code> 进程、模型与 TSF 注册（若启用）。</td></tr>
   <tr><td>输出</td><td>每项 <code>OK</code> / <code>WARN</code> / <code>FAIL</code>；存在 FAIL 时退出码 1。</td></tr>
 </table>
 <ul class="note">
-  <li>doctor 当前是 Linux 实现；Windows 版按 <a href="../../frontends/windows/USER.html#u4-4">windows USER §4.4</a> 检查命名管道、麦克风隐私、设备、前端进程、模型与 TSF 注册。</li>
+  <li>doctor 在 Linux 与 Windows 均可用；示例输出是 Linux，Windows 将 <code>fcitx</code> 段替换为命名管道、麦克风隐私与前端进程检查。</li>
   <li>自定义前缀或 <code>--model-dir</code> 部署需要手工确认；doctor 固定检查默认路径。</li>
   <li>worker ready / running 只来自日志与进程状态；doctor 不触发 worker 启动或模型加载。</li>
 </ul>

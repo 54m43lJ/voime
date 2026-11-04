@@ -21,9 +21,9 @@
 </p>
 
 <p>
-<strong>状态：</strong>托盘 / 后台听写属于核心安装；TSF 为可选扩展。本文定义 Windows 前端对用户与 daemon 的行为契约；
-Windows 的目标绑定、Partial 显示与 Final 提交与 Linux 等价，Final 后端选择不进入前端。平台 API 与安全边界见
-<a href="PROVIDER.html">PROVIDER</a>，协议消息见 <a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>。
+本文定义 Windows 前端对用户与 daemon 的行为契约；Windows 的目标绑定、Partial 显示与 Final 提交与 Linux 等价，
+Final 后端选择不进入前端。TSF 为可选扩展。平台 API 与安全边界见 <a href="PROVIDER.html">PROVIDER</a>，
+协议消息见 <a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>。
 </p>
 
 <h2 id="u1">1. TERMS</h2>
@@ -71,7 +71,7 @@ Windows 的目标绑定、Partial 显示与 Final 提交与 Linux 等价，Final
 <p><a href="#top">↑</a></p>
 
 <h3 id="u3-1">3.1 后台听写</h3>
-<div class="diagram"><img src="diagram/mvp-flow.svg" alt="Windows 前端从热键、浮层到 SendInput 的时序图"></div>
+<div class="diagram"><img src="diagram/mvp-flow.svg" alt="用户、Voime 与目标应用之间的热键、浮层与 SendInput 时序图"></div>
 <ul class="note">
   <li>热键触发后记录前台窗口与焦点元素，再发送 Start 开启会话。</li>
   <li>会话期间 VAD 每次语音终点软切分：当前段进入 Finalizing 并提交，同时开始监听下一段。</li>
@@ -123,7 +123,7 @@ Windows 的目标绑定、Partial 显示与 Final 提交与 Linux 等价，Final
 <ul class="note">
   <li>设置载体为 <code>%APPDATA%\voime\config.json</code>；字段名与语义固定，托盘右键菜单与设置窗口负责修改。</li>
   <li>修改 Mode / Hotkey 后立即通过 Configure 同步；Mode 变化时 daemon 会立即结束当前段，Final / 丢弃后生效。前端同时清除旧模式热键状态，保留目标直到旧段收尾。</li>
-  <li>热键必须包含至少一个修饰键（Ctrl / Alt / Shift / Win）。录制使用设置窗口的键盘事件，覆盖字母、数字、F1–F24、方向键、导航键与常用标点键；配置层仍兼容 <code>VK_0xXX</code> 扩展键。系统保留组合在保存时由 <code>RegisterHotKey</code> 拒绝并提示。</li>
+  <li>热键必须包含至少一个修饰键（Ctrl / Alt / Shift / Win）。录制使用设置窗口的键盘事件，覆盖字母、数字、F1–F24、方向键、导航键与常用标点键；配置层同时接受 <code>VK_0xXX</code> 扩展键。系统保留组合在保存时由 <code>RegisterHotKey</code> 拒绝并提示。</li>
   <li>设置窗口在独立进程运行；打开时托盘注销全局热键，设置进程退出后托盘重新加载 <code>config.json</code> 并恢复热键，避免配置时误触发听写。</li>
   <li>Final 后端不是前端配置项；后端的默认值、切换方式与生效时机见 <a href="../../USER.html#u2">根 USER §2</a> / <a href="../../USER.html#u4-4">§4.4</a>，daemon 侧契约见 <a href="../../crates/voimed/USER.html#u4-4">voimed USER §4.4</a>。</li>
 </ul>
@@ -156,7 +156,7 @@ Windows 的目标绑定、Partial 显示与 Final 提交与 Linux 等价，Final
   <tr><td><code>State</code></td><td>更新浮层与录音标记；Finalizing 后停止预览更新，保留最后一条 Partial；PTT / Toggle 两段之间的 Idle 不结束会话。</td></tr>
   <tr><td><code>Partial</code></td><td>更新浮层文本；不提交；Finalizing 后不再更新。</td></tr>
   <tr><td><code>Final</code></td><td>复核目标并注入；PTT 按住 / Toggle 开启期间继续监听；Toggle 保留空白浮层，PTT 与 Continuous 隐藏浮层。</td></tr>
-  <tr><td><code>Error</code></td><td>推理错误清空当前段并继续监听；角色 / 版本 / 非法消息清理状态并按重连策略重连。</td></tr>
+  <tr><td><code>Error</code></td><td><code>segment_dropped</code> 且 <code>segment_id</code> 匹配当前段时清空该段浮层并继续监听；是否提示由前端决定。角色 / 版本 / 非法消息清理状态并按重连策略重连。</td></tr>
   <tr><td><code>Bye</code></td><td>清理状态；按重连策略重连。</td></tr>
 </table>
 <ul class="note">

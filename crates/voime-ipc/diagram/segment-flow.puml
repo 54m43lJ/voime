@@ -35,5 +35,7 @@ note over Client, Daemon
   无当前段且无 Final 在途时硬切分不产生 Final；
   Continuous 由 daemon 直接广播 SegmentStarted，
   不需要客户端发送 Start。
+  段被丢弃时广播 Error { code: segment_dropped, segment_id }；
+  前端自行决定是否清理临时文本或提示。
 end note
 @enduml

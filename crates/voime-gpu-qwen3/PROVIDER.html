@@ -41,7 +41,7 @@ llama.cpp / llama-cpp-4 文档为准；产品级下边界见 <a href="../../PROV
   </tr>
   <tr>
     <td>BF16</td>
-    <td>Brain floating point 16；本后端主模型与 mmproj 的固定精度。Vulkan 设备需要支持 BF16 才能作为加速路径。</td>
+    <td>Brain floating point 16；本后端主模型与 mmproj 的固定精度。</td>
   </tr>
   <tr>
     <td>mtmd</td>
@@ -234,31 +234,30 @@ greedy 循环拆成内部阶段图。
   <li>音频 marker 使用 <code>MtmdContext::default_marker()</code>；prompt 的 chat template 来自主模型 GGUF，不由 worker 手写。</li>
 </ul>
 
-<h3 id="p4-4">4.4 Vulkan / CUDA 与 BF16 自检</h3>
+<h3 id="p4-4">4.4 Vulkan / CUDA runtime 与启动自检</h3>
 <table>
   <tr><th>平台 / 设备</th><th>Qwen runtime</th><th>约束</th></tr>
   <tr><td>Linux + AMD</td><td>Vulkan</td><td>只接受 Vulkan；使用系统 Vulkan loader / GPU 驱动；不安装 ROCm / HIP。</td></tr>
-  <tr><td>Linux + NVIDIA</td><td>CUDA 或 Vulkan</td><td>安装时二选一；同一构建只含一个 backend。</td></tr>
+  <tr><td>Linux + NVIDIA</td><td>CUDA 或 Vulkan</td><td>编译时二选一；同一构建只含一个 backend。</td></tr>
   <tr><td>Windows + NVIDIA</td><td>CUDA 或 Vulkan</td><td>与 Linux 分开打包；runtime 各自独立目录。</td></tr>
   <tr><td>Windows + AMD / Intel</td><td>Vulkan</td><td>不使用 DirectML / ROCm；Vulkan loader 与驱动由系统提供。</td></tr>
-  <tr><td>无 GPU / 驱动不匹配 / BF16 不支持</td><td>—</td><td>不启动 worker；Qwen 后端不可用；当前段回退 CPU。</td></tr>
+  <tr><td>无 GPU / 驱动不匹配</td><td>—</td><td>不启动 worker；Qwen 后端不可用；当前段回退 CPU。</td></tr>
 </table>
 
-<p><strong>worker 启动自检顺序：</strong></p>
-<ol>
-  <li><code>LlamaBackend::init()</code> 成功，且初始化的是编译时选中的 backend。</li>
-  <li>BF16 主模型可加载；<code>LlamaModel::ftype()</code> 表明权重为 BF16。Vulkan 设备应报告 <code>bf16: 1</code>；报告 <code>bf16: 0</code> 的设备不能作为 BF16 加速路径。</li>
-  <li>BF16 mmproj 可加载；<code>MtmdContext::init_from_file</code> 成功。</li>
-  <li><code>capabilities(&amp;model).audio == true</code>，且 <code>audio_sample_rate() == 16000</code>。</li>
-  <li>一次短静音 warmup 完成 mtmd / decode，不触发 backend 错误。</li>
-  <li>向 daemon 返回 <code>Ready</code>，携带 runtime、device 与显存信息。</li>
-</ol>
+<table>
+  <tr><th>顺序</th><th>启动自检</th></tr>
+  <tr><td>1</td><td><code>LlamaBackend::init()</code> 成功，且初始化的是编译时选中的 backend。</td></tr>
+  <tr><td>2</td><td>BF16 主模型可加载；<code>LlamaModel::ftype()</code> 表明权重为 BF16。</td></tr>
+  <tr><td>3</td><td>BF16 mmproj 可加载；<code>MtmdContext::init_from_file</code> 成功。</td></tr>
+  <tr><td>4</td><td><code>capabilities(&amp;model).audio == true</code>，且 <code>audio_sample_rate() == 16000</code>。</td></tr>
+  <tr><td>5</td><td>一次短静音 warmup 完成 mtmd / decode，不触发 backend 错误。</td></tr>
+  <tr><td>6</td><td>向 daemon 返回 <code>Ready</code>，携带 runtime、device 与显存信息。</td></tr>
+</table>
 
 <table>
   <tr><th>失败</th><th>错误码</th><th>行为</th></tr>
   <tr><td>Vulkan / CUDA runtime 缺失或版本不匹配</td><td><code>runtime_missing</code></td><td>Qwen 后端不可用；当前段回退 CPU；提示重装 GPU 模块。</td></tr>
   <tr><td>无 GPU、驱动不匹配、显存不足、Vulkan loader 缺失</td><td><code>device_unavailable</code></td><td>不启动 worker；Qwen 后端不可用；当前段回退 CPU；<code>doctor</code> 报原因。</td></tr>
-  <tr><td>设备 / backend 不支持 BF16</td><td><code>device_unavailable</code></td><td>不降级 Q8 / FP16；不回退 ROCm；当前段回退 CPU。</td></tr>
   <tr><td>模型缺失、SHA 不匹配、mmproj 能力缺失、精度不是 BF16</td><td><code>load_failed</code></td><td>Qwen 后端不可用；当前段回退 CPU；记录路径与 SHA 前缀。</td></tr>
   <tr><td><code>from_audio</code> / tokenize / eval / decode 失败</td><td><code>inference_failed</code></td><td>当前段回退 CPU；重启 worker；连续失败标记不可用。</td></tr>
   <tr><td>加载或识别超时</td><td><code>timeout</code></td><td>杀 worker；当前段回退 CPU；按崩溃路径重启。</td></tr>
@@ -266,7 +265,7 @@ greedy 循环拆成内部阶段图。
 </table>
 <ul class="note">
   <li>错误码定义见 <a href="../voime-gpu-common/USER.html#u4-5">voime-gpu-common USER §4.5</a>，超时 / 取消语义见 <a href="../voime-gpu-common/USER.html#u4-7">§4.7</a>；本文只记录 Qwen provider 触发条件。</li>
-  <li>BF16 / Vulkan 不支持只使 Qwen 后端不可用，不影响核心 VAD / Preview / CPU Final，也不影响另一个 GPU 后端。</li>
+  <li>Vulkan 不支持只使 Qwen 后端不可用，不影响核心 VAD / Preview / CPU Final，也不影响另一个 GPU 后端。</li>
   <li>不静默降级 Q8 / FP16，不在 worker 内跑 CPU 大模型；CPU 回退由 daemon 用核心 SenseVoice 完成。</li>
 </ul>
 

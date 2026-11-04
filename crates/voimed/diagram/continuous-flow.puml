@@ -3,40 +3,24 @@ skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
 hide footbox
 
-participant "VAD / pipeline" as Vad
-participant "voimed" as Daemon
-participant "voime-core" as Core
-participant "GPU worker" as Worker
 participant "平台前端" as Frontend
+participant "voimed" as Voimed
 
-Vad -> Daemon : SpeechStart
-Daemon -> Frontend : SegmentStarted { source: continuous }
-Daemon -> Frontend : State { recording: true }
+Voimed -> Voimed : 内部处理\n(VAD 自动开始段)
+Voimed --> Frontend : SegmentStarted { source: continuous }
+Voimed --> Frontend : State { recording: true }
 
 loop Recording
-  Vad -> Daemon : Partial
-  Daemon -> Frontend : Partial
+  Voimed -> Voimed : 内部处理\n(Preview / 分段)
+  Voimed --> Frontend : Partial
 end
 
-Vad -> Daemon : SpeechEnd
-Daemon -> Frontend : State { recording: false, finalizing: true }
-Daemon -> Core : Pipeline::finish_segment()
-Daemon -> Core : Pipeline::cancel_preview()
-Core -> Daemon : SegmentReady { segment }
+Voimed -> Voimed : 内部处理\n(VAD 终点 / Final 调度)
+Voimed --> Frontend : State { finalizing: true }
+Voimed --> Frontend : Final
+Voimed --> Frontend : State { idle }
 
-alt backend = cpu
-  Daemon -> Core : Final::transcribe()
-  Core -> Daemon : text
-else backend = firered / qwen3
-  Daemon -> Worker : Transcribe { PCM }
-  alt worker 成功
-    Worker -> Daemon : Result { text }
-  else worker 失败 / 超时 / 崩溃
-    Daemon -> Core : Final::transcribe()（回退，一次）
-    Core -> Daemon : text
-  end
-end
-
-Daemon -> Frontend : Final { text }
-Daemon -> Frontend : State { recording: false, finalizing: false }
+note over Frontend, Voimed
+  Continuous 不使用热键；每个语音段独立开始与结束。
+end note
 @enduml

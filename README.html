@@ -49,8 +49,8 @@
   <li>VAD 固定 FireRedVAD，Preview 固定 SenseVoice；任何 Final 后端组合都不改变两者。</li>
   <li>提供 FireRed 与 Qwen 两个可选 GPU Final 后端：FireRed 使用 FireRedASR2-AED + FireRedPunc，Qwen 使用 Qwen3-ASR。</li>
   <li><code>final.backend</code> 默认 <code>cpu</code>；安装 GPU 模块不自动切换，用户通过 <code>--backend</code> 或 <code>voime ctl backend</code> 显式选择。</li>
-  <li>Qwen 在 AMD Linux 只走 Vulkan；不安装、不构建 ROCm / HIP runtime。</li>
-  <li>Linux 核心安装通过 sudo 把 Fcitx5 addon 写入 <code>/usr</code> 系统目录；Windows 使用同一套核心 / GPU 安装入口。</li>
+  <li>GPU 后端使用预编译 runtime；具体平台矩阵与依赖见各 GPU 组件文档。</li>
+  <li>核心安装的组件树在 Linux 与 Windows 共用；平台安装入口与权限步骤由各组件文档定义。</li>
   <li><code>voimed</code> 持有音频、会话、Final 触发与后端选择；<code>voime-core</code> 持有 VAD / SenseVoice / CPU Final；GPU worker 持有各自的 Final 模型与 runtime。</li>
   <li>核心安装的模型与 GPU 模块的模型分开管理；一个模型一个目录，运行期只读。</li>
   <li>GPU 崩溃、驱动缺失、显存不足或模型缺失时，Preview 与 CPU Final 仍然可用。</li>
@@ -60,9 +60,9 @@
 <ul>
   <li>不做 GPU VAD、GPU Preview、GPU Partial 或流式 GPU 识别；GPU 模块只接收完整语音段。</li>
   <li>不做 CPU FireRedASR2-AED / CPU Qwen3-ASR；GPU 失败不加载任何 CPU 大模型。</li>
-  <li>不为 Qwen 提供 ROCm / HIP runtime；AMD Linux 的 Qwen 只支持 Vulkan。</li>
+  <li>不要求用户自行构建 GPU runtime；runtime 由安装脚本按组件预编译包部署。</li>
   <li>不做运行中 Final 后端热切换；切换配置后需重启 daemon。</li>
-  <li>不兼容旧 CTC、旧 CPU 标点与旧模型包布局。</li>
+  <li>只支持当前 schema 5 模型包；CTC 与独立 CPU 标点模型不在产品路径内。</li>
   <li>不做拼音、形码、候选词或通用键盘输入法；Voime 只负责语音文本的提交。</li>
   <li>不实现跨平台统一 UI 抽象；各平台前端保留自己的热键、目标、预览与提交实现。</li>
   <li>不保证锁屏、安全桌面、提权窗口、游戏或未使用受支持输入协议的应用。</li>
@@ -73,75 +73,75 @@
 <p><a href="#top">↑</a></p>
 
 <table>
-  <tr><th>场景</th><th>行为</th><th>详细契约</th></tr>
+  <tr><th>场景</th><th>用户可见结果</th><th>详细契约</th></tr>
   <tr>
     <td>安装核心</td>
-    <td>Linux 运行 <code>scripts/install-core.sh</code>，Windows 运行 <code>scripts/install-core.ps1</code>；安装 daemon、CLI、平台前端、FireRedVAD、SenseVoice 与 CPU 运行时。模型写入平台数据目录（Linux <code>$XDG_DATA_HOME/voime/models</code>，Windows <code>%LOCALAPPDATA%\voime\models</code>），与项目根目录无关。Linux 通过 sudo 把 Fcitx addon 写入系统目录；<code>--no-addon</code> 可跳过 addon 安装。</td>
-    <td><a href="crates/voimed/USER.html#u4-1">voimed USER §4.1</a> · <a href="frontends/fcitx/README.html#r2">fcitx README §2</a></td>
+    <td>Linux 运行 <code>scripts/install-core.sh</code>，Windows 运行 <code>scripts/install-core.ps1</code>；安装后可直接使用语音输入。平台安装步骤与选项见组件文档。</td>
+    <td><a href="frontends/fcitx/README.html#r2">fcitx README §2</a> · <a href="frontends/windows/README.html#r2">windows README §2</a> · <a href="crates/voimed/README.html#r2">voimed README §2</a></td>
   </tr>
   <tr>
     <td>安装 GPU 模块</td>
-    <td>运行 <code>scripts/install-gpu.sh</code> 或 <code>scripts/install-gpu.ps1</code>；无参数安装 FireRed 与 Qwen 两个后端，也可用 <code>--firered</code> / <code>--qwen3</code> 只装一个。安装 GPU 不改变 <code>final.backend</code>。</td>
-    <td><a href="USER.html#u4-4">根 USER §4.4</a></td>
+    <td>运行 <code>scripts/install-gpu.sh</code> 或 <code>scripts/install-gpu.ps1</code>；安装后仍默认使用 CPU Final。后端与 runtime 选项见各 GPU 组件文档。</td>
+    <td><a href="crates/voime-gpu-firered/README.html#r2">firered README §2</a> · <a href="crates/voime-gpu-qwen3/README.html#r2">qwen3 README §2</a></td>
   </tr>
   <tr>
     <td>选择 Final 后端</td>
-    <td>默认 <code>cpu</code>；用 <code>voime ctl backend cpu|firered|qwen3</code> 写配置，或安装时用 <code>--backend</code> 指定；重启 daemon 生效，不提供运行中热切换。</td>
+    <td>默认 <code>cpu</code>；用 <code>voime ctl backend cpu|firered|qwen3</code> 或安装时 <code>--backend</code> 选择，重启 daemon 后生效。</td>
     <td><a href="crates/voime/USER.html#u4-1">voime USER §4.1</a> · <a href="crates/voimed/USER.html#u4-4">voimed USER §4.4</a></td>
   </tr>
   <tr>
     <td>配置</td>
-    <td>Linux 在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 中设置 <code>Mode</code> 与 <code>Hotkey</code>；Windows 在托盘右键菜单或设置窗口中配置，热键通过按键录制。Final 后端不是前端配置项。</td>
+    <td>通过平台前端的配置入口修改 Mode / Hotkey 与平台选项。</td>
     <td><a href="frontends/fcitx/USER.html#u4-1">fcitx-addon USER §4.1</a> · <a href="frontends/windows/USER.html#u4-1">windows USER §4.1</a></td>
   </tr>
   <tr>
     <td>PTT 模式</td>
-    <td><code>Mode=ptt</code>：按住 <code>Hotkey</code> 开启会话；会话内 VAD 软切分多个段；松开硬切分，结束当前段并停止监听。</td>
+    <td>按住 <code>Hotkey</code> 说话，松开结束本次输入；按住期间可以连续说话。</td>
     <td><a href="frontends/fcitx/USER.html#u3-1">fcitx-addon USER §3.1</a> · <a href="frontends/windows/USER.html#u3-1">windows USER §3.1</a></td>
   </tr>
   <tr>
     <td>Toggle 模式</td>
-    <td><code>Mode=toggle</code>：按一下 <code>Hotkey</code> 开启会话，再按一下硬切分结束；会话内 VAD 连续软切分多个段；每个 Final 后清空文本但保留空白临时窗口；目标失焦或断线时自动结束。</td>
+    <td>按一下 <code>Hotkey</code> 开始，再按一下结束；期间可以连续说话，结束后保留空白临时窗口。</td>
     <td><a href="frontends/fcitx/USER.html#u3-1">fcitx-addon USER §3.1</a> · <a href="frontends/windows/USER.html#u3-1">windows USER §3.1</a></td>
   </tr>
   <tr>
     <td>Continuous 模式</td>
-    <td><code>Mode=continuous</code>：忽略热键，VAD 检测到语音起点即开始、终点即结束；无需按键。</td>
+    <td>不使用热键，直接说话；每次停顿后自动结束当前输入。</td>
     <td><a href="frontends/fcitx/USER.html#u3-2">fcitx-addon USER §3.2</a> · <a href="frontends/windows/USER.html#u3-2">windows USER §3.2</a></td>
   </tr>
   <tr>
     <td>临时文本窗口</td>
-    <td>说话期间显示当前段的 <code>Partial</code>；Final 触发后不再更新并保留最后一条 Partial，直到 Final 或丢弃结果到达。Toggle 会话在结果后保持空白窗口，直到再次按热键关闭、目标失焦或断线；PTT 每段 Final 后清空，按住期间继续监听下一段；Continuous 在 Final 后清空。</td>
+    <td>说话期间显示临时结果；最终结果到达后清空，Toggle 模式保留空白窗口。</td>
     <td><a href="frontends/fcitx/USER.html#u3-3">fcitx-addon USER §3.3</a> · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td>
   </tr>
   <tr>
     <td>最终结果</td>
-    <td>语音段结束后由所选 Final 后端识别：<code>cpu</code> 为 SenseVoice，<code>firered</code> 为 AED + FireRedPunc，<code>qwen3</code> 为 Qwen3-ASR；GPU 失败回退 CPU。文本提交到语音段或 PTT / Toggle 会话开始时聚焦的输入位置；失焦则不提交。</td>
+    <td>最终文本提交到开始说话时聚焦的输入位置；目标失焦则不提交。</td>
     <td><a href="USER.html#u4-4">根 USER §4.4</a> · <a href="frontends/fcitx/USER.html#u4-2">fcitx-addon USER §4.2</a> · <a href="frontends/windows/USER.html#u4-2">windows USER §4.2</a></td>
   </tr>
   <tr>
     <td>普通输入</td>
-    <td>除热键外的按键全部由宿主或系统正常处理；Voime 不抓取、不转发普通按键。</td>
+    <td>除热键外的按键全部由宿主或系统正常处理。</td>
     <td><a href="frontends/fcitx/USER.html#u2">fcitx-addon USER §2</a> · <a href="frontends/windows/USER.html#u2">windows USER §2</a></td>
   </tr>
   <tr>
     <td>TUI</td>
-    <td><code>voime</code> 可选连接 daemon，显示模式、热键、临时结果与历史；<code>q</code> 只 detach。</td>
+    <td><code>voime</code> 可选连接 daemon，显示模式、热键、临时结果与历史。</td>
     <td><a href="crates/voime/USER.html">voime USER</a></td>
   </tr>
   <tr>
     <td>诊断</td>
-    <td><code>voime doctor</code> 显示所选 Final 后端、各 GPU worker 的 ready / running 状态、模型与 Fcitx 系统 addon 路径；只读。</td>
+    <td><code>voime doctor</code> 输出平台、模型与 Final 后端诊断；只读。</td>
     <td><a href="crates/voime/USER.html#u4-4">voime USER §4.4</a></td>
   </tr>
   <tr>
     <td>停止 daemon</td>
-    <td>Linux 使用 <code>voime ctl quit</code> 或停止 systemd 用户服务；Windows 托盘托管 daemon，托盘菜单 / 设置窗口的“停止服务并退出”会停止服务并退出托盘。</td>
+    <td>通过平台前端或控制入口停止 daemon；停止后语音输入不可用。</td>
     <td><a href="crates/voimed/USER.html#u4-1">voimed USER §4.1</a> · <a href="crates/voime/USER.html#u4-2">voime USER §4.2</a></td>
   </tr>
   <tr>
     <td>运行环境缺失</td>
-    <td>核心模型缺失时 daemon 启动失败；GPU 模型 / runtime 缺失时只标记对应后端不可用，Final 回退 CPU。原因写入日志 / <code>doctor</code>。</td>
+    <td>核心模型缺失时 daemon 启动失败；GPU 模型 / runtime 缺失时当前输入仍可使用 CPU Final。</td>
     <td><a href="USER.html#u4-4">根 USER §4.4</a> · <a href="crates/voime/USER.html#u4-4">voime USER §4.4</a></td>
   </tr>
 </table>
@@ -184,7 +184,7 @@
   <li>父文档只定义产品级边界与组件关系；组件内部类型、签名和调用栈只出现在组件 <code>CORE</code>。</li>
   <li>三个 GPU crate 各自独立构建、独立进程、独立 runtime；<code>voime-gpu-common</code> 只提供共享协议。</li>
   <li>Windows 与 Linux 使用同一套核心 / GPU 组件树；平台差异只体现在安装脚本与前端。</li>
-  <li>模型不放在仓库内；默认安装到 <code>$XDG_DATA_HOME/voime/models</code>（未设置时 <code>~/.local/share/voime/models</code>），Windows 使用 <code>%LOCALAPPDATA%\voime\models</code>。</li>
+  <li>模型不放在仓库内；安装到平台数据目录。默认根目录与平台回退见 <a href="crates/voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</li>
   <li>源码结构见 <a href="CORE.html#c1">根 CORE §1</a>。</li>
 </ul>
 
@@ -195,12 +195,13 @@
   <tr><td>消息类型、JSON 编码、framing、协议版本、错误码</td><td><a href="crates/voime-ipc/USER.html">voime-ipc USER</a></td><td>只链接，不复制定义</td></tr>
   <tr><td>daemon 会话、<code>segment_id</code> 分配、广播、背压、历史</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>只链接，不复制状态机</td></tr>
   <tr><td>音频、VAD、Preview、CPU Final、pipeline 的公开 API</td><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>只链接，不复制类型与语义</td></tr>
+  <tr><td>模型清单通用 schema、字段与合法 <code>kind</code></td><td><a href="CORE.html#c4-8">根 CORE §4.8</a></td><td>组件只列固定值，不复制字段语义</td></tr>
   <tr><td>GPU worker 帧协议、请求 / 响应、错误码与生命周期辅助</td><td><a href="crates/voime-gpu-common/USER.html">voime-gpu-common USER</a></td><td>只链接，不复制帧格式</td></tr>
   <tr><td>FireRedASR2-AED / FireRedPunc 的模型与 ORT GPU 契约</td><td><a href="crates/voime-gpu-firered/PROVIDER.html">voime-gpu-firered PROVIDER</a></td><td>只链接，不复制张量契约</td></tr>
   <tr><td>Qwen3-ASR BF16 GGUF / mmproj 与 llama.cpp 契约</td><td><a href="crates/voime-gpu-qwen3/PROVIDER.html">voime-gpu-qwen3 PROVIDER</a></td><td>只链接，不复制模型契约</td></tr>
   <tr><td>OS 本机传输契约（Unix socket / named pipe）</td><td><a href="crates/voime-transport/USER.html">voime-transport USER</a></td><td>只链接，不复制端点与安全细节</td></tr>
-  <tr><td>Linux 热键、目标、临时窗口、提交</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td><td>Windows 前端只引用行为契约</td></tr>
-  <tr><td>Windows 热键、目标、浮层、注入、TSF</td><td><a href="frontends/windows/USER.html">windows USER</a></td><td>Linux 前端不复制 Windows API</td></tr>
+  <tr><td>Linux 热键、目标、临时窗口、配置、提交</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td><td>Windows 前端只引用行为契约</td></tr>
+  <tr><td>Windows 热键、目标、浮层、设置、注入、TSF</td><td><a href="frontends/windows/USER.html">windows USER</a></td><td>Linux 前端不复制 Windows API</td></tr>
   <tr><td>TUI、ctl、doctor 的用户界面与命令</td><td><a href="crates/voime/USER.html">voime USER</a></td><td>根 README 只列入口</td></tr>
   <tr><td>外部 provider 契约</td><td>各组件 <code>PROVIDER</code></td><td>被依赖方只链接到对应 provider</td></tr>
 </table>
@@ -309,7 +310,7 @@
 <ul class="note">
   <li>文档树自根向下：根 README → 根 USER / CORE / PROVIDER → 组件 README → 组件同名文档；跨组件引用只指向内容所有者。</li>
   <li><code>PROVIDER</code> 仅在下边界真实存在时创建；<code>voime-ipc</code>、<code>voime-log</code>、<code>voime-gpu-common</code> 与 <code>voimed</code> 没有直接外部 provider，故省略。</li>
-  <li>模型契约按组件拆分：核心两个模型归 <code>voime-core PROVIDER</code>，FireRed 两个模型归 <code>voime-gpu-firered PROVIDER</code>，Qwen 模型归 <code>voime-gpu-qwen3 PROVIDER</code>。</li>
+  <li>模型清单的通用 schema 与合法 <code>kind</code> 归 <a href="CORE.html#c4-8">根 CORE §4.8</a>；具体模型文件、张量与运行时契约按组件拆分：核心两个模型归 <code>voime-core PROVIDER</code>，FireRed 两个模型归 <code>voime-gpu-firered PROVIDER</code>，Qwen 模型归 <code>voime-gpu-qwen3 PROVIDER</code>。</li>
 </ul>
 
 <h2 id="r4">4. Credits</h2>

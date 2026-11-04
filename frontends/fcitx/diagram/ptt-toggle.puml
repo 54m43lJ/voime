@@ -5,45 +5,30 @@ hide footbox
 
 actor "用户" as User
 participant "Fcitx5" as Fcitx
-participant "Voime addon" as Addon
-participant "voimed" as Daemon
+participant "Voime" as Voime
 participant "目标应用" as App
 
 User -> Fcitx : 按下 Hotkey（ptt / toggle）
-Fcitx -> Addon : InputContextKeyEvent
-Addon -> Addon : 绑定目标
-Addon -> Fcitx : filterAndAccept()
-Addon -> Daemon : Start / Toggle（开启会话）
+Fcitx -> Voime : 热键事件
+Voime -> Voime : 内部处理\n(绑定目标 / 开启会话)
+Voime -> Fcitx : 接受热键
 
 loop 会话保持（PTT 按住 / Toggle 已开启）
-  loop 当前段
-    Daemon -> Addon : Partial
-    Addon -> Fcitx : setPreedit(Partial)
-    Fcitx -> User : 临时窗口
-  end
-
-  note over Addon, Daemon
-    VAD 终点 = 软切分：当前段 Finalizing；
-    会话保持，开始下一段监听。
-  end note
-
-  Daemon -> Addon : Final { 当前段 }
-  Addon -> Fcitx : 清空 preedit
-  Addon -> Fcitx : commitString(Final)
+  Voime -> Fcitx : 显示 Partial
+  Fcitx -> User : 临时窗口
+  Voime -> Voime : 内部处理\n(VAD 软切分 / Final)
+  Voime -> Fcitx : 清空临时窗口
+  Voime -> Fcitx : 提交 Final
   Fcitx -> App : 插入文本
-  Daemon -> Addon : SegmentStarted { 下一段 }
 end
 
 User -> Fcitx : 松开 PTT / 再按 Toggle
-Fcitx -> Addon : 硬切分事件
-Addon -> Daemon : Stop
+Fcitx -> Voime : 硬切分事件
+Voime -> Voime : 内部处理\n(结束当前段)
+Voime -> Fcitx : 清空临时窗口
+Voime -> Fcitx : 提交 Final
 
-alt 当前段在录 / Finalizing
-  Daemon -> Addon : Final { 当前段 }
-  Addon -> Fcitx : 清空 preedit
-  Addon -> Fcitx : commitString(Final)
-  Fcitx -> App : 插入文本
-else 无当前段且无 Final 在途
-  Addon -> Fcitx : 清空 preedit
-end
+note over Voime
+  没有当前段且没有 Final 在途时，只清空临时窗口。
+end note
 @enduml

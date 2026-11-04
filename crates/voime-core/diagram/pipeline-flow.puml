@@ -2,63 +2,35 @@
 skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
 
-|voimed|
+|调用方（voimed）|
 start
-:发送 StartSegment / FinishSegment / CancelPreview / 音频块;
+:发送命令 / 音频块;
 
-|pipeline worker|
+|Voime 核心|
 repeat
-  :select 命令优先，50 ms 超时;
+  :内部处理;
   if (Shutdown?) then (是)
     stop
   endif
   if (StartSegment?) then (是)
-    :清空旧音频;
-    :collecting = true;
-    :preview_gate = true;
+    :开始采集;
   endif
   if (FinishSegment?) then (是)
-    :硬切分;
-    :排空音频;
-    :collecting = false;
-    :preview_gate = false;
-    :取消未开始的 Preview;
-    :force_end 当前段;
+    :结束当前段;
     :发送 SegmentReady;
   endif
   if (CancelPreview?) then (是)
-    :preview_gate = false;
-    :丢弃未开始的 Preview;
+    :停止 Preview;
   endif
   if (音频块?) then (是)
-    :重采样;
-    :VAD 批处理;
-    if (VAD SpeechEnd?) then (是)
-      :发送 SegmentReady;
-      if (PTT / Toggle?) then (是)
-        :软切分：保持 collecting;
-        :重置分段器，开始下一段;
-      else (Continuous)
-        :完成段入队;
-      endif
-    else (否)
-      :preview_gate 开启时节流发送 Partial;
-    endif
+    :VAD / Preview / 分段;
   endif
-  :drain_queue;
+  if (VAD SpeechEnd?) then (是)
+    :发送 SegmentReady;
+  endif
 repeat while (继续)
-stop
 
-|voimed|
-:收到 SegmentReady;
-if (final.backend = cpu?) then (是)
-  :Final::transcribe 一次;
-else (否)
-  :发送 PCM 给 FireRed / Qwen worker;
-  if (GPU 失败?) then (是)
-    :回退 Final::transcribe 一次;
-  endif
-endif
-:发送 Final / SegmentDropped;
+|调用方（voimed）|
+:接收 Partial / SegmentReady;
 stop
 @enduml

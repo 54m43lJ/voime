@@ -349,11 +349,11 @@ pub enum ErrorCode {
 <table>
   <tr><th>变化</th><th>版本策略</th></tr>
   <tr><td>当前版本</td><td><code>GPU_PROTOCOL_VERSION = 1</code>；Hello 与 Ready 都携带。</td></tr>
-  <tr><td>新增可选字段</td><td>不提升版本；旧实现忽略未知字段。</td></tr>
+  <tr><td>新增可选字段</td><td>不提升版本；客户端忽略未知字段。</td></tr>
   <tr><td>修改字段类型 / 含义、删除字段、新增消息或错误码</td><td>必须提升 <code>GPU_PROTOCOL_VERSION</code>；worker 在 Hello 阶段返回 <code>protocol_mismatch</code>，daemon 在 Ready 阶段检测到不一致则终止 worker。</td></tr>
   <tr><td>新增 GPU 后端</td><td>新增 <code>GpuBackend</code> 线值并提升协议版本；不影响前端 IPC。</td></tr>
   <tr><td>与前端 IPC 的关系</td><td>完全独立；本协议变化不提升 <code>voime-ipc</code> 的 <code>PROTOCOL_VERSION</code>，也不改变前端消息形状。</td></tr>
-  <tr><td>兼容窗口</td><td>不提供多版本协商；daemon 与 worker 必须使用同一协议版本，随同一 GPU 模块安装。</td></tr>
+  <tr><td>多版本协商</td><td>不提供多版本协商；daemon 与 worker 必须使用同一协议版本，随同一 GPU 模块安装。</td></tr>
 </table>
 <ul class="note">
   <li>版本检查是双向的：daemon 检查 Ready，worker 检查 Hello；任一不一致都拒绝继续。</li>

@@ -26,10 +26,6 @@
 <a href="USER.html">USER</a> / <a href="CORE.html">CORE</a> / <a href="PROVIDER.html">PROVIDER</a>。
 </p>
 
-<p>
-<strong>状态：</strong>已落地。Unix 与 Windows 后端均按 <a href="USER.html">USER</a> 的契约实现；平台细节见 <a href="PROVIDER.html">PROVIDER</a>。
-</p>
-
 <h2 id="r1">1. WHAT &amp; WHY</h2>
 <p><a href="#top">↑</a></p>
 
@@ -56,7 +52,7 @@ daemon 与客户端需要本机传输：Linux 使用 Unix domain socket，Window
   <li>不定义 IPC 消息、JSON framing 或协议版本；这些属于 <a href="../voime-ipc/USER.html">voime-ipc</a>。</li>
   <li>不实现 daemon 会话、广播、背压或角色管理；这些属于 <a href="../voimed/USER.html">voimed</a>。</li>
   <li>不追求“一套实现跑所有平台”；Unix 与 Windows 实现互不复用。</li>
-  <li>不使用 loopback TCP 作为默认传输。</li>
+  <li>只使用本机 Unix domain socket / named pipe；不监听 TCP 端口。</li>
   <li>不把 <code>Endpoint</code> 放进 <code>voime-core::Config</code>；端点不属于引擎。</li>
   <li>不负责热键、目标输入位置或提交。</li>
   <li>不负责用户文案、日志策略或重连节奏。</li>

@@ -20,11 +20,6 @@
 <a href="PROVIDER.html">PROVIDER</a>
 </p>
 
-<p>
-<strong>状态：</strong>已实现；TSF 为可选子工程。以下文件与签名与当前源码一致；
-行为契约以 <a href="USER.html">USER</a> 为准。
-</p>
-
 <h2 id="c1">1. File tree</h2>
 <p><a href="#top">↑</a></p>
 
@@ -49,7 +44,7 @@
   <li>文件划分与当前 Rust 源码一致；前端不依赖 <code>voime-core</code>。</li>
   <li><code>../../scripts/install-core.ps1</code> 与 <code>../../scripts/install-gpu.ps1</code> 是仓库级安装入口，不属于本 crate 的源文件；托盘 / daemon 随核心安装，GPU 模块由 GPU 安装脚本独立安装。</li>
   <li>GPU worker 由 <code>voimed</code> 启动时按配置拉起；本 crate 不管理 worker，也不链接 GPU runtime。</li>
-  <li>TSF 为可选子工程；源码树未包含 <code>tsf/</code> 目录，不启用 TSF 时无需构建。</li>
+  <li>TSF 为可选子工程；不启用 TSF 时无需构建。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -97,11 +92,36 @@
 <h3 id="c4-1">4.1 main.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>fn main() -&gt; windows::core::Result&lt;()&gt;;
 fn run(frontend: Frontend) -&gt; windows::core::Result&lt;()&gt;;
-fn ensure_single_instance() -&gt; bool;</code></pre>
+fn ensure_single_instance() -&gt; bool;
+
+pub struct Frontend { /* config + ipc + tray + overlay + target */ }
+pub struct FrontendStatus { /* connected + phase + last error */ }
+
+impl Frontend {
+    pub fn new(config: Config) -&gt; Self;
+    pub fn attach_window(&amp;mut self, hwnd: HWND);
+    pub fn start_daemon(&amp;mut self);
+    pub fn try_connect(&amp;mut self);
+    pub fn sync_hotkey(&amp;mut self);
+    pub fn tick(&amp;mut self);
+    pub fn on_hotkey(&amp;mut self);
+    pub fn on_message(&amp;mut self, message: ServerMessage);
+    pub fn on_focus_change(&amp;mut self);
+    pub fn poll_daemon(&amp;mut self);
+    pub fn poll_settings(&amp;mut self);
+    pub fn apply_settings(&amp;mut self, config: Config);
+    pub fn open_settings(&amp;mut self, focus_hotkey: bool);
+    pub fn on_disconnect(&amp;mut self);
+    pub fn on_target_lost(&amp;mut self);
+    pub fn shutdown(&amp;mut self);
+    fn start_segment(&amp;mut self, source: TriggerSource);
+    fn stop_segment(&amp;mut self, source: TriggerSource);
+}</code></pre>
 <ul class="note">
   <li>二进制使用 <code>windows_subsystem = "windows"</code>（测试构建除外），启动不显示控制台；启动时设置 per-monitor v2 DPI awareness。</li>
   <li><code>--settings</code> 参数在单实例检查前分流到独立设置进程；托盘进程不再创建 eframe 事件循环。</li>
   <li><code>RegisterHotKey</code> 需要窗口句柄：先创建托盘窗口，连接 daemon 成功后才 <code>sync_hotkey</code> 注册热键。</li>
+  <li><code>tick</code> 轮询设置子进程、daemon 子进程、IPC 事件、PTT key-up 与目标焦点；<code>on_message</code> 分发 <code>ServerMessage</code>。</li>
 </ul>
 
 <h3 id="c4-2">4.2 config.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -135,6 +155,10 @@ impl IpcClient {
 <pre><code>pub struct Hotkey { /* modifiers + virtual key */ }
 pub struct HotkeyHandle { /* registered id */ }
 
+impl Hotkey {
+    pub fn is_down(&amp;self) -&gt; bool;
+}
+
 pub fn parse(spec: &amp;str) -&gt; anyhow::Result&lt;Hotkey&gt;;
 pub fn key_name(key: u32) -&gt; String;
 pub fn modifier_names(modifiers: u32) -&gt; String;
@@ -146,6 +170,7 @@ pub fn register(hotkey: &amp;Hotkey, frontend: &amp;mut Frontend)
 pub fn unregister(handle: HotkeyHandle);</code></pre>
 <ul class="note">
   <li>热键录制由设置窗口的 egui / winit 键盘事件完成，不安装低级键盘钩子；<code>modifier_state</code> / <code>win_down</code> 只用于读取实时修饰键。</li>
+  <li><code>Hotkey::is_down</code> 用 <code>GetAsyncKeyState</code> 轮询热键组合是否仍按下，供 PTT 的 key-up 检测使用。</li>
   <li><code>check_available</code> 用消息窗口试注册热键，避免把被占用的组合写入配置。</li>
   <li>按键名解析与显示共用单一 <code>NAMED_KEYS</code> 常量表（键码、显示名、解析别名），全表往返一致性由单元测试保证。</li>
 </ul>
@@ -181,13 +206,26 @@ fn to_utf16(text: &amp;str) -&gt; Vec&lt;u16&gt;;
 fn send_unicode(chunk: &amp;[u16]) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
 
 <h3 id="c4-8">4.8 tray.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub struct Tray { /* icon + menu */ }
+<pre><code>pub struct Tray { /* icon + menu + message window */ }
+pub enum TrayCommand {
+    ShowSettings,
+    StartDaemon,
+    StopDaemon,
+    Diagnose,
+    Quit,
+}
 
 impl Tray {
     pub fn create(frontend: &amp;mut Frontend) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn hwnd(&amp;self) -&gt; HWND;
+    pub fn send_command(&amp;self, command: TrayCommand) -&gt; anyhow::Result&lt;()&gt;;
     pub fn update_status(&amp;mut self, status: FrontendStatus);
     pub fn poll_events(&amp;mut self, frontend: &amp;mut Frontend);
 }</code></pre>
+<ul class="note">
+  <li><code>hwnd</code> 是托盘消息窗口句柄，用于 <code>RegisterHotKey</code> 与接收 <code>WM_APP</code> 命令。</li>
+  <li><code>send_command</code> 投递 <code>WM_APP</code> 命令消息；托盘未运行时返回错误，调用方只在窗口内提示。</li>
+</ul>
 
 <h3 id="c4-9">4.9 control.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Daemon { /* child + job handle + stopped */ }
@@ -314,7 +352,15 @@ frontend::on_message(Final)
 ├── 判断 target::focused(&amp;target) → 否则 on_target_lost()
 ├── 判断 Toggle 会话 active → Overlay::show_empty(&amp;target)
 ├── 其他模式 → Overlay::hide()
-└── commit::commit(&amp;target, &amp;text)</code></pre>
+└── commit::commit(&amp;target, &amp;text)
+
+frontend::on_message(Error)
+├── 判断 segment_dropped &amp;&amp; message.segment_id == target.segment_id
+│   ├── 判断 Toggle 会话 active → Overlay::show_empty(&amp;target)
+│   ├── 其他模式 → Overlay::hide()
+│   └── 清理当前段 / target
+├── 判断 role_conflict / version_mismatch / invalid_message → on_disconnect()
+└── 判断 其他 code → 记录日志</code></pre>
 <ul class="note">
   <li>PTT 的 key-up 不依赖低级键盘钩子，由主循环用 <code>GetAsyncKeyState</code> 轮询；松开是硬切分，即使当前处于 Finalizing 也发送 Stop 关闭会话。</li>
   <li>会话内 VAD 软切分续段不重新发送 Start；<code>SegmentStarted</code> 更新段 ID，目标沿用会话目标。进入 finalizing 后忽略新的热键启动，避免与 daemon 的 <code>Busy</code> 竞争。</li>

@@ -1,41 +1,51 @@
 @startuml
 skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
-hide footbox
+skinparam activity {
+  BackgroundColor #F8F8F8
+  BorderColor #333333
+}
 
-participant "Voime" as Voime
-participant "核心模型目录" as CoreModels
-participant "ONNX Runtime CPU" as OrtCpu
-participant "FireRed 模型目录" as FireredModels
-participant "ONNX Runtime GPU" as OrtGpu
-participant "Qwen 模型目录" as QwenModels
-participant "llama.cpp / GGML" as Llama
+|Voime|
+start
+:读取 final.backend;
+:加载并校验核心模型;
+if (backend = firered?) then (是)
+  :加载 FireRed worker、ORT runtime 与模型;
+elseif (backend = qwen3?) then (是)
+  :加载 Qwen worker、llama.cpp runtime 与 GGUF / mmproj;
+else (cpu)
+  :仅使用核心模型;
+endif
+:启动 VAD / Preview;
 
-Voime -> CoreModels : 读取 manifest + SHA-256
-Voime -> OrtCpu : 创建 VAD / SenseVoice CPU 会话
-OrtCpu -> Voime : Session
+repeat
+  :等待完整语音段;
+  if (backend = cpu?) then (是)
+    |CPU ORT|
+    :SenseVoice Final;
+    |Voime|
+  elseif (backend = firered?) then (是)
+    |FireRed ORT GPU|
+    :Transcribe;
+    |Voime|
+  else (qwen3)
+    |Qwen llama.cpp|
+    :Transcribe;
+    |Voime|
+  endif
 
-loop 每个语音段
-  Voime -> OrtCpu : VAD / Preview 推理
-  OrtCpu -> Voime : 概率 / Partial
-  alt final.backend = cpu
-    Voime -> OrtCpu : SenseVoice Final
-    OrtCpu -> Voime : text
-  else final.backend = firered
-    Voime -> FireredModels : 读取 manifest + SHA-256
-    Voime -> OrtGpu : 创建 AED / Punc 会话
-    Voime -> OrtGpu : Transcribe
-    OrtGpu -> Voime : text
-  else final.backend = qwen3
-    Voime -> QwenModels : 读取 manifest + SHA-256
-    Voime -> Llama : 加载 GGUF + mmproj
-    Voime -> Llama : Transcribe
-    Llama -> Voime : text
-  end
-end
+  if (GPU Final 失败?) then (是)
+    |CPU ORT|
+    :SenseVoice Final 回退;
+    |Voime|
+  endif
 
-note over Voime, Llama
-  GPU runtime / 模型不可用时只使对应后端不可用；
-  daemon 当前段回退 CPU SenseVoice，Preview 不中断。
-end note
+  if (Final 成功?) then (是)
+    :广播 Final;
+  else (否)
+    :广播 Error{segment_dropped};
+  endif
+repeat while (继续监听?)
+stop
 @enduml

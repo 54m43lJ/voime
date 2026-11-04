@@ -33,20 +33,18 @@
   <tr><td>daemon</td><td><code>voimed</code> 进程；拥有音频、pipeline、会话状态、Final 后端选择、worker 生命周期与 IPC。</td></tr>
   <tr><td>会话（session）</td><td>从 Start / Toggle 开启到 Stop / Toggle 关闭、目标失效或断线为止的一段用户交互；PTT / Toggle 会话可以包含多个语音段。Continuous 不使用会话，每段独立。</td></tr>
   <tr><td>软切分</td><td>PTT / Toggle 会话内 VAD 终点：当前段进入 Finalizing，pipeline 继续采集下一段；会话保持。</td></tr>
-  <tr><td>硬切分</td><td>PTT 松开或 Toggle 再按：清除 <code>session_active</code>，结束当前段；之后不再产生下一段。</td></tr>
+  <tr><td>硬切分</td><td>PTT 松开或 Toggle 再按：结束会话与当前段；之后不再产生下一段。</td></tr>
   <tr><td>语音段（segment）</td><td>产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>；daemon 为每段分配 <code>segment_id</code>。</td></tr>
   <tr><td>当前段</td><td><code>current_segment</code>；同一时刻最多一个，Final / SegmentDropped 后清空。</td></tr>
   <tr><td>阶段（Phase）</td><td><code>idle</code> / <code>recording</code> / <code>finalizing</code>；由 daemon 维护并广播。</td></tr>
   <tr><td>Final 后端</td><td><code>cpu</code> / <code>firered</code> / <code>qwen3</code>，由 <code>final.backend</code> 配置决定；默认 <code>cpu</code>。</td></tr>
   <tr><td>GPU worker</td><td>FireRed 或 Qwen 的独立 Final 推理进程；daemon 只启动配置选中的那个。</td></tr>
-  <tr><td>Finalizing 门禁</td><td>进入 Finalizing 后停止产生 Partial、取消未开始的 Preview 推理，并禁止新的 Preview，直到下一个段开始。</td></tr>
-  <tr><td>广播</td><td>向所有已连接客户端发送 <code>ServerMessage</code>；客户端队列有界。</td></tr>
+  <tr><td>Finalizing</td><td>语音段结束到 Final 或丢弃结果到达之间的状态；期间不再产生新的 Partial。</td></tr>
+  <tr><td>广播</td><td>向所有已连接客户端发送 <code>ServerMessage</code>。</td></tr>
   <tr><td>Snapshot</td><td>连接时返回的全量状态；字段见 <a href="../voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a>。</td></tr>
   <tr><td>历史（transcript）</td><td>daemon 内存中的最终结果列表；TUI 重连可恢复，daemon 退出丢失。</td></tr>
-  <tr><td>慢客户端</td><td>发送队列已满的客户端；Final / State 满时断开，Partial 满时只丢该条。</td></tr>
-  <tr><td>pending stop</td><td>PTT / Toggle 硬切分后置位；下一次 <code>Recording(true)</code> 不再分配段，直接结束。下一次 Start 清除。</td></tr>
-  <tr><td>有效模式（effective mode）</td><td>前端连接时使用其配置的 Mode；前端断开时 daemon 退回 <code>ptt</code>，避免无人控制 Continuous。</td></tr>
-  <tr><td>GPU 回退</td><td>所选 worker 不可用或识别失败时，当前段改用核心 CPU SenseVoice；下一段仍可继续尝试所选后端。</td></tr>
+  <tr><td>无前端连接</td><td>使用 <code>ptt</code>；前端连接后使用其配置的 Mode。</td></tr>
+  <tr><td>GPU 回退</td><td>所选 worker 不可用或识别失败时，当前段改用核心 CPU SenseVoice；下一段仍可继续尝试所选后端。只记录错误码与后端名，不记录文本。</td></tr>
 </table>
 
 <h2 id="u2">2. CONVENTIONS</h2>
@@ -62,15 +60,11 @@
   <tr><td>Stop 匹配</td><td><code>Stop</code> 在 PTT / Toggle 下是会话硬切分，忽略 ID；Continuous 下非零 ID 必须匹配当前段，0 表示当前段。</td></tr>
   <tr><td>PTT / Toggle 会话</td><td>VAD 在会话中连续软切分多个段；每段 Final 后会话保持，直到 PTT 松开、Toggle 再按、目标失焦或 daemon 断线。</td></tr>
   <tr><td>Continuous</td><td>仅当前端连接且 Mode=Continuous 时由 VAD 自动开始段；前端断开时 daemon 切回 <code>ptt</code> 并停止当前段。</td></tr>
-  <tr><td>模式切换时机</td><td>Idle 且无活动会话时立即应用到 pipeline；会话活动或 Finalizing 时立即结束当前段并暂存新模式，该段 Final / 丢弃后应用，不等待旧模式的下一次热键。</td></tr>
-  <tr><td>模式切换清理</td><td>应用新模式前，旧段必须已 Final / 丢弃；旧会话的临时文本、待处理音频、Preview 与录音标记全部清除，新模式从 Idle 开始，不保留旧模式的 Toggle 空白窗口。</td></tr>
-  <tr><td>Finalizing 门禁</td><td>当前段结束（VAD 软切分或会话硬切分）后立刻进入 Finalizing：停止产生该段 Partial、取消未开始的 Preview 推理、只允许一次 Final 推理；软切分不关闭会话。</td></tr>
-  <tr><td>CPU Final</td><td><code>backend=cpu</code> 时调用核心 <code>Final::transcribe</code> 一次；GPU Final 路径不再调用 SenseVoice ASR。</td></tr>
-  <tr><td>GPU Final</td><td><code>backend=firered|qwen3</code> 时只把完整 PCM 发给选中的 worker；Preview 仍由核心 SenseVoice 提供。</td></tr>
-  <tr><td>GPU 回退</td><td>worker 加载失败、超时、崩溃、显存不足或推理失败时，当前段回退 CPU SenseVoice；记录错误码与后端名，不记录文本。</td></tr>
-  <tr><td>worker 生命周期</td><td>daemon 启动时只启动选中的 GPU worker；默认 <code>cpu</code> 不启动。worker 常驻，空闲不卸载；退出时先停 worker。</td></tr>
+  <tr><td>模式切换时机</td><td>Idle 且无活动会话时立即生效；会话活动或 Finalizing 时先结束当前段，该段 Final / 丢弃后新模式生效，不等待旧模式的下一次热键。</td></tr>
+  <tr><td>模式切换清理</td><td>新模式从 Idle 开始；旧模式的音频、Partial、Preview、Toggle 会话与空白窗口不带入新模式。</td></tr>
+  <tr><td>Finalizing</td><td>当前段结束（VAD 软切分或会话硬切分）后立刻进入 Finalizing：该段不再产生新的 Partial，只处理一次 Final；软切分不关闭会话。</td></tr>
   <tr><td>后端不可用</td><td>GPU 模型 / runtime 缺失或设备能力不足时，daemon 仍以 CPU Final 启动；配置值保留，<code>doctor</code> 报原因。</td></tr>
-  <tr><td>广播优先级</td><td>Final / State 不丢弃；Partial 可丢弃；慢客户端断开不影响其他客户端。</td></tr>
+  <tr><td>广播可靠性</td><td>Final / State 不丢弃；Partial 可丢弃；一个客户端落后不影响其他客户端。</td></tr>
   <tr><td>历史</td><td>只存最终文本；<code>ClearHistory</code> 保留当前段与 partial。</td></tr>
   <tr><td>角色</td><td>只允许一个 <code>frontend</code> 连接；<code>Configure</code> 只接受前端；<code>Quit</code> 只接受 <code>control</code>。</td></tr>
   <tr><td>退出顺序</td><td>停止 worker → 广播 <code>Bye</code> → 关闭 IPC → 停止 pipeline → 停止音频 → 删除端点。</td></tr>
@@ -82,22 +76,22 @@
 <p><a href="#top">↑</a></p>
 
 <h3 id="u3-1">3.1 会话状态与 Final 调度</h3>
-<div class="diagram"><img src="diagram/session-state.svg" alt="voimed 的 Idle / Recording / Finalizing 状态、CPU / GPU Final 与回退"></div>
+<div class="diagram"><img src="diagram/session-state.svg" alt="平台前端与 voimed 的会话状态、Partial 与 Final 广播时序图"></div>
 <ul class="note">
   <li>PTT / Toggle 共用会话状态：Start / Toggle 开启，Stop / Toggle 关闭；VAD 每次终点软切分并继续下一段。</li>
   <li>Continuous 每段独立，无会话；每段仍进入 Finalizing 并单独提交。</li>
-  <li>Finalizing 期间 Preview 推理停止；CPU Final 只执行一次，GPU Final 不再调用 SenseVoice ASR。</li>
+  <li>Finalizing 期间停止 Preview；每段只产生一个 Final 或丢弃结果。</li>
   <li>默认 <code>cpu</code>；GPU 失败时当前段回退 CPU SenseVoice；切换后端需重启 daemon。</li>
   <li>空段与识别错误只结束当前段；会话仍活动时继续监听，否则回到 Idle。最终文本是否保留由前端决定。</li>
-  <li>前端断线会停止会话并把有效模式退回 <code>ptt</code>。</li>
+  <li>前端断线会停止会话并退回 <code>ptt</code>。</li>
 </ul>
 
 <h3 id="u3-2">3.2 Continuous 自动分段</h3>
-<div class="diagram"><img src="diagram/continuous-flow.svg" alt="voimed 在 Continuous 模式下广播 SegmentStarted / Partial / Final 并执行 Finalizing 门禁的时序图"></div>
+<div class="diagram"><img src="diagram/continuous-flow.svg" alt="平台前端与 Voime 在 Continuous 模式下的分段、Partial 与 Final 广播时序图"></div>
 <ul class="note">
-  <li>VAD 起点触发 <code>SegmentStarted</code>；无需客户端发送 Start。</li>
-  <li>VAD 终点进入 Finalizing：暂停 Preview，选择 CPU / GPU Final；失败回退 CPU。</li>
-  <li>完成段进入有界队列，识别慢时丢弃最旧段；音频通道也可能丢弃。</li>
+  <li>检测到语音起点后广播 <code>SegmentStarted</code>；无需客户端发送 Start。</li>
+  <li>检测到语音终点后进入 Finalizing；Final 或丢弃结果到达后继续下一段。</li>
+  <li>识别慢于语音时可能丢弃完成段；继续输入不被阻塞。</li>
 </ul>
 
 <h2 id="u4">4. INTERFACES</h2>
@@ -119,7 +113,7 @@ backend = "cpu"       # cpu | firered | qwen3</code></pre>
   <tr><td><code>--model-dir</code></td><td>模型根目录；内部仍按一模型一目录读取 <code>firered-vad</code> / <code>sensevoice-small</code>；默认见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>。GPU 模型目录在同一根目录下，由 worker 读取。</td></tr>
   <tr><td><code>--input-device</code></td><td>输入设备名，按精确字符串匹配；省略时使用默认设备。</td></tr>
   <tr><td><code>--threads</code></td><td>ONNX Runtime intra-op 线程数；必须大于 0。</td></tr>
-  <tr><td><code>--endpoint</code></td><td>本机传输端点；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名。</td></tr>
+  <tr><td><code>--endpoint</code></td><td>本机传输端点；Unix 为 socket 路径，Windows 为命名管道名；同时接受 <code>--socket</code> 别名。</td></tr>
   <tr><td><code>--verbose</code></td><td>输出启动与运行期诊断到 stderr。</td></tr>
   <tr><td><code>VOIME_LOG</code></td><td>环境变量；设为 <code>1</code> 或目录路径时写运行日志。取值与默认目录见 <a href="../voime-log/USER.html#u4-1">voime-log USER §4.1</a>；识别文本只记长度。</td></tr>
   <tr><td><code>final.backend</code></td><td><code>cpu</code>（默认）/ <code>firered</code> / <code>qwen3</code>；只由 <code>voime ctl backend</code> 或安装脚本写入；daemon 启动时读取一次，不提供命令行覆盖。</td></tr>
@@ -149,7 +143,7 @@ backend = "cpu"       # cpu | firered | qwen3</code></pre>
   <li>PTT / Toggle 的 <code>Stop</code> 是硬切分，不要求 <code>segment_id</code> 匹配；两段之间或 Finalizing 期间到达也能关闭会话。</li>
 </ul>
 
-<h3 id="u4-3">4.3 服务端广播</h3>
+<h3 id="u4-3">4.3 服务端消息</h3>
 <table>
   <tr><th>消息</th><th>触发</th><th>语义</th></tr>
   <tr><td><code>SegmentStarted</code></td><td>Start / Toggle 成功，或 PTT / Toggle / Continuous 的 VAD 续段。</td><td>携带最终 <code>segment_id</code> 与来源；前端据此绑定 / 沿用目标。</td></tr>
@@ -157,11 +151,14 @@ backend = "cpu"       # cpu | firered | qwen3</code></pre>
   <tr><td><code>Partial</code></td><td>pipeline 在 Recording 阶段产生临时结果。</td><td>可丢弃；只显示，不提交；Finalizing 后不再出现。</td></tr>
   <tr><td><code>Final</code></td><td>CPU / GPU Final 成功。</td><td>加入历史；前端清空临时文本并提交。</td></tr>
   <tr><td><code>Snapshot</code></td><td>Hello、配置变化、前端连接 / 断开。</td><td>全量状态；字段见 <a href="../voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a>；不含 Final 后端。</td></tr>
-  <tr><td><code>Error</code></td><td>协议、角色、忙碌或推理失败。</td><td>按 <code>code</code> 处理；不解析文案。</td></tr>
+  <tr><td><code>HistoryCleared</code></td><td>收到 <code>ClearHistory</code>。</td><td>历史已清空；广播给所有已连接客户端。</td></tr>
+  <tr><td><code>Status</code></td><td>收到 <code>Status</code> 请求。</td><td>只返回请求客户端，不是广播；字段见 <a href="../voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a>。</td></tr>
+  <tr><td><code>Error</code></td><td>协议、角色、忙碌、整段丢弃或其它推理失败；<code>segment_dropped</code> 携带被丢弃的 <code>segment_id</code>。</td><td>按 <code>code</code> 处理；<code>segment_dropped</code> 的清理 / 提示策略由前端决定。</td></tr>
   <tr><td><code>Bye</code></td><td>daemon 关闭。</td><td>客户端清理并等待重连。</td></tr>
 </table>
 <ul class="note">
-  <li>广播形状保持现状，不新增 backend 字段；<code>voime doctor</code> 单独展示所选后端与 worker 状态。</li>
+  <li><code>HistoryCleared</code> 是广播；<code>Status</code> 只返回请求客户端，不广播。</li>
+  <li>消息形状保持现状，不新增 backend 字段；<code>voime doctor</code> 单独展示所选后端与 worker 状态。</li>
 </ul>
 
 <h3 id="u4-4">4.4 启动与默认值</h3>
@@ -172,7 +169,7 @@ backend = "cpu"       # cpu | firered | qwen3</code></pre>
   <tr><td>核心模型目录</td><td>默认目录（Linux XDG / HOME 回退，Windows <code>%LOCALAPPDATA%\voime\models</code>）见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>；GPU 模型在同一根目录下。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
   <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>（未设置时 <code>/tmp/voime-&lt;uid&gt;/voimed.sock</code>）；Windows 默认 <code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td><td><a href="../voime-transport/USER.html#u4">voime-transport USER §4</a></td></tr>
   <tr><td>线程数</td><td>默认 2；必须大于 0。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
-  <tr><td>初始模式</td><td>无前端连接时有效模式为 <code>ptt</code>；前端 Hello 后使用其配置。</td><td>本组件 §2</td></tr>
+  <tr><td>初始模式</td><td>无前端连接时使用 <code>ptt</code>；前端 Hello 后使用其配置。</td><td>本组件 §2</td></tr>
   <tr><td>GPU 不可用</td><td>保留配置值但标记不可用；daemon 以 CPU Final 启动；<code>doctor</code> 给出修复命令。</td><td>本组件 §4.5</td></tr>
 </table>
 
@@ -181,14 +178,13 @@ backend = "cpu"       # cpu | firered | qwen3</code></pre>
   <tr><th>情况</th><th>行为</th></tr>
   <tr><td>核心模型 / 音频初始化失败</td><td>启动失败，stderr + 退出码 1；不绑定端点。</td></tr>
   <tr><td>GPU 模型 / runtime 缺失</td><td>不阻塞启动；对应后端标记不可用；Final 回退 CPU SenseVoice；<code>doctor</code> 报路径与错误码。</td></tr>
-  <tr><td>GPU 设备 / BF16 / Vulkan 不支持</td><td>不启动对应 worker；只使该后端不可用；CPU Final 继续。</td></tr>
+  <tr><td>GPU 设备 / Vulkan 不支持</td><td>不启动对应 worker；只使该后端不可用；CPU Final 继续。</td></tr>
   <tr><td>GPU 加载超时 / 握手失败</td><td>杀掉 worker；后端标记不可用；当前段回退 CPU；按退避重启。</td></tr>
-  <tr><td>GPU 推理失败 / 超时 / 崩溃</td><td>当前段回退 CPU SenseVoice；记录错误码与后端名；重启 worker，连续失败标记不可用。</td></tr>
+  <tr><td>GPU 推理失败 / 超时 / 崩溃</td><td>当前段回退 CPU SenseVoice；回退失败按“单段丢弃”广播 <code>segment_dropped</code>；记录错误码与后端名；重启 worker，连续失败标记不可用。</td></tr>
   <tr><td>GPU 配置值非法</td><td>启动失败并提示合法取值；不静默改成 <code>cpu</code>。</td></tr>
   <tr><td>端点已被活动 daemon 占用</td><td>幂等退出（退出码 0）。</td></tr>
-  <tr><td>单段推理失败</td><td>广播 <code>Error{code:"inference"}</code>，清空当前段；会话仍活动时继续监听，否则回到 Idle。</td></tr>
+  <tr><td>单段丢弃 / 推理失败</td><td>广播 <code>Error{code:"segment_dropped", segment_id}</code>；daemon 清空当前段和临时文本，会话仍活动时继续监听，否则回到 Idle。前端是否提示由前端决定。</td></tr>
   <tr><td>前端断线</td><td>前端状态置 disconnected；结束会话；Continuous 退回 PTT；广播 Snapshot。</td></tr>
-  <tr><td>慢客户端</td><td>Final / State 队列满时断开该客户端；Partial 满时丢该条。</td></tr>
   <tr><td>pipeline 致命错误</td><td>daemon 记录并以非零退出；客户端收到 <code>Bye</code>。</td></tr>
 </table>
 

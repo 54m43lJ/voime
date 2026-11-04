@@ -55,7 +55,7 @@
   <tr><td>ctl 超时</td><td>每次 ctl 动作等待响应的超时由 <code>main.rs</code> 拥有；具体值见 <a href="#c4-1">§4.1</a>。</td></tr>
   <tr><td>端点</td><td><code>Client</code> 通过 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Stream</code> 连接 daemon；<code>ctl backend</code> 不使用端点。</td></tr>
   <tr><td>无模型</td><td>不加载 ONNX / GGUF；doctor 只读模型 manifest、设备列表与 worker 日志。</td></tr>
-  <tr><td>Fcitx 系统安装</td><td>doctor 检查 <code>/usr</code> 系统 addon 路径与 ABI；不设置、不检查 <code>FCITX_ADDON_DIRS</code>，不检查旧 inputmethod 条目。</td></tr>
+  <tr><td>Fcitx 系统安装</td><td>doctor 检查 <code>/usr</code> 系统 addon 路径与 ABI；不设置、不检查 <code>FCITX_ADDON_DIRS</code>，不检查inputmethod 条目。</td></tr>
 </table>
 <ul class="note">
   <li>仓库级线程 / 进程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>
@@ -238,13 +238,24 @@ fn addon_path(relative: &amp;str) -&gt; Option&lt;PathBuf&gt;;
 fn library_path() -&gt; Option&lt;PathBuf&gt;;
 fn user_config_path() -&gt; Option&lt;PathBuf&gt;;
 fn system_addon_abi() -&gt; CheckResult;
+fn check_windows(snapshot: Option&lt;&amp;ServerMessage&gt;) -&gt; CheckResult;
+fn process_running(name: &amp;str) -&gt; bool;
+fn microphone_privacy() -&gt; Option&lt;String&gt;;
 fn worker_log_status(backend: BackendId) -&gt; WorkerStatus;
 
-pub enum WorkerStatus { Missing, Ready, Running, Unavailable }</code></pre>
+pub enum WorkerStatus { Missing, Ready, Running, Unavailable }
+
+pub enum CheckResult {
+    Pass,
+    Warn(String),
+    Fail(String),
+}</code></pre>
 <ul class="note">
+  <li><code>CheckResult</code> 是单项检查结果；<code>Warn</code> / <code>Fail</code> 携带一行原因，<code>Pass</code> 不带内容。</li>
   <li><code>check_final_backend</code> 只读 <code>FinalConfig::load</code>，并列出 CPU / FireRed / Qwen 的安装与选择状态。</li>
   <li><code>check_workers</code> 依次检查 CPU / FireRed / Qwen：worker 可执行文件、模型目录与 daemon 日志中的状态；不启动 worker。</li>
-  <li><code>check_fcitx</code> 只检查系统 addon 描述 / 库与 ABI；不检查旧 inputmethod 条目或 <code>FCITX_ADDON_DIRS</code>。</li>
+  <li><code>check_fcitx</code> 只检查系统 addon 描述 / 库与 ABI；不检查inputmethod 条目或 <code>FCITX_ADDON_DIRS</code>。</li>
+  <li><code>check_windows</code> 检查命名管道、麦克风隐私、<code>voime-tray.exe</code> 进程与 TSF 注册（若启用）；不加载模型。</li>
 </ul>
 
 <h2 id="c5">5. Call stack tree</h2>
@@ -324,7 +335,8 @@ Tui::draw(&amp;mut app)
 <h3 id="c5-5">5.5 doctor</h3>
 <pre><code>voime::main()
 └── voime::doctor::run(endpoint)
-    ├── std::fs::metadata(endpoint.as_unix_path()) → 检查 Unix 0600
+    ├── 判断 cfg(unix) → std::fs::metadata(endpoint.as_unix_path()) → 检查 Unix 0600
+    ├── 判断 cfg(windows) → 检查 endpoint 命名管道
     ├── Client::connect_as(endpoint, Role::Control)
     │   └── Client::snapshot() → daemon 在线
     ├── voime::config::FinalConfig::load()
@@ -337,12 +349,17 @@ Tui::draw(&amp;mut app)
     │   └── doctor::check_models(root) → 核心模型 manifest / SHA
     ├── voime_core::audio::capture::list_input_devices()
     ├── voime_core::audio::capture::default_input_device_name()
-    ├── doctor::fcitx_running() → 遍历 /proc
-    ├── doctor::addon_path("addon/voime.conf") → /usr/share/fcitx5/addon
-    ├── doctor::library_path() → /usr/lib/fcitx5/voime.so
-    ├── doctor::system_addon_abi() → Fcitx5 ABI / 依赖解析
-    └── doctor::user_config_path() → XDG_CONFIG_HOME / HOME</code></pre>
+    ├── 判断 cfg(unix) → doctor::check_fcitx()
+    │   ├── doctor::fcitx_running() → 遍历 /proc
+    │   ├── doctor::addon_path("addon/voime.conf") → /usr/share/fcitx5/addon
+    │   ├── doctor::library_path() → /usr/lib/fcitx5/voime.so
+    │   ├── doctor::system_addon_abi() → Fcitx5 ABI / 依赖解析
+    │   └── doctor::user_config_path() → XDG_CONFIG_HOME / HOME
+    └── 判断 cfg(windows) → doctor::check_windows(snapshot)
+        ├── doctor::process_running("voime-tray.exe")
+        └── doctor::microphone_privacy()</code></pre>
 <ul class="note">
+  <li>doctor 在 Linux 检查 fcitx5 与系统 addon；在 Windows 检查命名管道、麦克风隐私、前端进程与 TSF 注册。</li>
   <li>doctor 不再检查 <code>/usr/share/fcitx5/inputmethod/voime.conf</code>；Voime 不注册输入法条目。</li>
   <li>worker 状态只读日志与进程，不通过 IPC 扩展字段；<code>Status</code> 形状保持不变。</li>
   <li>doctor 不加载模型权重，只校验 manifest 与文件；模型缺失计为 FAIL，GPU 未选择只计为 WARN。</li>

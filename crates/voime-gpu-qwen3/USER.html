@@ -22,7 +22,7 @@
 
 <p>
 本文定义 Qwen worker 对 daemon 与 GPU 安装脚本暴露的边界：输入输出约定、启动时序、
-模型目录、runtime 选择、错误回退与安装 / 卸载入口。帧格式、请求 / 响应字段与错误码
+模型目录、runtime 构建选择、错误回退与安装 / 卸载入口。帧格式、请求 / 响应字段与错误码
 由 <a href="../voime-gpu-common/USER.html">voime-gpu-common USER</a> 拥有；本文只链接，不复制。
 </p>
 
@@ -61,7 +61,7 @@
   </tr>
   <tr>
     <td>后端不可用</td>
-    <td>Qwen worker 未安装、runtime 缺失、模型校验失败、设备 / BF16 不支持或连续失败；daemon 保留配置值，但当前段回退 CPU。</td>
+    <td>Qwen worker 未安装、runtime 缺失、模型校验失败、设备不可用或连续失败；daemon 保留配置值，但当前段回退 CPU。</td>
   </tr>
   <tr>
     <td>GPU 模块安装脚本</td>
@@ -116,7 +116,7 @@
   </tr>
   <tr>
     <td>不静默降级</td>
-    <td>BF16 或 Vulkan / CUDA 不满足时只把 Qwen 后端标记为不可用；不降级到 Q8 / FP16，也不在 worker 内跑 CPU 大模型。</td>
+    <td>Vulkan / CUDA 不满足时只把 Qwen 后端标记为不可用；不降级到 Q8 / FP16，也不在 worker 内跑 CPU 大模型。</td>
   </tr>
   <tr>
     <td>超时预算</td>
@@ -165,7 +165,7 @@
   <tr><th>文件</th><th>作用</th><th>体积 / 约束</th></tr>
   <tr>
     <td><code>manifest.json</code></td>
-    <td>模型清单：id、kind、version、license、文件 SHA-256 / 大小、runtime 精度与最长段。</td>
+    <td>模型清单：通用字段见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>；本模型固定 <code>kind=asr</code>，<code>runtime</code> 为 <code>qwen3</code> / <code>gguf</code> / <code>bf16</code>。</td>
     <td>与目录名一致；运行期只读；缺失或 schema 不符使 Qwen 后端不可用。</td>
   </tr>
   <tr>
@@ -210,10 +210,10 @@
   <li>具体来源、revision 与 SHA-256 见 <a href="PROVIDER.html#p4-1">PROVIDER §4.1</a> / <a href="PROVIDER.html#p4-2">§4.2</a>。</li>
 </ul>
 
-<h3 id="u4-2">4.2 runtime 选择</h3>
+<h3 id="u4-2">4.2 runtime 构建选择</h3>
 <p>
-Qwen runtime 在安装 / 构建时选定，不是运行期开关。安装脚本按 <code>--qwen-runtime</code>
-选择预编译的 worker 与 runtime 目录；worker 二进制只包含一个 llama.cpp backend feature。
+Qwen runtime 在编译时选定，不是运行期开关。安装脚本按 <code>--qwen-runtime</code>
+选择预编译的 worker 与 runtime 包；worker 二进制只包含一个 llama.cpp backend feature。
 </p>
 
 <table>
@@ -235,7 +235,7 @@ Qwen runtime 在安装 / 构建时选定，不是运行期开关。安装脚本�
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>AMD Linux</td><td>只接受 <code>vulkan</code>；安装脚本拒绝 <code>cuda</code>，也不暴露 <code>hip</code> / <code>rocm</code> 选项。</td></tr>
-  <tr><td>NVIDIA</td><td><code>cuda</code> 或 <code>vulkan</code>；由安装时选择与目标机器实测决定，不在运行期切换。</td></tr>
+  <tr><td>NVIDIA</td><td><code>cuda</code> 或 <code>vulkan</code>；由预编译包在编译时确定，安装脚本只透传选择，不在运行期切换。</td></tr>
   <tr><td>Windows AMD / Intel</td><td><code>vulkan</code>；不使用 DirectML 或 ROCm。</td></tr>
   <tr><td>未指定</td><td>安装脚本按平台选择受支持的 runtime；AMD Linux 仍固定 Vulkan。</td></tr>
   <tr><td>错误值</td><td>安装失败并非零退出；不构建“自动探测后回退”的路径。</td></tr>
@@ -243,8 +243,8 @@ Qwen runtime 在安装 / 构建时选定，不是运行期开关。安装脚本�
 </table>
 <ul class="note">
   <li><code>final.backend = qwen3</code> 与 <code>--qwen-runtime</code> 是两件事：前者选择 Final 后端，后者选择该 worker 的 llama.cpp 后端。</li>
-  <li>Vulkan 不可用或设备不支持 BF16 时，只使 Qwen 后端不可用；不回退 ROCm、Q8 或 FP16。</li>
-  <li>runtime 选择的平台矩阵与 BF16 自检见 <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a>。</li>
+  <li>Vulkan 不可用时，只使 Qwen 后端不可用；不回退 ROCm、Q8 或 FP16。</li>
+  <li>runtime 构建选择的平台矩阵与启动自检见 <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a>。</li>
 </ul>
 
 <h3 id="u4-3">4.3 错误与回退</h3>
@@ -264,7 +264,7 @@ Qwen runtime 在安装 / 构建时选定，不是运行期开关。安装脚本�
   </tr>
   <tr>
     <td><code>device_unavailable</code></td>
-    <td>没有可用 GPU、驱动不匹配、Vulkan loader 缺失、显存不足，或设备不支持 BF16。</td>
+    <td>没有可用 GPU、驱动不匹配、Vulkan loader 缺失或显存不足。</td>
     <td>不启动 worker；Qwen 后端不可用；当前段回退 CPU；<code>doctor</code> 报原因。</td>
   </tr>
   <tr>
@@ -292,7 +292,7 @@ Qwen runtime 在安装 / 构建时选定，不是运行期开关。安装脚本�
 <table>
   <tr><th>情况</th><th>Qwen 行为</th><th>daemon 行为</th></tr>
   <tr><td>输出清洗后为空</td><td>返回空文本，而不是半成品或错误文本。</td><td>按空段丢弃；不回退 CPU，不提交。</td></tr>
-  <tr><td>BF16 / Vulkan 不支持</td><td>启动自检失败，返回 <code>device_unavailable</code> 或 <code>runtime_missing</code>。</td><td>只使 Qwen 后端不可用；核心 VAD / Preview / CPU Final 继续。</td></tr>
+  <tr><td>Vulkan 不支持</td><td>启动自检失败，返回 <code>device_unavailable</code> 或 <code>runtime_missing</code>。</td><td>只使 Qwen 后端不可用；核心 VAD / Preview / CPU Final 继续。</td></tr>
   <tr><td>worker 崩溃 / 管道断开</td><td>无响应；由 daemon 检测进程退出或超时。</td><td>当前段回退 CPU；按退避重启；连续失败标记不可用。</td></tr>
   <tr><td>模型 / runtime 被删除</td><td>下次启动加载失败。</td><td>保留 <code>final.backend</code> 配置值但标记不可用；当前段回退 CPU。</td></tr>
 </table>
@@ -312,11 +312,11 @@ scripts/install-gpu.ps1 --qwen3 --qwen-runtime cuda</code></pre>
 
 <table>
   <tr><th>选项</th><th>行为</th></tr>
-  <tr><td><code>--qwen3</code></td><td>只安装 Qwen worker、所选 llama.cpp runtime 与 <code>qwen3-asr-1.7b</code> 模型；不改变 <code>final.backend</code>。</td></tr>
-  <tr><td><code>--qwen-runtime vulkan|cuda</code></td><td>选择 Qwen runtime；AMD Linux 只接受 <code>vulkan</code>；不提供 HIP / ROCm。</td></tr>
+  <tr><td><code>--qwen3</code></td><td>只安装预编译的 Qwen worker / runtime 包与 <code>qwen3-asr-1.7b</code> 模型；不改变 <code>final.backend</code>。</td></tr>
+  <tr><td><code>--qwen-runtime vulkan|cuda</code></td><td>选择预编译的 Qwen worker / runtime 变体；AMD Linux 只接受 <code>vulkan</code>；不提供 HIP / ROCm。</td></tr>
   <tr><td><code>--backend qwen3</code></td><td>安装后写入 <code>final.backend = qwen3</code>；该后端必须已安装；不自动重启 daemon。</td></tr>
-  <tr><td><code>--uninstall</code></td><td>删除 Qwen worker、runtime 与 <code>qwen3-asr-1.7b</code> 模型；不触碰核心、FireRed 后端或另一个 runtime。</td></tr>
-  <tr><td><code>--no-models</code></td><td>只装 worker 与 runtime；模型目录由用户提供，仍按 <a href="#u4-1">§4.1</a> 校验。</td></tr>
+  <tr><td><code>--uninstall</code></td><td>删除 Qwen worker、runtime 包与 <code>qwen3-asr-1.7b</code> 模型；不触碰核心、FireRed 后端或另一个 runtime。</td></tr>
+  <tr><td><code>--no-models</code></td><td>只装 worker 与 runtime 包；模型目录由用户提供，仍按 <a href="#u4-1">§4.1</a> 校验。</td></tr>
   <tr><td><code>--source-dir &lt;dir&gt;</code></td><td>离线模型 / runtime 源；不联网。</td></tr>
 </table>
 

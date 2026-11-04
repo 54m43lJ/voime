@@ -6,7 +6,7 @@ hide footbox
 participant "voimed（daemon）" as Daemon
 participant "voime-gpu-qwen3" as Worker
 
-Daemon -> Worker : spawn(model_dir, runtime)
+Daemon -> Worker : spawn(model_dir)
 Daemon -> Worker : Hello
 Worker --> Daemon : Ready
 

@@ -66,7 +66,7 @@ Linux 桌面的键盘、输入焦点与文本提交由 Fcitx5 持有。Voime 需
 </ul>
 <ul class="note">
   <li>产品级术语与端到端契约见 <a href="../../USER.html">根 USER</a>；Fcitx 外部 API 见 <a href="PROVIDER.html">PROVIDER</a>。</li>
-  <li>安装入口与 <code>--no-addon</code> 的选项语义由 <a href="../../README.html#r2">根 README §2</a> 定义，本组件不重复。</li>
+  <li>安装入口由 <a href="../../README.html#r2">根 README §2</a> 列出；addon 安装步骤与 <code>--no-addon</code> 语义见本文 §2。</li>
   <li>本组件仅支持 Linux；Windows 前端见 <a href="../windows/README.html">windows README</a>。</li>
 </ul>
 
@@ -75,8 +75,8 @@ Linux 桌面的键盘、输入焦点与文本提交由 Fcitx5 持有。Voime 需
 
 <table>
   <tr><th>场景</th><th>行为</th><th>契约</th></tr>
-  <tr><td>安装 addon</td><td>运行核心安装脚本；只有 addon 步骤申请 sudo，把 <code>voime.so</code> 与 <code>voime.conf</code> 写入 Fcitx5 系统 addon 目录。重启 Fcitx 后出现在 Addons 页面，不加入输入法组；系统路径见 <a href="PROVIDER.html#p4-3">PROVIDER §4.3</a>。</td><td><a href="../../README.html#r2">根 README §2</a></td></tr>
-  <tr><td>跳过 addon</td><td><code>--no-addon</code> 跳过 addon 安装，不申请 addon 提权；核心其他部分仍按用户级安装。用户自行完成系统 addon 安装后才出现热键与临时窗口。</td><td><a href="../../README.html#r2">根 README §2</a></td></tr>
+  <tr><td>安装 addon</td><td>运行核心安装脚本；只有 addon 步骤申请 sudo，把 <code>voime.so</code> 与 <code>voime.conf</code> 写入 Fcitx5 系统 addon 目录。重启 Fcitx 后出现在 Addons 页面，不加入输入法组；系统路径见 <a href="PROVIDER.html#p4-3">PROVIDER §4.3</a>。</td><td><a href="PROVIDER.html#p4-3">PROVIDER §4.3</a></td></tr>
+  <tr><td>跳过 addon</td><td><code>--no-addon</code> 跳过 addon 安装，不申请 addon 提权；核心其他部分仍按用户级安装。用户自行完成系统 addon 安装后才出现热键与临时窗口。</td><td><a href="PROVIDER.html#p2">PROVIDER §2</a></td></tr>
   <tr><td>安装失败</td><td>拒绝提权或 addon 安装失败时核心安装失败并提示 <code>--no-addon</code>；不写入用户目录，也不设置 <code>FCITX_ADDON_DIRS</code>。</td><td><a href="PROVIDER.html#p2">PROVIDER §2</a></td></tr>
   <tr><td>配置</td><td>在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 设置 <code>Mode</code> / <code>Hotkey</code>。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
   <tr><td>PTT</td><td>按住热键开启会话；会话内 VAD 软切分多个段；松开硬切分，结束当前段并停止监听。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>

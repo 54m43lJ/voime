@@ -4,41 +4,28 @@ skinparam shadowing false
 hide footbox
 
 actor "用户" as User
-participant "Windows 前端" as Frontend
-participant "voimed" as Daemon
+participant "Voime" as Voime
 participant "目标应用" as App
 
-User -> Frontend : 按下 Hotkey（ptt / toggle）
-Frontend -> Frontend : 记录前台窗口 + 焦点元素
-Frontend -> Daemon : Start / Toggle（开启会话）
-Daemon -> Frontend : SegmentStarted / State { recording: true }
+User -> Voime : 按下 Hotkey（ptt / toggle）
+Voime -> Voime : 内部处理\n(记录目标 / 开启会话)
+Voime -> User : 显示浮层
 
 loop 会话保持（PTT 按住 / Toggle 已开启）
-  loop 当前段
-    Daemon -> Frontend : Partial
-    Frontend -> Frontend : 更新浮层
-  end
-
-  note over Frontend, Daemon
-    VAD 终点 = 软切分：当前段 Finalizing；
-    会话保持，开始下一段监听。
-  end note
-
-  Daemon -> Frontend : Final { 当前段 }
-  Frontend -> Frontend : 复核目标
+  Voime -> Voime : 内部处理\n(Partial / 目标复核)
+  Voime -> User : 更新浮层
+  Voime -> Voime : 内部处理\n(Final / 目标复核)
   alt 目标仍有效
-    Frontend -> App : SendInput(UTF-16)
+    Voime -> App : SendInput(UTF-16)
   else 目标失效
-    Frontend -> Frontend : 不提交\n保留历史
+    Voime -> Voime : 不提交
   end
-  Daemon -> Frontend : SegmentStarted { 下一段 }
 end
 
-User -> Frontend : 松开 PTT / 再按 Toggle
-Frontend -> Daemon : Stop（硬切分）
-Daemon -> Frontend : Final { 当前段 }
+User -> Voime : 松开 PTT / 再按 Toggle
+Voime -> Voime : 内部处理\n(硬切分 / Final)
 
-note over Frontend
+note over Voime
   当前段沿用同样的目标复核与提交路径；
   无当前段且无 Final 在途时不产生 Final。
 end note

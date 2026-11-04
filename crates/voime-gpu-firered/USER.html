@@ -22,7 +22,7 @@
 
 <p>
 本文定义 <code>voime-gpu-firered</code> 与 <code>voimed</code> 之间的 Final 边界、模型目录、
-runtime 选择、错误回退与安装入口。帧格式、请求 / 响应字段与错误码定义由
+runtime 构建选择、错误回退与安装入口。帧格式、请求 / 响应字段与错误码定义由
 <a href="../voime-gpu-common/USER.html">voime-gpu-common USER</a> 拥有；本文只链接，不复制。
 模型张量与 ORT GPU 契约见 <a href="PROVIDER.html">PROVIDER</a>，内部实现见 <a href="CORE.html">CORE</a>。
 </p>
@@ -102,7 +102,7 @@ runtime 选择、错误回退与安装入口。帧格式、请求 / 响应字段
     <td><code>fireredasr2-aed/</code></td>
     <td><code>asr</code></td>
     <td><code>manifest.json</code><br><code>encoder.onnx</code><br><code>encoder.data</code><br><code>ctc.onnx</code><br><code>decoder.onnx</code><br><code>decoder.data</code><br><code>dict.txt</code><br><code>train_bpe1000.model</code><br><code>cmvn.ark</code><br><code>config.json</code></td>
-    <td>约 4.5 GB · FP32</td>
+    <td>约 4.7 GB · FP32</td>
   </tr>
   <tr>
     <td><code>fireredpunc/</code></td>
@@ -113,27 +113,21 @@ runtime 选择、错误回退与安装入口。帧格式、请求 / 响应字段
 </table>
 
 <table>
-  <tr><th>manifest 字段</th><th>FireRed 固定值</th></tr>
-  <tr><td><code>schema</code></td><td><code>5</code>；旧 manifest / 旧模型包直接拒绝。</td></tr>
-  <tr><td><code>id</code></td><td>必须等于目录名：<code>fireredasr2-aed</code> / <code>fireredpunc</code>；不接受别名或符号链接逃逸。</td></tr>
-  <tr><td><code>kind</code></td><td><code>asr</code> / <code>punc</code>；worker 只加载匹配的 kind。</td></tr>
-  <tr><td><code>files</code></td><td>每个文件的相对路径、SHA-256 与大小；启动时逐文件校验。</td></tr>
-  <tr><td><code>runtime.backend</code></td><td><code>firered</code>。</td></tr>
-  <tr><td><code>runtime.format</code></td><td><code>onnx</code>。</td></tr>
-  <tr><td><code>runtime.precision</code></td><td><code>fp32</code>。</td></tr>
-  <tr><td><code>runtime.max_segment_ms</code></td><td><code>30000</code>；超过 30 s 的语音由核心分段器继续切分。</td></tr>
+  <tr><th>项目</th><th>FireRed 固定值</th></tr>
+  <tr><td><code>id</code> / <code>kind</code></td><td><code>fireredasr2-aed</code> 为 <code>asr</code>；<code>fireredpunc</code> 为 <code>punc</code>。</td></tr>
+  <tr><td><code>runtime</code></td><td><code>firered</code> / <code>onnx</code> / <code>fp32</code>；<code>max_segment_ms = 30000</code>，超过 30 s 的语音由核心分段器继续切分。</td></tr>
 </table>
 <ul class="note">
-  <li>schema 5 的字段语义与通用校验规则见 <a href="../voime-core/USER.html#u4-3">voime-core USER §4.3</a>；本节只列 FireRed 两个模型的固定值。</li>
+  <li>schema 5 的字段语义与通用校验规则见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>；本节只列 FireRed 两个模型的固定值。</li>
   <li><code>ctc.onnx</code> 是上游模型目录的一部分，参与文件校验，但 worker 不创建 CTC 会话，也不把 CTC head 作为产品路径。</li>
   <li>模型目录运行期只读；ORT runtime 放在独立 runtime 目录，不写进模型目录，也不允许模型目录包含可执行文件或脚本。</li>
   <li>worker 从 daemon 的 <code>Hello</code> 接收 <code>model_dir</code> 与 <code>device</code>；默认根目录由 daemon / 安装脚本决定，worker 不自行猜测路径。</li>
   <li>模型来源、张量、tokenizer 与每个文件的 SHA-256 见 <a href="PROVIDER.html#p4-1">PROVIDER §4.1</a> 与 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
 </ul>
 
-<h3 id="u4-2">4.2 runtime 选择</h3>
+<h3 id="u4-2">4.2 runtime 构建选择</h3>
 <table>
-  <tr><th>平台 / 硬件</th><th>选择的 runtime</th><th>EP</th><th>说明</th></tr>
+  <tr><th>平台 / 硬件</th><th>编译时选择的 runtime</th><th>EP</th><th>说明</th></tr>
   <tr><td>Linux + NVIDIA</td><td>ORT CUDA</td><td>CUDA Execution Provider</td><td>需要匹配的 NVIDIA 驱动与 CUDA 能力；由安装脚本准备 runtime。</td></tr>
   <tr><td>Linux + AMD</td><td>ORT MIGraphX</td><td>MIGraphX Execution Provider</td><td>AMD Linux 的验收基线；依赖 MIGraphX / ROCm 能力。</td></tr>
   <tr><td>Windows + NVIDIA</td><td>ORT CUDA</td><td>CUDA Execution Provider</td><td>与 Linux 分开打包。</td></tr>
@@ -143,15 +137,15 @@ runtime 选择、错误回退与安装入口。帧格式、请求 / 响应字段
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
-  <tr><td>安装时选择</td><td><code>scripts/install-gpu.sh --firered-runtime cuda|migraphx|directml</code>（Windows 为 <code>install-gpu.ps1</code>）。</td></tr>
-  <tr><td>运行期</td><td>worker 只使用安装时选定的 EP；不切换 runtime、不回退到 CPU ORT 或另一个 EP。</td></tr>
+  <tr><td>构建时选择</td><td>EP 在编译 worker 时由 feature 固定；安装脚本的 <code>--firered-runtime cuda|migraphx|directml</code> 只选择对应的预编译 worker / runtime 包，不是运行期开关。</td></tr>
+  <tr><td>运行期</td><td>worker 只使用编译时选定的 EP；不切换、不探测第二个 EP、不回退到 CPU ORT 或另一个 EP。</td></tr>
   <tr><td>可用性</td><td>EP 或设备不可用时返回 <code>runtime_missing</code> / <code>device_unavailable</code>；daemon 标记后端不可用并回退 CPU。</td></tr>
   <tr><td>版本契约</td><td><code>api-29</code> 与 <code>load-dynamic</code> 的细节见 <a href="PROVIDER.html#p4-3">PROVIDER §4.3</a>；运行期不安装、不编译、不下载 runtime。</td></tr>
   <tr><td>隔离</td><td>FireRed runtime 与 Qwen runtime 分目录；本 worker 不加载 Qwen 的 llama.cpp / GGML 库。</td></tr>
 </table>
 <ul class="note">
-  <li>runtime 的部署细节不属于产品契约；安装脚本只负责把选定的 runtime 放到 worker 自己的目录。</li>
-  <li>切换 EP 需要重新安装对应 runtime 并重启 daemon；运行中的 worker 不热切换。</li>
+  <li>runtime 的部署细节不属于产品契约；安装脚本只负责把选定的 worker / runtime 包放到 worker 自己的目录。</li>
+  <li>切换 EP 需要重新安装对应 worker 包并重启 daemon；运行中的 worker 不热切换。</li>
   <li><code>voime doctor</code> 只报告后端 ready / running 与不可用原因，不加载模型。</li>
 </ul>
 
@@ -189,15 +183,15 @@ runtime 选择、错误回退与安装入口。帧格式、请求 / 响应字段
 <pre><code>scripts/install-gpu.sh --firered
 scripts/install-gpu.sh --firered --firered-runtime cuda
 scripts/install-gpu.sh --firered --firered-runtime migraphx
-scripts/install-gpu.sh --firered --firered-runtime directml
 scripts/install-gpu.sh --firered --backend firered
 scripts/install-gpu.sh --firered --uninstall
-scripts/install-gpu.ps1 --firered --firered-runtime cuda</code></pre>
+scripts/install-gpu.ps1 --firered --firered-runtime cuda
+scripts/install-gpu.ps1 --firered --firered-runtime directml</code></pre>
 
 <table>
   <tr><th>选项</th><th>行为</th></tr>
   <tr><td><code>--firered</code></td><td>只安装 FireRed worker、FireRedASR2-AED、FireRedPunc 与 ORT GPU runtime；不安装 Qwen。</td></tr>
-  <tr><td><code>--firered-runtime cuda|migraphx|directml</code></td><td>选择 FireRed 的 ORT GPU EP；Linux AMD 固定 MIGraphX，Linux / Windows NVIDIA 用 CUDA，Windows AMD / Intel 用 DirectML。</td></tr>
+  <tr><td><code>--firered-runtime cuda|migraphx|directml</code></td><td>选择预编译的 FireRed worker / runtime 变体；EP 在编译时固定，不在运行期切换。Linux AMD 使用 MIGraphX，Linux / Windows NVIDIA 使用 CUDA，Windows AMD / Intel 使用 DirectML；Linux 不提供 DirectML 包。</td></tr>
   <tr><td><code>--backend firered</code></td><td>安装后写入 <code>final.backend = firered</code>；必须与已安装后端一致；不加此选项时保持原值（默认 <code>cpu</code>）。</td></tr>
   <tr><td><code>--no-models</code></td><td>只安装 worker 与 runtime；模型目录由用户提供。</td></tr>
   <tr><td><code>--model-dir &lt;dir&gt;</code></td><td>覆盖模型根目录；仍按一模型一目录布局。</td></tr>

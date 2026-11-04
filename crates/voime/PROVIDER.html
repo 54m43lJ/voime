@@ -40,6 +40,7 @@
   <tr><td>系统 addon 描述</td><td><code>/usr/share/fcitx5/addon/voime.conf</code>；doctor 只读检查。</td></tr>
   <tr><td>系统 addon 库</td><td><code>/usr/lib/fcitx5/voime.so</code>（或发行版 libdir）；doctor 只读检查。</td></tr>
   <tr><td>worker 状态日志</td><td><code>voime-log</code> 中 daemon 记录的 worker ready / running / error 状态行；doctor 只读。</td></tr>
+  <tr><td>Windows 诊断源</td><td>命名管道、<code>voime-tray.exe</code> 进程、麦克风隐私设置与可选 TSF 注册。</td></tr>
 </table>
 
 <h2 id="p2">2. CONVENTIONS</h2>
@@ -54,8 +55,9 @@
   <tr><td>配置写入</td><td>只有 <code>ctl backend</code> 写 <code>[final].backend</code>；TUI / 其他 ctl 动作不写配置。</td></tr>
   <tr><td>doctor 只读</td><td>不启动 / 停止进程、不写配置文件、不打开音频流、不启动 worker、不加载模型权重。</td></tr>
   <tr><td>系统 addon 路径</td><td>doctor 固定检查 <code>/usr</code> / <code>/usr/local</code> 系统 addon 路径与 ABI；自定义前缀不属于自动检查。</td></tr>
-  <tr><td>不检查旧条目</td><td>doctor 不检查 <code>inputmethod/voime.conf</code>，也不设置或检查 <code>FCITX_ADDON_DIRS</code>。</td></tr>
+  <tr><td>不检查 inputmethod 条目</td><td>doctor 只检查系统 addon 描述与 ABI；不检查 <code>inputmethod/voime.conf</code>，也不设置或检查 <code>FCITX_ADDON_DIRS</code>。</td></tr>
   <tr><td>worker 状态</td><td>只读 daemon 日志与进程表；不新增 IPC 字段，不触发 worker 启动。</td></tr>
+  <tr><td>平台诊断</td><td>Linux 检查 <code>/proc</code>、Fcitx addon 与 XDG 配置；Windows 检查命名管道、<code>voime-tray.exe</code>、麦克风隐私与 TSF 注册。</td></tr>
 </table>
 
 <h2 id="p3">3. DIAGRAMS</h2>
@@ -94,6 +96,10 @@
   <tr><td>系统 addon 描述</td><td><code>/usr/share/fcitx5/addon/voime.conf</code> 或 <code>/usr/local/share/...</code></td><td>doctor 检查系统级 addon 安装。</td></tr>
   <tr><td>系统 addon 库</td><td><code>/usr/lib/fcitx5/voime.so</code> 或 <code>/usr/local/lib/...</code></td><td>doctor 检查系统路径与 ABI 依赖。</td></tr>
   <tr><td>用户配置</td><td><code>XDG_CONFIG_HOME/fcitx5/conf/voime.conf</code> 或 <code>~/.config/...</code></td><td>无配置时 WARN，使用默认 Mode / Hotkey。</td></tr>
+  <tr><td>Windows 端点</td><td><code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code></td><td>确认 daemon 使用命名管道。</td></tr>
+  <tr><td>Windows 前端</td><td><code>voime-tray.exe</code> 进程</td><td>doctor 判断托盘是否运行。</td></tr>
+  <tr><td>麦克风隐私</td><td>Windows 麦克风隐私设置</td><td>Deny 计为 FAIL；未读取到计为 WARN。</td></tr>
+  <tr><td>TSF 注册</td><td>可选 TSF DLL / COM 注册</td><td>启用 TSF 时检查；未启用不影响托盘前端。</td></tr>
 </table>
 <ul class="note">
   <li>不检查 <code>/usr/share/fcitx5/inputmethod/voime.conf</code>；Voime 不注册输入法条目。</li>

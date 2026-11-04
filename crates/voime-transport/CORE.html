@@ -20,10 +20,6 @@
 <a href="PROVIDER.html">PROVIDER</a>
 </p>
 
-<p>
-<strong>状态：</strong>已实现。契约语义以 <a href="USER.html">USER</a> 为准；平台实现细节以对应源文件为准。
-</p>
-
 <h2 id="c1">1. File tree</h2>
 <p><a href="#top">↑</a></p>
 
@@ -35,11 +31,8 @@
     ├── <a href="#c4-3">windows.rs</a>    named pipe adapter
     └── <a href="#c4-4">memory.rs</a>     cfg(test) 内存 transport</code></pre>
 <ul class="note">
-  <li>文件划分是起草结构；实现时可按平台模块拆分，但不得把协议 / 业务逻辑放进本 crate。</li>
+  <li>文件按平台拆分；不得把协议 / 业务逻辑放进本 crate。</li>
   <li>文档与测试金样不属于源码结构。</li>
-</ul>
-
-<ul class="note">
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>

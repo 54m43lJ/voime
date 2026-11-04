@@ -4,64 +4,28 @@ skinparam shadowing false
 hide footbox
 
 participant "平台前端" as Frontend
-participant "voimed" as Daemon
-participant "voime-core" as Core
-participant "GPU worker" as Worker
+participant "voimed" as Voimed
 
-Frontend -> Daemon : Start / Toggle（开启会话）
-Daemon -> Core : Pipeline::start_segment()
-Daemon -> Frontend : SegmentStarted { segment_id }
-Daemon -> Frontend : State { recording: true }
+Frontend -> Voimed : Start / Toggle（开启会话）
+Voimed -> Voimed : 内部处理\n(开启会话 / 分配语音段)
+Voimed --> Frontend : SegmentStarted / State { recording: true }
 
 loop 会话保持（PTT 按住 / Toggle 已开启）
-  loop 当前段
-    Core -> Daemon : Partial
-    Daemon -> Frontend : Partial
-  end
-
-  note over Core
-    VAD 终点 = 软切分：
-    结束当前段并继续下一段；
-    会话不结束。
-  end note
-
-  Core -> Daemon : SegmentReady { segment }
-  Daemon -> Frontend : State { recording: false, finalizing: true }
-  Daemon -> Core : Pipeline::cancel_preview()
-
-  alt backend = cpu
-    Daemon -> Core : Final::transcribe()
-  else backend = firered / qwen3
-    Daemon -> Worker : Transcribe { PCM }
-    alt worker 成功
-      Worker -> Daemon : Result { text }
-    else 加载失败 / 超时 / 崩溃 / 推理失败
-      Worker -> Daemon : Error
-      Daemon -> Core : Final::transcribe()（CPU 回退，一次）
-    end
-  end
-
-  Daemon -> Frontend : Final { text }
-  Daemon -> Frontend : SegmentStarted { 下一段 }
-  Daemon -> Frontend : State { recording: true }
+  Voimed -> Voimed : 内部处理\n(VAD 软切分 / Final 调度)
+  Voimed --> Frontend : Partial
+  Voimed --> Frontend : State { finalizing: true }
+  Voimed --> Frontend : Final
+  Voimed --> Frontend : SegmentStarted { 下一段 }
+  Voimed --> Frontend : State { recording: true }
 end
 
-Frontend -> Daemon : Stop / Toggle（硬切分）
-Daemon -> Frontend : State { recording: false, finalizing: true }
-Daemon -> Core : Pipeline::finish_segment()
-Daemon -> Core : Pipeline::cancel_preview()
-Core -> Daemon : SegmentReady { segment }
+Frontend -> Voimed : Stop / Toggle（硬切分）
+Voimed -> Voimed : 内部处理\n(结束当前段 / Final 调度)
+Voimed --> Frontend : State { finalizing: true }
+Voimed --> Frontend : Final
+Voimed --> Frontend : State { idle }
 
-note over Daemon
-  当前段沿用同一 CPU / GPU Final 调度；
-  完成后回到 Idle，不再续段。
-  无当前段且无 Final 在途时，不产生 SegmentReady / Final。
-end note
-
-Daemon -> Frontend : Final { text }
-Daemon -> Frontend : State { recording: false, finalizing: false }
-
-note over Frontend, Daemon
+note over Frontend, Voimed
   PTT / Toggle 共用会话状态；只有开始 / 结束的热键事件不同。
   默认 backend=cpu；安装 GPU 不自动切换。
 end note

@@ -40,7 +40,7 @@
   </tr>
   <tr>
     <td>平台前端（frontend）</td>
-    <td>把语音结果接入某个桌面输入环境的组件。Linux 前端是 Fcitx5 addon；Windows 前端是独立桌面进程，可选 TSF 文本服务。</td>
+    <td>把语音结果接入某个桌面输入环境的组件。Linux 前端是 <a href="frontends/fcitx/USER.html">Fcitx5 addon</a>；Windows 前端是 <a href="frontends/windows/USER.html">独立桌面进程</a>，可选 TSF 文本服务。</td>
   </tr>
   <tr>
     <td>daemon / <code>voimed</code></td>
@@ -68,7 +68,7 @@
   </tr>
   <tr>
     <td>目标输入位置（target）</td>
-    <td>语音段开始时聚焦的输入位置；PTT / Toggle 在会话开始时绑定并沿用到会话结束。Linux 上是 Fcitx <code>InputContext</code>；Windows 上是前台窗口 + 焦点元素，或 TSF <code>ITfContext</code>。</td>
+    <td>语音段开始时聚焦的输入位置；PTT / Toggle 在会话开始时绑定并沿用到会话结束。平台侧的具体目标对象与复核规则见 <a href="frontends/fcitx/USER.html#u4-2">fcitx-addon USER §4.2</a> 与 <a href="frontends/windows/USER.html#u4-2">windows USER §4.2</a>。</td>
   </tr>
   <tr>
     <td>模式（Mode）</td>
@@ -100,7 +100,7 @@
   </tr>
   <tr>
     <td>模型目录（model directory）</td>
-    <td><code>~/.local/share/voime/models/&lt;model&gt;/</code> 下的一模型一目录；每个目录自包含 <code>manifest.json</code> 与权重，运行期只读。</td>
+    <td>平台数据目录下 <code>voime/models/&lt;model&gt;/</code> 的一模型一目录；每个目录自包含 <code>manifest.json</code> 与权重，运行期只读。默认根目录与平台回退见 <a href="crates/voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</td>
   </tr>
   <tr>
     <td>本地运行</td>
@@ -134,7 +134,7 @@
     <td>只有 <code>install-gpu --backend</code> 或 <code>voime ctl backend</code> 才写 GPU 后端；配置写入后由下一次 daemon 启动生效，运行中不热切换。</td>
   </tr>
   <tr>
-    <td>Finalizing 计算门禁</td>
+    <td>Finalizing 计算</td>
     <td>Final 触发后不再进行 Preview 推理；<code>cpu</code> Final 只执行一次 CPU 推理，<code>firered</code> / <code>qwen3</code> Final 不再调用 SenseVoice ASR。</td>
   </tr>
   <tr>
@@ -190,8 +190,8 @@
 <div class="diagram"><img src="diagram/general-architecture.svg" alt="核心安装与可选 GPU Final 模块的总体架构组件图"></div>
 <ul class="note">
   <li>核心安装包含平台前端、<code>voimed</code>、FireRedVAD、SenseVoice 与 CPU Final；只装核心即可完成完整识别。</li>
-  <li>GPU 模块是可选的 Final-only 模块；FireRed 使用 ORT GPU，Qwen 使用 llama.cpp / Vulkan 或 CUDA。</li>
-  <li>VAD 与 Preview 只在核心；FireRedPunc 只在 FireRed worker；Qwen 标点包含在模型输出内。</li>
+  <li>GPU 模块是可选的 Final-only 模块；FireRed 与 Qwen 各自使用独立的 GPU worker 与 runtime。</li>
+  <li>VAD 与 Preview 只在核心；各 GPU worker 只负责自己的 Final 文本与标点。</li>
   <li>平台宿主持有键盘、输入焦点与最终提交路径；Voime 只接收热键事件并提交最终文本。</li>
 </ul>
 
@@ -212,13 +212,13 @@
   <li>VAD 报告语音起点时开始语音段，报告终点时进入 Finalizing；热键不参与。</li>
   <li>Finalizing 停止 Preview 计算；默认 CPU Final，显式选择 GPU 时只替换 Final，Preview 仍是 SenseVoice，失败回退 CPU。</li>
   <li>每个语音段仍绑定开始时的目标；失焦则不提交。</li>
-  <li>识别慢于语音时，完成段进入有界队列；队列满时丢弃最旧段。</li>
+  <li>识别慢于语音时，完成段可能延迟或丢弃；输入不被阻塞。背压契约见 <a href="crates/voimed/USER.html#u2">voimed USER §2</a>。</li>
 </ul>
 
 <h2 id="u4">4. INTERFACES</h2>
 <p><a href="#top">↑</a></p>
 
-<h3 id="u4-1">4.1 前端配置接口</h3>
+<h3 id="u4-1">4.1 通用前端配置</h3>
 <table>
   <tr><th>配置项</th><th>取值</th><th>语义</th><th>平台载体</th></tr>
   <tr>
@@ -235,6 +235,7 @@
   </tr>
 </table>
 <ul class="note">
+  <li>本表只列跨平台配置语义；平台特有配置项由对应前端 USER 定义（Windows 见 <a href="frontends/windows/USER.html#u4-1">windows USER §4.1</a>）。</li>
   <li>Final 后端不是前端配置项；安装入口见 <a href="README.html#r2">README §2</a>，选择入口见 §4.2 与 §4.4。</li>
 </ul>
 
@@ -257,8 +258,8 @@
   <tr><td>IPC 消息、JSON lines、协议版本、错误码</td><td><a href="crates/voime-ipc/USER.html">voime-ipc USER</a></td><td><code>voimed</code>、<code>voime</code>、Linux / Windows 前端</td></tr>
   <tr><td>本机传输契约（Endpoint / Listener / Stream）</td><td><a href="crates/voime-transport/USER.html">voime-transport USER</a></td><td><code>voimed</code>、<code>voime</code>、Windows 前端</td></tr>
   <tr><td>daemon 会话、分段、广播、背压、Final 调度</td><td><a href="crates/voimed/USER.html">voimed USER</a></td><td>前端、TUI、ctl</td></tr>
-  <tr><td>Linux 热键、目标、临时窗口、提交</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td><td>Fcitx5 用户</td></tr>
-  <tr><td>Windows 热键、目标、浮层、注入、TSF</td><td><a href="frontends/windows/USER.html">windows USER</a></td><td>Windows 用户</td></tr>
+  <tr><td>Linux 热键、目标、临时窗口、配置、提交</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td><td>Fcitx5 用户</td></tr>
+  <tr><td>Windows 热键、目标、浮层、设置、注入、TSF</td><td><a href="frontends/windows/USER.html">windows USER</a></td><td>Windows 用户</td></tr>
   <tr><td>TUI、ctl、doctor 的命令与界面</td><td><a href="crates/voime/USER.html">voime USER</a></td><td>用户 / 运维</td></tr>
 </table>
 
@@ -280,10 +281,10 @@
 <h3 id="u4-5">4.5 平台覆盖</h3>
 <table>
   <tr><th>平台 / 形态</th><th>支持</th><th>边界</th><th>契约</th></tr>
-  <tr><td>Linux + Fcitx5</td><td>是</td><td>原生 Wayland、XWayland / XIM；不覆盖无 text-input 的窗口。验收基线为 AMD GPU。</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td></tr>
-  <tr><td>Linux GPU Final</td><td>是</td><td>FireRed 使用 ORT MIGraphX；Qwen 只使用 Vulkan。</td><td><a href="crates/voime-gpu-firered/USER.html">voime-gpu-firered USER</a> · <a href="crates/voime-gpu-qwen3/USER.html">voime-gpu-qwen3 USER</a></td></tr>
+  <tr><td>Linux + Fcitx5</td><td>是</td><td>原生 Wayland、XWayland / XIM；不覆盖无 text-input 的窗口。</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td></tr>
+  <tr><td>Linux GPU Final</td><td>是</td><td>runtime / EP 选择与限制见所选 GPU 组件 USER。</td><td><a href="crates/voime-gpu-firered/USER.html">voime-gpu-firered USER</a> · <a href="crates/voime-gpu-qwen3/USER.html">voime-gpu-qwen3 USER</a></td></tr>
   <tr><td>Windows 后台听写</td><td>是</td><td>普通 Win32 / Chromium / Office 等；提权、游戏、部分终端/UWP 有覆盖边界。</td><td><a href="frontends/windows/USER.html">windows USER</a></td></tr>
-  <tr><td>Windows GPU Final</td><td>是</td><td>FireRed 使用 ORT CUDA / DirectML；Qwen 使用 Vulkan / CUDA。</td><td><a href="crates/voime-gpu-firered/USER.html">voime-gpu-firered USER</a> · <a href="crates/voime-gpu-qwen3/USER.html">voime-gpu-qwen3 USER</a></td></tr>
+  <tr><td>Windows GPU Final</td><td>是</td><td>runtime / EP 选择与限制见所选 GPU 组件 USER。</td><td><a href="crates/voime-gpu-firered/USER.html">voime-gpu-firered USER</a> · <a href="crates/voime-gpu-qwen3/USER.html">voime-gpu-qwen3 USER</a></td></tr>
   <tr><td>Windows TSF 输入法</td><td>可选扩展</td><td>需要成为当前输入法；非 TSF 应用不覆盖。</td><td><a href="frontends/windows/USER.html#u3-5">windows USER §3.5</a></td></tr>
   <tr><td>锁屏 / 安全桌面</td><td>否</td><td>不承诺热键、临时文本或提交。</td><td>—</td></tr>
 </table>
@@ -297,11 +298,10 @@ Voime 没有统一的自绘 UI；各平台前端使用宿主或系统提供的�
 </p>
 
 <table>
-  <tr><th>界面</th><th>形态</th><th>所有者</th></tr>
-  <tr><td>Linux 临时文本窗口</td><td>Fcitx <code>InputPanel</code> preedit，由 Fcitx UI 渲染</td><td><a href="frontends/fcitx/USER.html#u5">fcitx-addon USER §5</a></td></tr>
-  <tr><td>Linux 配置界面</td><td><code>fcitx5-configtool</code> 的 Addons 页面</td><td><a href="frontends/fcitx/USER.html#u4-1">fcitx-addon USER §4.1</a></td></tr>
-  <tr><td>TUI</td><td>终端备用屏幕；历史、临时行、提示行</td><td><a href="crates/voime/USER.html#u5">voime USER §5</a></td></tr>
-  <tr><td>Windows 托盘 / 浮层</td><td>系统托盘菜单 + 无激活浮层</td><td><a href="frontends/windows/USER.html#u5">windows USER §5</a></td></tr>
+  <tr><th>界面所有权</th><th>所有者</th></tr>
+  <tr><td>Linux 前端 UI</td><td><a href="frontends/fcitx/USER.html#u5">fcitx-addon USER §5</a> · <a href="frontends/fcitx/USER.html#u4-1">§4.1</a></td></tr>
+  <tr><td>TUI</td><td><a href="crates/voime/USER.html#u5">voime USER §5</a></td></tr>
+  <tr><td>Windows 前端 UI</td><td><a href="frontends/windows/USER.html#u5">windows USER §5</a></td></tr>
 </table>
 <ul class="note">
   <li>Fcitx 临时窗口的最终提交不依赖 UI addon；没有 UI 时仍可提交。</li>

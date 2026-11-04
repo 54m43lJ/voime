@@ -107,8 +107,8 @@
 
 <table>
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
-  <tr><td><code>llama-cpp-4</code> 0.11.0（<code>mtmd</code> + <code>vulkan</code> / <code>cuda</code>）</td><td>GGUF 主模型、mmproj、音频 bitmap、mtmd tokenize / eval、greedy 采样与 detokenize。一次构建只选一个 backend。</td></tr>
-  <tr><td><code>llama-cpp-sys-4</code> 0.11.0 / llama.cpp / GGML</td><td>底层 llama.cpp 与 GGML；由 crate 固定对应 commit，提供 Vulkan / CUDA backend。</td></tr>
+  <tr><td><code>llama-cpp-4</code>（<code>mtmd</code> + <code>vulkan</code> / <code>cuda</code>）</td><td>GGUF 主模型、mmproj、音频 bitmap、mtmd tokenize / eval、greedy 采样与 detokenize。一次构建只选一个 backend。</td></tr>
+  <tr><td><code>llama-cpp-sys-4</code> / llama.cpp / GGML</td><td>底层 llama.cpp 与 GGML；由 crate 固定对应 commit，提供 Vulkan / CUDA backend。</td></tr>
   <tr><td><code>voime-gpu-common</code></td><td>帧读写、<code>Hello</code> / <code>Transcribe</code> / <code>Cancel</code> / <code>Shutdown</code> 与 <code>Ready</code> / <code>Result</code> / <code>Error</code> / <code>Bye</code> 类型。</td></tr>
   <tr><td><code>serde</code> / <code>serde_json</code></td><td>manifest 解析与 common 帧头 JSON。</td></tr>
   <tr><td><code>sha2</code></td><td>主模型 / mmproj 的 SHA-256 校验。</td></tr>
@@ -123,9 +123,11 @@
 <h2 id="c4">4. Internal types &amp; method signatures</h2>
 <p><a href="#top">↑</a></p>
 
+<p>以下签名定义目标接口；实现可调整名称或参数，但必须保持消息、常量与状态语义。</p>
+
 <h3 id="c4-1">4.1 main.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>fn main() -&gt; std::process::ExitCode;
-fn run() -&gt; anyhow::Result&lt;()&gt;;                 // 待实现，可以根据实际情况调整</code></pre>
+fn run() -&gt; anyhow::Result&lt;()&gt;;                 </code></pre>
 <ul class="note">
   <li><code>main</code> 只把 <code>run</code> 的结果转换为退出码；不解析模型路径、不读帧、不加载模型。</li>
   <li>启动失败写 stderr 并返回非零退出码；不向 stdout 写任何非协议内容。</li>
@@ -134,28 +136,32 @@ fn run() -&gt; anyhow::Result&lt;()&gt;;                 // 待实现，可以�
 <h3 id="c4-2">4.2 worker.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub const TRANSCRIBE_BUDGET_MS: u64;             // 推荐值 60_000
 
-pub struct CancelFlag { /* Arc&lt;AtomicBool&gt; */ }
+#[derive(Clone)]
+pub struct CancelFlag { /* Arc&lt;AtomicBool&gt; + current id */ }
 enum WorkerCommand {
     Transcribe(Transcribe),
     Shutdown,
 }
 impl CancelFlag {
-    pub fn new() -&gt; Self;                          // 待实现，可以根据实际情况调整
-    pub fn cancel(&amp;self);                          // 待实现，可以根据实际情况调整
-    pub fn is_cancelled(&amp;self) -&gt; bool;            // 待实现，可以根据实际情况调整
+    pub fn new() -&gt; Self;
+    pub fn arm(&amp;self, id: u64);
+    pub fn cancel(&amp;self, id: u64);
+    pub fn is_cancelled(&amp;self) -&gt; bool;
+    pub fn flag(&amp;self) -&gt; &amp;AtomicBool;
+    pub fn clear(&amp;self);
 }
 
-pub fn run() -&gt; anyhow::Result&lt;()&gt;;               // 待实现，可以根据实际情况调整
+pub fn run() -&gt; anyhow::Result&lt;()&gt;;
 fn validate_hello(hello: &amp;Hello) -&gt; anyhow::Result&lt;()&gt;;
-                                                 // 待实现，可以根据实际情况调整
+
 fn handle_transcribe(engine: &amp;mut Engine, manifest: &amp;Manifest,
                      request: &amp;Transcribe) -&gt; anyhow::Result&lt;()&gt;;
-                                                 // 待实现，可以根据实际情况调整
+
 fn read_loop(tx: Sender&lt;WorkerCommand&gt;, cancel: CancelFlag);
-                                                 // 待实现，可以根据实际情况调整</code></pre>
+                                                 </code></pre>
 <ul class="note">
   <li><code>run</code> 先读 <code>Hello</code>，校验 protocol / backend / model_dir，再加载 manifest 与 engine，最后写 <code>Ready</code> 并进入帧循环。</li>
-  <li>读帧线程把 <code>Transcribe</code> / <code>Shutdown</code> 送入命令通道；收到 <code>Cancel</code> 时只在该 <code>id</code> 匹配当前请求时置位 <code>CancelFlag</code>，让当前解码在下一个 token 退出；无匹配 <code>id</code> 忽略。</li>
+  <li>读帧线程把 <code>Transcribe</code> / <code>Shutdown</code> 送入命令通道；每个请求开始前 <code>arm(id)</code>，结束后 <code>clear()</code>。收到 <code>Cancel</code> 时只在该 <code>id</code> 匹配当前请求时置位 <code>CancelFlag</code>，让当前解码在下一个 token 退出；无匹配 <code>id</code> 忽略。</li>
   <li><code>TRANSCRIBE_BUDGET_MS</code> 是 worker 侧的保护预算；daemon 仍是超时与杀进程的权威。</li>
 </ul>
 
@@ -188,16 +194,16 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn load(dir: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;       // 待实现，可以根据实际情况调整
-    pub fn verify(&amp;self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;; // 待实现，可以根据实际情况调整
+    pub fn load(dir: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn verify(&amp;self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
     pub fn main_model(&amp;self) -&gt; anyhow::Result&lt;&amp;FileSpec&gt;;
-                                                 // 待实现，可以根据实际情况调整
+
     pub fn mmproj(&amp;self) -&gt; anyhow::Result&lt;&amp;FileSpec&gt;;
-                                                 // 待实现，可以根据实际情况调整
-    pub fn max_segment_samples(&amp;self) -&gt; usize; // 待实现，可以根据实际情况调整
+
+    pub fn max_segment_samples(&amp;self) -&gt; usize;
 }</code></pre>
 <ul class="note">
-  <li><code>load</code> 校验 schema、<code>id</code> 与目录名一致、<code>kind == "asr"</code>、<code>runtime.backend == "qwen3"</code>、<code>format == "gguf"</code>、<code>precision == "bf16"</code>。</li>
+  <li>通用 schema、字段与合法 <code>kind</code> 见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>；<code>load</code> 校验 <code>id</code> 与目录名一致、<code>kind == "asr"</code>、<code>runtime.backend == "qwen3"</code>、<code>format == "gguf"</code>、<code>precision == "bf16"</code>。</li>
   <li><code>verify</code> 逐文件检查存在、非空、大小与 SHA-256；拒绝绝对路径、<code>..</code> 与目录外路径。</li>
   <li><code>max_segment_ms</code> 必须大于 0 且不超过 30_000；超出范围拒绝 manifest。<code>max_segment_samples</code> 按 <code>max_segment_ms * SAMPLE_RATE / 1000</code> 计算；超出时 worker 返回 <code>inference_failed</code>，不截断音频。</li>
 </ul>
@@ -214,18 +220,18 @@ pub struct Engine {
 
 impl Engine {
     pub fn load(manifest: &amp;Manifest, model_dir: &amp;Path, device: &amp;str)
-        -&gt; anyhow::Result&lt;Self&gt;;                    // 待实现，可以根据实际情况调整
+        -&gt; anyhow::Result&lt;Self&gt;;
     pub fn transcribe(&amp;mut self, samples: &amp;[f32], language: Option&lt;&amp;str&gt;,
                       cancel: &amp;CancelFlag, deadline: Instant)
-        -&gt; anyhow::Result&lt;String&gt;;                  // 待实现，可以根据实际情况调整
-    fn warmup(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;    // 待实现，可以根据实际情况调整
+        -&gt; anyhow::Result&lt;String&gt;;
+    fn warmup(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
     fn context_params(&amp;self) -&gt; LlamaContextParams;
-                                                 // 待实现，可以根据实际情况调整
+
 }</code></pre>
 <ul class="note">
   <li><code>load</code> 创建 <code>LlamaBackend</code>、加载 BF16 主模型、检查 <code>LlamaModel::ftype()</code>、初始化 <code>MtmdContext</code>，再检查 <code>capabilities(&amp;model).audio</code> 与 <code>audio_sample_rate()</code>。</li>
   <li><code>device</code> 来自 <code>Hello</code>；空串使用 backend 默认设备，不支持的值返回 <code>device_unavailable</code>。</li>
-  <li><code>warmup</code> 用一段短静音完成一次 mtmd / decode，提前暴露 backend 或 BF16 问题；不计入用户 Final。</li>
+  <li><code>warmup</code> 用一段短静音完成一次 mtmd / decode，提前暴露 backend 或模型加载问题；不计入用户 Final。</li>
   <li><code>transcribe</code> 每次创建 <code>LlamaContext</code>，调用 <a href="#c4-5">mtmd</a> 与 <a href="#c4-6">decode</a>，最后调用 <a href="#c4-7">clean</a>；不在方法内重新加载模型。</li>
   <li><code>context_params</code> 按 30 s 音频编码后的 token 与 <code>MAX_NEW_TOKENS</code> 设置上下文长度；不足时返回 <code>inference_failed</code>，不截断音频。</li>
   <li>字段顺序保证 <code>MtmdContext</code> 先于 <code>LlamaModel</code>、<code>LlamaModel</code> 先于 <code>LlamaBackend</code> 释放。</li>
@@ -235,14 +241,14 @@ impl Engine {
 <pre><code>// 依赖：MtmdBitmap::from_audio(samples: &amp;[f32]) -&gt; mtmd::Result&lt;MtmdBitmap&gt;
 
 pub fn build_prompt(model: &amp;LlamaModel, language: Option&lt;&amp;str&gt;)
-    -&gt; anyhow::Result&lt;String&gt;;                      // 待实现，可以根据实际情况调整
+    -&gt; anyhow::Result&lt;String&gt;;
 
 pub fn tokenize_audio(mtmd: &amp;MtmdContext, samples: &amp;[f32], prompt: &amp;str)
-    -&gt; anyhow::Result&lt;MtmdInputChunks&gt;;             // 待实现，可以根据实际情况调整
+    -&gt; anyhow::Result&lt;MtmdInputChunks&gt;;
 
 pub fn eval(mtmd: &amp;mut MtmdContext, lctx: &amp;mut LlamaContext&lt;'_&gt;,
             chunks: &amp;MtmdInputChunks, n_past: &amp;mut i32)
-    -&gt; anyhow::Result&lt;()&gt;;                         // 待实现，可以根据实际情况调整</code></pre>
+    -&gt; anyhow::Result&lt;()&gt;;                         </code></pre>
 <ul class="note">
   <li><code>build_prompt</code> 从 GGUF 的 chat template 生成单轮 prompt，并把 <code>MtmdContext::default_marker()</code> 放入用户内容；语言只作为可选提示，不拼接任意用户文本。</li>
   <li><code>tokenize_audio</code> 调用 <code>MtmdBitmap::from_audio(samples)</code>、<code>MtmdInputText::new(prompt, true, true)</code> 与 <code>MtmdContext::tokenize</code>；不写临时 WAV。</li>
@@ -255,19 +261,19 @@ pub fn eval(mtmd: &amp;mut MtmdContext, lctx: &amp;mut LlamaContext&lt;'_&gt;,
 pub fn greedy(model: &amp;LlamaModel, lctx: &amp;mut LlamaContext&lt;'_&gt;,
               n_past: &amp;mut i32, cancel: &amp;CancelFlag,
               deadline: Instant) -&gt; anyhow::Result&lt;Vec&lt;LlamaToken&gt;&gt;;
-                                                 // 待实现，可以根据实际情况调整</code></pre>
+                                                 </code></pre>
 <ul class="note">
   <li>使用 <code>LlamaSampler::greedy()</code> 与 <code>LlamaBatch</code>；每轮采样、判断 EOS / 上限 / 取消 / 截止时间，再 decode 新 token。</li>
   <li><code>MAX_NEW_TOKENS</code> 按 30 s 段的上限设置，防止异常模型无限生成；具体值由金样与性能测试冻结。</li>
 </ul>
 
 <h3 id="c4-7">4.7 clean.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub fn clean_text(raw: &amp;str) -&gt; String;             // 待实现，可以根据实际情况调整
+<pre><code>pub fn clean_text(raw: &amp;str) -&gt; String;
 
-fn strip_asr_text(raw: &amp;str) -&gt; &amp;str;           // 待实现，可以根据实际情况调整
-fn strip_language_prefix(raw: &amp;str) -&gt; &amp;str;    // 待实现，可以根据实际情况调整
-fn strip_nul(raw: &amp;str) -&gt; &amp;str;                 // 待实现，可以根据实际情况调整
-fn trim_edges(raw: &amp;str) -&gt; &amp;str;                // 待实现，可以根据实际情况调整</code></pre>
+fn strip_asr_text(raw: &amp;str) -&gt; &amp;str;
+fn strip_language_prefix(raw: &amp;str) -&gt; &amp;str;
+fn strip_nul(raw: &amp;str) -&gt; &amp;str;
+fn trim_edges(raw: &amp;str) -&gt; &amp;str;                </code></pre>
 <ul class="note">
   <li>Qwen3-ASR 的典型包装是 <code>language English&lt;asr_text&gt;And so, ...</code>；<code>clean_text</code> 取 <code>&lt;asr_text&gt;</code> 之后的内容，去掉 <code>language ...</code> 前缀与可选的 <code>&lt;/asr_text&gt;</code> 尾部。</li>
   <li>只做包装清洗、NUL 与首尾空白；模型输出中的标点、大小写、数字与中英文混排保持不变。</li>
@@ -313,7 +319,6 @@ fn trim_edges(raw: &amp;str) -&gt; &amp;str;                // 待实现，可�
     │   │   │   ├── MtmdBitmap::from_audio(samples)
     │   │   │   ├── MtmdInputText::new(&amp;prompt, true, true)
     │   │   │   └── MtmdContext::tokenize(&amp;text, &amp;[&amp;bitmap], &amp;mut chunks)
-    │   │   ├── let mut n_past = 0
     │   │   ├── mtmd::eval(&amp;mut self.mtmd, &amp;mut lctx, &amp;chunks, &amp;mut n_past)
     │   │   │   └── MtmdContext::eval_chunks(&amp;mut lctx, &amp;chunks, 0, 0, n_batch, true, n_past)
     │   │   ├── decode::greedy(&amp;self.model, &amp;mut lctx, &amp;mut n_past, cancel, deadline)
@@ -324,6 +329,7 @@ fn trim_edges(raw: &amp;str) -&gt; &amp;str;                // 待实现，可�
 <ul class="note">
   <li><code>Transcribe</code> 的字段与音频帧格式见 <a href="../voime-gpu-common/USER.html#u4-2">voime-gpu-common USER §4.2</a>；本文不复制帧定义。</li>
   <li>每次 Final 使用独立 <code>LlamaContext</code>，不跨段保留 KV cache；模型权重与 mtmd 上下文常驻。</li>
+  <li><code>n_past</code> 从 0 开始并由 eval / decode 推进；状态赋值不展开为调用栈节点。</li>
   <li>超长段在进入 mtmd 前拒绝，避免 llama.cpp 在长音频上无输出。</li>
 </ul>
 
@@ -338,13 +344,13 @@ fn trim_edges(raw: &amp;str) -&gt; &amp;str;                // 待实现，可�
 │   ├── 判断 cancel.is_cancelled() → anyhow::bail!("cancelled")
 │   ├── 判断 Instant::now() &gt;= deadline → anyhow::bail!("timeout")
 │   ├── batch.add(token, *n_past, &amp;[0], true)
-│   ├── lctx.decode(&amp;mut batch)
-│   └── *n_past += 1
+│   └── lctx.decode(&amp;mut batch)
 └── tokens</code></pre>
 <ul class="note">
   <li>只做 greedy；不设置 temperature、top-k、top-p 或重复惩罚。</li>
   <li>EOS 与 token 上限都正常结束并返回已生成 tokens；取消与超时返回错误，由 worker 映射为 common 错误码。</li>
   <li>每轮只 decode 一个新 token；不在解码循环中重新 tokenize 音频或重建 prompt。</li>
+  <li><code>n_past</code> 的步进属于解码状态；调用栈只保留 <code>decode</code> 调用。</li>
 </ul>
 
 <h3 id="c5-4">5.4 <code>asr_text</code> 清洗</h3>
@@ -366,18 +372,19 @@ fn trim_edges(raw: &amp;str) -&gt; &amp;str;                // 待实现，可�
 <h3 id="c5-5">5.5 超时与取消</h3>
 <pre><code>worker::read_loop(tx, cancel)
 ├── voime_gpu_common::read_frame(stdin)
-├── 判断 Cancel → cancel.cancel()
+├── 判断 Cancel(id) → cancel.cancel(id)          // 仅匹配当前 id 时置位
 ├── 判断 Shutdown → tx.send(WorkerCommand::Shutdown)
 └── 判断 Transcribe → tx.send(WorkerCommand::Transcribe)
 
 worker::handle_transcribe(...)
-├── deadline = Instant::now() + Duration::from_millis(TRANSCRIBE_BUDGET_MS)
+├── cancel.arm(request.id)
 ├── 判断 Engine::transcribe(...) 返回 "timeout" → voime_gpu_common::write_frame(Error) // timeout
 ├── 判断 Engine::transcribe(...) 返回 "cancelled" → voime_gpu_common::write_frame(Error) // inference_failed; message=cancelled
-└── 判断其他错误 → voime_gpu_common::write_frame(Error) // inference_failed</code></pre>
+├── 判断其他错误 → voime_gpu_common::write_frame(Error) // inference_failed
+└── cancel.clear()</code></pre>
 <ul class="note">
-  <li><code>Cancel</code> 只置位当前请求的取消标志；解码在下一个 token 边界退出，不强行中断 llama.cpp 内部调用。</li>
-  <li>daemon 的 60 s 预算是权威；超过预算时 daemon 可以直接杀 worker，当前段回退 CPU SenseVoice。</li>
+  <li><code>Cancel</code> 只置位当前请求的取消标志；请求开始时 <code>arm(id)</code>，结束时 <code>clear()</code>。解码在下一个 token 边界退出，不强行中断 llama.cpp 内部调用。</li>
+  <li>deadline 由 <code>TRANSCRIBE_BUDGET_MS</code> 计算；daemon 的 60 s 预算是权威，超过预算时 daemon 可以直接杀 worker，当前段回退 CPU SenseVoice。</li>
   <li>取消 / 超时的响应与退出语义以 <a href="../voime-gpu-common/USER.html#u4-7">voime-gpu-common USER §4.7</a> 为准；daemon 丢弃 Cancel 后的 <code>inference_failed</code> 终态，不执行 CPU 回退。</li>
 </ul>
 

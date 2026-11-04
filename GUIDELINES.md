@@ -34,6 +34,7 @@ Documents per project, in HTML — the development docs split by boundary:
 | 8 | One block, one flow | a code block is a single continuous content; disjoint pieces → separate blocks/subsections |
 | 9 | CONVENTIONS chapter | USER / CORE / PROVIDER each keep one, right after the first chapter (may stay empty); stated once there, referenced from the affected sections |
 | 10 | BUILD is downstream | BUILD is generated from README / USER / CORE / PROVIDER. Those documents must never link to or cite BUILD; every fact they need lives in them, and BUILD repeats it with links back. Before development, no BUILD document exists in the doc set. |
+| 11 | Documentation-first | documents define the target design and contract before implementation; docs guide implementation, never the reverse. Never record implementation status (implemented / not implemented / pending / draft) in any document. |
 
 ## Readme
 
@@ -79,7 +80,7 @@ Documents per project, in HTML — the development docs split by boundary:
 - not exhaustive — key execution paths only: startup, key events, shutdown
 - symbols already defined in USER/PROVIDER → one-line declaration with trailing `//见 USER §xx.xx` / `//见 PROVIDER §xx.xx` — project language, no body, no redefinition; everything else syntactically valid in the project language
 - engineering constants (bus names, periods, capacities, …) — in the owning source file's signature subsection, declare the constant name and purpose; a concrete value may appear only as a recommended value in a comment (e.g. `// 推荐值 15_000`), never as an assignment in the declaration; do not use a separate constants table; tuned against the real system, code stays the operational source of truth; a literal may appear inline in a call stack where that flow depends on it; exception: UI visual literals (dimensions, radii, font sizes, …) pin the visual contract and may be stated in USER's UI chapters — CSS/code stays the operational source of truth
-- no implementation reference → draft meaningful names/signatures marked `待实现，可以根据实际情况调整` (call-stack lines use the drafted names, no marker at the call site); a reference exists (main branch, breadpan, std / GTK APIs) → use its real names
+- no implementation reference → draft meaningful names/signatures as the target contract; implementation may adjust names or parameters while preserving the documented semantics (call-stack lines use the drafted names); a reference exists (main branch, breadpan, std / GTK APIs) → use its real names
 
 **Chapters**
 1. **File tree** — final code structure; each entry states what the module serves and links to its signatures subsection (no subsection → plain entry); lists source/build/config/assets only — documentation artifacts and their styling are out of scope
