@@ -65,7 +65,7 @@ FireRedASR2-AED + FireRedPunc（ORT + FP32 ONNX）与 Qwen3-ASR（llama-cpp-rs +
   <tr>
     <td>FireRed 后端</td>
     <td><strong>FireRedASR2-AED FP32 ONNX + FireRedPunc FP32 ONNX。</strong></td>
-    <td>AED 负责识别，FireRedPunc 负责中英文标点；两者都由 FireRed worker 加载。MIGraphX runtime 优先 Arch 系统包，默认不编译源码。</td>
+    <td>AED 负责识别，FireRedPunc 负责中英文标点；两者都由 FireRed worker 加载。ORT GPU runtime 的部署方式在准备阶段调研并冻结；运行期不切换 EP / runtime；无可行方案则取消 FireRed 后端。</td>
   </tr>
   <tr>
     <td>Qwen 后端</td>
@@ -415,6 +415,7 @@ Response
 
 <ul class="note">
   <li>协议字段为提案草案；最终字段、版本与错误码以 <code>voime-gpu-common USER</code> 为准。</li>
+  <li>FireRed worker 不切换 EP / runtime；<code>RuntimeMissing</code> / <code>DeviceUnavailable</code> / <code>LoadFailed</code> 均使 FireRed 后端不可用，只有 daemon 按 §10.5 对当前段回退 CPU SenseVoice。</li>
   <li>Qwen 的 mmproj 路径由模型 manifest 声明；worker 只接受模型目录，不从全局配置或环境变量猜路径。</li>
   <li>worker 的 stdout 只用于协议；日志走 stderr，由 daemon 转发到 <code>voime-log</code>。</li>
   <li>协议不记录识别文本；daemon 只记录长度、耗时、错误码与后端名称。</li>
@@ -534,45 +535,34 @@ runtime、GPU 后端独立”的边界一致。
 </ul>
 
 <p>
-<strong>FireRed 的 MIGraphX runtime 获取顺序：</strong>
-安装脚本不默认从源码编译。优先使用发行版现成包，其次使用项目发布的预编译 runtime，最后才允许显式选择源码编译。
+<strong>FireRed runtime 约束：</strong>FireRed worker 必须使用 ORT GPU EP；Linux AMD 使用 MIGraphX provider，
+Linux NVIDIA 使用 CUDA，Windows 使用 CUDA / DirectML。runtime 的具体获取方式属于开发前准备，
+不在产品文档中固定优先级。
 </p>
 
 <table>
-  <tr><th>优先级</th><th>来源</th><th>适用条件</th><th>说明</th></tr>
+  <tr><th>项目</th><th>契约</th></tr>
   <tr>
-    <td>1</td>
-    <td>Arch Linux 官方 <code>extra/onnxruntime-rocm</code> 或 <code>onnxruntime-opt-rocm</code>（1.29.0）</td>
-    <td>Arch / 兼容发行版；已启用 ROCm 仓库；接受安装 <code>migraphx</code> 与 ROCm 依赖。</td>
-    <td>包内已包含 <code>libonnxruntime_providers_migraphx.so</code>；<code>ort</code> 用 <code>api-29</code> + <code>load-dynamic</code> + <code>migraphx</code> 加载系统 <code>libonnxruntime.so</code>。不需要源码编译。</td>
+    <td>获取</td>
+    <td>准备阶段先调研发行版 <code>onnxruntime</code> 包是否包含 MIGraphX；不可用时按 ONNX Runtime 文档源码编译支持 MIGraphX 的 runtime，并在安装 GPU 后端时完成编译。若找不到可行部署，取消 FireRed 后端。</td>
   </tr>
   <tr>
-    <td>2</td>
-    <td>项目发布的预编译 runtime tarball</td>
-    <td>目标 OS / 架构 / ROCm ABI 有对应产物；runtimes 带 SHA-256 与构建证明。</td>
-    <td>由发布流程在 CI 构建一次，用户只下载；安装到 <code>~/.local/lib/voime/firered/</code>，不污染系统。</td>
+    <td>运行期</td>
+    <td>worker 不切换 EP / runtime，不回退到 CPU ORT 或另一 runtime；runtime 或 provider 不可用即 FireRed 后端不可用。</td>
   </tr>
   <tr>
-    <td>3</td>
-    <td><code>intel-agency/inference-engine-rocm</code> 等第三方预编译包</td>
-    <td>仅限其已验证的 GPU 目标。</td>
-    <td>该包为 ORT 1.24.1 + MIGraphX，已验证 gfx1030 / gfx1031 / gfx1100 / gfx1101 / gfx1102；<strong>不包含 gfx1201（RX 9070 XT）</strong>，因此不作为当前验收基线路径。</td>
+    <td>daemon 兜底</td>
+    <td>FireRed 后端不可用时，当前段按 §10.5 回退 CPU SenseVoice；这是产品级兜底，不是 FireRed worker 的 runtime 回退。</td>
   </tr>
   <tr>
-    <td>4</td>
-    <td>源码编译 ONNX Runtime + MIGraphX</td>
-    <td>前三种都不可用，或用户显式 <code>--firered-runtime-source source</code>。</td>
-    <td>作为过渡方案；用 ONNX Runtime 的 <code>--use_migraphx</code> 构建；需要 ROCm / MIGraphX 开发包、<code>half</code>、CMake、Ninja 等；编译一次后缓存，不随每次安装重复。</td>
+    <td>固定项</td>
+    <td>FireRed worker 固定 <code>ort</code> <code>default-features=false</code> + <code>api-29</code> + <code>load-dynamic</code> + <code>migraphx</code>；启动时校验 ORT 版本与 MIGraphX provider。</td>
   </tr>
 </table>
 
 <ul class="note">
-  <li>Arch 的 <code>onnxruntime-rocm</code> 与普通 <code>onnxruntime</code> 冲突；安装脚本必须检测冲突并说明：核心的 CPU ORT 使用私有 runtime，不受系统包影响；若用户依赖系统 CPU ORT，则改用预编译或源码 runtime。</li>
-  <li><code>onnxruntime-opt-rocm</code> 带 AVX2 优化，现代 x86_64 可用；兼容性优先时选 <code>onnxruntime-rocm</code>。</li>
-  <li>AUR 当前没有独立的 <code>onnxruntime-migraphx</code> 包；Arch 官方 Extra 的 <code>onnxruntime-rocm</code> 已满足，ArchLinux CN 只是镜像官方包，不需要额外 AUR 源。</li>
-  <li>AMD 的 <code>onnxruntime-migraphx</code> Python wheel 只作为参考 / 提取来源，不作为 Rust worker 的产品路径。</li>
-  <li>源码 fallback 必须显式同意，默认安装只做系统包 / 预编译检测；没有可用 runtime 时 FireRed 后端标记不可用，核心 CPU Final 继续。</li>
-  <li>FireRed worker 固定 <code>ort</code> <code>default-features=false</code> + <code>api-29</code> + <code>load-dynamic</code> + <code>migraphx</code>；启动时用 <code>init_from()</code> 指向系统或私有 <code>libonnxruntime.so</code>，并校验 MIGraphX provider。</li>
+  <li>发行版包名、版本、构建参数与缓存策略由准备阶段记录，不进入产品文档。</li>
+  <li>运行期不安装、不编译、不切换 runtime；安装脚本只在安装阶段准备 runtime。</li>
 </ul>
 
 <h3 id="s5-6">5.6 模型契约</h3>
@@ -719,8 +709,6 @@ addon 库与描述文件固定写入 Fcitx 的系统路径，不读取用户目�
 scripts/install-gpu.sh --firered --backend firered
 scripts/install-gpu.sh --qwen3 --backend qwen3
 scripts/install-gpu.sh --firered --qwen3
-scripts/install-gpu.sh --firered --backend firered --firered-runtime-source system
-scripts/install-gpu.sh --firered --backend firered --firered-runtime-source source
 scripts/install-gpu.sh --no-models --firered-runtime cuda --qwen-runtime vulkan</code></pre>
 
 <table>
@@ -732,7 +720,6 @@ scripts/install-gpu.sh --no-models --firered-runtime cuda --qwen-runtime vulkan<
   <tr><td><code>--backend cpu|firered|qwen3</code></td><td>安装后写入 <code>final.backend</code>；必须与已安装的后端一致；默认 <code>cpu</code>。</td></tr>
   <tr><td><code>--no-models</code></td><td>只装 worker 与 runtime；模型目录由用户提供。</td></tr>
   <tr><td><code>--firered-runtime cuda|migraphx|directml</code></td><td>选择 FireRed 的 ORT GPU EP；AMD Linux 固定 MIGraphX，NVIDIA 用 CUDA，Windows AMD / Intel 用 DirectML。</td></tr>
-  <tr><td><code>--firered-runtime-source auto|system|prebuilt|source</code></td><td>选择 MIGraphX runtime 获取方式；默认 <code>auto</code>：系统包 → 项目预编译；都没有则提示 <code>source</code> 或标记 FireRed 不可用。只有显式 <code>source</code> 才编译。</td></tr>
   <tr><td><code>--qwen-runtime vulkan|cuda</code></td><td>选择 Qwen 的 llama.cpp backend；AMD Linux 只接受 Vulkan，CUDA 用于 NVIDIA；不提供 HIP / ROCm。</td></tr>
 
   <tr><td><code>--model-dir &lt;dir&gt;</code></td><td>覆盖模型根目录。</td></tr>
@@ -745,8 +732,8 @@ scripts/install-gpu.sh --no-models --firered-runtime cuda --qwen-runtime vulkan<
   <li>GPU 安装脚本必须先验证核心已安装；缺少核心时失败，不创建“只有 GPU 模块”的孤立安装。</li>
   <li>安装体积：FireRed 约 4.9 GB，Qwen BF16 约 4.7 GB，默认两个约 9.6 GB；脚本必须显示各模型体积并支持断点续传 / 离线源。</li>
   <li>FireRed runtime 与 Qwen runtime 分开安装 / 卸载；卸载一个不得删除另一个的库或模型。</li>
-  <li>FireRed 默认不编译源码：Arch 优先安装 <code>onnxruntime-rocm</code> / <code>onnxruntime-opt-rocm</code>；其他平台先找项目预编译 runtime；只有 <code>--firered-runtime-source source</code> 才编译，并缓存结果。</li>
-  <li>源码 fallback 需要 ROCm / MIGraphX 开发包、<code>half</code>、CMake、Ninja；一次编译后复用，不随每次安装重复。</li>
+  <li>FireRed runtime 获取方式由准备阶段冻结；若需要源码编译，在安装 GPU 后端时完成并缓存，运行期不编译、不切换 runtime。</li>
+  <li>源码编译需要 ROCm / MIGraphX 开发包、<code>half</code>、CMake、Ninja；一次编译后复用，不随每次安装重复。</li>
   <li>模型下载失败必须非零退出并清理临时目录，不写 manifest、不做 rename；运行期缺失按 §10.5 回退 CPU。</li>
   <li>Windows 与 Linux 使用同一套 <code>install-core.ps1</code> / <code>install-gpu.ps1</code> 语义（10.8 A）。</li>
 </ul>
@@ -819,7 +806,7 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><td>manifest 测试</td><td>一模型一目录；缺文件 / SHA 不符 / 错 kind / 旧 schema 拒绝；精度校验（FireRed FP32 / Qwen BF16）；不允许可执行文件。</td></tr>
   <tr><td>pipeline 集成</td><td>Final 触发后停止 Partial；Finalizing 期间 Preview 推理计数为 0；CPU Final 只执行一次；CPU / FireRed / Qwen 三条 Final 路径；GPU 超时 / 崩溃 / 回退；Qwen 空输出与包装清洗。</td></tr>
   <tr><td>安装测试</td><td>核心默认；GPU 默认两个且 <code>final.backend</code> 仍为 <code>cpu</code>；<code>--backend</code> 显式切换；<code>--firered</code> / <code>--qwen3</code>；离线源；下载失败退出且不留下半成品；卸载；升级后旧模型目录处理。</td></tr>
-  <tr><td>FireRed runtime</td><td>Arch 系统包路径：<code>libonnxruntime_providers_migraphx.so</code> 存在；<code>ort</code> api-29 能加载；EP 注册成功。默认安装不触发源码编译；source fallback 只编译一次并复用缓存。</td></tr>
+  <tr><td>FireRed runtime</td><td>准备阶段冻结的 runtime 部署：<code>libonnxruntime_providers_migraphx.so</code> 存在；<code>ort</code> api-29 能加载；EP 注册成功。运行期不切换 EP / runtime；无可行部署则取消 FireRed 后端。</td></tr>
   <tr><td>隔离测试</td><td>核心动态依赖无 GPU 库；FireRed worker 无 ggml / llama.cpp；Qwen worker 无 ORT / ONNX Runtime；删除任一 runtime 后核心和另一后端仍可用。</td></tr>
   <tr><td>Fcitx 系统安装</td><td>addon 库与描述写入系统目录；安装 / 卸载需要 sudo；不设置 <code>FCITX_ADDON_DIRS</code>；<code>--no-addon</code> 时核心仍可用。</td></tr>
   <tr><td>前端测试</td><td>Fcitx addon 注册 / 卸载；Preview 中断且 Finalizing 不再 CPU 推理；Final 等待期间 UI 不重复提交；Windows 与 Linux 同一测试矩阵。</td></tr>
@@ -887,11 +874,11 @@ backend = "cpu"       # cpu | firered | qwen3
 
 <table>
   <tr><th>风险</th><th>影响</th><th>缓解</th></tr>
-  <tr><td>FireRed 的 ORT GPU EP 与目标硬件不匹配</td><td>AMD Linux 需要 MIGraphX / ROCm，部署复杂；CUDA 只覆盖 NVIDIA。</td><td>优先 Arch 官方 <code>onnxruntime-rocm</code> 1.29.0；<code>ort</code> 用 <code>api-29</code> + <code>load-dynamic</code>；在开发前于目标机器验证；Qwen 的 Vulkan 路径可作为 AMD Linux 的先行后端。</td></tr>
-  <tr><td>MIGraphX runtime 无可用预编译包</td><td>只能从源码编译 ONNX Runtime，安装时间与构建依赖不可接受。</td><td>顺序：Arch 系统包 → 项目 prebuilt → 明确匹配的第三方；仅最后显式 <code>--firered-runtime-source source</code>；编译一次并缓存，不随每次安装重复。</td></tr>
+  <tr><td>FireRed 的 ORT GPU EP 与目标硬件不匹配</td><td>AMD Linux 需要 MIGraphX / ROCm，部署复杂；CUDA 只覆盖 NVIDIA。</td><td>准备阶段先验证发行版 onnxruntime 包；不可用则源码编译支持 MIGraphX 的 runtime；<code>ort</code> 用 <code>api-29</code> + <code>load-dynamic</code>；Qwen 的 Vulkan 路径可作为 AMD Linux 的先行后端。</td></tr>
+  <tr><td>FireRed runtime 无可行部署</td><td>无法加载 MIGraphX provider 时 FireRed 后端不可用，安装时间与构建依赖不可接受。</td><td>准备阶段先验证发行版 onnxruntime 包；不可用则在安装 GPU 后端时源码编译支持 MIGraphX 的 runtime；仍不可行则取消 FireRed 后端。</td></tr>
   <tr><td>系统 ORT 1.29 与 <code>ort</code> API 版本不匹配</td><td><code>ort</code> 默认 API 31，直接加载 1.29 可能失败或运行期崩溃。</td><td>FireRed worker 固定 <code>default-features=false</code> + <code>api-29</code> + <code>load-dynamic</code> + <code>migraphx</code>；启动时校验 ORT 版本与 MIGraphX provider。</td></tr>
-  <tr><td>Arch <code>onnxruntime-rocm</code> 与系统 <code>onnxruntime</code> 冲突</td><td>安装包互相冲突，可能影响用户其他应用。</td><td>核心使用私有 CPU ORT；安装脚本检测冲突并提示选择 prebuilt / source；不强制卸载系统 CPU ORT。</td></tr>
-  <tr><td>Qwen BF16 在目标 GPU 上不可用</td><td>Vulkan 设备可能报告 <code>bf16: 0</code>；此时 BF16 不能作为加速路径，性能或可用性下降。</td><td><code>doctor</code> 读取 backend 能力；按 §10.5 回退 CPU；开发前先验证。</td></tr>
+  <tr><td>Arch <code>onnxruntime-rocm</code> 与系统 <code>onnxruntime</code> 冲突</td><td>安装包互相冲突，可能影响用户其他应用。</td><td>核心使用私有 CPU ORT；准备阶段决定使用发行版包还是源码 runtime；不强制卸载系统 CPU ORT。</td></tr>
+  <tr><td>Qwen BF16 在目标 GPU 上不可用</td><td>Vulkan 设备可能报告 <code>bf16: 0</code>；此时 BF16 不能作为加速路径，性能或可用性下降。</td><td>worker 启动时自检 BF16；<code>doctor</code> 只报 worker ready / running；不支持的设备按 §10.5 回退 CPU。</td></tr>
   <tr><td>llama.cpp 音频仍是 experimental</td><td>输出质量、长音频、版本升级可能回归；Qwen3-ASR 输出可能带 <code>asr_text</code> 包装。</td><td>锁定 llama.cpp commit / crate 版本；30 s 分段规避长音频问题；worker 清洗包装；目标语料金样。</td></tr>
   <tr><td><code>llama-cpp-4</code> 绑定较新</td><td>API 变动、与 llama.cpp 版本错配、构建失败。</td><td>固定 crate 版本与对应 llama.cpp commit；worker 内封装 mtmd 调用；升级必须重跑金样。</td></tr>
   <tr><td>两个 GPU runtime 被错误地放进同一个 crate / 二进制</td><td>Cargo feature 合并可能让同一二进制链接 ORT 与 llama.cpp，引入符号、CUDA / Vulkan 或库版本冲突。</td><td>拆成 <code>voime-gpu-common</code> + 两个独立 backend crate；每个 worker 只开自己的 feature；CI 检查动态依赖。</td></tr>
@@ -988,9 +975,9 @@ backend = "cpu"       # cpu | firered | qwen3
   </tr>
   <tr>
     <td>10.13</td>
-    <td>FireRed MIGraphX runtime 获取</td>
-    <td>顺序：Arch 官方 <code>onnxruntime-rocm</code> / <code>onnxruntime-opt-rocm</code> → 项目预编译 runtime → 明确匹配的第三方预编译 → 源码编译（显式 opt-in）。</td>
-    <td>默认安装不编译源码；<code>ort</code> 用 <code>api-29</code> + <code>load-dynamic</code> + <code>migraphx</code> 加载系统 ORT；源码编译结果缓存，安装脚本区分 <code>system</code> / <code>prebuilt</code> / <code>source</code>。</td>
+    <td>FireRed runtime 部署</td>
+    <td>准备阶段调研并冻结：先验证发行版 <code>onnxruntime</code> 包是否包含 MIGraphX；不可用则在安装 GPU 后端时源码编译支持 MIGraphX 的 runtime；没有可行方案则取消 FireRed 后端。</td>
+    <td><code>ort</code> 固定 <code>api-29</code> + <code>load-dynamic</code> + <code>migraphx</code>；运行期不切换 EP / runtime；发行版包名与源码构建参数由准备阶段记录。</td>
   </tr>
 </table>
 
@@ -998,7 +985,7 @@ backend = "cpu"       # cpu | firered | qwen3
   <li>10.6 是硬约束：Finalizing 期间只允许一次 Final 推理，不得继续为 Preview 跑 CPU；实现需要取消令牌 + 调用计数测试。</li>
   <li>10.7 不再采用用户级 addon 加载：Fcitx 默认只搜索系统 addon 库目录；把用户目录加入 <code>FCITX_ADDON_DIRS</code> 会扩大库搜索面，已否决。addon 只允许 sudo 安装到系统目录。</li>
   <li>10.8 的 Windows 是完整目标平台，文档按同一架构定义；不使用“本轮 / 后续”等时序措辞。</li>
-  <li>10.13 优先用 Arch 官方 <code>onnxruntime-rocm</code> 1.29.0：包内已含 <code>libonnxruntime_providers_migraphx.so</code>；<code>intel-agency</code> 的 1.24.1 预编译包不含 gfx1201，不作为 RX 9070 XT 路径。</li>
+  <li>10.13 准备阶段先验证 Arch 官方 <code>onnxruntime-rocm</code> 1.29.0：包内已含 <code>libonnxruntime_providers_migraphx.so</code>；不可用则源码编译，第三方预编译不作为产品路径。</li>
 </ul>
 
 <h2 id="s11">11. 参考</h2>
@@ -1016,7 +1003,6 @@ backend = "cpu"       # cpu | firered | qwen3
   <li><a href="https://archlinux.org/packages/extra/x86_64/onnxruntime-rocm/">Arch Linux onnxruntime-rocm 1.29.0</a>：系统包内含 <code>libonnxruntime_providers_migraphx.so</code>，依赖 <code>migraphx</code>；对应 <a href="https://archlinux.org/packages/extra/x86_64/onnxruntime-opt-rocm/">onnxruntime-opt-rocm</a>。</li>
   <li><a href="https://ort.pyke.io/setup/multiversion">ort Multiversioning</a>：<code>api-17</code>–<code>api-31</code>；FireRed 固定 <code>api-29</code> 并使用 <code>load-dynamic</code> 加载系统 ORT 1.29。</li>
   <li><a href="https://ort.pyke.io/misc/prebuilt-binaries">ort 预编译二进制</a>：官方预编译不包含 MIGraphX；因此 FireRed 使用系统包 / 自建 runtime，而不是 <code>download-binaries</code>。</li>
-  <li><a href="https://github.com/intel-agency/inference-engine-rocm">intel-agency/inference-engine-rocm</a>：ORT 1.24.1 + MIGraphX 的第三方预编译；已验证 gfx1030 / gfx1031 / gfx1100 / gfx1101 / gfx1102，不含 gfx1201。</li>
   <li><a href="https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/onnxruntime.html">AMD ROCm: ONNX Runtime</a>：MIGraphX EP / <code>onnxruntime-migraphx</code> wheel 与源码构建说明。</li>
   <li><a href="https://onnxruntime.ai/docs/execution-providers/">ONNX Runtime Execution Providers</a>：FireRed 使用的 CUDA、MIGraphX、DirectML 平台与依赖。</li>
   <li><a href="https://ort.pyke.io/perf/execution-providers">ort Execution Providers</a>：Rust <code>ort</code> 的 EP feature 与平台支持。</li>
@@ -1053,7 +1039,7 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><td><code>USER.html §3.2</code></td><td>改</td><td>PTT / Toggle 流程：Finalizing 停止 Preview 计算；CPU Final 一次；GPU Final 只发 PCM；失败按 10.5 回退。</td></tr>
   <tr><td><code>USER.html §3.3</code></td><td>改</td><td>Continuous 流程：VAD 分段后的 Finalizing 计算门禁同上；默认 CPU 与显式 GPU 的差异。</td></tr>
   <tr><td><code>USER.html §4.1</code></td><td>改</td><td>前端配置：仍只有 Mode / Hotkey；Final 后端不是前端配置项；补充 Fcitx addon 需要 sudo 系统安装。</td></tr>
-  <tr><td><code>USER.html §4.2</code></td><td>改</td><td>命令行入口：<code>voime ctl backend</code> 写配置；<code>doctor</code> 显示 CPU / FireRed / Qwen、runtime 与 BF16 能力。</td></tr>
+  <tr><td><code>USER.html §4.2</code></td><td>改</td><td>命令行入口：<code>voime ctl backend</code> 写配置；<code>doctor</code> 显示所选 Final 后端与 GPU worker 的 ready / running 状态。</td></tr>
   <tr><td><code>USER.html §4.3</code></td><td>改</td><td>组件接口索引：增加三个 GPU crate；删除核心 CTC / Punc；链接 GPU 协议与模型契约。</td></tr>
   <tr><td><code>USER.html §4.4</code></td><td>改</td><td>端到端契约：默认 CPU；GPU 失败回退；Finalizing 不重复跑 Preview；切换需重启 daemon。</td></tr>
   <tr><td><code>USER.html §4.5</code></td><td>改</td><td>平台覆盖：Linux 与 Windows 全量定义；Linux 验收基线为 AMD，Windows 覆盖 DirectML / Vulkan / CUDA；Qwen AMD Linux 只支持 Vulkan。</td></tr>
@@ -1093,7 +1079,7 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><td><code>crates/voime-core/USER.html §4.5</code></td><td>改</td><td>错误：模型下载 / 缺失 / 推理失败；删除 CTC / Punc 错误。</td></tr>
   <tr><td><code>crates/voime-core/CORE.html §1</code></td><td>改</td><td>文件树：删除 <code>asr/firered_ctc.rs</code>、<code>punc/*</code>；增加 SenseVoice 推理 / 解码。</td></tr>
   <tr><td><code>crates/voime-core/CORE.html §2–§3</code></td><td>改</td><td>CONVENTIONS / SBOM：CPU ORT only；增加 SenseVoice 依赖；删除 CTC / Punc。</td></tr>
-  <tr><td><code>crates/voime-core/CORE.html §4</code></td><td>改</td><td>签名：删除 CTC / Punc 类型；增加 SenseVoice、Preview 调度取消、Finalizing 门禁。</td></tr>
+  <tr><td><code>crates/voime-core/CORE.html §4</code></td><td>改</td><td>签名：删除 CTC / Punc 类型；增加 SenseVoice、Preview 调度取消、Finalizing 门禁。Segmenter 常量 <code>MAX_SEGMENT_MS</code>：30 s 强制切分，推荐值 <code>30_000</code>；manifest 的 <code>max_segment_ms</code> 与长段测试使用同一上限。</td></tr>
   <tr><td><code>crates/voime-core/CORE.html §5</code></td><td>改</td><td>调用栈：启动加载 VAD / SenseVoice；VAD → Preview；Finalizing 取消 Preview；CPU Final 一次；错误路径。</td></tr>
   <tr><td><code>crates/voime-core/PROVIDER.html §1–§2</code></td><td>改</td><td>TERMS / CONVENTIONS：FireRedVAD + SenseVoice；CPU EP only；per-model manifest。</td></tr>
   <tr><td><code>crates/voime-core/PROVIDER.html §3.2</code></td><td>改</td><td>推理边界图：只画 CPU ORT 与两个核心模型；删除 CTC / Punc。</td></tr>
@@ -1128,18 +1114,18 @@ backend = "cpu"       # cpu | firered | qwen3
 <table>
   <tr><th>文档位置</th><th>操作</th><th>内容</th></tr>
   <tr><td><code>crates/voime/README.html §1</code></td><td>改</td><td>WHAT &amp; WHY：CLI / TUI / ctl / doctor；不加载模型。</td></tr>
-  <tr><td><code>crates/voime/README.html §2</code></td><td>改</td><td>用户交互：<code>ctl backend</code> 写配置；<code>doctor</code> 展示 CPU / FireRed / Qwen 与 Fcitx 系统 addon 路径。</td></tr>
+  <tr><td><code>crates/voime/README.html §2</code></td><td>改</td><td>用户交互：<code>ctl backend</code> 写配置；<code>doctor</code> 展示 CPU / FireRed / Qwen、worker ready / running 与 Fcitx 系统 addon 路径。</td></tr>
   <tr><td><code>crates/voime/README.html §3</code></td><td>改</td><td>边界：通过 IPC 读写 daemon；只读配置；不启动 worker。</td></tr>
   <tr><td><code>crates/voime/README.html §4</code></td><td>改</td><td>Credits：ratatui / crossterm、Fcitx 诊断；删除 CTC 相关。</td></tr>
   <tr><td><code>crates/voime/USER.html §1–§2</code></td><td>改</td><td>TERMS / CONVENTIONS：<code>voime ctl backend</code> 写配置；默认 CPU；切换需重启 daemon。</td></tr>
-  <tr><td><code>crates/voime/USER.html §3.1</code></td><td>改</td><td>ctl 命令流：backend 选择不进入 daemon 热切换；doctor 检查 Fcitx 系统 addon 路径、GPU runtime。</td></tr>
-  <tr><td><code>crates/voime/USER.html §4.1–§4.4</code></td><td>改</td><td>命令行 / ctl 输出 / doctor：CPU / FireRed / Qwen、runtime、BF16、Fcitx 系统 addon 路径与 ABI。</td></tr>
+  <tr><td><code>crates/voime/USER.html §3.1</code></td><td>改</td><td>ctl 命令流：backend 选择不进入 daemon 热切换；doctor 检查 Fcitx 系统 addon 路径与 GPU worker ready / status。</td></tr>
+  <tr><td><code>crates/voime/USER.html §4.1–§4.4</code></td><td>改</td><td>命令行 / ctl 输出 / doctor：CPU / FireRed / Qwen、worker ready / running、Fcitx 系统 addon 路径与 ABI。</td></tr>
   <tr><td><code>crates/voime/USER.html §5</code></td><td>不改</td><td>TUI 视觉与按键不变；只增加 backend 状态信息。</td></tr>
   <tr><td><code>crates/voime/CORE.html §1</code></td><td>改</td><td>文件树：ctl / doctor 增加 backend 选择与环境诊断；不再列 CTC 相关。</td></tr>
   <tr><td><code>crates/voime/CORE.html §2–§3</code></td><td>改</td><td>CONVENTIONS / SBOM：只读配置、Fcitx 系统 addon 检查；不加载模型。</td></tr>
-  <tr><td><code>crates/voime/CORE.html §4</code></td><td>改</td><td>签名：<code>ctl backend</code>、doctor 的 runtime / env 检查项。</td></tr>
-  <tr><td><code>crates/voime/CORE.html §5</code></td><td>改</td><td>调用栈：ctl backend 写配置；doctor 读取配置与 Fcitx 系统 addon 路径。</td></tr>
-  <tr><td><code>crates/voime/PROVIDER.html §1–§4</code></td><td>改</td><td>已知 provider：终端、OS 诊断；新增 Vulkan / GPU 诊断只读信息；不加载模型。</td></tr>
+  <tr><td><code>crates/voime/CORE.html §4</code></td><td>改</td><td>签名：<code>ctl backend</code>、doctor 的 worker status / env 检查项。</td></tr>
+  <tr><td><code>crates/voime/CORE.html §5</code></td><td>改</td><td>调用栈：ctl backend 写配置；doctor 读取配置、worker 状态与 Fcitx 系统 addon 路径。</td></tr>
+  <tr><td><code>crates/voime/PROVIDER.html §1–§4</code></td><td>改</td><td>已知 provider：终端、OS 诊断；只读 worker 状态；不加载模型、不读取 GPU runtime 细节。</td></tr>
   <tr><td><code>crates/voime-ipc/USER.html §4.2–§4.3</code></td><td>不改</td><td>前端协议不变：不新增后端热切换消息；backend 选择通过配置文件 + daemon 重启。</td></tr>
 </table>
 
@@ -1181,8 +1167,12 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><td><code>crates/voime-gpu-firered/PROVIDER.html §1–§2</code></td><td>增</td><td>TERMS / CONVENTIONS：ONNX 张量、CMVN、FireRedPunc tokenizer、ORT GPU EP。</td></tr>
   <tr><td><code>crates/voime-gpu-firered/PROVIDER.html §3</code></td><td>增</td><td>加载 / 推理边界图：模型目录 → ORT 会话 → AED / Punc。</td></tr>
   <tr><td><code>crates/voime-gpu-firered/PROVIDER.html §4.1–§4.2</code></td><td>增</td><td>FireRedASR2-AED 与 FireRedPunc 的 ONNX 张量、tokenizer、来源与 SHA。</td></tr>
-  <tr><td><code>crates/voime-gpu-firered/PROVIDER.html §4.3–§4.4</code></td><td>增</td><td>ORT GPU EP、CUDA / MIGraphX / DirectML；Arch <code>onnxruntime-rocm</code> 1.29 + <code>libonnxruntime_providers_migraphx.so</code>；<code>ort api-29</code> / <code>load-dynamic</code>；加载失败与运行期错误。</td></tr>
+  <tr><td><code>crates/voime-gpu-firered/PROVIDER.html §4.3–§4.4</code></td><td>增</td><td>ORT GPU EP、CUDA / MIGraphX / DirectML；<code>ort api-29</code> / <code>load-dynamic</code>；加载失败与运行期错误；发行版包名与获取顺序不写入 Provider。</td></tr>
 </table>
+
+<ul class="note">
+  <li>若准备阶段确认没有可行的 FireRed runtime 部署，删除本节全部 FireRed 文档动作及对应图表、安装项，不在产品中保留半成品后端。</li>
+</ul>
 
 <h4 id="s12-3-3">12.3.3 voime-gpu-qwen3</h4>
 
@@ -1202,7 +1192,7 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><td><code>crates/voime-gpu-qwen3/PROVIDER.html §1–§2</code></td><td>增</td><td>TERMS / CONVENTIONS：GGUF、mmproj、Whisper mel、Vulkan / CUDA、BF16。</td></tr>
   <tr><td><code>crates/voime-gpu-qwen3/PROVIDER.html §3</code></td><td>增</td><td>加载 / 推理边界图：GGUF + mmproj → llama.cpp → 文本。</td></tr>
   <tr><td><code>crates/voime-gpu-qwen3/PROVIDER.html §4.1–§4.2</code></td><td>增</td><td>BF16 主模型 / mmproj 文件、来源、SHA、同版本约束、不混 Q8 mmproj。</td></tr>
-  <tr><td><code>crates/voime-gpu-qwen3/PROVIDER.html §4.3–§4.4</code></td><td>增</td><td>llama-cpp-4 / llama.cpp、Vulkan / CUDA、BF16 能力检查、错误与回退。</td></tr>
+  <tr><td><code>crates/voime-gpu-qwen3/PROVIDER.html §4.3–§4.4</code></td><td>增</td><td>llama-cpp-4 / llama.cpp、Vulkan / CUDA、BF16 要求与 worker 启动自检、错误与回退。</td></tr>
 </table>
 
 <h3 id="s12-4">12.4 前端</h3>
