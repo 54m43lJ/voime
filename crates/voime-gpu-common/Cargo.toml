@@ -1,0 +1,12 @@
+[package]
+name = "voime-gpu-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Voime GPU worker 帧协议与生命周期辅助"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "voime-ipc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Voime 前端线协议：消息类型、JSON framing 与错误码"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

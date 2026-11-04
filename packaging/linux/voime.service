@@ -1,0 +1,12 @@
+[Unit]
+Description=Voime local speech daemon
+After=pipewire.service sound.target
+
+[Service]
+Type=simple
+ExecStart=@BINDIR@/voimed
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

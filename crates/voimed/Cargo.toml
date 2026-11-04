@@ -1,0 +1,23 @@
+[package]
+name = "voimed"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Voime 本地 ASR 守护进程"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crossbeam-channel.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+voime-core = { path = "../voime-core" }
+voime-gpu-common = { path = "../voime-gpu-common" }
+voime-ipc = { path = "../voime-ipc" }
+voime-log = { path = "../voime-log" }
+voime-transport = { path = "../voime-transport" }
+
+[dev-dependencies]
+tempfile.workspace = true
