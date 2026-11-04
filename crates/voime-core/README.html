@@ -53,6 +53,12 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
   <li>不提供 TUI、配置 UI 或会话历史；这些属于 <code>voime</code> 与 <code>voimed</code>。</li>
   <li>不做模型下载、导出或安装；安装脚本在根 <code>scripts/</code> / <code>tools/</code>。</li>
   <li>不保存音频、按键或识别文本到磁盘。</li>
+  <li>不负责设备选择策略与平台隐私 / 通信设备策略。</li>
+  <li>不负责平台路径、日志、systemd / 登录启动。</li>
+</ul>
+<ul class="note">
+  <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；核心内部约定见 <a href="CORE.html#c2">本组件 CORE §2</a>。</li>
+  <li>模型包与推理运行时的外部契约见 <a href="PROVIDER.html">PROVIDER</a>，不要在 README 或 USER 中复制张量形状。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -70,24 +76,7 @@ daemon、CLI 与平台前端里，跨平台适配会立刻产生多份 ASR / VAD
   <tr><td>根集成测试</td><td>直接调用分段器、CTC 解析与 pipeline 事件。</td><td><a href="CORE.html#c5">CORE §5</a></td></tr>
 </table>
 
-<h2 id="r3">3. 边界</h2>
-<p><a href="#top">↑</a></p>
-
-<table>
-  <tr><th>拥有</th><th>不拥有</th></tr>
-  <tr><td>16 kHz / 单声道 / <code>f32</code> 音频归一化与重采样</td><td>设备选择策略、平台隐私 / 通信设备策略</td></tr>
-  <tr><td>FireRedVAD 流式推理与分段器</td><td>热键、模式切换、目标输入位置</td></tr>
-  <tr><td>FireRedASR2-CTC、fbank、CMVN、greedy 解码</td><td>IPC 消息、daemon 会话、TUI</td></tr>
-  <tr><td>FireRedPunc 标点</td><td>模型下载 / 安装 / 版本发布</td></tr>
-  <tr><td>pipeline 线程、Partial 节流、完成段队列</td><td>平台路径、日志、systemd / 登录启动</td></tr>
-  <tr><td>模型清单解析、SHA-256、张量校验</td><td>OS 传输端点</td></tr>
-</table>
-<ul class="note">
-  <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；核心内部约定见 <a href="CORE.html#c2">本组件 CORE §2</a>。</li>
-  <li>模型包与推理运行时的外部契约见 <a href="PROVIDER.html">PROVIDER</a>，不要在 README 或 USER 中复制张量形状。</li>
-</ul>
-
-<h2 id="r4">4. Credits</h2>
+<h2 id="r3">3. Credits</h2>
 <p><a href="#top">↑</a></p>
 
 <table>

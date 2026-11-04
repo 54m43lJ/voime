@@ -46,7 +46,7 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
 <ul>
   <li>用户按热键说话，浮层显示 Partial，Final 注入语音段开始时聚焦的输入位置。</li>
   <li>目标失焦、提权窗口、注入失败时不误提交；最终文本保留在 daemon 历史 / TUI。</li>
-  <li>前端不加载模型、不做 VAD / CTC / 分段；只消费 IPC 消息。</li>
+  <li>前端不加载模型、不做 VAD / Preview / Final；只消费 IPC 消息。</li>
   <li>命名管道只允许当前用户；不记录按键、音频或识别文本到磁盘。</li>
   <li>安装、登录启动、托盘、卸载形成闭环；不把 daemon 装成 Session 0 服务。</li>
 </ul>
@@ -58,6 +58,12 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
   <li>不做跨平台 UI 抽象；Linux 前端与 Windows 前端各自实现。</li>
   <li>不使用 loopback TCP；默认传输是命名管道。</li>
   <li>不在前端内保存模型或识别历史。</li>
+  <li>不负责协议消息定义；协议见 <a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>。</li>
+  <li>不负责本机端点实现；传输见 <a href="../../crates/voime-transport/USER.html">voime-transport USER</a>。</li>
+  <li>不负责模型安装；安装脚本写入 <code>%LOCALAPPDATA%\voime\models</code>。</li>
+</ul>
+<ul class="note">
+  <li>产品级术语与端到端契约见 <a href="../../USER.html">根 USER</a>；Windows API 细节见 <a href="PROVIDER.html">PROVIDER</a>。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -76,22 +82,7 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
   <tr><td>daemon 不可用</td><td>放行热键、清空浮层、定时重连。</td><td><a href="USER.html#u4-5">USER §4.5</a></td></tr>
 </table>
 
-<h2 id="r3">3. 边界</h2>
-<p><a href="#top">↑</a></p>
-
-<table>
-  <tr><th>拥有</th><th>不拥有</th></tr>
-  <tr><td>全局热键 / PTT key-up</td><td>音频、VAD、CTC、标点</td></tr>
-  <tr><td>前台窗口 / UIA 焦点元素绑定</td><td>daemon 会话、<code>segment_id</code> 分配</td></tr>
-  <tr><td>浮层窗口与 DPI / 多显示器定位</td><td>协议消息定义（<a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>）</td></tr>
-  <tr><td><code>SendInput</code> / TSF 提交</td><td>本机端点实现（<a href="../../crates/voime-transport/USER.html">voime-transport USER</a>）</td></tr>
-  <tr><td>托盘、配置、登录启动、daemon 生命周期</td><td>模型安装：<code>scripts\install_models.ps1</code>，默认 <code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
-</table>
-<ul class="note">
-  <li>产品级术语与端到端契约见 <a href="../../USER.html">根 USER</a>；Windows API 细节见 <a href="PROVIDER.html">PROVIDER</a>。</li>
-</ul>
-
-<h2 id="r4">4. Credits</h2>
+<h2 id="r3">3. Credits</h2>
 <p><a href="#top">↑</a></p>
 
 <table>

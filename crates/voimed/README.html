@@ -53,6 +53,11 @@
   <li>不解析命令行模式 / 热键；这些由前端通过 IPC 提供。</li>
   <li>不保存音频、按键或历史到磁盘。</li>
   <li>不直接依赖 Fcitx / Win32；OS 传输由 <a href="../voime-transport/USER.html">voime-transport</a> 负责。</li>
+  <li>不负责协议消息形状；协议定义见 <a href="../voime-ipc/USER.html">voime-ipc USER</a>。</li>
+</ul>
+<ul class="note">
+  <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；daemon 行为见 <a href="USER.html">USER</a>。</li>
+  <li>音频 / 模型契约在 <a href="../voime-core/PROVIDER.html">voime-core PROVIDER</a>，端点契约在 <a href="../voime-transport/PROVIDER.html">voime-transport PROVIDER</a>。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -67,22 +72,7 @@
   <tr><td><code>voimed</code> CLI</td><td>指定模型目录、输入设备、线程数、端点路径与日志。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
 </table>
 
-<h2 id="r3">3. 边界</h2>
-<p><a href="#top">↑</a></p>
-
-<table>
-  <tr><th>拥有</th><th>不拥有</th></tr>
-  <tr><td>音频设备生命周期、模型加载与 pipeline 线程</td><td>热键、输入上下文、临时窗口、提交</td></tr>
-  <tr><td>会话状态、<code>segment_id</code> 分配、模式切换</td><td>前端配置界面与平台默认值</td></tr>
-  <tr><td>IPC 服务端、角色、广播、背压、历史</td><td>协议消息形状（<a href="../voime-ipc/USER.html">voime-ipc</a>）</td></tr>
-  <tr><td>daemon 生命周期与退出顺序</td><td>OS transport 实现（<a href="../voime-transport/USER.html">voime-transport</a>）</td></tr>
-</table>
-<ul class="note">
-  <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；daemon 行为见 <a href="USER.html">USER</a>。</li>
-  <li>本 crate 不直接面对外部 provider；音频 / 模型契约在 <a href="../voime-core/PROVIDER.html">voime-core PROVIDER</a>，端点契约在 <a href="../voime-transport/PROVIDER.html">voime-transport PROVIDER</a>。</li>
-</ul>
-
-<h2 id="r4">4. Credits</h2>
+<h2 id="r3">3. Credits</h2>
 <p><a href="#top">↑</a></p>
 
 <table>

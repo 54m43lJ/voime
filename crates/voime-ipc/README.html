@@ -52,6 +52,11 @@ daemon、TUI、Linux addon 与 Windows 前端使用不同语言与不同传输�
   <li>不实现 daemon 会话、角色冲突处理、广播或背压；这些属于 <a href="../voimed/USER.html">voimed</a>。</li>
   <li>不处理热键、目标绑定、临时窗口或文本提交；这些属于平台前端。</li>
   <li>不保存历史、不加载模型、不访问文件系统。</li>
+  <li>不负责错误文案、日志或用户提示。</li>
+</ul>
+<ul class="note">
+  <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；协议字段与编码见 <a href="USER.html">USER</a>。</li>
+  <li>本 crate 没有直接外部 provider，因此没有 <code>PROVIDER</code> 文档；依赖库见 <a href="CORE.html#c3">CORE §3</a>。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -70,22 +75,7 @@ daemon、TUI、Linux addon 与 Windows 前端使用不同语言与不同传输�
   <tr><td><code>frontends/windows</code></td><td>Rust 前端直接依赖本 crate 的消息类型。</td><td><a href="../../frontends/windows/USER.html#u4-3">windows USER §4.3</a></td></tr>
 </table>
 
-<h2 id="r3">3. 边界</h2>
-<p><a href="#top">↑</a></p>
-
-<table>
-  <tr><th>拥有</th><th>不拥有</th></tr>
-  <tr><td>消息类型、字段、枚举值</td><td>传输端点、连接、accept、权限</td></tr>
-  <tr><td>JSON 编码 / 解码、换行 framing、最大消息长度</td><td>daemon 会话状态、角色冲突处理、广播策略</td></tr>
-  <tr><td>协议版本与错误码枚举</td><td>错误文案、日志、用户提示</td></tr>
-  <tr><td>消息语义的通用定义</td><td>平台前端的显示与提交行为</td></tr>
-</table>
-<ul class="note">
-  <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；协议字段与编码见 <a href="USER.html">USER</a>。</li>
-  <li>本 crate 没有直接外部 provider，因此没有 <code>PROVIDER</code> 文档；依赖库见 <a href="CORE.html#c3">CORE §3</a>。</li>
-</ul>
-
-<h2 id="r4">4. Credits</h2>
+<h2 id="r3">3. Credits</h2>
 <p><a href="#top">↑</a></p>
 
 <table>

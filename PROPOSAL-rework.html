@@ -1031,9 +1031,9 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><td><code>README.html §1.2</code></td><td>改</td><td>GOAL：只装核心可用；FireRed / Qwen 两个 GPU Final；默认 <code>cpu</code>；Qwen AMD 只走 Vulkan；Linux Fcitx addon 通过 sudo 安装到 <code>/usr</code>，Windows 使用同一套核心 / GPU 安装入口；voimed 持有音频 / 会话，核心持有 VAD / SenseVoice / CPU Final，GPU worker 持有 Final 模型。</td></tr>
   <tr><td><code>README.html §1.3</code></td><td>改</td><td>非目标：GPU VAD / Preview、CPU 大模型、Qwen ROCm / HIP。</td></tr>
   <tr><td><code>README.html §2</code></td><td>改</td><td>用户交互：核心 / GPU 两个安装入口；默认 CPU；用户可显式选择 GPU 后端；安装脚本允许用户选择不安装 Fcitx5 addon（系统级 addon 安装需要 sudo）。</td></tr>
-  <tr><td><code>README.html §3</code></td><td>改</td><td>项目地图与文档树：增加 <code>voime-gpu-common</code> / <code>voime-gpu-firered</code> / <code>voime-gpu-qwen3</code>；安装脚本改为 core / gpu；Windows 与 Linux 使用同一套组件树。</td></tr>
-  <tr><td><code>README.html §4</code></td><td>改</td><td>文档所有权：GPU 协议、FireRed、Qwen 分别归属三个新组件；核心行只列 VAD / SenseVoice / CPU Final；模型契约按三个组件 PROVIDER 拆分；安装 / 选择入口归 README、USER 与 voime。</td></tr>
-  <tr><td><code>README.html §5</code></td><td>改</td><td>Credits：FireRedVAD、FireRedASR2-AED、FireRedPunc、Qwen3-ASR、SenseVoice、ONNX Runtime、llama-cpp-rs / llama.cpp、Fcitx5。</td></tr>
+  <tr><td><code>README.html §3</code></td><td>改</td><td>项目地图、文档树、文档所有权与组件索引：增加 <code>voime-gpu-common</code> / <code>voime-gpu-firered</code> / <code>voime-gpu-qwen3</code>；安装脚本改为 core / gpu；Windows 与 Linux 使用同一套组件树。</td></tr>
+  <tr><td><code>README.html §3.1</code></td><td>改</td><td>文档所有权：GPU 协议、FireRed、Qwen 分别归属三个新组件；核心行只列 VAD / SenseVoice / CPU Final；模型契约按三个组件 PROVIDER 拆分；安装 / 选择入口归 README、USER 与 voime。</td></tr>
+  <tr><td><code>README.html §4</code></td><td>改</td><td>Credits：FireRedVAD、FireRedASR2-AED、FireRedPunc、Qwen3-ASR、SenseVoice、ONNX Runtime、llama-cpp-rs / llama.cpp、Fcitx5。</td></tr>
   <tr><td><code>USER.html §1</code></td><td>改</td><td>TERMS：核心安装、GPU 模块、Final 后端、Preview 中断；补充默认 <code>cpu</code>。</td></tr>
   <tr><td><code>USER.html §2</code></td><td>改</td><td>CONVENTIONS：VAD / Preview 固定；GPU Final-only；默认 CPU；显式切换；Finalizing 不再进行 Preview 计算；前端不加载模型，VAD / Preview / CPU Final 在核心，GPU Final 在 worker。</td></tr>
   <tr><td><code>USER.html §3.1</code></td><td>改</td><td>总体架构图与 note：核心安装（VAD、Preview、CPU Final、前端）+ 可选 GPU Final；note 只写组件边界（VAD / Preview / CPU Final 在核心，FireRedPunc 在 FireRed worker，Qwen 标点在模型内），不写调用链。</td></tr>
@@ -1070,8 +1070,8 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><th>文档位置</th><th>操作</th><th>内容</th></tr>
   <tr><td><code>crates/voime-core/README.html §1</code></td><td>改</td><td>WHAT &amp; WHY：CPU 核心，VAD + SenseVoice，Preview + CPU Final；目标与非目标只描述当前 CPU 核心。</td></tr>
   <tr><td><code>crates/voime-core/README.html §2</code></td><td>改</td><td>用户交互：只装核心即可识别；模型目录一模型一目录；不依赖 GPU / 网络 / Python。</td></tr>
-  <tr><td><code>crates/voime-core/README.html §3</code></td><td>改</td><td>边界：只服务 daemon；不管理 worker / 前端；GPU Final 不在本 crate。</td></tr>
-  <tr><td><code>crates/voime-core/README.html §4</code></td><td>改</td><td>Credits：ONNX Runtime CPU、SenseVoice、FireRedVAD。</td></tr>
+  <tr><td><code>crates/voime-core/README.html §1.3</code></td><td>改</td><td>非目标：不管理 worker / 前端；不执行 GPU Final；不负责平台路径、日志或服务管理。</td></tr>
+  <tr><td><code>crates/voime-core/README.html §3</code></td><td>改</td><td>Credits：ONNX Runtime CPU、SenseVoice、FireRedVAD。</td></tr>
   <tr><td><code>crates/voime-core/USER.html §1–§2</code></td><td>改</td><td>TERMS / CONVENTIONS：per-model 目录、SenseVoice、Preview 停止；Preview 取消与 CPU Final 收尾。</td></tr>
   <tr><td><code>crates/voime-core/USER.html §3.1</code></td><td>改</td><td>Pipeline 生命周期图：加入 Preview 取消与 CPU Final 收尾；只保留当前阶段。</td></tr>
   <tr><td><code>crates/voime-core/USER.html §4.1</code></td><td>改</td><td>Config：模型根目录 + 一模型一目录；不包含 <code>final.backend</code>，该值由 <code>voimed</code> 读取。</td></tr>
@@ -1094,8 +1094,8 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><th>文档位置</th><th>操作</th><th>内容</th></tr>
   <tr><td><code>crates/voimed/README.html §1</code></td><td>改</td><td>WHAT &amp; WHY：核心应用持有音频、VAD、Preview、Final 触发、Final 后端选择与 worker 生命周期。</td></tr>
   <tr><td><code>crates/voimed/README.html §2</code></td><td>改</td><td>用户交互：默认 CPU Final；GPU 模块显式安装 / 选择；Finalizing 期间预览不再计算。</td></tr>
-  <tr><td><code>crates/voimed/README.html §3</code></td><td>改</td><td>边界：GPU worker 由本 crate 拉起，但模型推理不在本 crate；前端不感知 backend。</td></tr>
-  <tr><td><code>crates/voimed/README.html §4</code></td><td>改</td><td>Credits：FireRedVAD、SenseVoice、ONNX Runtime CPU；GPU runtime 归 backend crate。</td></tr>
+  <tr><td><code>crates/voimed/README.html §1.3</code></td><td>改</td><td>非目标：不负责模型推理；前端不感知 backend；worker 管理由本 crate 负责。</td></tr>
+  <tr><td><code>crates/voimed/README.html §3</code></td><td>改</td><td>Credits：FireRedVAD、SenseVoice、ONNX Runtime CPU；GPU runtime 归 backend crate。</td></tr>
   <tr><td><code>crates/voimed/USER.html §1–§2</code></td><td>改</td><td>TERMS / CONVENTIONS：默认 CPU、显式 GPU、Finalizing 计算门禁、GPU 失败回退、切换需重启 daemon。</td></tr>
   <tr><td><code>crates/voimed/USER.html §3.1</code></td><td>改</td><td>会话状态图：Idle / Recording / Finalizing；Finalizing 不再产生 Preview 推理。</td></tr>
   <tr><td><code>crates/voimed/USER.html §3.2</code></td><td>改</td><td>Continuous：VAD 分段 → Finalizing → CPU / GPU Final；失败回退。</td></tr>
@@ -1116,8 +1116,8 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><th>文档位置</th><th>操作</th><th>内容</th></tr>
   <tr><td><code>crates/voime/README.html §1</code></td><td>改</td><td>WHAT &amp; WHY：CLI / TUI / ctl / doctor；不加载模型。</td></tr>
   <tr><td><code>crates/voime/README.html §2</code></td><td>改</td><td>用户交互：<code>ctl backend</code> 写配置；<code>doctor</code> 展示 CPU / FireRed / Qwen、worker ready / running 与 Fcitx 系统 addon 路径。</td></tr>
-  <tr><td><code>crates/voime/README.html §3</code></td><td>改</td><td>边界：通过 IPC 读写 daemon；doctor 只读配置，ctl 可写配置；不启动 worker。</td></tr>
-  <tr><td><code>crates/voime/README.html §4</code></td><td>改</td><td>Credits：ratatui / crossterm、Fcitx 诊断。</td></tr>
+  <tr><td><code>crates/voime/README.html §1.3</code></td><td>改</td><td>非目标：不负责 daemon 状态机 / <code>segment_id</code>；不负责模型安装、服务管理或平台安装器；不启动 worker。</td></tr>
+  <tr><td><code>crates/voime/README.html §3</code></td><td>改</td><td>Credits：ratatui / crossterm、Fcitx 诊断。</td></tr>
   <tr><td><code>crates/voime/USER.html §1–§2</code></td><td>改</td><td>TERMS / CONVENTIONS：<code>voime ctl backend</code> 写配置；默认 CPU；切换需重启 daemon。</td></tr>
   <tr><td><code>crates/voime/USER.html §3.1</code></td><td>改</td><td>ctl 命令流：backend 选择不进入 daemon 热切换；doctor 检查 Fcitx 系统 addon 路径与 GPU worker ready / status。</td></tr>
   <tr><td><code>crates/voime/USER.html §4.1–§4.4</code></td><td>改</td><td>命令行 / ctl 输出 / doctor：CPU / FireRed / Qwen、worker ready / running、Fcitx 系统 addon 路径与 ABI；不检查旧 inputmethod 条目。</td></tr>
@@ -1138,8 +1138,8 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><th>文档位置</th><th>操作</th><th>内容</th></tr>
   <tr><td><code>crates/voime-gpu-common/README.html §1</code></td><td>增</td><td>WHAT &amp; WHY：两个 GPU worker 的共享帧协议；非目标：不加载模型、不链 ORT / llama.cpp。</td></tr>
   <tr><td><code>crates/voime-gpu-common/README.html §2</code></td><td>增</td><td>用户交互：无直接用户入口；供 daemon 与两个 worker 消费。</td></tr>
-  <tr><td><code>crates/voime-gpu-common/README.html §3</code></td><td>增</td><td>边界：只放协议与生命周期辅助；不放模型、runtime、VAD、Preview。</td></tr>
-  <tr><td><code>crates/voime-gpu-common/README.html §4</code></td><td>增</td><td>Credits：serde / serde_json；无推理运行时。</td></tr>
+  <tr><td><code>crates/voime-gpu-common/README.html §1.3</code></td><td>增</td><td>非目标：只放协议与生命周期辅助；不放模型、runtime、VAD、Preview。</td></tr>
+  <tr><td><code>crates/voime-gpu-common/README.html §3</code></td><td>增</td><td>Credits：serde / serde_json；无推理运行时。</td></tr>
   <tr><td><code>crates/voime-gpu-common/USER.html §1–§2</code></td><td>增</td><td>TERMS / CONVENTIONS：Frame、Request、Response、协议版本、超时、无文本日志。</td></tr>
   <tr><td><code>crates/voime-gpu-common/USER.html §3</code></td><td>增</td><td>时序图：daemon spawn worker → Hello → Ready → Transcribe → Result / Error → Shutdown。</td></tr>
   <tr><td><code>crates/voime-gpu-common/USER.html §4.1–§4.2</code></td><td>增</td><td>帧格式、Hello / Transcribe / Cancel / Shutdown 的字段与错误。</td></tr>
@@ -1156,8 +1156,8 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><th>文档位置</th><th>操作</th><th>内容</th></tr>
   <tr><td><code>crates/voime-gpu-firered/README.html §1</code></td><td>增</td><td>WHAT &amp; WHY：ORT GPU + FP32 ONNX；FireRedASR2-AED + FireRedPunc；只做 Final。</td></tr>
   <tr><td><code>crates/voime-gpu-firered/README.html §2</code></td><td>增</td><td>用户交互：通过 GPU 安装脚本安装；daemon 选择后启动；不直接面向用户。</td></tr>
-  <tr><td><code>crates/voime-gpu-firered/README.html §3</code></td><td>增</td><td>边界：不加载 VAD / Preview / 前端；不与 Qwen 共享 runtime。</td></tr>
-  <tr><td><code>crates/voime-gpu-firered/README.html §4</code></td><td>增</td><td>Credits：FireRedASR2-AED、FireRedPunc、ONNX Runtime GPU。</td></tr>
+  <tr><td><code>crates/voime-gpu-firered/README.html §1.3</code></td><td>增</td><td>非目标：不加载 VAD / Preview / 前端；不与 Qwen 共享 runtime。</td></tr>
+  <tr><td><code>crates/voime-gpu-firered/README.html §3</code></td><td>增</td><td>Credits：FireRedASR2-AED、FireRedPunc、ONNX Runtime GPU。</td></tr>
   <tr><td><code>crates/voime-gpu-firered/USER.html §1–§2</code></td><td>增</td><td>TERMS / CONVENTIONS：worker 输入输出、AED greedy、FireRedPunc、错误码。</td></tr>
   <tr><td><code>crates/voime-gpu-firered/USER.html §3</code></td><td>增</td><td>daemon ↔ worker 边界时序：Transcribe(PCM) → Result(text)；内部处理只画一个 <code>内部处理</code> self-loop，不展开 AED / Punc；超时 / 取消只画边界消息。</td></tr>
   <tr><td><code>crates/voime-gpu-firered/USER.html §4.1–§4.4</code></td><td>增</td><td>模型目录、runtime 选择、错误与回退、安装 / 卸载入口。</td></tr>
@@ -1181,8 +1181,8 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><th>文档位置</th><th>操作</th><th>内容</th></tr>
   <tr><td><code>crates/voime-gpu-qwen3/README.html §1</code></td><td>增</td><td>WHAT &amp; WHY：llama-cpp-rs / llama.cpp + BF16 GGUF；Qwen3-ASR 1.7B；只做 Final；AMD 只 Vulkan。</td></tr>
   <tr><td><code>crates/voime-gpu-qwen3/README.html §2</code></td><td>增</td><td>用户交互：通过 GPU 安装脚本安装；daemon 选择后启动；不直接面向用户。</td></tr>
-  <tr><td><code>crates/voime-gpu-qwen3/README.html §3</code></td><td>增</td><td>边界：不加载 VAD / Preview / 前端；不加载 ORT；不提供 HIP / ROCm。</td></tr>
-  <tr><td><code>crates/voime-gpu-qwen3/README.html §4</code></td><td>增</td><td>Credits：Qwen3-ASR、llama-cpp-rs / llama.cpp、GGUF。</td></tr>
+  <tr><td><code>crates/voime-gpu-qwen3/README.html §1.3</code></td><td>增</td><td>非目标：不加载 VAD / Preview / 前端；不加载 ORT；不提供 HIP / ROCm。</td></tr>
+  <tr><td><code>crates/voime-gpu-qwen3/README.html §3</code></td><td>增</td><td>Credits：Qwen3-ASR、llama-cpp-rs / llama.cpp、GGUF。</td></tr>
   <tr><td><code>crates/voime-gpu-qwen3/USER.html §1–§2</code></td><td>增</td><td>TERMS / CONVENTIONS：BF16 主模型 + BF16 mmproj；PCM 输入；<code>asr_text</code> 清洗。</td></tr>
   <tr><td><code>crates/voime-gpu-qwen3/USER.html §3</code></td><td>增</td><td>daemon ↔ worker 边界时序：Transcribe(PCM) → Result(text)；内部处理只画一个 <code>内部处理</code> self-loop，不展开 mtmd / prompt / decode / 清洗。</td></tr>
   <tr><td><code>crates/voime-gpu-qwen3/USER.html §4.1–§4.4</code></td><td>增</td><td>模型目录、runtime 选择（Vulkan / CUDA）、错误与回退、安装 / 卸载。</td></tr>
@@ -1204,8 +1204,8 @@ backend = "cpu"       # cpu | firered | qwen3
   <tr><th>文档位置</th><th>操作</th><th>内容</th></tr>
   <tr><td><code>frontends/fcitx/README.html §1</code></td><td>改</td><td>WHAT &amp; WHY：核心安装的后台 addon；不做识别；系统级安装。</td></tr>
   <tr><td><code>frontends/fcitx/README.html §2</code></td><td>改</td><td>用户交互：安装后出现在 Addons 页面；Finalizing 保留最后 Partial；不加入输入法组；安装入口允许跳过 addon。</td></tr>
-  <tr><td><code>frontends/fcitx/README.html §3</code></td><td>改</td><td>边界：只做热键 / 预览 / 提交；不加载模型；不感知 GPU backend。</td></tr>
-  <tr><td><code>frontends/fcitx/README.html §4</code></td><td>改</td><td>Credits：Fcitx5、nlohmann/json。</td></tr>
+  <tr><td><code>frontends/fcitx/README.html §1.3</code></td><td>改</td><td>非目标：不加载模型；不感知 GPU backend；不做识别。</td></tr>
+  <tr><td><code>frontends/fcitx/README.html §3</code></td><td>改</td><td>Credits：Fcitx5、nlohmann/json。</td></tr>
   <tr><td><code>frontends/fcitx/USER.html §1–§2</code></td><td>改</td><td>TERMS / CONVENTIONS：Finalizing 保留最后 Partial；不再更新；addon 系统级安装由核心安装入口负责。</td></tr>
   <tr><td><code>frontends/fcitx/USER.html §3.1–§3.4</code></td><td>改</td><td>PTT / Toggle / Continuous / 临时窗口：Finalizing 停止 Preview；Final 到达后提交。</td></tr>
   <tr><td><code>frontends/fcitx/USER.html §4.1–§4.5</code></td><td>改</td><td>配置 / 输出 / IPC / 目标 / 错误：不感知 GPU 后端；Finalizing 不清空最后 Partial；安装选项不在本节重复。</td></tr>
@@ -1222,7 +1222,7 @@ backend = "cpu"       # cpu | firered | qwen3
 
 <table>
   <tr><th>文档位置</th><th>操作</th><th>内容</th></tr>
-  <tr><td><code>frontends/windows/README.html §1–§4</code></td><td>改</td><td>WHAT &amp; WHY / 用户交互 / 边界 / Credits：Windows 托盘前端属于核心安装；安装入口由核心安装脚本提供；不加载模型；GPU 模块独立。</td></tr>
+  <tr><td><code>frontends/windows/README.html §1–§3</code></td><td>改</td><td>WHAT &amp; WHY / 用户交互 / Credits；边界并入 §1.3：Windows 托盘前端属于核心安装；安装入口由核心安装脚本提供；不加载模型；GPU 模块独立。</td></tr>
   <tr><td><code>frontends/windows/USER.html §1–§5</code></td><td>改</td><td>TERMS / CONVENTIONS / DIAGRAMS / INTERFACES / UI：Windows 目标、预览、提交与 Linux 等价；后端选择不进入前端。</td></tr>
   <tr><td><code>frontends/windows/CORE.html §1–§5</code></td><td>改</td><td>文件树 / 调用栈：托盘与 daemon；<code>install-core.ps1</code> / <code>install-gpu.ps1</code>；worker 由 <code>voimed</code> 拉起；只列当前模块。</td></tr>
   <tr><td><code>frontends/windows/PROVIDER.html §1–§4</code></td><td>改</td><td>Win32 / UIA / TSF、DirectML / Vulkan / CUDA、安装与权限；不写阶段编号。</td></tr>
@@ -1257,6 +1257,7 @@ backend = "cpu"       # cpu | firered | qwen3
   <li>单一来源：核心模型与 CPU 契约写在 <code>voime-core PROVIDER</code>；FireRed 契约写在 <code>voime-gpu-firered PROVIDER</code>；Qwen 契约写在 <code>voime-gpu-qwen3 PROVIDER</code>；公共协议写在 <code>voime-gpu-common USER</code>；前端消息只写在 <code>voime-ipc USER</code>。</li>
   <li>VAD 与 Preview 的行为只写在核心文档；GPU 文档只描述 Final 请求与返回，不复制 VAD / Partial 规则。</li>
   <li>单一来源：默认 <code>cpu</code> 与显式切换写在根 USER §2 / §4.4；Finalizing 计算门禁写在 voimed USER §2 / §3，根 USER 只链接；Fcitx addon 安装入口写在 README §2，系统路径与加载细节写在 fcitx PROVIDER / CORE；其他文档只链接，不复制定义。</li>
+  <li>README 章节：根 README 不设独立“文档所有权”章节，所有权与组件索引并入 §3；组件 README 不设独立“边界”章节，拥有项并入 §1.2 GOAL，不拥有项并入 §1.3 非目标。</li>
 </ul>
 
 </body>

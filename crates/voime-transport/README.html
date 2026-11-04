@@ -58,6 +58,12 @@ daemon 与客户端需要本机传输：Linux 使用 Unix domain socket，Window
   <li>不追求“一套实现跑所有平台”；Unix 与 Windows 实现互不复用。</li>
   <li>不使用 loopback TCP 作为默认传输。</li>
   <li>不把 <code>Endpoint</code> 放进 <code>voime-core::Config</code>；端点不属于引擎。</li>
+  <li>不负责热键、目标输入位置或提交。</li>
+  <li>不负责用户文案、日志策略或重连节奏。</li>
+</ul>
+<ul class="note">
+  <li>产品级下边界见 <a href="../../PROVIDER.html">根 PROVIDER</a>；OS API 与安全细节见 <a href="PROVIDER.html">本组件 PROVIDER</a>。</li>
+  <li>本 crate 不依赖 core / ipc / daemon；需要消息类型时由调用方组合。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -76,22 +82,7 @@ daemon 与客户端需要本机传输：Linux 使用 Unix domain socket，Window
   <tr><td><code>fcitx-addon</code></td><td>C++ 前端不链接本 crate；按平台契约直接使用 Unix socket。</td><td><a href="../../frontends/fcitx/PROVIDER.html#p4-5">fcitx-addon PROVIDER §4.5</a></td></tr>
 </table>
 
-<h2 id="r3">3. 边界</h2>
-<p><a href="#top">↑</a></p>
-
-<table>
-  <tr><th>拥有</th><th>不拥有</th></tr>
-  <tr><td><code>Endpoint</code> / <code>Listener</code> / <code>Stream</code> 契约</td><td>消息、JSON、协议版本</td></tr>
-  <tr><td>Unix socket 与 named pipe 的 bind / connect / accept</td><td>daemon 会话状态、广播、背压</td></tr>
-  <tr><td>端点权限、陈旧端点、关闭唤醒、读写分离</td><td>热键、目标输入位置、提交</td></tr>
-  <tr><td>平台错误映射到 <code>io::Error</code></td><td>用户文案、日志策略、重连节奏</td></tr>
-</table>
-<ul class="note">
-  <li>产品级下边界见 <a href="../../PROVIDER.html">根 PROVIDER</a>；OS API 与安全细节见 <a href="PROVIDER.html">本组件 PROVIDER</a>。</li>
-  <li>本 crate 不依赖 core / ipc / daemon；需要消息类型时由调用方组合。</li>
-</ul>
-
-<h2 id="r4">4. Credits</h2>
+<h2 id="r3">3. Credits</h2>
 <p><a href="#top">↑</a></p>
 
 <table>

@@ -52,6 +52,12 @@ daemon 在后台运行，用户与运维仍需要一个轻量的观察与控制�
   <li>不实现 daemon 会话或识别；这些属于 <a href="../voimed/USER.html">voimed</a>。</li>
   <li>不保存历史到磁盘；TUI 退出后从 daemon 快照恢复。</li>
   <li>不提供图形设置界面；配置由平台前端或 Fcitx configtool 负责。</li>
+  <li>不负责模型安装、服务管理或平台安装器。</li>
+  <li>不负责协议消息定义；协议见 <a href="../voime-ipc/USER.html">voime-ipc USER</a>。</li>
+</ul>
+<ul class="note">
+  <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；命令与界面见 <a href="USER.html">USER</a>。</li>
+  <li>终端 / OS 诊断的外部契约见 <a href="PROVIDER.html">PROVIDER</a>。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -67,22 +73,7 @@ daemon 在后台运行，用户与运维仍需要一个轻量的观察与控制�
   <tr><td><code>voime doctor</code></td><td>只读检查端点、daemon、模型、音频与前端；不修改状态。</td><td><a href="USER.html#u4-4">USER §4.4</a></td></tr>
 </table>
 
-<h2 id="r3">3. 边界</h2>
-<p><a href="#top">↑</a></p>
-
-<table>
-  <tr><th>拥有</th><th>不拥有</th></tr>
-  <tr><td>TUI 布局、滚动、终端恢复</td><td>临时文本窗口（Fcitx / Windows 前端）</td></tr>
-  <tr><td><code>ctl</code> 命令与输出格式</td><td>daemon 状态机、<code>segment_id</code> 分配</td></tr>
-  <tr><td><code>doctor</code> 只读检查</td><td>模型安装、服务管理、平台安装器</td></tr>
-  <tr><td>客户端 IPC 连接与快照</td><td>协议消息定义（<a href="../voime-ipc/USER.html">voime-ipc</a>）</td></tr>
-</table>
-<ul class="note">
-  <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；命令与界面见 <a href="USER.html">USER</a>。</li>
-  <li>终端 / OS 诊断的外部契约见 <a href="PROVIDER.html">PROVIDER</a>。</li>
-</ul>
-
-<h2 id="r4">4. Credits</h2>
+<h2 id="r3">3. Credits</h2>
 <p><a href="#top">↑</a></p>
 
 <table>
