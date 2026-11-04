@@ -11,10 +11,17 @@ package "平台边界" {
   component "Win32 / UIA / TSF\nWindows 输入栈" as Win
 }
 
-package "本机资源" {
+package "核心本机资源" {
   component "音频设备\ncpal / ALSA / WASAPI" as Audio
-  component "ONNX Runtime\nCPU" as Ort
-  component "模型包\nFireRedVAD / CTC / Punc" as Models
+  component "ONNX Runtime\nCPU" as OrtCpu
+  component "核心模型目录\nfirered-vad / sensevoice-small" as CoreModels
+}
+
+package "GPU 本机资源" {
+  component "ONNX Runtime\nFireRed GPU EP" as OrtGpu
+  component "FireRed 模型目录\nfireredasr2-aed / fireredpunc" as FireredModels
+  component "llama.cpp / GGML\nQwen Vulkan / CUDA" as Llama
+  component "Qwen 模型目录\nqwen3-asr-1.7b" as QwenModels
 }
 
 package "本机端点" {
@@ -25,8 +32,12 @@ package "本机端点" {
 Voime --> Fcitx : 热键 / 目标 / 提交
 Voime --> Win : 热键 / 目标 / 提交
 Voime --> Audio : PCM
-Voime --> Ort : 推理
-Voime --> Models : 只读加载
+Voime --> OrtCpu : 核心推理
+Voime --> CoreModels : 只读加载
+Voime --> OrtGpu : FireRed Final
+Voime --> FireredModels : 只读加载
+Voime --> Llama : Qwen Final
+Voime --> QwenModels : 只读加载
 Voime --> Unix : daemon ↔ 客户端
 Voime --> Pipe : daemon ↔ 客户端
 @enduml

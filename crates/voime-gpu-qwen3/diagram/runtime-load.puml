@@ -1,0 +1,29 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voime-gpu-qwen3" as Worker
+participant "llama-cpp-4 / llama.cpp" as Llama
+participant "模型目录\nqwen3-asr-1.7b" as Model
+
+Worker -> Model : 读取 manifest.json
+Worker -> Model : 校验 SHA-256 / 大小
+Worker -> Llama : LlamaBackend::init()
+Llama --> Worker : backend
+Worker -> Llama : LlamaModel::load_from_file(BF16 主模型)
+Llama --> Worker : LlamaModel
+Worker -> Llama : model.ftype()
+Llama --> Worker : BF16
+Worker -> Llama : MtmdContext::init_from_file(BF16 mmproj)
+Llama --> Worker : MtmdContext
+Worker -> Llama : capabilities(&model).audio / audio_sample_rate()
+Llama --> Worker : true / 16000
+Worker -> Llama : warmup（短静音）
+Llama --> Worker : ok
+
+note over Worker, Llama
+  每次 Transcribe 复用已加载的模型与 mtmd 上下文；
+  不重新加载权重，不展开 mtmd / prompt / decode 内部阶段。
+end note
+@enduml

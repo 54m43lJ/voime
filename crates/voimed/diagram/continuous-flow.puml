@@ -5,19 +5,38 @@ hide footbox
 
 participant "VAD / pipeline" as Vad
 participant "voimed" as Daemon
+participant "voime-core" as Core
+participant "GPU worker" as Worker
 participant "平台前端" as Frontend
 
 Vad -> Daemon : SpeechStart
 Daemon -> Frontend : SegmentStarted { source: continuous }
 Daemon -> Frontend : State { recording: true }
 
-loop 语音期间
+loop Recording
   Vad -> Daemon : Partial
   Daemon -> Frontend : Partial
 end
 
 Vad -> Daemon : SpeechEnd
 Daemon -> Frontend : State { recording: false, finalizing: true }
-Daemon -> Frontend : Final
+Daemon -> Core : Pipeline::finish_segment()
+Daemon -> Core : Pipeline::cancel_preview()
+Core -> Daemon : SegmentReady { segment }
+
+alt backend = cpu
+  Daemon -> Core : Final::transcribe()
+  Core -> Daemon : text
+else backend = firered / qwen3
+  Daemon -> Worker : Transcribe { PCM }
+  alt worker 成功
+    Worker -> Daemon : Result { text }
+  else worker 失败 / 超时 / 崩溃
+    Daemon -> Core : Final::transcribe()（回退，一次）
+    Core -> Daemon : text
+  end
+end
+
+Daemon -> Frontend : Final { text }
 Daemon -> Frontend : State { recording: false, finalizing: false }
 @enduml

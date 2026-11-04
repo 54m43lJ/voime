@@ -4,21 +4,24 @@ skinparam shadowing false
 hide footbox
 
 participant "voime-core" as Core
-participant "ONNX Runtime" as Ort
-participant "模型文件" as Model
+participant "核心模型目录" as Models
+participant "ONNX Runtime CPU" as Ort
 
-Core -> Model : 读取 + SHA-256
-Core -> Ort : SessionBuilder::commit_from_file()
+Core -> Models : 读取 manifest + SHA-256
+Core -> Ort : 创建 VAD / SenseVoice CPU 会话
 Ort -> Core : Session
-Core -> Ort : metadata()
-Ort -> Core : cmvn_mean / cmvn_inv_stddev
 
 loop 每个语音段
-  Core -> Core : fbank + CMVN
-  Core -> Ort : run(x, x_lens)
-  Ort -> Core : log_probs
-  Core -> Core : greedy CTC
-  Core -> Ort : run(punc input_ids, mask, token_type_ids)
+  Core -> Ort : VAD run(fbank, state)
+  Ort -> Core : speech_prob + state
+  Core -> Core : SenseVoice fbank + LFR + CMVN
+  Core -> Ort : SenseVoice run(x, x_length, language, text_norm)
   Ort -> Core : logits
+  Core -> Core : 解码 + 内置标点 / ITN
 end
+
+note over Core, Ort
+  核心只使用 CPU Execution Provider；
+  不加载 FireRedPunc、GPU EP 或 llama.cpp。
+end note
 @enduml

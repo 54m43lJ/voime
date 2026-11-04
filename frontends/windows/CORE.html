@@ -30,6 +30,8 @@
 
 <pre><code>frontends/windows/
 ├── Cargo.toml                    独立 workspace
+├── ../../scripts/install-core.ps1  仓库脚本：核心安装（托盘 / daemon / 核心模型 / 登录启动）
+├── ../../scripts/install-gpu.ps1   仓库脚本：GPU 模块安装（worker / runtime / GPU 模型）
 └── src/
     ├── <a href="#c4-1">main.rs</a>              进程入口、事件循环、单实例、设置进程分流
     ├── <a href="#c4-2">config.rs</a>            Mode / Hotkey / 设置持久化
@@ -45,6 +47,8 @@
     └── <a href="#c4-10">settings.rs</a>          egui 设置窗口（模式 / 热键 / daemon）</code></pre>
 <ul class="note">
   <li>文件划分与当前 Rust 源码一致；前端不依赖 <code>voime-core</code>。</li>
+  <li><code>../../scripts/install-core.ps1</code> 与 <code>../../scripts/install-gpu.ps1</code> 是仓库级安装入口，不属于本 crate 的源文件；托盘 / daemon 随核心安装，GPU 模块由 GPU 安装脚本独立安装。</li>
+  <li>GPU worker 由 <code>voimed</code> 启动时按配置拉起；本 crate 不管理 worker，也不链接 GPU runtime。</li>
   <li>TSF 为可选子工程；源码树未包含 <code>tsf/</code> 目录，不启用 TSF 时无需构建。</li>
 </ul>
 
@@ -55,12 +59,14 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>独立构建根</td><td><code>frontends/windows</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>；不进入根 <code>cargo test --workspace</code>。</td></tr>
   <tr><td>平台</td><td>只构建 Windows 目标；Linux CI 不构建本 crate。</td></tr>
-  <tr><td>无模型</td><td>不链接 ONNX Runtime，不加载模型，不做 VAD / CTC / 分段。</td></tr>
+  <tr><td>无模型</td><td>不链接 ONNX Runtime，不加载模型，不做 VAD / Preview / 分段；GPU runtime 不属于本 crate。</td></tr>
+  <tr><td>安装</td><td>核心安装脚本 <code>scripts/install-core.ps1</code> 安装托盘、daemon 与核心模型，并写入登录启动；GPU 安装脚本 <code>scripts/install-gpu.ps1</code> 安装 worker、runtime 与 GPU 模型。前端不执行安装、不探测 GPU runtime。</td></tr>
   <tr><td>事件循环</td><td>主线程拥有托盘与消息循环；IPC reader 线程把消息送入有界通道；热键 / 目标 / 浮层更新回到主线程。设置窗口在独立进程（<code>voime-tray.exe --settings</code>）运行唯一的 egui 事件循环，托盘轮询设置子进程并在其退出后重载配置。</td></tr>
-  <tr><td>daemon 生命周期</td><td>daemon 由托盘以子进程启动，并加入设置了 <code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code> 的 Job Object；托盘退出或崩溃即终止 daemon；托盘是 daemon 的唯一所有者。</td></tr>
+  <tr><td>daemon 生命周期</td><td>daemon 由托盘以子进程启动，并加入设置了 <code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code> 的 Job Object；托盘退出或崩溃即终止 daemon；托盘是 daemon 的唯一所有者。GPU worker 由 <code>voimed</code> 按配置拉起，托盘不启动、不停止、不重启 worker。</td></tr>
   <tr><td>目标所有权</td><td>目标窗口 / 焦点元素属于前端私有类型；协议只传 <code>segment_id</code> 与事件。</td></tr>
   <tr><td>单实例</td><td>每用户一个前端进程；重复启动激活已有托盘。</td></tr>
   <tr><td>提交边界</td><td>SendInput 只在目标复核通过后调用；失败不重试其他窗口。</td></tr>
+  <tr><td>Finalizing</td><td>收到 <code>State.finalizing</code> 后保留最后一条 Partial，不再更新浮层；Final 或丢弃结果到达后清空浮层，Final 继续提交，丢弃结果只清理。不感知 Final 来自 CPU 还是 GPU。</td></tr>
   <tr><td>日志</td><td>只记录错误码、端点、热键注册与目标变化；不记录按键内容或识别文本。</td></tr>
 </table>
 <ul class="note">
@@ -81,7 +87,8 @@
   <tr><td>C++ / COM / CMake</td><td>可选 TSF DLL；Windows SDK。</td></tr>
 </table>
 <ul class="note">
-  <li>不依赖 <code>voime-core</code>；版本以 <code>frontends/windows/Cargo.toml</code> 为准。</li>
+  <li>不依赖 <code>voime-core</code>，不链接 ONNX Runtime；GPU worker、DirectML / Vulkan / CUDA runtime 不属于本组件。</li>
+  <li>版本以 <code>frontends/windows/Cargo.toml</code> 为准。</li>
 </ul>
 
 <h2 id="c4">4. Internal types &amp; method signatures</h2>
@@ -110,6 +117,7 @@ pub fn save(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
 pub fn to_ipc_config(&amp;self) -&gt; IpcConfig;</code></pre>
 <ul class="note">
   <li>保存先写 <code>config.json.tmp</code> 再 <code>rename</code> 覆盖目标；Windows 上 <code>std::fs::rename</code> 使用 <code>MOVEFILE_REPLACE_EXISTING</code>，替换一步完成。</li>
+  <li><code>Config</code> 只包含前端拥有的字段，不含 Final 后端；后端由 <code>voimed</code> 读取，前端不感知。</li>
 </ul>
 
 <h3 id="c4-3">4.3 ipc.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -196,6 +204,7 @@ pub fn quit_running() -&gt; anyhow::Result&lt;()&gt;;</code></pre>
   <li><code>start</code> 以 <code>CREATE_NO_WINDOW</code> 拉起同目录 <code>voimed.exe</code>，并把子进程 <code>AssignProcessToJobObject</code> 到 <code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code> 的 Job Object；Job 创建或分配失败时降级为仅在正常退出时停止 daemon。</li>
   <li><code>stop</code> 先以 Control 角色发送 <code>Quit</code>，最多等 3 秒，超时 <code>kill</code>；<code>Drop</code> 关闭 Job 句柄兜底终止。</li>
   <li><code>stop_existing</code> 在托盘启动时停止外部 daemon 并等待命名管道释放（最多 2 秒），保证托盘是唯一所有者。</li>
+  <li>托盘只拉起 <code>voimed.exe</code>；GPU worker 由 <code>voimed</code> 启动时按配置加载，本模块不创建 worker 进程。</li>
 </ul>
 
 <h3 id="c4-10">4.10 settings.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -217,6 +226,7 @@ fn run_window(config: Config, status: FrontendStatus,
 <ul class="note">
   <li><code>--settings</code> 启动独立设置进程，<code>run_process</code> 在该进程主线程运行唯一的 egui 事件循环；保存由动作线程执行（校验热键可用性后写盘），结果经 <code>ack</code> 返回窗口，冲突在窗口内显示。</li>
   <li>设置窗口的“启动服务 / 停止服务并退出”经 <code>tray::send_command</code>（<code>WM_APP</code> 命令消息）转交托盘执行；托盘未运行时只在窗口内提示，不自行拉起 daemon。</li>
+  <li>设置窗口不提供 Final 后端选项；后端配置由 <code>voimed</code> 读取，前端不写入。</li>
   <li>托盘打开设置前注销全局热键；设置子进程退出后托盘重新加载配置并恢复热键。</li>
 </ul>
 
@@ -237,8 +247,12 @@ fn run_window(config: Config, status: FrontendStatus,
         ├── Overlay::create()
         ├── frontend.start_daemon()
         │   ├── control::stop_existing()
-        │   └── control::Daemon::start()
+        │   └── control::Daemon::start()          // 只拉起 voimed.exe
         └── Windows 消息循环（退出 → frontend.shutdown()）
+
+voimed（control::Daemon::start() 的子进程）
+└── voimed::main()
+    └── 判断 final.backend != Cpu → voimed::worker::Worker::spawn(...)
 
 frontend.tick()（消息循环每轮）
 ├── poll_settings()
@@ -259,6 +273,7 @@ frontend.shutdown()
 └── 判断有托管子进程 → control::Daemon::stop()；否则 control::quit_running()</code></pre>
 <ul class="note">
   <li><code>start_daemon</code> 先停止外部 daemon 再拉起自己的子进程；连接失败时按 10 秒节奏重试拉起。</li>
+  <li><code>Daemon::start</code> 只拉起 <code>voimed.exe</code>；GPU worker 由 <code>voimed</code> 按配置加载，托盘不启动 worker。核心 / GPU 安装脚本只在安装期运行，不进入本调用栈。</li>
   <li>热键注册依赖托盘窗口句柄，因此在 <code>Tray::create</code> 之后、首次连接成功时执行。</li>
   <li><code>Daemon::stop</code> 发送 <code>Quit</code> 后最多等 3 秒，超时 <code>kill</code>；<code>Drop</code> 关闭 Job 句柄兜底终止。</li>
 </ul>
@@ -285,8 +300,11 @@ stop_segment(source)
 ├── Overlay::hide()
 └── IpcClient::send(Stop { segment_id, source })
 
+frontend::on_message(State)
+└── 判断 finalizing → 停止预览更新，保留最后一条 Partial
+
 frontend::on_message(Partial)
-└── 判断 segment_id 匹配目标 → Overlay::show(text, &amp;target)
+└── 判断 segment_id 匹配目标且非 finalizing → Overlay::show(text, &amp;target)
 
 frontend::on_message(Final)
 ├── 判断 message.segment_id == target.segment_id
@@ -296,6 +314,7 @@ frontend::on_message(Final)
 └── commit::commit(&amp;target, &amp;text)</code></pre>
 <ul class="note">
   <li>PTT 的 key-up 不依赖低级键盘钩子，由主循环用 <code>GetAsyncKeyState</code> 轮询；进入 finalizing 后忽略新的热键启动，避免与 daemon 的 <code>Busy</code> 竞争。</li>
+  <li>Finalizing 期间保留最后一条 Partial，不再更新；Final 或丢弃结果到达后清空浮层，Final 按模式提交。Final 的来源是 CPU 还是 GPU 不影响本路径。</li>
 </ul>
 
 <h3 id="c5-3">5.3 Continuous 与目标失效</h3>
@@ -339,7 +358,7 @@ frontend::on_focus_change()
 设置窗口（启动 / 停止服务）
 └── tray::send_command(TrayCommand)（WM_APP 命令消息；托盘未运行时失败）
     └── Tray::poll_events
-        ├── 判断 StartDaemon → frontend.start_daemon()
+        ├── 判断 StartDaemon → frontend.start_daemon()   // 只拉起 voimed；worker 由 voimed 加载
         └── 判断 StopDaemon → PostQuitMessage(0)（停止服务即退出托盘）
 
 frontend.tick()

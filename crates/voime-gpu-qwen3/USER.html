@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>USER — voime-gpu-qwen3</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>USER — voime-gpu-qwen3</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+</p>
+
+<p>
+本文定义 Qwen worker 对 daemon 与 GPU 安装脚本暴露的边界：输入输出约定、启动时序、
+模型目录、runtime 选择、错误回退与安装 / 卸载入口。帧格式、请求 / 响应字段与错误码
+由 <a href="../voime-gpu-common/USER.html">voime-gpu-common USER</a> 拥有；本文只链接，不复制。
+</p>
+
+<h2 id="u1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr>
+    <td>Qwen worker</td>
+    <td><code>voime-gpu-qwen3</code> 可执行文件；由 <code>voimed</code> 按 <code>final.backend = qwen3</code> 拉起，只处理完整语音段的 Final 识别。</td>
+  </tr>
+  <tr>
+    <td>BF16 主模型</td>
+    <td><code>Qwen3-ASR-1.7B-bf16.gguf</code>；Qwen3-ASR 1.7B 的 BF16 GGUF 权重，包含 tokenizer 与模型配置。</td>
+  </tr>
+  <tr>
+    <td>BF16 mmproj</td>
+    <td><code>mmproj-Qwen3-ASR-1.7B-bf16.gguf</code>；同一模型版本的音频投影器，把音频编码成语言模型可消费的嵌入。它不是第二个 ASR 或标点模型。</td>
+  </tr>
+  <tr>
+    <td>完整 PCM 输入</td>
+    <td>一个语音段的完整音频：16 kHz、单声道、<code>f32</code>、样本范围 <code>[-1, 1]</code>；不接收活动段增量。</td>
+  </tr>
+  <tr>
+    <td>输出清洗</td>
+    <td>去掉 Qwen3-ASR 输出中可能出现的 <code>language ...</code> 前缀与 <code>asr_text</code> 包装，只保留识别文本；不修改模型自带标点与大小写。</td>
+  </tr>
+  <tr>
+    <td>空段</td>
+    <td>清洗后为空的输出；按空语音段处理，daemon 丢弃该段，不提交文本。</td>
+  </tr>
+  <tr>
+    <td>Qwen runtime</td>
+    <td>Qwen worker 编译时选定的 llama.cpp / GGML 后端：<code>vulkan</code> 或 <code>cuda</code>；一次构建只包含一个 backend feature。</td>
+  </tr>
+  <tr>
+    <td>后端不可用</td>
+    <td>Qwen worker 未安装、runtime 缺失、模型校验失败、设备 / BF16 不支持或连续失败；daemon 保留配置值，但当前段回退 CPU。</td>
+  </tr>
+  <tr>
+    <td>GPU 模块安装脚本</td>
+    <td><code>scripts/install-gpu.sh</code> / <code>scripts/install-gpu.ps1</code>；负责 workers、runtime 与模型目录，不改变核心安装。</td>
+  </tr>
+</table>
+
+<h2 id="u2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr>
+    <td>BF16 固定</td>
+    <td>主模型与 mmproj 都必须是 BF16；不加载 Q8_0 / FP16 作为替代，也不在运行期量化。</td>
+  </tr>
+  <tr>
+    <td>同版本约束</td>
+    <td>主模型与 mmproj 必须来自同一模型版本、同一 revision；不混用 Q8 mmproj，也不把不同发布批次的两个文件放进同一目录。</td>
+  </tr>
+  <tr>
+    <td>PCM 固定</td>
+    <td>只接受 16 kHz、单声道、<code>f32</code> 的完整语音段；worker 不重采样、不读音频文件、不生成临时 WAV。</td>
+  </tr>
+  <tr>
+    <td>只做 Final</td>
+    <td>一次请求一个完整语音段；不接收 VAD 状态、活动段音频、Partial 请求、前端 IPC、热键或目标。</td>
+  </tr>
+  <tr>
+    <td>模型常驻</td>
+    <td>daemon 在启动时拉起选中的 worker；worker 在 Hello 后加载模型并保持常驻，不在每次 Final 前重新加载 GGUF / mmproj。</td>
+  </tr>
+  <tr>
+    <td>串行请求</td>
+    <td>同一 worker 一次只处理一个 Final；daemon 不在上一段未完成时发送下一段。</td>
+  </tr>
+  <tr>
+    <td>内置标点 / 大小写</td>
+    <td>标点与大小写来自 Qwen3-ASR 模型输出；不加载 FireRedPunc，不做二次标点或英文大小写修正。</td>
+  </tr>
+  <tr>
+    <td>必须清洗包装</td>
+    <td>Qwen3-ASR 输出可能带 <code>language ...</code> / <code>asr_text</code> 包装；worker 在返回前必须清洗。清洗后为空则按空段处理。</td>
+  </tr>
+  <tr>
+    <td>30 s 段上限</td>
+    <td>语音段由 daemon 按 30 s 上限切分；worker 拒绝超过上限的输入。llama.cpp 上超过约 2 分钟的长音频可能无输出，本方案不触发该边界。</td>
+  </tr>
+  <tr>
+    <td>AMD Linux 只 Vulkan</td>
+    <td>AMD Linux 只接受 <code>--qwen-runtime vulkan</code>；不安装、不探测、不回退 ROCm / HIP。</td>
+  </tr>
+  <tr>
+    <td>不静默降级</td>
+    <td>BF16 或 Vulkan / CUDA 不满足时只把 Qwen 后端标记为不可用；不降级到 Q8 / FP16，也不在 worker 内跑 CPU 大模型。</td>
+  </tr>
+  <tr>
+    <td>超时预算</td>
+    <td>加载与识别超时由 daemon 持有；worker 不延长预算，收到 <code>Cancel</code> 后按 <a href="../voime-gpu-common/USER.html#u4-7">voime-gpu-common USER §4.7</a> 的取消语义结束当前请求。</td>
+  </tr>
+  <tr>
+    <td>日志不含文本</td>
+    <td>stdout 只用于协议；日志写 stderr，由 daemon 转发到 <code>voime-log</code>。日志只记录长度、耗时、错误码与后端名，不记录识别文本。</td>
+  </tr>
+  <tr>
+    <td>无直接用户入口</td>
+    <td>用户通过 GPU 安装脚本安装、通过 <code>final.backend</code> 选择；不直接运行 worker，也没有窗口或 TUI。</td>
+  </tr>
+</table>
+
+<h2 id="u3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u3-1">3.1 daemon 与 worker 边界</h3>
+<div class="diagram"><img src="diagram/daemon-worker.svg" alt="voimed 与 voime-gpu-qwen3 的启动、Transcribe、超时取消与关闭时序图"></div>
+<ul class="note">
+  <li>daemon 在 <code>Hello</code> 中给出协议、backend、模型目录与设备；worker 加载 manifest、GGUF 主模型与 BF16 mmproj 后返回 <code>Ready</code>，其中 <code>punc</code> 为 <code>false</code>（没有独立标点模型）。</li>
+  <li><code>Transcribe(PCM)</code> 送入一个完整语音段；<code>Result(text)</code> 只返回最终文本。内部处理只画一个 <code>内部处理</code> self-loop，不展开 mtmd / prompt / decode / 清洗。</li>
+  <li>超时与取消只表现为边界消息：daemon 发送 <code>Cancel</code>，预算耗尽时杀掉 worker。超时 / 崩溃的当前段由 daemon 回退 CPU SenseVoice；主动取消的终态由 daemon 丢弃，不执行回退。</li>
+  <li>空输出按空段处理，不返回半成品文本；worker 不产生 Partial，也不接收 VAD / 前端消息。</li>
+  <li>帧格式与字段见 <a href="../voime-gpu-common/USER.html#u4-1">voime-gpu-common USER §4.1</a>；错误码见 <a href="../voime-gpu-common/USER.html#u4-5">§4.5</a>。</li>
+</ul>
+
+<h2 id="u4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u4-1">4.1 模型目录</h3>
+<p>
+模型安装在 <code>~/.local/share/voime/models/qwen3-asr-1.7b/</code>
+（Windows 为 <code>%LOCALAPPDATA%\voime\models\qwen3-asr-1.7b\</code>）。
+目录名是稳定标识，版本写在 <code>manifest.json</code>；运行期只读。
+</p>
+
+<pre><code>qwen3-asr-1.7b/
+├── manifest.json
+├── Qwen3-ASR-1.7B-bf16.gguf
+├── mmproj-Qwen3-ASR-1.7B-bf16.gguf
+└── LICENSE</code></pre>
+
+<table>
+  <tr><th>文件</th><th>作用</th><th>体积 / 约束</th></tr>
+  <tr>
+    <td><code>manifest.json</code></td>
+    <td>模型清单：id、kind、version、license、文件 SHA-256 / 大小、runtime 精度与最长段。</td>
+    <td>与目录名一致；运行期只读；缺失或 schema 不符使 Qwen 后端不可用。</td>
+  </tr>
+  <tr>
+    <td><code>Qwen3-ASR-1.7B-bf16.gguf</code></td>
+    <td>Qwen3-ASR 1.7B 的 BF16 主模型；tokenizer 与模型配置已包含在 GGUF 内。</td>
+    <td>4,069,674,944 bytes（约 4.07 GB）；必须为 BF16。</td>
+  </tr>
+  <tr>
+    <td><code>mmproj-Qwen3-ASR-1.7B-bf16.gguf</code></td>
+    <td>同一模型版本的 BF16 音频投影器；把完整 PCM 编码成音频嵌入。</td>
+    <td>641,773,984 bytes（约 642 MB）；必须为主模型同版本 BF16，不得使用 Q8 mmproj。</td>
+  </tr>
+  <tr>
+    <td><code>LICENSE</code></td>
+    <td>Qwen3-ASR 模型许可证文本。</td>
+    <td>随模型目录分发；不参与推理。</td>
+  </tr>
+</table>
+
+<pre><code>{
+  "schema": 5,
+  "id": "qwen3-asr-1.7b",
+  "kind": "asr",
+  "version": "&lt;发布清单冻结值&gt;",
+  "license": "Apache-2.0",
+  "files": [
+    { "path": "Qwen3-ASR-1.7B-bf16.gguf", "sha256": "...", "size": 4069674944 },
+    { "path": "mmproj-Qwen3-ASR-1.7B-bf16.gguf", "sha256": "...", "size": 641773984 }
+  ],
+  "runtime": {
+    "backend": "qwen3",
+    "format": "gguf",
+    "precision": "bf16",
+    "max_segment_ms": 30000
+  }
+}</code></pre>
+
+<ul class="note">
+  <li>worker 只接受 daemon 传入的模型目录，不从全局配置或环境变量猜路径；目录外文件、绝对路径与 <code>..</code> 一律拒绝。</li>
+  <li>启动时逐文件校验 SHA-256 与大小；任一文件缺失、被修改或精度声明不是 <code>bf16</code>，按 <a href="#u4-3">§4.3</a> 的 <code>load_failed</code> 处理。</li>
+  <li>目录内不允许可执行文件、脚本或系统库；安装脚本用同盘临时目录 + rename 原子替换，失败不留下半成品。</li>
+  <li>具体来源、revision 与 SHA-256 见 <a href="PROVIDER.html#p4-1">PROVIDER §4.1</a> / <a href="PROVIDER.html#p4-2">§4.2</a>。</li>
+</ul>
+
+<h3 id="u4-2">4.2 runtime 选择</h3>
+<p>
+Qwen runtime 在安装 / 构建时选定，不是运行期开关。安装脚本按 <code>--qwen-runtime</code>
+选择预编译的 worker 与 runtime 目录；worker 二进制只包含一个 llama.cpp backend feature。
+</p>
+
+<table>
+  <tr><th><code>--qwen-runtime</code></th><th>适用平台</th><th>依赖</th><th>说明</th></tr>
+  <tr>
+    <td><code>vulkan</code></td>
+    <td>Linux AMD（唯一选项）· Linux NVIDIA · Windows AMD / Intel / NVIDIA</td>
+    <td>系统 Vulkan loader、匹配的 GPU 驱动</td>
+    <td>不安装 ROCm / HIP；AMD Linux 只允许此值。</td>
+  </tr>
+  <tr>
+    <td><code>cuda</code></td>
+    <td>Linux NVIDIA · Windows NVIDIA</td>
+    <td>匹配的 NVIDIA 驱动与 CUDA runtime</td>
+    <td>不用于 AMD；worker 自己的 runtime 目录，不写全局 <code>LD_LIBRARY_PATH</code>。</td>
+  </tr>
+</table>
+
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>AMD Linux</td><td>只接受 <code>vulkan</code>；安装脚本拒绝 <code>cuda</code>，也不暴露 <code>hip</code> / <code>rocm</code> 选项。</td></tr>
+  <tr><td>NVIDIA</td><td><code>cuda</code> 或 <code>vulkan</code>；由安装时选择与目标机器实测决定，不在运行期切换。</td></tr>
+  <tr><td>Windows AMD / Intel</td><td><code>vulkan</code>；不使用 DirectML 或 ROCm。</td></tr>
+  <tr><td>未指定</td><td>安装脚本按平台选择受支持的 runtime；AMD Linux 仍固定 Vulkan。</td></tr>
+  <tr><td>错误值</td><td>安装失败并非零退出；不构建“自动探测后回退”的路径。</td></tr>
+  <tr><td>runtime 缺失 / 版本不匹配</td><td>worker 返回 <code>runtime_missing</code>；Qwen 后端不可用，当前段回退 CPU。</td></tr>
+</table>
+<ul class="note">
+  <li><code>final.backend = qwen3</code> 与 <code>--qwen-runtime</code> 是两件事：前者选择 Final 后端，后者选择该 worker 的 llama.cpp 后端。</li>
+  <li>Vulkan 不可用或设备不支持 BF16 时，只使 Qwen 后端不可用；不回退 ROCm、Q8 或 FP16。</li>
+  <li>runtime 选择的平台矩阵与 BF16 自检见 <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a>。</li>
+</ul>
+
+<h3 id="u4-3">4.3 错误与回退</h3>
+<p>
+错误码的完整定义见
+<a href="../voime-gpu-common/USER.html#u4-5">voime-gpu-common USER §4.5</a>，
+超时 / 取消语义见 <a href="../voime-gpu-common/USER.html#u4-7">§4.7</a>。
+本表只列 Qwen 后端的触发条件与 daemon 动作。
+</p>
+
+<table>
+  <tr><th>错误码</th><th>Qwen 触发条件</th><th>daemon 动作</th></tr>
+  <tr>
+    <td><code>runtime_missing</code></td>
+    <td>llama.cpp / Vulkan / CUDA runtime 未安装、版本不匹配或 worker 构建的 backend 与安装包不符。</td>
+    <td>标记 Qwen 后端不可用；当前段回退 CPU SenseVoice；提示重装 GPU 模块。</td>
+  </tr>
+  <tr>
+    <td><code>device_unavailable</code></td>
+    <td>没有可用 GPU、驱动不匹配、Vulkan loader 缺失、显存不足，或设备不支持 BF16。</td>
+    <td>不启动 worker；Qwen 后端不可用；当前段回退 CPU；<code>doctor</code> 报原因。</td>
+  </tr>
+  <tr>
+    <td><code>load_failed</code></td>
+    <td>manifest 缺失 / schema 不符、主模型或 mmproj 缺失、SHA-256 不匹配、精度不是 BF16、音频投影能力缺失。</td>
+    <td>Qwen 后端不可用；当前段回退 CPU SenseVoice；日志记录路径与 SHA 前缀，不记录文本。</td>
+  </tr>
+  <tr>
+    <td><code>inference_failed</code></td>
+    <td>音频包装、特征编码或解码失败，或输入超过 30 s 段上限。</td>
+    <td>当前段回退 CPU；重启 worker；连续失败后标记 Qwen 后端不可用。</td>
+  </tr>
+  <tr>
+    <td><code>timeout</code></td>
+    <td>加载或识别超过 daemon 预算。</td>
+    <td>杀掉 worker；当前段回退 CPU；按崩溃路径重启，连续超时标记不可用。</td>
+  </tr>
+  <tr>
+    <td><code>protocol_mismatch</code></td>
+    <td>协议版本、backend 名或消息形状与 daemon 不一致。</td>
+    <td>拒绝 worker；Qwen 后端不可用；当前段回退 CPU；提示重装 GPU 模块。</td>
+  </tr>
+</table>
+
+<table>
+  <tr><th>情况</th><th>Qwen 行为</th><th>daemon 行为</th></tr>
+  <tr><td>输出清洗后为空</td><td>返回空文本，而不是半成品或错误文本。</td><td>按空段丢弃；不回退 CPU，不提交。</td></tr>
+  <tr><td>BF16 / Vulkan 不支持</td><td>启动自检失败，返回 <code>device_unavailable</code> 或 <code>runtime_missing</code>。</td><td>只使 Qwen 后端不可用；核心 VAD / Preview / CPU Final 继续。</td></tr>
+  <tr><td>worker 崩溃 / 管道断开</td><td>无响应；由 daemon 检测进程退出或超时。</td><td>当前段回退 CPU；按退避重启；连续失败标记不可用。</td></tr>
+  <tr><td>模型 / runtime 被删除</td><td>下次启动加载失败。</td><td>保留 <code>final.backend</code> 配置值但标记不可用；当前段回退 CPU。</td></tr>
+</table>
+
+<ul class="note">
+  <li>Qwen worker 内部不做“GPU 失败 → CPU 大模型”的回退；CPU 回退由 daemon 用核心 SenseVoice 完成，见 <a href="../../USER.html#u4-4">根 USER §4.4</a>。</li>
+  <li>Qwen 后端失败不影响 VAD、Preview、热键、目标或另一个 GPU 后端；daemon 仍以 CPU Final 启动，同一时刻仍只有一个 worker 运行。</li>
+  <li>错误码以 <a href="../voime-gpu-common/USER.html#u4-5">voime-gpu-common USER §4.5</a> 为准，超时 / 取消以 <a href="../voime-gpu-common/USER.html#u4-7">§4.7</a> 为准；本文不复制字段定义。</li>
+</ul>
+
+<h3 id="u4-4">4.4 安装 / 卸载入口</h3>
+<pre><code>scripts/install-gpu.sh --qwen3
+scripts/install-gpu.sh --qwen3 --qwen-runtime vulkan
+scripts/install-gpu.sh --qwen3 --backend qwen3
+scripts/install-gpu.sh --qwen3 --uninstall
+scripts/install-gpu.ps1 --qwen3 --qwen-runtime cuda</code></pre>
+
+<table>
+  <tr><th>选项</th><th>行为</th></tr>
+  <tr><td><code>--qwen3</code></td><td>只安装 Qwen worker、所选 llama.cpp runtime 与 <code>qwen3-asr-1.7b</code> 模型；不改变 <code>final.backend</code>。</td></tr>
+  <tr><td><code>--qwen-runtime vulkan|cuda</code></td><td>选择 Qwen runtime；AMD Linux 只接受 <code>vulkan</code>；不提供 HIP / ROCm。</td></tr>
+  <tr><td><code>--backend qwen3</code></td><td>安装后写入 <code>final.backend = qwen3</code>；该后端必须已安装；不自动重启 daemon。</td></tr>
+  <tr><td><code>--uninstall</code></td><td>删除 Qwen worker、runtime 与 <code>qwen3-asr-1.7b</code> 模型；不触碰核心、FireRed 后端或另一个 runtime。</td></tr>
+  <tr><td><code>--no-models</code></td><td>只装 worker 与 runtime；模型目录由用户提供，仍按 <a href="#u4-1">§4.1</a> 校验。</td></tr>
+  <tr><td><code>--source-dir &lt;dir&gt;</code></td><td>离线模型 / runtime 源；不联网。</td></tr>
+</table>
+
+<ul class="note">
+  <li>GPU 安装脚本先验证核心已安装；缺少核心时失败，不创建“只有 GPU 模块”的孤立安装。</li>
+  <li>安装体积约 4.7 GB；脚本显示模型体积并支持断点续传 / 离线源；下载失败非零退出并清理临时目录，不写 manifest、不做 rename。</li>
+  <li>卸载只删除本后端；Qwen 的配置值不静默改写。若 <code>final.backend</code> 仍为 <code>qwen3</code>，daemon 按 <a href="#u4-3">§4.3</a> 标记不可用并回退 CPU。</li>
+  <li>Windows 与 Linux 使用同一语义：<code>install-gpu.ps1</code> 的 <code>--qwen3</code> / <code>--qwen-runtime</code> / <code>--uninstall</code> 与 Linux 对应。</li>
+  <li>安装脚本只在安装阶段准备 runtime；运行期不安装、不编译、不切换 runtime。</li>
+</ul>
+
+</body>
+</html>

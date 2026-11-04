@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PROVIDER — voime-gpu-qwen3</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>PROVIDER — voime-gpu-qwen3</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+</p>
+
+<p>
+本文只记录 Qwen worker 实际消费的外部子集：Qwen3-ASR 的 BF16 GGUF 主模型与 BF16 mmproj、
+llama.cpp / GGML 的 mtmd 音频接口，以及 Vulkan / CUDA backend。完整定义以官方模型卡与
+llama.cpp / llama-cpp-4 文档为准；产品级下边界见 <a href="../../PROVIDER.html">根 PROVIDER</a>。
+</p>
+
+<h2 id="p1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr>
+    <td>GGUF</td>
+    <td>llama.cpp 使用的模型容器格式；一个文件包含张量、tokenizer、模型配置与 chat template 等元数据。本后端的主模型与 mmproj 都是 GGUF。</td>
+  </tr>
+  <tr>
+    <td>mmproj</td>
+    <td>多模态投影器文件；本项目只使用 Qwen3-ASR 的音频投影器，把音频编码成语言模型可消费的嵌入。它不是第二个 ASR 或标点模型。</td>
+  </tr>
+  <tr>
+    <td>BF16</td>
+    <td>Brain floating point 16；本后端主模型与 mmproj 的固定精度。Vulkan 设备需要支持 BF16 才能作为加速路径。</td>
+  </tr>
+  <tr>
+    <td>mtmd</td>
+    <td>llama.cpp 的 multimodal 支持库 / <code>llama-cpp-4</code> 的 <code>mtmd</code> feature；提供音频 bitmap、tokenize 与 <code>eval_chunks</code>。</td>
+  </tr>
+  <tr>
+    <td>音频 bitmap</td>
+    <td><code>MtmdBitmap::from_audio(&amp;[f32])</code> 创建的音频输入对象；数据是 little-endian <code>f32</code> PCM，不经过 WAV 容器。</td>
+  </tr>
+  <tr>
+    <td>Whisper 风格 log-mel</td>
+    <td>mmproj 内部使用的 128-bin log-mel 音频特征；由 mmproj / mtmd 计算，worker 只提供 16 kHz <code>f32</code> PCM。</td>
+  </tr>
+  <tr>
+    <td>Vulkan</td>
+    <td>跨平台 GPU API；AMD Linux 的 Qwen 后端唯一 runtime。使用系统 Vulkan loader 与 GPU 驱动，不引入 ROCm / HIP。</td>
+  </tr>
+  <tr>
+    <td>CUDA</td>
+    <td>NVIDIA GPU runtime；用于 Linux / Windows 的 NVIDIA 设备。与 Vulkan 一样，一次构建只选一个 backend。</td>
+  </tr>
+  <tr>
+    <td>EOS</td>
+    <td>模型生成的结束 token；<code>LlamaModel::is_eog_token</code> 为真时停止 greedy 解码。</td>
+  </tr>
+  <tr>
+    <td>chat template</td>
+    <td>GGUF 内自带的对话模板；worker 用它构造单轮 ASR prompt，并插入 <code>MtmdContext::default_marker()</code>。</td>
+  </tr>
+  <tr>
+    <td>revision / SHA-256</td>
+    <td>模型来源的固定版本与文件内容摘要；安装清单与运行期校验共用，运行期不联网解析最新版本。</td>
+  </tr>
+</table>
+
+<h2 id="p2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>BF16 only</td><td>主模型与 mmproj 固定 BF16；不加载 Q8_0 / FP16，不在运行期量化或转换。</td></tr>
+  <tr><td>同版本</td><td>主模型与 mmproj 必须来自同一模型版本、同一 revision；更换任一文件都要重新跑目标语料金样。</td></tr>
+  <tr><td>不混 Q8 mmproj</td><td>上游同时提供 Q8_0 mmproj，但 Q8 mmproj 不是产品路径；不得与 BF16 主模型混用。</td></tr>
+  <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest、SHA-256 与大小，失败不进入运行态。</td></tr>
+  <tr><td>PCM 直通</td><td>只消费 16 kHz、单声道、<code>f32</code> PCM；不读 WAV / MP3，不重采样，不生成临时文件。</td></tr>
+  <tr><td>mel 在 mmproj 内</td><td>Whisper 风格 128-bin log-mel 由 mmproj 内部处理；worker 不实现 fbank / mel 前端，也不传特征张量。</td></tr>
+  <tr><td>30 s 段</td><td>每次只处理一个完整语音段，上限 30 s；超过约 2 分钟的长音频在 llama.cpp 上可能无输出，本方案不触发。</td></tr>
+  <tr><td>Greedy / EOS</td><td>greedy 采样；遇到 EOS 或 token 上限停止；不引入温度、top-p、重复惩罚或束搜索。</td></tr>
+  <tr><td>AMD Linux 只 Vulkan</td><td>不构建、不安装、不探测 HIP / ROCm；Vulkan 不可用即该后端不可用。</td></tr>
+  <tr><td>一个 backend / 二进制</td><td><code>vulkan</code> 与 <code>cuda</code> 不共存于同一 worker 构建；安装包按 runtime 分开。</td></tr>
+  <tr><td>版本锁定</td><td><code>llama-cpp-4</code> 固定 0.11.0；对应 llama.cpp commit 随 <code>llama-cpp-sys-4</code> 固定并记录在发布清单，不跟随 master。</td></tr>
+  <tr><td>音频 experimental</td><td>llama.cpp 的音频输入仍是 experimental；升级 crate / commit 必须重跑 30 s 段金样与长段边界测试。</td></tr>
+  <tr><td>无 ORT</td><td>不链接 ONNX Runtime / ONNX；Qwen 路径与 FireRed 的 ORT 路径完全隔离。</td></tr>
+</table>
+
+<h2 id="p3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<p>
+Qwen 后端的边界分为两张图：<a href="USER.html#u3-1">USER §3.1</a> 的 daemon ↔ worker 协议时序，
+以及本节 <code>runtime-load.svg</code> 的 worker ↔ llama.cpp / 模型目录加载边界。
+§3.2 用表格列出 Transcribe 使用的边界 API，不展开 mtmd / prompt / decode 内部阶段。
+</p>
+
+<h3 id="p3-1">3.1 模型加载边界</h3>
+<div class="diagram"><img src="diagram/runtime-load.svg" alt="voime-gpu-qwen3 从模型目录读取 manifest、加载 BF16 GGUF 与 mmproj 并自检的时序图"></div>
+<ul class="note">
+  <li>worker 先读 <code>manifest.json</code> 并校验文件 SHA-256 / 大小，再初始化 llama.cpp backend、加载 BF16 主模型与 BF16 mmproj。</li>
+  <li>加载后用 <code>MtmdCapabilities.audio</code> 与 <code>audio_sample_rate()</code> 自检；自检失败只使 Qwen 后端不可用。</li>
+  <li>加载完成后模型常驻；每个 Final 只创建 / 重置 <code>LlamaContext</code>，不重新加载 GGUF。</li>
+  <li>内部 mtmd / prompt / decode 阶段不在图中展开；daemon 与 worker 的请求边界见 <a href="USER.html#u3-1">USER §3.1</a>。</li>
+</ul>
+
+<h3 id="p3-2">3.2 Transcribe 边界</h3>
+<p>
+Transcribe 只跨越 worker → llama.cpp / mtmd 的已声明 API；不把 mtmd 音频编码、prompt 拼接或
+greedy 循环拆成内部阶段图。
+</p>
+
+<table>
+  <tr><th>边界调用</th><th>作用</th><th>约束</th></tr>
+  <tr>
+    <td><code>MtmdBitmap::from_audio(&amp;[f32])</code></td>
+    <td>把完整 PCM 段包装成音频 bitmap。</td>
+    <td>16 kHz、单声道、<code>f32</code>；不写临时 WAV；样本数受 30 s 上限约束。</td>
+  </tr>
+  <tr>
+    <td><code>MtmdInputText::new(&amp;prompt, true, true)</code></td>
+    <td>把含 media marker 的 ASR prompt 包装成 mtmd 文本输入。</td>
+    <td>prompt 来自 GGUF chat template；只插入一个音频 marker。</td>
+  </tr>
+  <tr>
+    <td><code>MtmdContext::tokenize(&amp;text, &amp;[&amp;bitmap], &amp;mut chunks)</code></td>
+    <td>把 prompt 与音频 bitmap 编码成 <code>MtmdInputChunks</code>。</td>
+    <td>bitmap 数量必须与 marker 数量一致；失败返回 <code>inference_failed</code>。</td>
+  </tr>
+  <tr>
+    <td><code>MtmdContext::eval_chunks(&amp;mut lctx, &amp;chunks, 0, 0, n_batch, true, &amp;mut n_past)</code></td>
+    <td>编码音频并 prefill 到 <code>LlamaContext</code>。</td>
+    <td><code>n_batch</code> 来自上下文；不在 worker 内展开 mtmd 编码阶段。</td>
+  </tr>
+  <tr>
+    <td><code>LlamaSampler::greedy()</code> / <code>sample</code> / <code>LlamaContext::decode</code></td>
+    <td>逐 token greedy 生成；遇 EOS 停止。</td>
+    <td>不采样、不并行生成；每轮只 decode 一个新 token。</td>
+  </tr>
+  <tr>
+    <td><code>LlamaModel::detokenize(&amp;tokens, true, false)</code></td>
+    <td>把生成 token 还原成文本。</td>
+    <td>移除 special token；之后必须经 <code>clean::clean_text</code>。</td>
+  </tr>
+</table>
+<ul class="note">
+  <li>音频特征由 mmproj 内部计算，worker 不持有 128-bin log-mel 张量，也不提供 fbank 参数。</li>
+  <li>失败只影响当前段；daemon 按 <a href="USER.html#u4-3">USER §4.3</a> 回退 CPU SenseVoice。</li>
+</ul>
+
+<h2 id="p4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="p4-1">4.1 BF16 主模型</h3>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>文件</td><td><code>Qwen3-ASR-1.7B-bf16.gguf</code></td></tr>
+  <tr><td>体积</td><td>4,069,674,944 bytes（约 4.07 GB）</td></tr>
+  <tr><td>格式 / 精度</td><td>GGUF / BF16；<code>runtime.precision = "bf16"</code></td></tr>
+  <tr><td>模型</td><td>Qwen3-ASR 1.7B；tokenizer、模型配置与 chat template 包含在 GGUF 内，不需要额外 tokenizer / config 文件。</td></tr>
+  <tr><td>来源</td><td><a href="https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF">ggml-org/Qwen3-ASR-1.7B-GGUF</a>（Hugging Face）</td></tr>
+  <tr><td>revision</td><td><code>36a678687ba7d07a74ca70ccb0e36902e005fb80</code></td></tr>
+  <tr><td>SHA-256</td><td><code>1af18763dfafde2bbf071ef8a0952f7bee66f140c3565e5ccc5afb07dc1f9227</code></td></tr>
+  <tr><td>许可</td><td>Apache-2.0；许可证文本随模型目录的 <code>LICENSE</code> 分发。</td></tr>
+  <tr><td>加载</td><td><code>LlamaModel::load_from_file(&amp;backend, path, &amp;LlamaModelParams::default())</code>；加载后检查 <code>ftype</code> 为 BF16。</td></tr>
+  <tr><td>禁止</td><td>不得用 Q8_0 / FP16 / 其它量化文件替代；运行期不做转换或量化。</td></tr>
+</table>
+<ul class="note">
+  <li>主模型约 4.07 GB 是文件体积；显存峰值还包含 KV cache、mtmd 编码与 runtime 开销，门禁按 8 GB 设计。</li>
+  <li>来源 revision 与 SHA-256 是安装清单的冻结值；运行期不联网检查更新。</li>
+</ul>
+
+<h3 id="p4-2">4.2 BF16 mmproj</h3>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>文件</td><td><code>mmproj-Qwen3-ASR-1.7B-bf16.gguf</code></td></tr>
+  <tr><td>体积</td><td>641,773,984 bytes（约 642 MB）</td></tr>
+  <tr><td>格式 / 精度</td><td>GGUF / BF16</td></tr>
+  <tr><td>角色</td><td>Qwen3-ASR 的音频投影器；把 PCM 编码成音频嵌入。不是第二个 ASR / 标点模型。</td></tr>
+  <tr><td>音频前端</td><td>Whisper 风格 128-bin log-mel 由 mmproj 内部处理；worker 只提供 16 kHz <code>f32</code> PCM。</td></tr>
+  <tr><td>来源</td><td><a href="https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF">ggml-org/Qwen3-ASR-1.7B-GGUF</a>，与主模型同一 revision。</td></tr>
+  <tr><td>SHA-256</td><td><code>8882e9ddab3186f9aa71b1417c847177913e1466655ac944cf86e9b846735d62</code></td></tr>
+  <tr><td>同版本约束</td><td>必须与主模型同为 BF16、同一 revision；不得使用 <code>mmproj-Qwen3-ASR-1.7B-Q8_0.gguf</code>。</td></tr>
+  <tr><td>合计体积</td><td>主模型 + mmproj = 4,711,448,928 bytes（约 4.7 GB）。</td></tr>
+</table>
+<ul class="note">
+  <li>上游同时发布 Q8_0 主模型与 Q8_0 mmproj；Q8 mmproj 不作为产品路径，已有导出者报告质量退化。</li>
+  <li>主模型或 mmproj 任一文件更换都要重新跑金样；不把不同 revision 的两个文件放进同一目录。</li>
+  <li>mmproj 的加载入口是 <code>MtmdContext::init_from_file(mmproj_path, &amp;model, MtmdContextParams::default())</code>；能力检查用 <code>MtmdCapabilities.audio</code>。</li>
+</ul>
+
+<h3 id="p4-3">4.3 llama-cpp-4 / llama.cpp</h3>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>crate</td><td><code>llama-cpp-4</code> 0.11.0；上游项目 <code>eugenehp/llama-cpp-rs</code>。</td></tr>
+  <tr><td>feature</td><td><code>mtmd</code> + 且仅一个 backend：<code>vulkan</code> 或 <code>cuda</code>；不启用 ORT 或其它 GPU feature。</td></tr>
+  <tr><td>底层</td><td><code>llama-cpp-sys-4</code> 0.11.0 / llama.cpp / GGML；对应 commit 随 crate 固定并记录在发布清单。</td></tr>
+  <tr><td>版本日志</td><td>启动时记录 <code>llama_cpp_4::llama_version()</code> 到 stderr；不向用户界面输出。</td></tr>
+  <tr><td>升级</td><td>只允许显式升级 crate / commit，并同时更新 <code>Cargo.lock</code>；禁止跟随 master 自动升级。</td></tr>
+  <tr><td>音频状态</td><td>llama.cpp 音频输入仍标 experimental；发布前用 30 s 段做金样，长音频边界只作为回归测试。</td></tr>
+</table>
+
+<table>
+  <tr><th>消费 API</th><th>签名 / 类型</th><th>用途</th></tr>
+  <tr><td>backend</td><td><code>LlamaBackend::init() -&gt; Result&lt;LlamaBackend, _&gt;</code></td><td>初始化编译时选中的 Vulkan / CUDA backend。</td></tr>
+  <tr><td>主模型</td><td><code>LlamaModel::load_from_file(&amp;backend, path, &amp;LlamaModelParams::default())</code></td><td>加载 BF16 GGUF。</td></tr>
+  <tr><td>模型精度</td><td><code>LlamaModel::ftype()</code></td><td>拒绝非 BF16 主模型。</td></tr>
+  <tr><td>上下文</td><td><code>LlamaModel::new_context(&amp;backend, LlamaContextParams::default())</code></td><td>每个 Final 创建独立上下文。</td></tr>
+  <tr><td>mmproj</td><td><code>MtmdContext::init_from_file(path, &amp;model, MtmdContextParams::default())</code></td><td>加载 BF16 音频投影器。</td></tr>
+  <tr><td>能力</td><td><code>MtmdContext::capabilities(&amp;self, &amp;model) -&gt; MtmdCapabilities</code></td><td>检查 <code>audio == true</code>。</td></tr>
+  <tr><td>采样率</td><td><code>MtmdContext::audio_sample_rate() -&gt; i32</code></td><td>必须为 16000。</td></tr>
+  <tr><td>音频 bitmap</td><td><code>MtmdBitmap::from_audio(&amp;[f32]) -&gt; mtmd::Result&lt;MtmdBitmap&gt;</code></td><td>PCM 直通，不经过 WAV。</td></tr>
+  <tr><td>tokenize</td><td><code>MtmdContext::tokenize(&amp;text, &amp;[&amp;bitmap], &amp;mut chunks)</code></td><td>prompt + 音频 marker 编码。</td></tr>
+  <tr><td>eval</td><td><code>MtmdContext::eval_chunks(&amp;mut lctx, &amp;chunks, n_past, seq_id, n_batch, logits_last, &amp;mut new_n_past)</code></td><td>编码音频并 prefill。</td></tr>
+  <tr><td>采样</td><td><code>LlamaSampler::greedy()</code> / <code>sample(&amp;lctx, -1)</code></td><td>greedy 生成。</td></tr>
+  <tr><td>解码</td><td><code>LlamaBatch::add</code> / <code>LlamaContext::decode(&amp;mut batch)</code></td><td>每次推进一个 token。</td></tr>
+  <tr><td>EOS</td><td><code>LlamaModel::is_eog_token(token) -&gt; bool</code></td><td>遇到 EOS / EOG 停止。</td></tr>
+  <tr><td>文本</td><td><code>LlamaModel::detokenize(&amp;tokens, true, false)</code></td><td>移除 special token 后还原文本。</td></tr>
+</table>
+<ul class="note">
+  <li><code>MtmdContext</code> 与 <code>LlamaContext</code> 不是线程安全的；worker 串行处理 Final，不并发调用。</li>
+  <li><code>MtmdContext</code> 共享 <code>tokenize</code> 是只读的，但 <code>eval_chunks</code> / 编码会修改内部状态；同一 worker 内只允许一个解码路径。</li>
+  <li>音频 marker 使用 <code>MtmdContext::default_marker()</code>；prompt 的 chat template 来自主模型 GGUF，不由 worker 手写。</li>
+</ul>
+
+<h3 id="p4-4">4.4 Vulkan / CUDA 与 BF16 自检</h3>
+<table>
+  <tr><th>平台 / 设备</th><th>Qwen runtime</th><th>约束</th></tr>
+  <tr><td>Linux + AMD</td><td>Vulkan</td><td>只接受 Vulkan；使用系统 Vulkan loader / GPU 驱动；不安装 ROCm / HIP。</td></tr>
+  <tr><td>Linux + NVIDIA</td><td>CUDA 或 Vulkan</td><td>安装时二选一；同一构建只含一个 backend。</td></tr>
+  <tr><td>Windows + NVIDIA</td><td>CUDA 或 Vulkan</td><td>与 Linux 分开打包；runtime 各自独立目录。</td></tr>
+  <tr><td>Windows + AMD / Intel</td><td>Vulkan</td><td>不使用 DirectML / ROCm；Vulkan loader 与驱动由系统提供。</td></tr>
+  <tr><td>无 GPU / 驱动不匹配 / BF16 不支持</td><td>—</td><td>不启动 worker；Qwen 后端不可用；当前段回退 CPU。</td></tr>
+</table>
+
+<p><strong>worker 启动自检顺序：</strong></p>
+<ol>
+  <li><code>LlamaBackend::init()</code> 成功，且初始化的是编译时选中的 backend。</li>
+  <li>BF16 主模型可加载；<code>LlamaModel::ftype()</code> 表明权重为 BF16。Vulkan 设备应报告 <code>bf16: 1</code>；报告 <code>bf16: 0</code> 的设备不能作为 BF16 加速路径。</li>
+  <li>BF16 mmproj 可加载；<code>MtmdContext::init_from_file</code> 成功。</li>
+  <li><code>capabilities(&amp;model).audio == true</code>，且 <code>audio_sample_rate() == 16000</code>。</li>
+  <li>一次短静音 warmup 完成 mtmd / decode，不触发 backend 错误。</li>
+  <li>向 daemon 返回 <code>Ready</code>，携带 runtime、device 与显存信息。</li>
+</ol>
+
+<table>
+  <tr><th>失败</th><th>错误码</th><th>行为</th></tr>
+  <tr><td>Vulkan / CUDA runtime 缺失或版本不匹配</td><td><code>runtime_missing</code></td><td>Qwen 后端不可用；当前段回退 CPU；提示重装 GPU 模块。</td></tr>
+  <tr><td>无 GPU、驱动不匹配、显存不足、Vulkan loader 缺失</td><td><code>device_unavailable</code></td><td>不启动 worker；Qwen 后端不可用；当前段回退 CPU；<code>doctor</code> 报原因。</td></tr>
+  <tr><td>设备 / backend 不支持 BF16</td><td><code>device_unavailable</code></td><td>不降级 Q8 / FP16；不回退 ROCm；当前段回退 CPU。</td></tr>
+  <tr><td>模型缺失、SHA 不匹配、mmproj 能力缺失、精度不是 BF16</td><td><code>load_failed</code></td><td>Qwen 后端不可用；当前段回退 CPU；记录路径与 SHA 前缀。</td></tr>
+  <tr><td><code>from_audio</code> / tokenize / eval / decode 失败</td><td><code>inference_failed</code></td><td>当前段回退 CPU；重启 worker；连续失败标记不可用。</td></tr>
+  <tr><td>加载或识别超时</td><td><code>timeout</code></td><td>杀 worker；当前段回退 CPU；按崩溃路径重启。</td></tr>
+  <tr><td>协议版本 / backend 不匹配</td><td><code>protocol_mismatch</code></td><td>拒绝 worker；当前段回退 CPU；提示重装 GPU 模块。</td></tr>
+</table>
+<ul class="note">
+  <li>错误码定义见 <a href="../voime-gpu-common/USER.html#u4-5">voime-gpu-common USER §4.5</a>，超时 / 取消语义见 <a href="../voime-gpu-common/USER.html#u4-7">§4.7</a>；本文只记录 Qwen provider 触发条件。</li>
+  <li>BF16 / Vulkan 不支持只使 Qwen 后端不可用，不影响核心 VAD / Preview / CPU Final，也不影响另一个 GPU 后端。</li>
+  <li>不静默降级 Q8 / FP16，不在 worker 内跑 CPU 大模型；CPU 回退由 daemon 用核心 SenseVoice 完成。</li>
+</ul>
+
+</body>
+</html>

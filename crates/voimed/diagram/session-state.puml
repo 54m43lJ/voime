@@ -5,23 +5,46 @@ hide footbox
 
 participant "平台前端" as Frontend
 participant "voimed" as Daemon
+participant "voime-core" as Core
+participant "GPU worker" as Worker
 
 Frontend -> Daemon : Start { segment_id, source }
+Daemon -> Core : Pipeline::start_segment()
 Daemon -> Frontend : SegmentStarted { final_id }
 Daemon -> Frontend : State { recording: true }
 
-loop 录音期间
+loop Recording
+  Core -> Daemon : Partial
   Daemon -> Frontend : Partial
 end
 
-alt Mode = Toggle
-  Daemon -> Frontend : Final
-  Daemon -> Frontend : State { recording: false, finalizing: true }
-  Daemon -> Frontend : State { recording: true, finalizing: false }
-  note right of Daemon : 同一 Toggle 会话继续下一段
-else Mode = Ptt / Continuous
-  Frontend -> Daemon : Stop（PTT 松开）
-  Daemon -> Frontend : Final
-  Daemon -> Frontend : State { recording: false, finalizing: false }
+Frontend -> Daemon : Stop
+Daemon -> Frontend : State { recording: false, finalizing: true }
+Daemon -> Core : Pipeline::finish_segment()
+Daemon -> Core : Pipeline::cancel_preview()
+note over Core
+  Finalizing 门禁关闭：
+  不再产生 Partial、不再启动 Preview 推理。
+end note
+Core -> Daemon : SegmentReady { segment }
+
+alt backend = cpu
+  Daemon -> Core : Final::transcribe()
+else backend = firered / qwen3
+  Daemon -> Worker : Transcribe { PCM }
+  alt worker 成功
+    Worker -> Daemon : Result { text }
+  else 加载失败 / 超时 / 崩溃 / 推理失败
+    Worker -> Daemon : Error
+    Daemon -> Core : Final::transcribe()（CPU 回退，一次）
+  end
 end
+
+Daemon -> Frontend : Final { text }
+Daemon -> Frontend : State { recording: false, finalizing: false }
+
+note over Frontend, Daemon
+  默认 backend=cpu；安装 GPU 不自动切换。
+  切换 backend 需写配置并重启 daemon。
+end note
 @enduml

@@ -4,21 +4,38 @@ skinparam shadowing false
 hide footbox
 
 participant "Voime" as Voime
-participant "模型包" as Model
-participant "ONNX Runtime" as Ort
+participant "核心模型目录" as CoreModels
+participant "ONNX Runtime CPU" as OrtCpu
+participant "FireRed 模型目录" as FireredModels
+participant "ONNX Runtime GPU" as OrtGpu
+participant "Qwen 模型目录" as QwenModels
+participant "llama.cpp / GGML" as Llama
 
-Voime -> Model : 读取 manifest.json
-Voime -> Model : SHA-256 + 张量校验
-Voime -> Ort : 创建 CPU 会话
-Ort -> Voime : Session
+Voime -> CoreModels : 读取 manifest + SHA-256
+Voime -> OrtCpu : 创建 VAD / SenseVoice CPU 会话
+OrtCpu -> Voime : Session
 
 loop 每个语音段
-  Voime -> Ort : 推理
-  Ort -> Voime : log_probs / logits
+  Voime -> OrtCpu : VAD / Preview 推理
+  OrtCpu -> Voime : 概率 / Partial
+  alt final.backend = cpu
+    Voime -> OrtCpu : SenseVoice Final
+    OrtCpu -> Voime : text
+  else final.backend = firered
+    Voime -> FireredModels : 读取 manifest + SHA-256
+    Voime -> OrtGpu : 创建 AED / Punc 会话
+    Voime -> OrtGpu : Transcribe
+    OrtGpu -> Voime : text
+  else final.backend = qwen3
+    Voime -> QwenModels : 读取 manifest + SHA-256
+    Voime -> Llama : 加载 GGUF + mmproj
+    Voime -> Llama : Transcribe
+    Llama -> Voime : text
+  end
 end
 
-note over Voime
-  模型只读；每个语音段只重置解码状态，
-  不重新加载权重。
+note over Voime, Llama
+  GPU runtime / 模型不可用时只使对应后端不可用；
+  daemon 当前段回退 CPU SenseVoice，Preview 不中断。
 end note
 @enduml

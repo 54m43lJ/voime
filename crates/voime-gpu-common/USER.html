@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>USER — voime-gpu-common</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>USER — voime-gpu-common</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="CORE.html">CORE</a>
+</p>
+
+<p>
+本文是两个 GPU worker 帧协议的单一事实来源。<code>voimed</code>、<code>voime-gpu-firered</code> 与
+<code>voime-gpu-qwen3</code> 都实现本文；其他文档只链接具体小节，不复制帧格式、消息字段或错误码。
+前端 IPC 不在本文范围内，见 <a href="../voime-ipc/USER.html">voime-ipc USER</a>。
+</p>
+
+<h2 id="u1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>帧（frame）</td><td>一次请求或响应在线路上的完整单元：<code>u32</code> header 长度 + UTF-8 JSON header + <code>u32</code> 音频长度 + PCM。</td></tr>
+  <tr><td>header</td><td>帧内的 UTF-8 JSON 值，承载一个 Request 或 Response。</td></tr>
+  <tr><td>音频载荷（audio）</td><td>帧内的 <code>f32le</code> PCM；只有 Transcribe 使用，其他消息为空。</td></tr>
+  <tr><td>请求（Request）</td><td>daemon → worker 的 header 类型。</td></tr>
+  <tr><td>响应（Response）</td><td>worker → daemon 的 header 类型。</td></tr>
+  <tr><td>daemon</td><td><code>voimed</code>；启动 worker、发送请求、执行超时与 CPU 回退。</td></tr>
+  <tr><td>worker</td><td><code>voime-gpu-firered</code> 或 <code>voime-gpu-qwen3</code> 的独立进程；加载自己的 runtime 与模型，只执行 Final。</td></tr>
+  <tr><td>GPU 后端（GpuBackend）</td><td><code>firered</code> 或 <code>qwen3</code>；与 worker 二进制一一对应。</td></tr>
+  <tr><td>Final</td><td>一次完整语音段的最终识别；本协议不传增量音频，也不产生 Partial。</td></tr>
+  <tr><td>Transcribe</td><td>携带完整 PCM 的请求；一个 <code>id</code> 对应一次 Final。</td></tr>
+  <tr><td><code>id</code></td><td>daemon 分配的 <code>u64</code> 请求标识；从 1 递增；0 保留给不属于某次 Transcribe 的错误。</td></tr>
+  <tr><td>Ready</td><td>worker 完成加载后的响应；表示可以接受 Transcribe。</td></tr>
+  <tr><td>Bye</td><td>worker 对 Shutdown 的确认；发送后退出。</td></tr>
+  <tr><td>错误码（ErrorCode）</td><td>稳定的 snake_case 标识；daemon 按码处理，不解析 <code>message</code>。</td></tr>
+  <tr><td>协议版本</td><td><code>GPU_PROTOCOL_VERSION</code>；独立于 <code>voime-ipc</code> 的协议版本。</td></tr>
+  <tr><td>RTF</td><td>real-time factor；<code>latency_ms / 1000 / 音频秒数</code>；音频为空时为 0。</td></tr>
+  <tr><td><code>punc</code></td><td>worker 是否加载了独立标点模型；Qwen3 由模型自带标点，故为 <code>false</code>。</td></tr>
+  <tr><td><code>model_dir</code></td><td>daemon 传入的模型目录绝对路径；目录布局由对应 worker 定义，本协议只透传。</td></tr>
+  <tr><td><code>device</code></td><td>GPU 设备标识，例如 <code>cuda:0</code>、<code>vulkan:0</code>、<code>migraphx:0</code>、<code>dml:0</code>；worker 可以拒绝。</td></tr>
+  <tr><td><code>runtime</code></td><td>worker 自报的实现标识，例如 <code>cuda</code>、<code>vulkan</code>、<code>migraphx</code>、<code>directml</code>；daemon 只记录与展示。</td></tr>
+  <tr><td>加载预算</td><td>从 daemon 发出 Hello 到收到 Ready / Error 的默认 120 s。</td></tr>
+  <tr><td>识别预算</td><td>从 daemon 写完 Transcribe 到收到 Result / Error 的默认 60 s。</td></tr>
+  <tr><td>关闭预算</td><td>从 daemon 写完 Shutdown 到收到 Bye 或 worker 退出的默认 5 s。</td></tr>
+  <tr><td>干净 EOF</td><td>在帧边界读到 0 字节；帧中间读到 EOF 是截断帧，属于协议错误。</td></tr>
+  <tr><td>协议错误</td><td>长度、UTF-8、JSON、消息顺序或版本不合法；连接不可继续。</td></tr>
+  <tr><td>取消（Cancel）</td><td>daemon 放弃某个 <code>id</code> 的提示；worker 尽力中止，并以既有终态响应结束该请求。</td></tr>
+</table>
+
+<h2 id="u2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>字节序</td><td>所有 <code>u32</code> 长度与 <code>f32</code> PCM 都是 little-endian；不使用主机字节序。</td></tr>
+  <tr><td>header 编码</td><td>UTF-8 JSON，紧凑输出，不带 BOM、结尾 NUL 或额外换行；字段顺序不参与比较。</td></tr>
+  <tr><td>外部标签</td><td>有字段的消息编码为 <code>{"Name":{...}}</code>；无字段消息编码为 JSON 字符串 <code>"Name"</code>；枚举值使用 snake_case。</td></tr>
+  <tr><td>长度单位</td><td><code>header_len</code> 与 <code>audio_len</code> 都是字节数；<code>audio_len</code> 必须是 4 的倍数。</td></tr>
+  <tr><td>长度上限</td><td><code>header_len</code> 不超过 <code>MAX_HEADER_BYTES</code>；<code>audio_len</code> 不超过 <code>MAX_AUDIO_BYTES</code>；超限即协议错误。</td></tr>
+  <tr><td>帧边界</td><td>帧按顺序紧邻，无对齐填充；只有帧起点允许干净 EOF。</td></tr>
+  <tr><td>消息顺序</td><td>Hello 必须是第一条请求；Ready / Error 之后才允许 Transcribe；Shutdown 是最后一条请求；Bye 是最后一条响应。</td></tr>
+  <tr><td>方向</td><td>Request 只从 daemon 发往 worker；Response 只从 worker 发往 daemon；反向消息是协议错误。</td></tr>
+  <tr><td>并发</td><td>同一 worker 一次只处理一个 Transcribe；daemon 在收到当前 <code>id</code> 的 Result / Error 前不得发送下一个 Transcribe。</td></tr>
+  <tr><td>音频格式</td><td>单声道、16 kHz、<code>f32le</code>、范围 <code>[-1, 1]</code>；不做重采样、不做归一化。</td></tr>
+  <tr><td>音频载荷</td><td>PCM 直接作为二进制写入帧；不做 base64、WAV 封装或文本转义。</td></tr>
+  <tr><td>采样率字段</td><td><code>Transcribe.sample_rate</code> 必须为 16000；其他值按 <code>inference_failed</code> 返回。</td></tr>
+  <tr><td>stdout / stderr</td><td>worker 的 stdout 只写协议帧；所有日志、警告与 backtrace 写 stderr。daemon 不把 stderr 当协议解析。</td></tr>
+  <tr><td>文本保护</td><td>不得记录 <code>text</code> 或 PCM；错误 <code>message</code> 也不得包含识别文本。日志只记录长度、耗时、错误码与后端名称；加载失败可附加模型路径与 SHA 前缀。</td></tr>
+  <tr><td>超时</td><td>加载 120 s、识别 60 s、关闭 5 s；由 daemon 计时并执行；worker 自报的 <code>timeout</code> 不能替代 daemon 的硬超时。</td></tr>
+  <tr><td>取消</td><td>Cancel 不引入新的响应类型；worker 用 Result 或 Error 结束被取消的 <code>id</code>；没有在途请求时忽略。</td></tr>
+  <tr><td>版本</td><td>Hello 与 Ready 都携带 <code>protocol</code>；worker 发现不一致时返回 <code>protocol_mismatch</code>，daemon 发现不一致时终止 worker。</td></tr>
+  <tr><td>未知字段</td><td>反序列化忽略未知字段；未知消息标签、未知错误码或字段类型不符按协议错误处理。</td></tr>
+  <tr><td>无持久化</td><td>协议消息不写磁盘；音频与文本不落盘。</td></tr>
+  <tr><td>无前端语义</td><td>协议不携带 <code>segment_id</code>、热键、目标、Partial 或提交状态。</td></tr>
+  <tr><td>错误文案</td><td><code>message</code> 是单行诊断文本，建议不超过 1 KiB；daemon 只用它写日志 / <code>doctor</code>，不作为分支依据。</td></tr>
+  <tr><td>数值范围</td><td><code>vram_mb</code> 为 <code>u32</code>；<code>latency_ms</code> 为 <code>u64</code>；<code>rtf</code> 为有限非负 <code>f32</code>。</td></tr>
+</table>
+<ul class="note">
+  <li>前端 IPC 的编码、framing 与版本规则见 <a href="../voime-ipc/USER.html#u2">voime-ipc USER §2</a>；本协议不复用其换行 framing。</li>
+  <li>协议不提升 <code>voime-ipc</code> 的 <code>PROTOCOL_VERSION</code>；两者独立演进。</li>
+</ul>
+
+<h2 id="u3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u3-1">3.1 worker 生命周期与消息顺序</h3>
+<div class="diagram"><img src="diagram/protocol.svg" alt="daemon 启动 GPU worker、Hello、Ready、Transcribe、Result 或 Error、Shutdown 与 Bye 的时序图"></div>
+<ul class="note">
+  <li><code>spawn</code> 不是协议帧；进程创建、管道与环境由 <code>voimed</code> 负责。</li>
+  <li>Hello → Ready 的加载预算为 120 s；Transcribe → Result / Error 的识别预算为 60 s；Shutdown → Bye 的关闭预算为 5 s。</li>
+  <li>Result 与 Error 是 Transcribe 的二选一终态；Cancel 不显示为独立响应。</li>
+  <li>worker 的模型加载与推理内部不展开；图中只保留跨越 daemon / worker 边界的消息。</li>
+</ul>
+
+<h2 id="u4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="u4-1">4.1 帧格式</h3>
+<pre><code>Frame
+├── header_len   u32 LE     // header 字节数，1 .. MAX_HEADER_BYTES
+├── header       UTF-8 JSON // Request 或 Response
+├── audio_len    u32 LE     // audio 字节数，必须为 4 的倍数
+└── audio        f32le mono 16 kHz PCM [-1, 1]</code></pre>
+
+<pre><code>pub const GPU_PROTOCOL_VERSION: u32 = 1;
+pub const MAX_HEADER_BYTES: usize = 64 * 1024;
+pub const MAX_AUDIO_BYTES: usize = 64 * 1024 * 1024;
+
+pub struct Frame {
+    pub header: String,     // UTF-8 JSON
+    pub audio: Vec&lt;f32&gt;,    // 采样，不是字节
+}
+
+impl Frame {
+    pub fn request(&amp;self) -&gt; anyhow::Result&lt;Request&gt;;
+    pub fn response(&amp;self) -&gt; anyhow::Result&lt;Response&gt;;
+}
+
+pub fn read_frame&lt;R: Read&gt;(reader: &amp;mut R) -&gt; anyhow::Result&lt;Option&lt;Frame&gt;&gt;;
+pub fn write_frame&lt;W: Write&gt;(writer: &amp;mut W, frame: &amp;Frame) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td><code>GPU_PROTOCOL_VERSION</code></td><td>当前为 1；消息形状、字段含义或错误码变化时提升。</td></tr>
+  <tr><td><code>MAX_HEADER_BYTES</code></td><td>单帧 header 上限 64 KiB；读写两侧都检查。</td></tr>
+  <tr><td><code>MAX_AUDIO_BYTES</code></td><td>单帧音频上限 64 MiB；读写两侧都检查。</td></tr>
+  <tr><td><code>header_len</code></td><td>4 字节 little-endian；0 或超过上限都是协议错误。</td></tr>
+  <tr><td><code>header</code></td><td>UTF-8 JSON；必须是 Request 或 Response 中的一个外部标签。</td></tr>
+  <tr><td><code>audio_len</code></td><td>4 字节 little-endian；0 或 4 的倍数；不是 4 的倍数即协议错误。</td></tr>
+  <tr><td><code>audio</code></td><td><code>audio_len / 4</code> 个 <code>f32le</code> 采样；只有 Transcribe 非空，所有 Response 为空。</td></tr>
+  <tr><td><code>read_frame</code></td><td>在帧起点读到干净 EOF 返回 <code>Ok(None)</code>；帧中间 EOF、超限或非法 UTF-8 返回错误；JSON 解析由 <code>Frame::request</code> / <code>response</code> 完成。</td></tr>
+  <tr><td><code>write_frame</code></td><td>检查 header 与 audio 长度，依次写长度、header、audio_len、audio，最后 flush；header 已由调用方序列化。</td></tr>
+  <tr><td><code>Frame::request</code></td><td>解析 header 为 Request；非 Transcribe 的帧必须没有音频。</td></tr>
+  <tr><td><code>Frame::response</code></td><td>解析 header 为 Response；任何 Response 都不得携带音频。</td></tr>
+</table>
+<ul class="note">
+  <li><code>Frame.audio</code> 以采样数计；线上 <code>audio_len</code> 是字节数，等于 <code>audio.len() * 4</code>。</li>
+  <li>写入前用 <code>Frame::from_request</code> / <code>from_response</code> 生成 header 与音频；签名见 <a href="CORE.html#c4-2">CORE §4.2</a>。</li>
+  <li>帧头不携带总长度；读取方按两个长度字段顺序读取，不能跳过或重排。</li>
+  <li>header 不使用换行分隔；JSON 内部的换行只可能出现在字符串转义中。</li>
+</ul>
+
+<h3 id="u4-2">4.2 Request</h3>
+<pre><code>pub enum Request {
+    Hello {
+        protocol: u32,
+        backend: GpuBackend,
+        model_dir: String,
+        device: String,
+    },
+    Transcribe {
+        id: u64,
+        sample_rate: u32,
+        language: String,
+    },
+    Cancel {
+        id: u64,
+    },
+    Shutdown,
+}</code></pre>
+
+<table>
+  <tr><th>消息</th><th>字段</th><th>类型</th><th>语义</th></tr>
+  <tr><td rowspan="4"><code>Hello</code></td><td><code>protocol</code></td><td><code>u32</code></td><td>daemon 的 <code>GPU_PROTOCOL_VERSION</code>；worker 必须相等，否则返回 <code>protocol_mismatch</code>。</td></tr>
+  <tr><td><code>backend</code></td><td><code>GpuBackend</code></td><td>必须是当前 worker 的后端；不匹配按 <code>protocol_mismatch</code> 拒绝。</td></tr>
+  <tr><td><code>model_dir</code></td><td><code>String</code></td><td>模型目录绝对路径；目录布局由 worker 定义；缺失或校验失败返回 <code>load_failed</code>。</td></tr>
+  <tr><td><code>device</code></td><td><code>String</code></td><td>请求的 GPU 设备；worker 不支持时返回 <code>device_unavailable</code>。</td></tr>
+  <tr><td rowspan="3"><code>Transcribe</code></td><td><code>id</code></td><td><code>u64</code></td><td>daemon 分配；从 1 递增；同一连接内不复用未完成的 <code>id</code>。</td></tr>
+  <tr><td><code>sample_rate</code></td><td><code>u32</code></td><td>必须为 16000；其他值返回 <code>inference_failed</code>。</td></tr>
+  <tr><td><code>language</code></td><td><code>String</code></td><td>语言提示，如 <code>zh</code>、<code>en</code> 或 <code>auto</code>；worker 可以忽略。</td></tr>
+  <tr><td><code>Cancel</code></td><td><code>id</code></td><td><code>u64</code></td><td>放弃该 <code>id</code> 的在途请求；没有匹配请求时忽略。</td></tr>
+  <tr><td><code>Shutdown</code></td><td>—</td><td>—</td><td>请求释放资源并退出；可以中断在途 Transcribe。</td></tr>
+</table>
+
+<table>
+  <tr><th>消息</th><th>何时发送</th><th>响应</th></tr>
+  <tr><td><code>Hello</code></td><td>进程启动后的第一条，且只发送一次。</td><td><code>Ready</code> 或 <code>Error</code>；加载错误后 worker 退出。</td></tr>
+  <tr><td><code>Transcribe</code></td><td>收到 <code>Ready</code> 后；一次只发一个，且等待当前 <code>id</code> 的终态。</td><td><code>Result</code> 或 <code>Error</code>；<code>id</code> 必须匹配。</td></tr>
+  <tr><td><code>Cancel</code></td><td>需要放弃当前 <code>id</code> 时；不要求先停止等待。</td><td>不引入新响应；被取消的 <code>id</code> 仍以 <code>Result</code> 或 <code>Error</code> 结束。</td></tr>
+  <tr><td><code>Shutdown</code></td><td>daemon 退出或切换后端前；不要求先取消在途请求。</td><td><code>Bye</code>；worker 随后退出。</td></tr>
+</table>
+<ul class="note">
+  <li>Hello / Cancel / Shutdown 的 <code>audio_len</code> 必须为 0；Transcribe 的 <code>audio_len</code> 必须大于 0。</li>
+  <li><code>model_dir</code> 只使用 UTF-8 路径；worker 不从全局配置或环境变量猜模型路径。</li>
+  <li>重复 Hello、Ready 前发送 Transcribe、在途时发送第二个 Transcribe 都是协议错误；接收方可以返回 <code>protocol_mismatch</code> 后关闭连接。</li>
+</ul>
+
+<h3 id="u4-3">4.3 Response</h3>
+<pre><code>pub enum Response {
+    Ready {
+        protocol: u32,
+        backend: GpuBackend,
+        runtime: String,
+        device: String,
+        vram_mb: u32,
+        punc: bool,
+    },
+    Result {
+        id: u64,
+        text: String,
+        latency_ms: u64,
+        rtf: f32,
+    },
+    Error {
+        id: u64,
+        code: ErrorCode,
+        message: String,
+    },
+    Bye,
+}</code></pre>
+
+<table>
+  <tr><th>消息</th><th>字段</th><th>类型</th><th>语义</th></tr>
+  <tr><td rowspan="6"><code>Ready</code></td><td><code>protocol</code></td><td><code>u32</code></td><td>worker 的 <code>GPU_PROTOCOL_VERSION</code>；daemon 必须与自己的版本相等。</td></tr>
+  <tr><td><code>backend</code></td><td><code>GpuBackend</code></td><td>worker 身份；必须与 Hello 的 <code>backend</code> 一致。</td></tr>
+  <tr><td><code>runtime</code></td><td><code>String</code></td><td>实际使用的 runtime 标识；例如 <code>cuda</code>、<code>vulkan</code>、<code>migraphx</code>、<code>directml</code>。</td></tr>
+  <tr><td><code>device</code></td><td><code>String</code></td><td>实际选中的设备；可以与 Hello 的请求不同，但必须是该 runtime 可用的设备。</td></tr>
+  <tr><td><code>vram_mb</code></td><td><code>u32</code></td><td>Ready 时 worker 估算的显存占用，单位 MB；未知时为 0。</td></tr>
+  <tr><td><code>punc</code></td><td><code>bool</code></td><td>是否加载了独立标点模型；Qwen3 由模型自带标点，故为 <code>false</code>。</td></tr>
+  <tr><td rowspan="4"><code>Result</code></td><td><code>id</code></td><td><code>u64</code></td><td>对应 Transcribe 的 <code>id</code>；必须匹配。</td></tr>
+  <tr><td><code>text</code></td><td><code>String</code></td><td>最终文本；允许空串；不含结尾换行或 NUL；空串表示该段没有可提交文本。</td></tr>
+  <tr><td><code>latency_ms</code></td><td><code>u64</code></td><td>worker 从接受请求到产出结果的耗时，单位毫秒。</td></tr>
+  <tr><td><code>rtf</code></td><td><code>f32</code></td><td>实时率，等于 <code>latency_ms / 1000 / 音频秒数</code>；空音频为 0；有限且非负。</td></tr>
+  <tr><td rowspan="3"><code>Error</code></td><td><code>id</code></td><td><code>u64</code></td><td>识别错误时为对应 Transcribe 的 <code>id</code>；握手 / 加载错误为 0。</td></tr>
+  <tr><td><code>code</code></td><td><code>ErrorCode</code></td><td>稳定错误码，见 §4.5；daemon 只按此字段分支。</td></tr>
+  <tr><td><code>message</code></td><td><code>String</code></td><td>单行诊断信息；不得包含识别文本或 PCM；建议不超过 1 KiB。</td></tr>
+  <tr><td><code>Bye</code></td><td>—</td><td>—</td><td>Shutdown 的确认；worker 发送后释放资源并退出。</td></tr>
+</table>
+
+<table>
+  <tr><th>消息</th><th>何时发送</th><th>语义</th></tr>
+  <tr><td><code>Ready</code></td><td>Hello 校验通过且 runtime / 模型加载完成后。</td><td>握手成功；表示 worker 可以接受 Transcribe。</td></tr>
+  <tr><td><code>Result</code></td><td>Transcribe 成功完成。</td><td>最终文本与耗时；daemon 可以提交或记录长度。</td></tr>
+  <tr><td><code>Error</code></td><td>握手、加载、识别或协议失败。</td><td>按 <code>code</code> 决定回退、重启或拒绝 worker；不解析文案。</td></tr>
+  <tr><td><code>Bye</code></td><td>收到 Shutdown 并完成资源释放后。</td><td>正常关闭；worker 随后以 0 退出。</td></tr>
+</table>
+<ul class="note">
+  <li>所有 Response 的 <code>audio_len</code> 必须为 0；Response 不携带 PCM。</li>
+  <li>worker 不发送 Partial、Snapshot 或状态广播；这些属于 daemon 与前端 IPC。</li>
+  <li><code>Result.text</code> 已经是最终文本；daemon 不再做标点、大小写或语言后处理。</li>
+</ul>
+
+<h3 id="u4-4">4.4 辅助类型</h3>
+<pre><code>pub enum GpuBackend {
+    Firered,
+    Qwen3,
+}
+
+pub enum ErrorCode {
+    RuntimeMissing,
+    DeviceUnavailable,
+    LoadFailed,
+    InferenceFailed,
+    Timeout,
+    ProtocolMismatch,
+}</code></pre>
+
+<table>
+  <tr><th>类型</th><th>线值</th><th>含义</th></tr>
+  <tr><td><code>GpuBackend::Firered</code></td><td><code>firered</code></td><td>FireRed worker 后端。</td></tr>
+  <tr><td><code>GpuBackend::Qwen3</code></td><td><code>qwen3</code></td><td>Qwen3 worker 后端。</td></tr>
+  <tr><td><code>ErrorCode::RuntimeMissing</code></td><td><code>runtime_missing</code></td><td>runtime / backend 未安装或版本不匹配。</td></tr>
+  <tr><td><code>ErrorCode::DeviceUnavailable</code></td><td><code>device_unavailable</code></td><td>无 GPU、驱动不匹配或显存不足。</td></tr>
+  <tr><td><code>ErrorCode::LoadFailed</code></td><td><code>load_failed</code></td><td>模型、manifest 或张量校验失败。</td></tr>
+  <tr><td><code>ErrorCode::InferenceFailed</code></td><td><code>inference_failed</code></td><td>运行期推理失败，或输入不满足 Transcribe 契约。</td></tr>
+  <tr><td><code>ErrorCode::Timeout</code></td><td><code>timeout</code></td><td>加载或识别超过预算。</td></tr>
+  <tr><td><code>ErrorCode::ProtocolMismatch</code></td><td><code>protocol_mismatch</code></td><td>协议版本、后端身份或消息种类 / 顺序不一致。</td></tr>
+</table>
+
+<h3 id="u4-5">4.5 错误码与 daemon 动作</h3>
+<table>
+  <tr><th>错误码</th><th>触发条件</th><th>daemon 动作</th></tr>
+  <tr><td><code>runtime_missing</code></td><td>GPU runtime / backend 未安装或版本不匹配。</td><td>标记该后端不可用；已启动则停止 worker；Final 回退 CPU；提示重装 GPU 模块。</td></tr>
+  <tr><td><code>device_unavailable</code></td><td>无 GPU、驱动不匹配、显存不足或请求的设备不可用。</td><td>不启动 worker；已启动则标记不可用；Final 回退 CPU；<code>doctor</code> 报告原因。</td></tr>
+  <tr><td><code>load_failed</code></td><td>模型 / manifest / 张量校验失败。</td><td>当前后端不可用；保留 CPU 路径；记录路径与 SHA 前缀。</td></tr>
+  <tr><td><code>inference_failed</code></td><td>运行期推理失败，或 Transcribe 输入不合法。</td><td>当前段回退 CPU；重启 worker；连续失败标记后端不可用。</td></tr>
+  <tr><td><code>timeout</code></td><td>加载或识别超过预算。</td><td>杀 worker；当前段回退 CPU；按崩溃路径重启。</td></tr>
+  <tr><td><code>protocol_mismatch</code></td><td>协议版本不一致、Hello 的 backend 与 worker 不符，或收到不属于当前状态的消息。</td><td>拒绝 worker；提示重装 GPU 模块。</td></tr>
+</table>
+<ul class="note">
+  <li>daemon 主动发送 Cancel 后收到的 <code>inference_failed</code> 只用于释放请求槽，不对该段执行 CPU 回退。</li>
+  <li>错误码是线协议的一部分；新增错误码提升 <code>GPU_PROTOCOL_VERSION</code>，不提升 <code>voime-ipc</code> 版本。</li>
+  <li><code>message</code> 只用于日志与 <code>doctor</code>；daemon 不按文案分支，也不向最终用户展示原文。</li>
+</ul>
+
+<h3 id="u4-6">4.6 JSON 示例</h3>
+<pre><code>// daemon → worker：Hello（audio_len = 0）
+{"Hello":{"protocol":1,"backend":"firered","model_dir":"/home/me/.local/share/voime/models","device":"cuda:0"}}
+
+// worker → daemon：Ready
+{"Ready":{"protocol":1,"backend":"firered","runtime":"cuda","device":"cuda:0","vram_mb":5120,"punc":true}}
+
+// daemon → worker：Transcribe（3 s、16 kHz、mono、f32；audio_len = 192000）
+{"Transcribe":{"id":42,"sample_rate":16000,"language":"zh"}}
+
+// worker → daemon：Result
+{"Result":{"id":42,"text":"明天的日程帮我确认一下。","latency_ms":860,"rtf":0.29}}
+
+// worker → daemon：Error
+{"Error":{"id":42,"code":"inference_failed","message":"inference aborted"}}
+
+// daemon → worker：Shutdown（audio_len = 0）
+"Shutdown"
+
+// worker → daemon：Bye（audio_len = 0）
+"Bye"</code></pre>
+<ul class="note">
+  <li>示例只展示 header；实际线上字节前面还有 <code>header_len</code>，Transcribe 后面还有 <code>audio_len</code> 与 PCM。</li>
+  <li><code>Shutdown</code> 与 <code>Bye</code> 是无字段消息，按外部标签编码为 JSON 字符串。</li>
+  <li>示例中的文本仅用于说明字段；实现不得记录识别文本。</li>
+</ul>
+
+<h3 id="u4-7">4.7 超时、取消与退出</h3>
+<table>
+  <tr><th>阶段</th><th>计时</th><th>预算</th><th>超时处理</th></tr>
+  <tr><td>加载</td><td>daemon 写完 Hello → 收到 Ready / Error。</td><td>120 s</td><td>杀 worker；标记后端不可用；Final 回退 CPU；不阻塞 daemon 启动。</td></tr>
+  <tr><td>识别</td><td>daemon 写完 Transcribe → 收到 Result / Error。</td><td>60 s</td><td>杀 worker；当前段回退 CPU；按崩溃路径重启。</td></tr>
+  <tr><td>关闭</td><td>daemon 写完 Shutdown → 收到 Bye 或进程退出。</td><td>5 s</td><td>强杀 worker；确保无孤儿进程。</td></tr>
+</table>
+
+<table>
+  <tr><th>事件</th><th>行为</th></tr>
+  <tr><td>Cancel</td><td>worker 尽力中止当前 <code>id</code>；若成功中止，发送 <code>Error { id, code: "inference_failed", message: "cancelled" }</code> 作为该请求的终态；daemon 丢弃该终态，不执行 CPU 回退。若推理已经完成，Result 可能已在途，daemon 同样丢弃。</td></tr>
+  <tr><td>Cancel 无匹配 <code>id</code></td><td>忽略，不产生响应。</td></tr>
+  <tr><td>Shutdown 时有在途 Transcribe</td><td>worker 放弃该请求，不再发送其终态；释放 runtime / 模型后直接发送 Bye。</td></tr>
+  <tr><td>正常关闭</td><td>daemon 发送 Shutdown；worker 发送 Bye 并以 0 退出；daemon 回收进程。</td></tr>
+  <tr><td>worker 崩溃 / 管道断开</td><td>daemon 视为失败；当前段回退 CPU，并按崩溃路径重启或标记后端不可用。</td></tr>
+  <tr><td>daemon 未发 Shutdown 就断开 stdout / stdin</td><td>worker 视为异常关闭；释放资源后以非零退出。</td></tr>
+  <tr><td>帧级协议错误</td><td>长度、UTF-8 或 JSON 不合法时直接关闭连接；不发送 Result / Error，也不映射为业务回退。</td></tr>
+</table>
+<ul class="note">
+  <li>取消是协作式的，不是强制终止；daemon 的识别预算到期后仍然强杀 worker。</li>
+  <li>超时、崩溃与管道断开都不产生 Partial 或前端消息；回退与丢弃由 daemon 决定。</li>
+  <li>关闭顺序固定为 Shutdown → Bye → 退出；daemon 不向 worker 发送 Bye。</li>
+</ul>
+
+<h3 id="u4-8">4.8 版本与兼容</h3>
+<table>
+  <tr><th>变化</th><th>版本策略</th></tr>
+  <tr><td>当前版本</td><td><code>GPU_PROTOCOL_VERSION = 1</code>；Hello 与 Ready 都携带。</td></tr>
+  <tr><td>新增可选字段</td><td>不提升版本；旧实现忽略未知字段。</td></tr>
+  <tr><td>修改字段类型 / 含义、删除字段、新增消息或错误码</td><td>必须提升 <code>GPU_PROTOCOL_VERSION</code>；worker 在 Hello 阶段返回 <code>protocol_mismatch</code>，daemon 在 Ready 阶段检测到不一致则终止 worker。</td></tr>
+  <tr><td>新增 GPU 后端</td><td>新增 <code>GpuBackend</code> 线值并提升协议版本；不影响前端 IPC。</td></tr>
+  <tr><td>与前端 IPC 的关系</td><td>完全独立；本协议变化不提升 <code>voime-ipc</code> 的 <code>PROTOCOL_VERSION</code>，也不改变前端消息形状。</td></tr>
+  <tr><td>兼容窗口</td><td>不提供多版本协商；daemon 与 worker 必须使用同一协议版本，随同一 GPU 模块安装。</td></tr>
+</table>
+<ul class="note">
+  <li>版本检查是双向的：daemon 检查 Ready，worker 检查 Hello；任一不一致都拒绝继续。</li>
+  <li>协议版本与模型版本无关；模型校验属于各 worker 与 <code>voimed</code> 的加载路径。</li>
+</ul>
+
+</body>
+</html>

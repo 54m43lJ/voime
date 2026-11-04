@@ -25,6 +25,8 @@
 
 <pre><code>frontends/fcitx/
 ├── CMakeLists.txt
+├── cmake/
+│   └── <a href="#c4-6">install-addon.cmake</a>
 ├── voime-addon.conf.in
 ├── third_party/
 │   └── nlohmann/
@@ -41,13 +43,14 @@
     ├── <a href="#c4-3">preview.cpp</a>
     ├── <a href="#c4-4">ipc.h</a>
     ├── <a href="#c4-4">ipc.cpp</a>
-    └── <a href="#c4-5">target.h</a></code></pre>
+    ├── <a href="#c4-5">target.h</a>
+    ├── <a href="#c4-6">diagnostics.h</a>
+    └── <a href="#c4-6">diagnostics.cpp</a></code></pre>
 <ul class="note">
   <li><code>voime-addon.conf.in</code> 由 CMake 生成 addon 描述文件；不安装 inputmethod 条目。</li>
-  <li>文件树位于 <code>frontends/fcitx/</code>；不安装 inputmethod 条目。</li>
-</ul>
-
-<ul class="note">
+  <li><code>cmake/install-addon.cmake</code> 负责把 addon 库 / 描述文件安装到 Fcitx5 系统目录并校验；待实现，可以根据实际情况调整。</li>
+  <li><code>src/diagnostics.h</code> / <code>diagnostics.cpp</code> 提供系统 addon 路径与 ABI 诊断；待实现，可以根据实际情况调整。</li>
+  <li>本组件不新增模型、GPU runtime 或识别代码；文件树位于 <code>frontends/fcitx/</code>。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -55,18 +58,25 @@
 
 <table>
   <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>系统 addon 路径</td><td>addon 库写入 Fcitx5 系统 addon 目录，例如 <code>/usr/lib/fcitx5/voime.so</code>；多架构发行版按 <code>pkg-config --variable=libdir Fcitx5Core</code> + <code>/fcitx5</code> 解析。描述文件写入 <code>/usr/share/fcitx5/addon/voime.conf</code>。</td></tr>
+  <tr><td>sudo 范围</td><td>只有 addon 安装 / 卸载申请 sudo；脚本不整体以 root 运行，<code>voimed</code>、<code>voime</code>、模型与配置仍由用户拥有。安装入口与选项见 <a href="../../README.html#r2">根 README §2</a>。</td></tr>
+  <tr><td>不设置 <code>FCITX_ADDON_DIRS</code></td><td>只依赖 Fcitx5 默认系统 addon 目录；不读取用户 addon 目录，不把用户可写目录加入库搜索路径。拒绝提权或安装失败时不静默降级到用户目录。</td></tr>
+  <tr><td>ABI 诊断</td><td><code>voime doctor</code> 检查系统 addon 路径、<code>voime.so</code>、描述文件与 ABI；不检查旧 inputmethod 条目。</td></tr>
   <tr><td>线程</td><td>所有 Fcitx API 调用、socket 事件与定时器都在 Fcitx 事件循环线程内；IpcClient 不做后台线程。</td></tr>
   <tr><td>事件监听</td><td>按键使用 <code>watchEvent&lt;InputContextKeyEvent&gt;(PreInputMethod)</code>；焦点失焦使用 <code>watchEvent&lt;InputContextFocusOut&gt;(PreInputMethod)</code>。</td></tr>
   <tr><td>热键消费</td><td>命中热键后调用 <code>filterAndAccept()</code>；未命中立即返回，不影响 Fcitx 普通路由。</td></tr>
   <tr><td>PTT 状态</td><td><code>holdActive_</code> 表示按住；松开按记录的 keycode 匹配；auto-repeat 消费后忽略。</td></tr>
   <tr><td>Toggle 状态</td><td><code>toggleActive_</code> 表示会话有效；<code>toggleCode_</code> 防止同一次按键的 press / release 重复切换。</td></tr>
   <tr><td>目标</td><td><code>TargetRef</code> 保存 <code>TrackableObjectReference&lt;InputContext&gt;</code> 与 <code>segment_id</code>；提交前检查 <code>focused()</code>。</td></tr>
+  <tr><td>Finalizing 预览</td><td><code>finalizing_</code> 为 true 后忽略新的 Partial，不调用 <code>Preview::show</code> / <code>clear</code>；保留最后一条 Partial，直到 Final 或清空路径。</td></tr>
+  <tr><td>不链接 GPU / 模型</td><td>只链接 <code>Fcitx5Core</code> 与 <code>nlohmann/json</code>；不链接 ONNX Runtime / llama.cpp / ROCm / CUDA / Vulkan，不加载模型，不感知 <code>final.backend</code>。</td></tr>
   <tr><td>重连</td><td>2 s 定时器每次重新 <code>setNextInterval</code> 与 <code>setOneShot</code>；只重连不阻塞事件循环。</td></tr>
   <tr><td>socket</td><td>非阻塞 Unix socket；读写缓冲在 IpcClient 内，断线时先关闭 fd 再禁用事件源。</td></tr>
   <tr><td>配置</td><td><code>readAsIni</code> / <code>safeSaveAsIni</code> 不会自动补 <code>.conf</code>；路径必须写全。</td></tr>
 </table>
 <ul class="note">
   <li>仓库级线程 / 进程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>
+  <li>addon 只从系统 addon 目录加载；安装辅助与诊断不改变 Fcitx 的库搜索路径。</li>
 </ul>
 
 <h2 id="c3">3. SBOM</h2>
@@ -76,8 +86,12 @@
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
   <tr><td><code>Fcitx5Core</code></td><td>addon 工厂、<code>InputMethodEngineV2</code>、事件循环、<code>InputContext</code> / <code>InputPanel</code>。</td></tr>
   <tr><td><code>nlohmann/json</code></td><td>IPC JSON 行解析；仓库内 <code>third_party/nlohmann/json.hpp</code>（MIT）。</td></tr>
-  <tr><td>CMake / C++20</td><td>编译 <code>voime.so</code> 与安装描述文件。</td></tr>
+  <tr><td>CMake / pkg-config / C++20</td><td>编译 <code>voime.so</code>、解析 Fcitx5 系统 addon 目录并安装描述文件。</td></tr>
 </table>
+<ul class="note">
+  <li>不依赖 ONNX Runtime、llama.cpp 或任何 GPU runtime；addon 不加载模型文件。</li>
+  <li>addon 库与描述文件只写入系统路径；不设置 <code>FCITX_ADDON_DIRS</code>，不使用用户级库搜索。</li>
+</ul>
 
 <h2 id="c4">4. Internal types &amp; method signatures</h2>
 <p><a href="#top">↑</a></p>
@@ -131,10 +145,14 @@ private:
 
 class VoimeAddonFactory final : public fcitx::AddonFactory {
     fcitx::AddonInstance *create(fcitx::AddonManager *manager) override;
-};</code></pre>
+};
+
+FCITX_ADDON_FACTORY_V2(voime, VoimeAddonFactory)</code></pre>
 <ul class="note">
   <li>继承 <code>InputMethodEngineV2</code> 仅为获得 <code>AddonInstance</code> 生命周期；<code>keyEvent</code> 不参与普通输入。</li>
   <li><code>starting_</code> 表示已发送 Start 但尚未收到 daemon <code>State.recording=true</code>。</li>
+  <li><code>FCITX_ADDON_FACTORY_V2</code> 导出 addon 工厂；Fcitx 通过系统描述文件的 <code>Library=voime</code> 加载系统 addon 目录中的 <code>voime.so</code>。</li>
+  <li><code>finalizing_</code> 为 true 时 <code>onIpcMessage(Partial)</code> 直接返回；<code>State.finalizing</code> 只更新标志，不调用 <code>clearPreview()</code>。</li>
 </ul>
 
 <h3 id="c4-2">4.2 src/config.h, src/config.cpp <a class="backlink" href="#c1">文件树</a></h3>
@@ -160,8 +178,9 @@ public:
     void clear(fcitx::InputContext *ic);
 };</code></pre>
 <ul class="note">
-  <li><code>show</code> 调用 <code>InputPanel::setPreedit</code> 与 <code>InputContext::updateUserInterface</code>。</li>
-  <li><code>showEmpty</code> 写入单个空格以保留面板；<code>clear</code> 写空 <code>Text</code> 并刷新。</li>
+  <li><code>show</code> 调用 <code>InputPanel::setPreedit</code> 与 <code>InputContext::updateUserInterface</code>；<code>finalizing_</code> 为 true 时不调用。</li>
+  <li><code>showEmpty</code> 写入单个空格以保留面板；<code>clear</code> 写空 <code>Text</code> 并刷新，只在 Final 或没有 Final 可等的清空路径（未录音的 Toggle 停止、目标丢失、断线）调用。</li>
+  <li>Finalizing 只冻结当前 preedit，不清空、不刷新；最后一条 Partial 保留到 Final 到达。</li>
   <li>只写 Fcitx UI preedit，不调用 <code>setClientPreedit</code>。</li>
 </ul>
 
@@ -231,7 +250,9 @@ private:
     bool connectedOnce_ = false;
 };</code></pre>
 <ul class="note">
+  <li><code>connect</code> 成功后发送 <code>Hello { role: "frontend", version, config }</code>；线协议兼容旧值 <code>fcitx</code>，新实现写 <code>frontend</code>。</li>
   <li>socket 断线在 Fcitx 事件循环线程处理：先关闭 fd，再对 <code>ioEvent_</code> 调用 <code>setEnabled(false)</code>，不在回调内销毁事件源。</li>
+  <li>addon 不解析 Final 的生成后端；IPC 中只出现 <code>Partial</code> / <code>Final</code> / <code>Error</code> 等前端消息。</li>
 </ul>
 
 <h3 id="c4-5">4.5 src/target.h <a class="backlink" href="#c1">文件树</a></h3>
@@ -243,23 +264,48 @@ private:
     fcitx::InputContext *get() const;
 };</code></pre>
 
+<h3 id="c4-6">4.6 cmake/install-addon.cmake, src/diagnostics.h, src/diagnostics.cpp <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code># cmake/install-addon.cmake
+voime_install_addon(&lt;target&gt;)       # 安装系统 addon 库与描述文件
+voime_check_addon_abi(&lt;target&gt;)     # 安装后检查 Fcitx5 ABI
+
+# src/diagnostics.h
+struct AddonPaths {
+    std::filesystem::path library;
+    std::filesystem::path description;
+};
+
+AddonPaths systemAddonPaths();
+bool checkAddonAbi(std::string *error);</code></pre>
+<ul class="note">
+  <li>安装辅助只写入 Fcitx5 系统目录：库为 <code>/usr/lib/fcitx5/voime.so</code>，描述为 <code>/usr/share/fcitx5/addon/voime.conf</code>；不写用户目录，不设置 <code>FCITX_ADDON_DIRS</code>。</li>
+  <li><code>src/diagnostics.*</code> 供 addon 启动与安装后自检使用；<code>voime doctor</code> 按同一系统路径与 ABI 规则检查，不检查旧 inputmethod 条目。</li>
+  <li>上述安装函数与诊断接口为新增设计；待实现，可以根据实际情况调整。</li>
+</ul>
+
 <h2 id="c5">5. Call stack tree</h2>
 <p><a href="#top">↑</a></p>
 
-<h3 id="c5-1">5.1 addon 启动</h3>
+<h3 id="c5-1">5.1 addon 启动 / 加载</h3>
 <pre><code>fcitx5
-├── 加载 share/fcitx5/addon/voime.conf（OnDemand=False）
-└── VoimeAddon::VoimeAddon(instance)
-    ├── VoimeAddon::reloadConfig()
-    │   ├── migrateLegacyConfig()
-    │   ├── fcitx::readAsIni(config_, "conf/voime.conf")
-    │   └── IpcClient::setConfig(currentConfig())
-    ├── IpcClient::connect(defaultSocketPath())
-    │   └── sendJson(Hello { role: fcitx, version, config })
-    ├── Instance::watchEvent&lt;InputContextKeyEvent&gt;(PreInputMethod, handleKey)
-    ├── Instance::watchEvent&lt;InputContextFocusOut&gt;(PreInputMethod, focus lambda)
-    └── EventLoop::addTimeEvent(2 s, reconnect timer)
-        └── connectDaemon()</code></pre>
+├── 读取系统描述 /usr/share/fcitx5/addon/voime.conf
+├── 加载系统库 /usr/lib/fcitx5/voime.so（Library=voime）
+└── VoimeAddonFactory::create(manager)
+    └── VoimeAddon::VoimeAddon(instance)
+        ├── VoimeAddon::reloadConfig()
+        │   ├── migrateLegacyConfig()
+        │   ├── fcitx::readAsIni(config_, "conf/voime.conf")
+        │   └── IpcClient::setConfig(currentConfig())
+        ├── IpcClient::connect(defaultSocketPath())
+        │   └── sendJson(Hello { role: frontend, version, config })
+        ├── Instance::watchEvent&lt;InputContextKeyEvent&gt;(PreInputMethod, handleKey)
+        ├── Instance::watchEvent&lt;InputContextFocusOut&gt;(PreInputMethod, focus lambda)
+        └── EventLoop::addTimeEvent(2 s, reconnect timer)
+            └── connectDaemon()</code></pre>
+<ul class="note">
+  <li>Fcitx 只从系统 addon 目录加载；不设置 <code>FCITX_ADDON_DIRS</code>，不读取用户目录。</li>
+  <li>描述文件缺失、ABI 不匹配或库加载失败时 addon 不启动；<code>voime doctor</code> 检查系统路径与 ABI，不检查旧 inputmethod 条目。</li>
+</ul>
 
 <h3 id="c5-2">5.2 PTT 热键</h3>
 <pre><code>fcitx5::InputContextKeyEvent
@@ -279,6 +325,9 @@ private:
         ├── VoimeAddon::bindTarget(event.inputContext())
         ├── holdActive_ = true; starting_ = true
         └── IpcClient::start(segmentId, Hold)</code></pre>
+<ul class="note">
+  <li>松开后不调用 <code>clearPreview()</code>；进入 Finalizing 时保留最后一条 Partial，等待 Final 到达。</li>
+</ul>
 
 <h3 id="c5-3">5.3 Toggle 热键</h3>
 <pre><code>VoimeAddon::handleToggle(event, matches)
@@ -292,14 +341,19 @@ private:
 │   ├── toggleActive_ = true; starting_ = true
 │   ├── VoimeAddon::refreshTogglePreview()
 │   └── IpcClient::start(segmentId, Toggle)
+├── 判断 finalizing_ → 返回
 └── 判断 toggleActive_
     └── VoimeAddon::stopToggle()
         ├── toggleActive_ = false
-        ├── clearPreview()
+        ├── 判断 recording_ → finalizing_ = true
         ├── IpcClient::stop(0, Toggle)
+        ├── 判断 !recording_ → clearPreview()
         └── 判断 !finalizing_ → target_.ref.unwatch() + segmentId_.reset()</code></pre>
+<ul class="note">
+  <li>录音中停止 Toggle 时保留最后一条 Partial，Final 到达后清空并提交；未录音时没有 Final，直接清空。</li>
+</ul>
 
-<h3 id="c5-4">5.4 IPC 消息</h3>
+<h3 id="c5-4">5.4 SegmentStarted / Partial</h3>
 <pre><code>IpcClient::onReadable()
 └── IpcClient::handleLine(line)
     └── VoimeAddon::onIpcMessage(message)
@@ -309,23 +363,32 @@ private:
         │   ├── 判断 source 非 Hold / Toggle → 绑定 mostRecentInputContext()
         │   ├── 判断 toggleActive_ &amp;&amp; Toggle &amp;&amp; !target_.focused() → 跟随当前焦点
         │   └── 判断 toggleActive_ → refreshTogglePreview()
-        ├── State
-        │   ├── recording_ = message.recording
-        │   ├── finalizing_ = message.finalizing
-        │   ├── 判断 recording_ → starting_ = false
-        │   ├── 判断 !recording_ → 清空 / 空白 / 清理
-        │   └── 判断 Idle &amp;&amp; !toggleActive_ → unwatch + reset
-        ├── Partial
-        │   ├── 判断 segmentId 不匹配 → 忽略
-        │   ├── 判断 target_.focused() → Preview::show
-        │   └── 否则 clearPreview()
-        └── Final
+        └── Partial
+            ├── 判断 finalizing_ → 返回
             ├── 判断 segmentId 不匹配 → 忽略
-            ├── Preview::clear(target)
-            ├── 判断 focused &amp;&amp; text 非空 → InputContext::commitString(text)
-            └── 判断 toggleActive_ → refreshTogglePreview() / 清理</code></pre>
+            ├── 判断 target_.focused() → Preview::show
+            └── 否则 clearPreview()</code></pre>
 
-<h3 id="c5-5">5.5 失焦、断线与错误</h3>
+<h3 id="c5-5">5.5 Finalizing 与 Final</h3>
+<pre><code>VoimeAddon::onIpcMessage(State)
+├── recording_ = message.recording
+├── finalizing_ = message.finalizing
+├── 判断 finalizing_ → 保留 Preview（不调用 show / clear）
+├── 判断 recording_ → starting_ = false
+├── 判断 !recording_ &amp;&amp; !finalizing_ → 清空 / 空白 / 清理
+└── 判断 !recording_ &amp;&amp; !finalizing_ &amp;&amp; !toggleActive_ → unwatch + reset
+
+VoimeAddon::onIpcMessage(Final)
+├── 判断 segmentId 不匹配 → 忽略
+├── Preview::clear(target_)
+├── 判断 target_.focused() &amp;&amp; !text.empty() → InputContext::commitString(text)
+└── 判断 toggleActive_ → refreshTogglePreview() / 清理</code></pre>
+<ul class="note">
+  <li>Finalizing 门禁只停止刷新，不清空最后 Partial；Final 到达后才调用 <code>Preview::clear</code> 并提交。</li>
+  <li>Finalizing 期间到达的迟到 Partial 在 §5.4 被忽略。</li>
+</ul>
+
+<h3 id="c5-6">5.6 失焦、断线与错误</h3>
 <pre><code>fcitx5::InputContextFocusOut
 └── focusWatcher_ lambda
     ├── 判断 target_.get() != event.inputContext() → 返回
@@ -337,7 +400,7 @@ IpcClient::fail() / EOF
     ├── clearPreview()
     ├── target_.ref.unwatch()
     ├── segmentId_.reset()
-    ├── holdActive_ / starting_ / toggleActive_ = false
+    ├── holdActive_ / starting_ / recording_ / finalizing_ / toggleActive_ = false
     └── 热键恢复为普通按键
 
 VoimeAddon::onIpcMessage(Error)
@@ -345,8 +408,12 @@ VoimeAddon::onIpcMessage(Error)
 │   └── IpcClient::disconnect() → 2 s 后重连
 ├── 判断 inference &amp;&amp; toggleActive_
 │   └── 重置状态 + refreshTogglePreview()
-└── 判断 !recording_
+└── 判断 !recording_ &amp;&amp; !finalizing_
     └── 清理 Toggle / PTT / target / preview</code></pre>
+<ul class="note">
+  <li>目标失焦或断线时不再有 Final 可提交；清空临时窗口，最终文本保留在 daemon / TUI。</li>
+  <li>错误处理只按 IPC 错误码；GPU Final 失败与 CPU 回退由 daemon 负责，addon 不感知后端。</li>
+</ul>
 
 </body>
 </html>

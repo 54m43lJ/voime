@@ -23,7 +23,7 @@
 文档树：父文档为根 <a href="../../README.html">README</a> / <a href="../../USER.html">USER</a> /
 <a href="../../CORE.html">CORE</a> / <a href="../../PROVIDER.html">PROVIDER</a>；本组件 README 是子树的根，其下为
 <a href="USER.html">USER</a> / <a href="CORE.html">CORE</a>。
-本组件不直接面对外部 provider，音频与端点契约分别在 voime-core / voime-transport 中定义。
+本组件不直接面对外部 provider，音频与端点契约分别在 voime-core / voime-transport 中定义，GPU 协议在 voime-gpu-common 中定义。
 </p>
 
 <h2 id="r1">1. WHAT &amp; WHY</h2>
@@ -31,33 +31,41 @@
 
 <h3 id="r1-1">1.1 IDEAL：要解决的问题</h3>
 <p>
-语音识别需要常驻的音频流、模型会话与有状态的分段流水线；这些资源不能放进 Fcitx 进程，
-也不应该由每个平台前端各复制一份。<code>voimed</code> 是唯一的识别守护进程：它持有音频、
-模型、pipeline 与会话历史，通过本机 IPC 向平台前端、TUI 与控制客户端提供
-<code>SegmentStarted</code> / <code>Partial</code> / <code>Final</code> 等事件。
+语音识别需要常驻的音频流、VAD、预览、分段与最终识别；这些资源不能放进 Fcitx 进程，
+也不应该由每个平台前端各复制一份。<code>voimed</code> 是唯一的应用守护进程：它持有音频、
+pipeline、会话历史与 Final 后端选择，通过本机 IPC 向平台前端、TUI 与控制客户端提供
+<code>SegmentStarted</code> / <code>Partial</code> / <code>Final</code> 等事件，并按配置把完整语音段
+交给核心 CPU Final 或选中的 GPU worker。
 </p>
 
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
 <ul>
   <li>Linux 与 Windows 使用同一个 daemon 二进制，只替换本机传输实现。</li>
-  <li>平台前端只发送 Start / Stop / Toggle 与配置，不接触模型或音频。</li>
+  <li>平台前端只发送 Start / Stop / Toggle 与配置，不接触模型、音频或 Final 后端。</li>
   <li>同一时刻只有一个语音段；<code>segment_id</code> 由 daemon 分配并广播。</li>
+  <li>默认 <code>final.backend = cpu</code>；安装 GPU 不自动切换；只有配置显式指定 <code>firered</code> / <code>qwen3</code> 才启动对应 worker。</li>
+  <li>daemon 启动时只加载选中的 GPU worker 并保持常驻；默认 <code>cpu</code> 时不启动 worker。</li>
+  <li>Finalizing 期间停止 Preview 计算；<code>cpu</code> Final 只执行一次，GPU Final 不再调用 SenseVoice ASR。</li>
+  <li>GPU 加载失败、超时、崩溃或显存不足时，当前段回退 CPU SenseVoice；Preview 不中断。</li>
   <li>Final / State 不丢弃；Partial 可丢弃；慢客户端不会阻塞 daemon。</li>
-  <li>daemon 退出时按顺序停止 pipeline、音频与 IPC，并清理端点。</li>
+  <li>daemon 退出时先停 worker，再按顺序停止 pipeline、音频与 IPC，并清理端点。</li>
 </ul>
 
 <h3 id="r1-3">1.3 非目标</h3>
 <ul>
+  <li>不负责具体模型推理；VAD / SenseVoice / CPU Final 在 <code>voime-core</code>，FireRed / Qwen 在各自 worker。</li>
   <li>不处理热键、输入焦点、目标绑定、临时窗口或文本提交。</li>
-  <li>不实现平台 UI、托盘、配置界面或安装器。</li>
+  <li>不实现平台 UI、托盘、配置界面或安装器；GPU worker 由本 crate 拉起，但前端不感知。</li>
   <li>不解析命令行模式 / 热键；这些由前端通过 IPC 提供。</li>
+  <li>不提供 <code>--backend</code> 命令行选项，也不提供运行中后端热切换；只读取配置文件。</li>
   <li>不保存音频、按键或历史到磁盘。</li>
   <li>不直接依赖 Fcitx / Win32；OS 传输由 <a href="../voime-transport/USER.html">voime-transport</a> 负责。</li>
-  <li>不负责协议消息形状；协议定义见 <a href="../voime-ipc/USER.html">voime-ipc USER</a>。</li>
+  <li>不负责协议消息形状；前端协议见 <a href="../voime-ipc/USER.html">voime-ipc USER</a>，GPU 协议见 <a href="../voime-gpu-common/USER.html">voime-gpu-common USER</a>。</li>
+  <li>不安装、不编译、不切换 GPU runtime；这些属于 GPU 安装脚本与 worker。</li>
 </ul>
 <ul class="note">
   <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；daemon 行为见 <a href="USER.html">USER</a>。</li>
-  <li>音频 / 模型契约在 <a href="../voime-core/PROVIDER.html">voime-core PROVIDER</a>，端点契约在 <a href="../voime-transport/PROVIDER.html">voime-transport PROVIDER</a>。</li>
+  <li>核心音频 / 模型契约在 <a href="../voime-core/PROVIDER.html">voime-core PROVIDER</a>，端点契约在 <a href="../voime-transport/PROVIDER.html">voime-transport PROVIDER</a>，GPU 协议在 <a href="../voime-gpu-common/USER.html">voime-gpu-common USER</a>。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -67,22 +75,33 @@
   <tr><th>角色 / 入口</th><th>交互</th><th>契约</th></tr>
   <tr><td>平台前端</td><td>连接 daemon，发送 Hello / Configure / Start / Stop / Toggle，接收 SegmentStarted / State / Partial / Final。</td><td><a href="USER.html#u4-2">USER §4.2</a> · <a href="../voime-ipc/USER.html">voime-ipc USER</a></td></tr>
   <tr><td>TUI（<code>voime</code>）</td><td>连接为 <code>tui</code>，读取 Snapshot / Partial / Final，发送 Start / Stop / ClearHistory。</td><td><a href="../voime/USER.html#u4-2">voime USER §4.2</a></td></tr>
-  <tr><td><code>voime ctl</code></td><td>连接为 <code>control</code>，发送 Start / Stop / Toggle / Status / ClearHistory / Quit。</td><td><a href="../voime/USER.html#u4-3">voime USER §4.3</a></td></tr>
+  <tr><td><code>voime ctl</code></td><td>连接为 <code>control</code>，发送 Start / Stop / Toggle / Status / ClearHistory / Quit；<code>backend</code> 直接写配置，不通过 daemon。</td><td><a href="../voime/USER.html#u4-1">voime USER §4.1</a></td></tr>
   <tr><td>systemd / 登录启动</td><td>启动 / 重启 / 停止 daemon；Linux 使用 systemd 用户服务，Windows 由托盘托管 daemon，随托盘启动和退出。</td><td>本组件 §2</td></tr>
-  <tr><td><code>voimed</code> CLI</td><td>指定模型目录、输入设备、线程数、端点路径与日志。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
+  <tr><td><code>voimed</code> CLI</td><td>指定模型根目录、输入设备、线程数、端点路径与日志；Final 后端只从配置文件读取。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
+  <tr><td>GPU worker</td><td>daemon 按 <code>final.backend</code> 拉起一个 worker，完成 Hello / Ready 后发送完整语音段；退出时 Shutdown。</td><td><a href="../voime-gpu-common/USER.html#u3">voime-gpu-common USER §3</a> · <a href="CORE.html#c5-5">CORE §5.5</a></td></tr>
 </table>
+<ul class="note">
+  <li>安装 GPU 模块后默认 Final 仍是 CPU；用户必须用 <code>voime ctl backend</code> 或安装时 <code>--backend</code> 显式选择。</li>
+  <li>切换后端只影响 Final；Preview 始终由核心 SenseVoice 提供。</li>
+</ul>
 
 <h2 id="r3">3. Credits</h2>
 <p><a href="#top">↑</a></p>
 
 <table>
   <tr><th>项目</th><th>在本组件中的角色</th><th>技术栈 / 许可</th></tr>
-  <tr><td><code>voime-core</code></td><td>音频、VAD、CTC、标点、pipeline</td><td>本仓库</td></tr>
-  <tr><td><code>voime-ipc</code></td><td>消息类型与 framing</td><td>本仓库</td></tr>
+  <tr><td><code>voime-core</code></td><td>音频、VAD、Preview、CPU Final、pipeline</td><td>本仓库</td></tr>
+  <tr><td><code>voime-ipc</code></td><td>前端消息类型与 framing</td><td>本仓库</td></tr>
   <tr><td><code>voime-transport</code></td><td>本机端点</td><td>本仓库</td></tr>
+  <tr><td><code>voime-gpu-common</code></td><td>GPU worker 帧协议与错误码</td><td>本仓库</td></tr>
   <tr><td><a href="https://github.com/clap-rs/clap">clap</a></td><td>命令行参数</td><td>Rust · MIT / Apache-2.0</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>IPC 事件、pipeline 事件与客户端队列</td><td>Rust · MIT / Apache-2.0</td></tr>
+  <tr><td><code>toml</code> / <code>serde</code></td><td>读取 <code>final.backend</code> 配置</td><td>Rust · MIT / Apache-2.0</td></tr>
+  <tr><td>FireRedVAD / SenseVoice / ONNX Runtime CPU</td><td>由核心提供；daemon 不直接链接推理库</td><td>见 <a href="../voime-core/README.html#r3">voime-core Credits</a></td></tr>
 </table>
+<ul class="note">
+  <li>FireRed ORT GPU 与 Qwen llama.cpp runtime 归各自 backend crate；daemon 不链接任何 GPU runtime。</li>
+</ul>
 
 </body>
 </html>

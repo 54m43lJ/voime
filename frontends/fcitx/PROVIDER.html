@@ -33,6 +33,9 @@
   <tr><th>术语</th><th>定义</th></tr>
   <tr><td>Fcitx5</td><td>Linux 输入法框架；本项目作为 addon 运行在 <code>fcitx5</code> 进程内。</td></tr>
   <tr><td>addon</td><td>Fcitx 的可加载组件；Voime addon 在后台加载，不注册输入法条目。</td></tr>
+  <tr><td>系统 addon 目录</td><td>Fcitx5 只搜索的系统库目录，例如 <code>/usr/lib/fcitx5</code>；多架构发行版按 <code>pkg-config --variable=libdir Fcitx5Core</code> + <code>/fcitx5</code> 解析。</td></tr>
+  <tr><td>addon 描述文件</td><td><code>/usr/share/fcitx5/addon/voime.conf</code>；<code>Library=voime</code> 指向系统 addon 目录内的 <code>voime.so</code>。</td></tr>
+  <tr><td>系统库加载</td><td>Fcitx <code>AddonManager</code> 读取描述文件并从系统 addon 目录加载共享库；不读取用户目录，不设置 <code>FCITX_ADDON_DIRS</code>。</td></tr>
   <tr><td><code>InputContext</code></td><td>Fcitx 中代表一个客户端输入目标的上下文；提供 <code>commitString</code>、<code>inputPanel</code>、<code>hasFocus</code>。</td></tr>
   <tr><td><code>InputPanel</code> / preedit</td><td>Fcitx 输入面板；Voime 用 <code>setPreedit</code> 写入 Partial，由 Fcitx UI 渲染。</td></tr>
   <tr><td>commit string / commit filter</td><td><code>InputContext::commitString</code> 提交的文本；Fcitx 的 commit filter 可能在到达客户端前转换文本。</td></tr>
@@ -51,24 +54,35 @@
 <table>
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>Fcitx 版本</td><td>要求 Fcitx5 ≥ 5.1.23；<code>MatchAllNormalizedKeys</code> 与 <code>checkKeyList</code> 以该版本为准。</td></tr>
-  <tr><td>addon 加载</td><td><code>OnDemand=False</code>；Fcitx 启动时后台加载，不安装 <code>inputmethod</code> 条目。</td></tr>
+  <tr><td>addon 加载</td><td><code>OnDemand=False</code>；Fcitx 启动时从系统 addon 目录后台加载，不安装 <code>inputmethod</code> 条目。</td></tr>
+  <tr><td>系统级安装</td><td>addon 库写入 Fcitx5 系统 addon 目录（例如 <code>/usr/lib/fcitx5/voime.so</code>），描述文件写入 <code>/usr/share/fcitx5/addon/voime.conf</code>；只有 addon 安装 / 卸载需要 sudo。安装入口与选项见 <a href="../../README.html#r2">根 README §2</a>。</td></tr>
+  <tr><td>不设置 <code>FCITX_ADDON_DIRS</code></td><td>明确否决用户级 addon 加载：不设置该环境变量，不把用户可写目录加入 Fcitx 的库搜索路径，不读取用户 addon 目录。</td></tr>
+  <tr><td>失败处理</td><td>拒绝提权或系统安装失败时核心安装失败并提示 <code>--no-addon</code>；不静默降级到用户目录。</td></tr>
+  <tr><td><code>Library=voime</code></td><td>对应系统 addon 目录中的 <code>voime.so</code>，不是用户前缀；CMake 不生成 <code>libvoime.so</code>。</td></tr>
+  <tr><td>ABI</td><td><code>voime.so</code> 与 Fcitx5 头文件绑定；Fcitx 大版本升级后重新编译。系统路径与 ABI 由 <code>voime doctor</code> 检查，不检查旧 inputmethod 条目。</td></tr>
   <tr><td>键盘所有权</td><td>Fcitx 持有键盘与 frontend；Voime 不抓键盘、不转发按键、不注入按键。</td></tr>
   <tr><td>热键范围</td><td>只有 Fcitx 能收到按键的输入上下文才触发热键；没有文本焦点、未使用 Fcitx 的窗口不保证。</td></tr>
   <tr><td>热键消费</td><td>命中后调用 <code>filterAndAccept</code>；普通按键继续由 Fcitx 路由。</td></tr>
-  <tr><td>临时窗口</td><td><code>InputPanel::setPreedit</code> + <code>updateUserInterface(InputPanel)</code>；Toggle 空白窗口写单个空格。</td></tr>
+  <tr><td>临时窗口</td><td><code>InputPanel::setPreedit</code> + <code>updateUserInterface(InputPanel)</code>；Finalizing 期间保留最后一条 Partial，不再刷新；Toggle 空白窗口写单个空格。</td></tr>
   <tr><td>目标输入框</td><td>语音段开始时聚焦的 <code>InputContext</code>；提交前重新检查存在与 <code>hasFocus()</code>。</td></tr>
-  <tr><td>提交</td><td><code>commitString</code> 无返回值；不保证客户端接受。Fcitx commit filter 与长文本分块由 Fcitx 负责。</td></tr>
-  <tr><td>addon ABI</td><td><code>voime.so</code> 与 Fcitx5 头文件绑定；Fcitx 大版本升级后重新编译。</td></tr>
+  <tr><td>提交</td><td>只在 Final 到达后调用 <code>commitString</code>；无返回值，不保证客户端接受。Fcitx commit filter 与长文本分块由 Fcitx 负责。</td></tr>
+  <tr><td>不感知 Final 后端</td><td>addon 不读取 <code>final.backend</code>，不区分 CPU / FireRed / Qwen，不加载模型，也不包含 ROCm、CUDA、Vulkan、ONNX Runtime 或 llama.cpp 依赖。</td></tr>
   <tr><td>配置</td><td><code>Mode</code> / <code>Hotkey</code> 只来自 addon 配置；socket 使用默认路径。</td></tr>
-  <tr><td>本地性</td><td>运行期所有边界调用在本机完成；模型包、音频与 IPC 不经过网络。</td></tr>
+  <tr><td>本地性</td><td>运行期所有边界调用在本机完成；模型目录、音频与 IPC 不经过网络。</td></tr>
 </table>
 
 <h2 id="p3">3. DIAGRAMS</h2>
 <p><a href="#top">↑</a></p>
 
+<p>
+Fcitx 启动时先读取系统描述文件并从系统 addon 目录加载库；以下边界都发生在加载完成之后。
+加载顺序与安装路径见 §4.3。
+</p>
+
 <h3 id="p3-1">3.1 按键与热键边界</h3>
 <div class="diagram"><img src="diagram/fcitx-key.svg" alt="Fcitx InputContextKeyEvent 与 Voime 热键消费的时序图"></div>
 <ul class="note">
+  <li>加载顺序：<code>/usr/share/fcitx5/addon/voime.conf</code> → <code>Library=voime</code> → <code>/usr/lib/fcitx5/voime.so</code>；不经过用户目录或 <code>FCITX_ADDON_DIRS</code>。</li>
   <li>Voime 在 <code>PreInputMethod</code> 读取事件；命中 <code>Hotkey</code> 后 <code>filterAndAccept</code>。</li>
   <li>Mode 只影响 Voime 对热键的解释；普通按键继续由 Fcitx 交给当前输入法或应用。</li>
 </ul>
@@ -77,13 +91,13 @@
 <div class="diagram"><img src="diagram/fcitx-panel.svg" alt="Fcitx InputPanel 临时文本窗口的时序图"></div>
 <ul class="note">
   <li><code>Partial</code> 写入 <code>InputPanel::setPreedit</code>，由 Fcitx UI 渲染；Voime 不创建窗口。</li>
-  <li>Final / 停止 / 断线时清空 preedit；Toggle 会话在 Final 后写入空白 preedit。</li>
+  <li>Finalizing 期间保留最后一条 Partial，不再写入新的 Partial；Final / 目标丢失 / 断线时清空，Toggle 会话在 Final 后写入空白 preedit。</li>
 </ul>
 
 <h3 id="p3-3">3.3 提交边界</h3>
 <div class="diagram"><img src="diagram/fcitx-commit.svg" alt="Fcitx commitString 提交最终文本的时序图"></div>
 <ul class="note">
-  <li>Voime 只调用 <code>InputContext::commitString</code>；Fcitx 选择 Wayland / XIM frontend 并处理长文本。</li>
+  <li>只有 Final 到达后才调用 <code>InputContext::commitString</code>；Fcitx 选择 Wayland / XIM frontend 并处理长文本。</li>
   <li>目标输入框失焦或销毁时不提交；文本保留在 daemon 历史。</li>
 </ul>
 
@@ -98,7 +112,7 @@
   <tr><td>匹配</td><td><code>KeyEvent::checkKeyList(keys, KeyEventMatchingMode::MatchAllNormalizedKeys)</code></td><td>按 Mode 解释 <code>Hotkey</code>。</td></tr>
   <tr><td>消费</td><td><code>KeyEvent::filterAndAccept()</code></td><td>阻止热键进入应用与当前输入法。</td></tr>
   <tr><td>目标</td><td><code>TrackableObjectReference&lt;InputContext&gt;</code></td><td>语音段目标输入框的弱引用。</td></tr>
-  <tr><td>临时窗口</td><td><code>InputPanel::setPreedit(Text)</code></td><td>写入当前 <code>Partial</code>。</td></tr>
+  <tr><td>临时窗口</td><td><code>InputPanel::setPreedit(Text)</code></td><td>写入当前 <code>Partial</code>；Finalizing 后不再更新。</td></tr>
   <tr><td>刷新 UI</td><td><code>InputContext::updateUserInterface(UserInterfaceComponent::InputPanel)</code></td><td>让 Fcitx UI 重绘输入面板。</td></tr>
   <tr><td>焦点检查</td><td><code>InputContext::hasFocus()</code></td><td>提交前确认目标仍聚焦。</td></tr>
   <tr><td>配置</td><td><code>Option&lt;Mode&gt;</code> / <code>KeyListOption</code> / <code>AddonInstance::getConfig</code></td><td><code>Mode</code> / <code>Hotkey</code>。</td></tr>
@@ -106,22 +120,25 @@
 <ul class="note">
   <li>临时窗口只使用 Fcitx preedit，不调用 <code>setClientPreedit</code> / <code>updatePreedit</code>。</li>
   <li>Fcitx UI 是否渲染 preedit 由当前 UI addon 决定；没有 UI 时不影响最终提交。</li>
-  <li>当前输入法可能更新同一 <code>InputPanel</code>；Voime 在每次 Partial 重设，停止 / Final 时清空。</li>
+  <li>当前输入法可能更新同一 <code>InputPanel</code>；Voime 在每次 Partial 重设，Finalizing 时保持不动，Final / 目标丢失 / 断线时清空。</li>
+  <li>本边界不读取任何 Final 后端或 GPU runtime；前端只依赖 Fcitx5Core。</li>
 </ul>
 
 <h3 id="p4-2">4.2 提交与 frontend</h3>
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>提交 API</td><td><code>InputContext::commitString(const std::string &amp;text)</code>。</td></tr>
+  <tr><td>提交时机</td><td>只在 Final 到达后提交；Finalizing 期间保留最后一条 Partial，不提交。</td></tr>
   <tr><td>目标</td><td>语音段开始时聚焦的 <code>InputContext</code>；失焦 / 销毁不提交。</td></tr>
   <tr><td>Wayland</td><td>Fcitx text-input-v3 frontend 调用 <code>commit_string</code>；长文本由 Fcitx 按 UTF-8 边界拆分。</td></tr>
   <tr><td>XWayland / X11</td><td>Fcitx XIM frontend 使用 <code>XIM_COMMIT</code>；只有使用 XIM 的客户端覆盖。</td></tr>
   <tr><td>commit filter</td><td>Fcitx 提交过滤器生效；Voime 不绕过。</td></tr>
   <tr><td>无确认</td><td><code>commitString</code> 无返回值；不承诺客户端一定接受。</td></tr>
+  <tr><td>不感知后端</td><td>Final 文本由 daemon 选择 CPU / FireRed / Qwen 生成；addon 只提交收到的文本，不做回退或二次识别。</td></tr>
 </table>
 
-<h3 id="p4-3">4.3 addon 描述文件与配置</h3>
-<pre><code># share/fcitx5/addon/voime.conf
+<h3 id="p4-3">4.3 addon 描述、系统安装与库加载</h3>
+<pre><code># /usr/share/fcitx5/addon/voime.conf
 [Addon]
 Name=Voime
 Category=InputMethod
@@ -131,14 +148,25 @@ Type=SharedLibrary
 OnDemand=False
 Configurable=True
 
-# 不安装 share/fcitx5/inputmethod/voime.conf：Voime 不进入输入法列表。
+# 不安装 /usr/share/fcitx5/inputmethod/voime.conf：Voime 不进入输入法列表。
 
 # ~/.config/fcitx5/conf/voime.conf
 Mode=ptt
 Hotkey=Super+F2</code></pre>
+
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>addon 库</td><td>系统 addon 目录，例如 <code>/usr/lib/fcitx5/voime.so</code>；多架构发行版按 <code>pkg-config --variable=libdir Fcitx5Core</code> + <code>/fcitx5</code> 解析。</td></tr>
+  <tr><td>addon 描述</td><td><code>/usr/share/fcitx5/addon/voime.conf</code>；不安装 inputmethod 条目。</td></tr>
+  <tr><td>安装权限</td><td>只有 addon 安装 / 卸载需要 sudo；脚本不整体以 root 运行，其他文件仍由用户拥有。</td></tr>
+  <tr><td>失败处理</td><td>用户拒绝提权或 addon 安装失败时，核心安装失败并提示 <code>--no-addon</code>；不静默降级为用户目录加载。</td></tr>
+  <tr><td>验证</td><td>重启 Fcitx 后检查 Addons 页面与日志；<code>voime doctor</code> 检查系统 addon 路径、<code>voime.so</code>、描述文件与 ABI；不检查 <code>FCITX_ADDON_DIRS</code>，不检查旧 inputmethod 条目。</td></tr>
+</table>
 <ul class="note">
+  <li><code>Library=voime</code> 对应系统 addon 目录中的 <code>voime.so</code>；不是 <code>$PREFIX/lib/fcitx5</code>，也不生成 <code>libvoime.so</code>。</li>
+  <li><code>Category=InputMethod</code> 只用于 Addons 页面分类；不安装 inputmethod 条目，不加入输入法组。</li>
   <li><code>OnDemand=False</code> 让 addon 在 Fcitx 启动时后台加载，从而在其他输入法活动时也能收到按键。</li>
-  <li><code>Library=voime</code> 对应 <code>$PREFIX/lib/fcitx5/voime.so</code>；CMake 关闭 <code>lib</code> 前缀，不能生成 <code>libvoime.so</code>。</li>
+  <li>不设置 <code>FCITX_ADDON_DIRS</code>：该变量会把用户可写目录加入 Fcitx 库搜索面，已明确否决。</li>
   <li><code>readAsIni</code> / <code>safeSaveAsIni</code> 不会自动补 <code>.conf</code>，配置文件路径必须写全 <code>conf/voime.conf</code>。</li>
 </ul>
 
@@ -166,11 +194,13 @@ Hotkey=Super+F2</code></pre>
 <table>
   <tr><th>错误</th><th>触发条件</th><th>处理</th></tr>
   <tr><td>Fcitx 未运行 / addon 未加载</td><td>Fcitx 未运行或 addon 未加载。</td><td>无热键 / 临时窗口；日志说明。</td></tr>
-  <tr><td>addon 描述文件缺失 / 加载失败</td><td>描述文件缺失或加载失败。</td><td>日志 / <code>voime doctor</code>；不消费热键。</td></tr>
-  <tr><td>addon ABI 不匹配</td><td>Fcitx 升级后 addon ABI 不匹配。</td><td>重新编译 addon；Fcitx 日志记录。</td></tr>
-  <tr><td>已有 <code>fcitx</code> 客户端连接</td><td>已有 <code>role=fcitx</code> 客户端连接。</td><td>daemon 发送 Error 后断开；addon 按重连策略重试。</td></tr>
+  <tr><td>addon 描述文件缺失 / 加载失败</td><td>系统描述文件缺失或库加载失败。</td><td>检查 Fcitx 日志 / <code>voime doctor</code>；不消费热键。</td></tr>
+  <tr><td>addon ABI 不匹配</td><td>Fcitx 升级后 addon ABI 不匹配。</td><td>重新编译并安装 addon；Fcitx 日志记录。</td></tr>
+  <tr><td>系统安装 / 提权失败</td><td>无法写入系统 addon 目录或用户拒绝 sudo。</td><td>核心安装失败并提示 <code>--no-addon</code>；不降级到用户目录。</td></tr>
+  <tr><td>已有 <code>frontend</code> 客户端连接</td><td>已有 <code>role=frontend</code> 客户端连接。</td><td>daemon 发送 Error 后断开；addon 按重连策略重试。</td></tr>
   <tr><td>无法连接 daemon socket</td><td>无法连接 socket。</td><td>放行热键；按重连策略重试。</td></tr>
   <tr><td>提交目标失焦 / 销毁</td><td>目标输入框失焦或销毁。</td><td>清空临时窗口；Final 保留历史。</td></tr>
+  <tr><td>Final 后端失败</td><td>daemon 的 GPU Final 失败并回退 CPU，或返回错误。</td><td>addon 不感知后端；只等待 Final 或 Error，不在前端做回退。</td></tr>
 </table>
 
 </body>

@@ -30,6 +30,9 @@
 ├── rust-toolchain.toml
 ├── crates/
 │   ├── voime-core/                    → <a href="crates/voime-core/CORE.html#c1">voime-core CORE §1</a>
+│   ├── voime-gpu-common/              → <a href="crates/voime-gpu-common/CORE.html#c1">voime-gpu-common CORE §1</a>
+│   ├── voime-gpu-firered/             → <a href="crates/voime-gpu-firered/CORE.html#c1">voime-gpu-firered CORE §1</a>（独立 workspace）
+│   ├── voime-gpu-qwen3/               → <a href="crates/voime-gpu-qwen3/CORE.html#c1">voime-gpu-qwen3 CORE §1</a>（独立 workspace）
 │   ├── voime-ipc/                     → <a href="crates/voime-ipc/CORE.html#c1">voime-ipc CORE §1</a>
 │   ├── voime-log/                     → <a href="crates/voime-log/CORE.html#c1">voime-log CORE §1</a>
 │   ├── voime-transport/               → <a href="crates/voime-transport/CORE.html#c1">voime-transport CORE §1</a>
@@ -38,28 +41,33 @@
 ├── frontends/
 │   ├── fcitx/                         → <a href="frontends/fcitx/CORE.html#c1">fcitx-addon CORE §1</a>
 │   └── windows/                       → <a href="frontends/windows/CORE.html#c1">windows CORE §1</a>（TSF 为可选子工程）
-├── models/
-│   └── manifest.json                  共享模型清单（权重不提交）
-├── scripts/                           安装入口 / 模型辅助脚本
-├── tools/                             模型导出 / 安装 / 校验
+├── models/                            安装后的模型根目录；权重不提交
+│   ├── firered-vad/                   核心安装
+│   ├── sensevoice-small/              核心安装
+│   ├── fireredasr2-aed/               GPU 安装
+│   ├── fireredpunc/                   GPU 安装
+│   └── qwen3-asr-1.7b/                GPU 安装
+├── scripts/
+│   ├── install-core.sh                核心安装（Linux）
+│   ├── install-gpu.sh                 GPU 模块安装（Linux）
+│   ├── install-core.ps1               核心安装（Windows）
+│   └── install-gpu.ps1                GPU 模块安装（Windows）
 ├── packaging/
 │   ├── linux/
-│   │   ├── voime.service              Linux 用户服务
-│   │   ├── install_voime.sh           voime 安装脚本
-│   │   └── install_voimed.sh          voimed 安装脚本
-│   └── windows/
-│       ├── install.ps1                每用户安装 / 登录启动 / 模型
-│       └── uninstall.ps1              卸载
+│   │   └── voime.service              Linux 用户服务
+│   └── windows/                       托盘图标与平台资源
 └── tests/
     ├── segmenter.rs                   分段器集成测试
     ├── ipc.rs                         协议集成测试
     ├── state.rs                       daemon 状态测试
     ├── daemon.rs                      端点 / 断线测试
-    └── asr_ctc.rs                     CTC 金样测试</code></pre>
+    ├── manifest.rs                    一模型一目录 / schema 5 校验测试
+    └── final_backend.rs               CPU / FireRed / Qwen Final 与回退测试</code></pre>
 <ul class="note">
   <li>根文件树只列到组件目录；组件内部文件树见对应 CORE，文档与图表不属于源码结构。</li>
   <li>根 <code>Cargo.toml</code> 同时是 <code>voime-tests</code> 包，通过显式 <code>[[test]]</code> 发现 <code>tests/</code>。</li>
-  <li><code>frontends/windows</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>，不进入根 workspace。</li>
+  <li><code>frontends/windows</code>、<code>voime-gpu-firered</code> 与 <code>voime-gpu-qwen3</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>，不进入根 workspace；GPU worker 不共享 runtime 链接单元。</li>
+  <li><code>models/</code> 只表示安装后的目标布局；仓库不提交权重，安装脚本在用户模型根目录写入一模型一目录。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -69,7 +77,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
     <td>依赖方向</td>
-    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport + log；<code>voime</code> → core + ipc + transport + log（doctor）；前端 → ipc + transport + log。前端不依赖 core，core 不依赖 transport / daemon / 前端；<code>voime-log</code> 是零依赖叶子 crate，被 daemon、CLI doctor 与 Windows 前端消费。</td>
+    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport + log + gpu-common；<code>voime</code> → core + ipc + transport + log；前端 → ipc + transport + log。<code>voimed</code> 不依赖任一 backend crate；<code>voime-gpu-firered</code> 只依赖 common + ORT；<code>voime-gpu-qwen3</code> 只依赖 common + llama.cpp。</td>
   </tr>
   <tr>
     <td>OS API 位置</td>
@@ -81,27 +89,31 @@
   </tr>
   <tr>
     <td>进程边界</td>
-    <td><code>fcitx5</code> 进程加载 addon；<code>voimed</code> 是独立进程；<code>voime</code> TUI 是独立客户端；Windows 前端是独立桌面进程，TSF DLL 加载到目标应用进程。</td>
+    <td><code>fcitx5</code> 进程加载 addon；<code>voimed</code> 是独立进程；<code>voime</code> TUI 是独立客户端；Windows 前端是独立桌面进程，TSF DLL 加载到目标应用进程；FireRed / Qwen worker 是 <code>voimed</code> 拉起的独立进程。</td>
   </tr>
   <tr>
     <td>线程边界</td>
-    <td>addon 的 Fcitx 调用在 Fcitx 事件循环线程；daemon 由事件循环 + accept / reader / writer 线程组成；pipeline 只有一个工作线程串行执行 VAD / CTC / 标点；TUI 使用自己的输入线程。</td>
+    <td>addon 的 Fcitx 调用在 Fcitx 事件循环线程；daemon 由事件循环 + accept / reader / writer 线程组成；pipeline 只有一个工作线程串行执行 VAD / Preview / CPU Final；GPU Final 在 worker 进程内执行；TUI 使用自己的输入线程。</td>
   </tr>
   <tr>
     <td>协议单一来源</td>
-    <td>消息形状、编码、错误码只在 <a href="crates/voime-ipc/USER.html">voime-ipc USER</a> 定义；daemon 与前端只实现行为，不复制类型。</td>
+    <td>前端消息形状、编码、错误码只在 <a href="crates/voime-ipc/USER.html">voime-ipc USER</a> 定义；GPU worker 帧协议只在 <a href="crates/voime-gpu-common/USER.html">voime-gpu-common USER</a> 定义；daemon 与前端只实现行为，不复制类型。</td>
   </tr>
   <tr>
     <td>模型单一来源</td>
-    <td>模型清单、SHA-256、张量契约只在 <a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a> 定义；安装脚本与 runtime 校验共用同一清单。</td>
+    <td>核心模型与 CPU 契约在 <a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a>；FireRed 模型与 ORT GPU 契约在 <a href="crates/voime-gpu-firered/PROVIDER.html">voime-gpu-firered PROVIDER</a>；Qwen 模型与 llama.cpp 契约在 <a href="crates/voime-gpu-qwen3/PROVIDER.html">voime-gpu-qwen3 PROVIDER</a>。安装脚本与运行期校验共用同一份 manifest。</td>
+  </tr>
+  <tr>
+    <td>Final 调度</td>
+    <td><code>voimed</code> 读取 <code>final.backend</code>，在 Finalizing 调用核心 CPU Final 或选中的 GPU worker；<code>voime-core</code> 不感知后端选择，只提供 Preview 取消与 CPU Final。</td>
   </tr>
   <tr>
     <td>前端职责</td>
-    <td>前端只做热键、目标、临时文本与提交；不加载模型、不做 VAD / CTC / 分段、不保存识别文本。</td>
+    <td>前端只做热键、目标、临时文本与提交；不加载模型、不做 VAD / Preview / 分段、不保存识别文本、不感知 Final 后端。</td>
   </tr>
   <tr>
     <td>测试分层</td>
-    <td>根 <code>tests/</code> 覆盖跨组件协议、分段与状态；组件单测覆盖内部算法；平台 transport / 前端在各自 runner 上跑 conformance 测试。</td>
+    <td>根 <code>tests/</code> 覆盖跨组件协议、分段、状态、manifest 与 Final 后端；组件单测覆盖内部算法；平台 transport / 前端在各自 runner 上跑 conformance 测试。</td>
   </tr>
   <tr>
     <td>无异步运行时</td>
@@ -109,7 +121,7 @@
   </tr>
   <tr>
     <td>无持久化</td>
-    <td>不写音频、按键或识别历史到磁盘；daemon 退出后会话历史丢失。</td>
+    <td>不写音频、按键或识别历史到磁盘；daemon 退出后会话历史丢失。模型与配置只读 / 由安装与 ctl 写入。</td>
   </tr>
 </table>
 
@@ -121,7 +133,10 @@
   <tr><td><code>voime-tests</code>（根包）</td><td>根 workspace</td><td>跨组件集成测试入口；声明 <code>tests/</code>。</td></tr>
   <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>Rust workspace</td><td>错误传播与边界错误类型。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>Rust workspace</td><td>音频、pipeline、daemon 与客户端之间的有界通道。</td></tr>
-  <tr><td><code>serde</code> / <code>serde_json</code></td><td>Rust workspace</td><td>IPC、manifest 与标签表。</td></tr>
+  <tr><td><code>serde</code> / <code>serde_json</code></td><td>Rust workspace</td><td>IPC、manifest、worker 帧头与标签表。</td></tr>
+  <tr><td><code>onnxruntime</code>（CPU）</td><td><code>voime-core</code></td><td>FireRedVAD 与 SenseVoice 的 CPU 会话。</td></tr>
+  <tr><td><code>onnxruntime</code>（GPU EP）</td><td><code>voime-gpu-firered</code></td><td>FireRedASR2-AED 与 FireRedPunc 的 CUDA / MIGraphX / DirectML 会话。</td></tr>
+  <tr><td><code>llama-cpp-4</code> / ggml</td><td><code>voime-gpu-qwen3</code></td><td>Qwen3-ASR BF16 GGUF 与 mmproj 的 Vulkan / CUDA 推理。</td></tr>
   <tr><td><code>tempfile</code></td><td>dev-dependencies</td><td>临时目录 / socket 测试。</td></tr>
   <tr><td>CMake / C++20</td><td><code>fcitx-addon</code></td><td>编译 <code>voime.so</code> 与安装描述文件。</td></tr>
   <tr><td>Python 3.10+</td><td><code>tools/</code> / <code>scripts/</code></td><td>模型导出、安装与校验；只在构建 / 安装期使用。</td></tr>
@@ -143,64 +158,67 @@
 <pre><code>pub struct Config { /* ... */ }                  // 见 voime-core USER §4.1
 pub struct ModelManifest { /* ... */ }           // 见 voime-core USER §4.3
 pub fn resolve(args: Args) -&gt; anyhow::Result&lt;Config&gt;;      // 见 voime-core USER §4.1
+pub fn load_models(root: &amp;Path) -&gt; anyhow::Result&lt;ModelSet&gt;; // 见 voime-core USER §4.3
 pub fn spawn(config: &amp;Config, factory: SessionFactory,
-             audio_rx: Receiver&lt;AudioChunk&gt;) -&gt; anyhow::Result&lt;Pipeline&gt;; // 见 voime-core USER §4.4
+             audio_rx: Receiver&lt;AudioChunk&gt;) -&gt; anyhow::Result&lt;(Pipeline, Final)&gt;; // 见 voime-core USER §4.4
+pub struct Final { /* ... */ }
+impl Final {
+    pub fn transcribe(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;String&gt;; // 见 voime-core USER §4.4
+}
 // 内部类型与调用栈见 voime-core CORE §4 / §5</code></pre>
 
-<h3 id="c4-2">4.2 crates/voime-ipc <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub const PROTOCOL_VERSION: u32;                 // 见 voime-ipc USER §4.1
-pub const MAX_MESSAGE_BYTES: usize;              // 见 voime-ipc USER §4.1
-pub enum ClientMessage { /* ... */ }             // 见 voime-ipc USER §4.2
-pub enum ServerMessage { /* ... */ }             // 见 voime-ipc USER §4.3
-pub fn encode_message&lt;T: Serialize&gt;(message: &amp;T) -&gt; anyhow::Result&lt;Vec&lt;u8&gt;&gt;; // 见 voime-ipc USER §4.1
-pub fn write_message&lt;W: Write, T: Serialize&gt;(writer: &amp;mut W, message: &amp;T) -&gt; anyhow::Result&lt;()&gt;; // 见 voime-ipc USER §4.1
-pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R) -&gt; anyhow::Result&lt;Option&lt;T&gt;&gt;; // 见 voime-ipc USER §4.1
-// 编码与解码细节见 voime-ipc CORE §4 / §5</code></pre>
+<h3 id="c4-2">4.2 crates/voime-gpu-common <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const GPU_PROTOCOL_VERSION: u32;             // 见 voime-gpu-common USER §4.1
+pub enum Request { /* ... */ }                   // 见 voime-gpu-common USER §4.2
+pub enum Response { /* ... */ }                  // 见 voime-gpu-common USER §4.3
+pub struct Frame { /* ... */ }                   // 见 voime-gpu-common USER §4.1
+pub fn read_frame&lt;R: Read&gt;(reader: &amp;mut R) -&gt; anyhow::Result&lt;Option&lt;Frame&gt;&gt;; // 见 voime-gpu-common CORE §4
+pub fn write_frame&lt;W: Write&gt;(writer: &amp;mut W, frame: &amp;Frame) -&gt; anyhow::Result&lt;()&gt;; // 见 voime-gpu-common CORE §4
+// 帧编解码与生命周期辅助见 voime-gpu-common CORE §4 / §5</code></pre>
 
-<h3 id="c4-3">4.3 crates/voime-transport <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub enum Endpoint { /* ... */ }                  // 见 voime-transport USER §4.1
-pub trait Stream: Read + Write + Send { /* ... */ } // 见 voime-transport USER §4.2
-pub trait Listener: Send + Sync { /* ... */ }   // 见 voime-transport USER §4.2
-pub fn bind(endpoint: &amp;Endpoint) -&gt; io::Result&lt;Box&lt;dyn Listener&gt;&gt;; // 见 voime-transport USER §4.3
-pub fn connect(endpoint: &amp;Endpoint) -&gt; io::Result&lt;Box&lt;dyn Stream&gt;&gt;; // 见 voime-transport USER §4.3
-// 平台实现见 voime-transport CORE §4 / PROVIDER §4</code></pre>
-
-<h3 id="c4-4">4.4 crates/voimed <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>fn main() -&gt; std::process::ExitCode;
+<h3 id="c4-3">4.3 crates/voimed <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum BackendId { Cpu, Firered, Qwen3 }       // 见 voimed USER §4.4
+pub struct FinalConfig { pub backend: BackendId } // 见 voimed USER §4.4
+pub struct Worker { /* ... */ }                  // 见 voimed CORE §4
+impl Worker {
+    pub fn spawn(id: BackendId, model_root: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;; // 见 voimed CORE §4
+    pub fn transcribe(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;String&gt;; // 见 voimed CORE §4
+    pub fn shutdown(self);
+}
+fn main() -&gt; std::process::ExitCode;
 pub struct Daemon { /* ... */ }
 impl Daemon {
-    pub fn new(config: Config, pipeline: Pipeline, audio: CaptureHandle,
-               ipc: IpcServer) -&gt; Self;
+    pub fn new(config: Config, pipeline: Pipeline, finalizer: Final,
+               audio: CaptureHandle, ipc: IpcServer,
+               worker: Option&lt;Worker&gt;) -&gt; Self;
     pub fn run(self) -&gt; anyhow::Result&lt;()&gt;;
 }
-pub struct IpcServer { /* ... */ }               // 内部类型，见 voimed CORE §4.6
-// 会话状态与事件处理见 voimed CORE §4 / §5</code></pre>
+// 会话状态、Final 调度与 worker 生命周期见 voimed CORE §4 / §5</code></pre>
 
-<h3 id="c4-5">4.5 crates/voime <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-4">4.4 crates/voime <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>fn main() -&gt; std::process::ExitCode;
 pub struct Client { /* ... */ }
 impl Client {
     pub fn connect(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn connect_as(path: &amp;Path, role: Role) -&gt; anyhow::Result&lt;Self&gt;;
 }
-pub struct App { /* ... */ }
-pub struct Tui { /* ... */ }
-pub fn run(socket: &amp;Path) -&gt; bool;                // doctor::run
+pub enum CtlAction { Start, Stop, Toggle, Status, Clear, Quit, Backend(BackendId) } // 见 voime USER §4.1
+pub fn run(socket: &amp;Path) -&gt; bool;                // doctor::run；见 voime USER §4.4
 // TUI / ctl / doctor 细节见 voime CORE §4 / §5</code></pre>
 
-<h3 id="c4-6">4.6 fcitx-addon <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-5">4.5 fcitx-addon <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>class VoimeAddon final : public fcitx::InputMethodEngineV2 { /* ... */ };
 class IpcClient { /* ... */ };                   // 内部类型，见 fcitx-addon CORE §4.4
 class Preview { /* ... */ };
 struct TargetRef { /* ... */ };
 // 事件处理与调用栈见 fcitx-addon CORE §4 / §5</code></pre>
 
-<h3 id="c4-7">4.7 frontends/windows <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-6">4.6 frontends/windows <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>// 已实现；TSF 为可选子工程
 fn main() -&gt; windows::core::Result&lt;()&gt;;
 // 托盘 / 热键 / 目标 / 浮层 / 提交见 windows CORE §4 / §5</code></pre>
 
-<h3 id="c4-8">4.8 crates/voime-log <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-7">4.7 crates/voime-log <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub fn init(component: &amp;str) -&gt; bool;            // 见 voime-log USER §4.1
 pub fn enabled() -&gt; bool;
 pub fn log_path() -&gt; Option&lt;PathBuf&gt;;
@@ -214,10 +232,17 @@ pub fn default_directory() -&gt; PathBuf;
 <h3 id="c5-1">5.1 冷启动</h3>
 <pre><code>systemd --user / voime-tray 子进程（Windows）
 └── voimed::main()
+    ├── voime_log::init("voimed")
     ├── voimed::cli::parse()
+    ├── voimed::config::load() → FinalConfig { backend }
     ├── voime_core::config::resolve()
+    ├── voime_core::model::load_models(model_root)
+    │   ├── ModelManifest::load(firered-vad/manifest.json)
+    │   └── ModelManifest::load(sensevoice-small/manifest.json)
     ├── voime_core::infer::session::SessionFactory::new()
-    ├── voime_core::pipeline::spawn()
+    ├── voime_core::pipeline::spawn() → (Pipeline, Final)
+    ├── 判断 backend != Cpu → voimed::worker::Worker::spawn(backend, model_root)
+    │   └── GPU Hello / Ready handshake
     ├── voime_core::audio::capture::start()
     ├── voimed::ipc_server::IpcServer::bind()
     └── voimed::daemon::Daemon::run()
@@ -226,8 +251,9 @@ fcitx5 / Windows 前端
 └── 前端连接
     └── voime_ipc::write_message(Hello)</code></pre>
 <ul class="note">
+  <li>默认 <code>backend = Cpu</code> 时不启动 GPU worker，也不探测 GPU runtime；核心仍完成模型校验与 pipeline 启动。</li>
+  <li>GPU worker 加载失败不阻塞 daemon 启动：daemon 保留 CPU Final，并把该后端标记为不可用。</li>
   <li><code>IpcServer::bind()</code> 内部调用 <code>voime_transport::bind()</code>；当前实现见 <a href="crates/voimed/CORE.html#c5-1">voimed CORE §5.1</a>。</li>
-  <li>每个组件内部的模型加载、线程创建与错误分支见对应 CORE。</li>
 </ul>
 
 <h3 id="c5-2">5.2 热键到最终提交</h3>
@@ -245,12 +271,24 @@ voime_ipc::read_message(Partial) / voime_transport::Stream::read()
 └── fcitx_addon::VoimeAddon::onIpcMessage(Partial) / frontends_windows::Frontend::on_message(Partial)
     └── fcitx_addon::Preview::show() / frontends_windows::preview::Overlay::show()
 
+voimed::daemon::Daemon::on_client(Stop)
+├── voime_core::pipeline::Pipeline::finish_segment()
+├── voime_core::pipeline::Pipeline::cancel_preview()
+├── voime_core::pipeline::PipelineEvent::SegmentReady(segment)
+└── voimed::daemon::Daemon::finalize(segment)
+    ├── 判断 backend == Cpu → voime_core::Final::transcribe(segment.samples)
+    ├── 判断 backend == Firered → voimed::worker::Worker::transcribe(segment.samples)
+    ├── 判断 backend == Qwen3 → voimed::worker::Worker::transcribe(segment.samples)
+    ├── 判断 GPU 失败 → voime_core::Final::transcribe(segment.samples)
+    └── voime_ipc::encode_message(Final / SegmentDropped)
+
 voime_ipc::read_message(Final) / voime_transport::Stream::read()
 └── fcitx_addon::VoimeAddon::onIpcMessage(Final) / frontends_windows::Frontend::on_message(Final)
     ├── fcitx_addon::TargetRef::focused() / frontends_windows::target::focused()
     └── fcitx::InputContext::commitString() / frontends_windows::commit::commit()</code></pre>
 <ul class="note">
   <li>PTT / Toggle 的目标绑定与提交顺序见 <a href="frontends/fcitx/CORE.html#c5-2">fcitx-addon CORE §5.2</a> 与 <a href="frontends/windows/CORE.html#c5-2">windows CORE §5.2</a>。</li>
+  <li>Finalizing 期间不再产生 Partial；CPU Final 只调用一次，GPU Final 不再调用 SenseVoice ASR。</li>
   <li>daemon 内部的分段、背压与广播见 <a href="crates/voimed/CORE.html#c5-5">voimed CORE §5.5</a>。</li>
 </ul>
 
@@ -259,17 +297,26 @@ voime_ipc::read_message(Final) / voime_transport::Stream::read()
 ├── voime_core::pipeline::Pipeline events
 │   ├── 判断 Recording(true) → voimed::daemon::Daemon::on_pipeline(...)
 │   ├── 判断 Partial → voimed::daemon::Daemon::on_pipeline(...)
-│   └── 判断 Final → voimed::daemon::Daemon::on_pipeline(...)
+│   ├── 判断 SegmentReady → voimed::daemon::Daemon::finalize(segment)
+│   └── 判断 SegmentDropped → voimed::daemon::Daemon::on_pipeline(...)
 └── fcitx_addon::VoimeAddon::onIpcMessage(SegmentStarted / Partial / Final) / frontends_windows::Frontend::on_message(...)</code></pre>
+<ul class="note">
+  <li>Continuous 的每个段独立进入 Finalizing；VAD 继续监听下一段，完成段由 daemon 的有界队列串行处理。</li>
+</ul>
 
 <h3 id="c5-4">5.4 TUI、控制与退出</h3>
 <pre><code>voime::main()
 ├── 判断无子命令 → voime::client::Client::connect(Endpoint)
-├── 判断 ctl → voimed 控制命令
+├── 判断 ctl → voimed 控制命令 / 写 Final 后端配置
 └── 判断 doctor → 只读检查
+
+voime ctl backend firered
+└── voime::config::write_backend(Firered)
+    └── 写入 ~/.config/voime/config.toml [final].backend
 
 voime ctl quit
 └── voimed::daemon::Daemon::on_client(Quit)
+    ├── voimed::worker::Worker::shutdown()
     ├── voime_ipc::encode_message(Bye)
     ├── voime_core::pipeline::Pipeline::shutdown()
     ├── voime_core::audio::capture::CaptureHandle::stop()
@@ -277,6 +324,7 @@ voime ctl quit
 <ul class="note">
   <li><code>voimed::ipc_server::IpcServer::shutdown()</code> 调用 <code>Listener::shutdown()</code>，由 transport 删除端点。</li>
   <li>TUI 的 <code>q</code> 只 detach，不发送 Quit；Linux 停止 daemon 使用 <code>ctl quit</code> 或 systemd；Windows 由托盘以子进程托管 daemon，退出托盘即停止（见 <a href="frontends/windows/CORE.html#c4-9">windows CORE §4.9</a>）。</li>
+  <li>配置切换不通过 IPC；<code>ctl backend</code> 只写文件，下一次 daemon 启动读取新值。</li>
 </ul>
 
 </body>

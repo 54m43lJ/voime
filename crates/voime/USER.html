@@ -22,7 +22,7 @@
 
 <p>
 本文定义 <code>voime</code> 的命令行、TUI 行为与界面。协议消息形状见
-<a href="../voime-ipc/USER.html">voime-ipc USER</a>；daemon 状态语义见 <a href="../voimed/USER.html">voimed USER</a>。
+<a href="../voime-ipc/USER.html">voime-ipc USER</a>；daemon 状态与 Final 调度见 <a href="../voimed/USER.html">voimed USER</a>。
 </p>
 
 <h2 id="u1">1. TERMS</h2>
@@ -32,7 +32,9 @@
   <tr><th>术语</th><th>定义</th></tr>
   <tr><td>TUI</td><td><code>voime</code> 无子命令时进入的终端监视器；只读展示并发送控制命令。</td></tr>
   <tr><td><code>ctl</code></td><td>一次性控制客户端；执行一个动作并退出。</td></tr>
-  <tr><td><code>doctor</code></td><td>只读诊断命令；检查端点、daemon、模型、音频与平台前端。</td></tr>
+  <tr><td><code>doctor</code></td><td>只读诊断命令；检查端点、daemon、模型、音频、平台前端、Final 后端与 worker 状态。</td></tr>
+  <tr><td>Final 后端配置</td><td><code>~/.config/voime/config.toml</code> 的 <code>[final].backend</code>；<code>ctl backend</code> 负责写入，daemon 启动时读取。</td></tr>
+  <tr><td>worker ready / running</td><td>daemon 日志中最近一次 GPU worker 握手成功 / 正在处理请求的状态；doctor 只读，不启动 worker。</td></tr>
   <tr><td>detach</td><td>退出 TUI 但不停止 daemon；<code>q</code> / <code>Ctrl+C</code> 的行为。</td></tr>
   <tr><td>临时行</td><td>TUI 中显示当前 <code>Partial</code> 的行；不是最终历史。</td></tr>
   <tr><td>历史行</td><td>已收到的 <code>Final</code> 文本；保存在 daemon 内存，TUI 重连后恢复。</td></tr>
@@ -53,17 +55,21 @@
   <tr><td>滚动</td><td><code>PageUp</code> / <code>PageDown</code> / <code>Home</code> / <code>End</code>；上翻停止跟随，<code>End</code> 恢复。</td></tr>
   <tr><td>内容清洗</td><td>Final / Partial 中的 <code>\r</code> / <code>\n</code> 替换为空格并 trim；空文本不进入历史。</td></tr>
   <tr><td>断线</td><td>daemon 断开时 TUI 以错误退出（退出码 1）；<code>Bye</code> 视为正常 detach。</td></tr>
-  <tr><td>doctor 只读</td><td>不启动/停止 daemon，不修改配置；只报告 OK / WARN / FAIL。</td></tr>
-  <tr><td>无持久化</td><td>TUI 不写历史文件；退出后历史只存在于 daemon 内存。</td></tr>
+  <tr><td>backend 只写配置</td><td><code>voime ctl backend</code> 只写配置文件，不连接 daemon、不发送 IPC、不触发热切换；提示用户重启 daemon。</td></tr>
+  <tr><td>默认 CPU</td><td>配置缺失时显示 / 保持 <code>cpu</code>；写入 GPU 后端必须先安装对应模块，但安装脚本不自动切换。</td></tr>
+  <tr><td>doctor 只读</td><td>不启动 / 停止 daemon，不修改配置，不启动 worker，不打开音频流；只报告 OK / WARN / FAIL。</td></tr>
+  <tr><td>worker 状态来源</td><td>doctor 读取配置、worker 可执行文件 / 模型目录与 daemon 运行日志中的 worker 状态行；不新增 IPC 字段。</td></tr>
+  <tr><td>无持久化</td><td>TUI 不写历史文件；退出后历史只存在于 daemon 内存。只有 <code>ctl backend</code> 写配置文件。</td></tr>
 </table>
 
 <h2 id="u3">3. DIAGRAMS</h2>
 <p><a href="#top">↑</a></p>
 
 <h3 id="u3-1">3.1 ctl 命令流</h3>
-<div class="diagram"><img src="diagram/ctl-flow.svg" alt="voime ctl 连接 daemon、发送命令并等待状态的时序图"></div>
+<div class="diagram"><img src="diagram/ctl-flow.svg" alt="voime ctl 连接 daemon、发送命令或写 Final 后端配置并等待状态的时序图"></div>
 <ul class="note">
   <li><code>ctl</code> 以 <code>control</code> 角色连接，先读取 Snapshot，再发送命令。</li>
+  <li><code>backend</code> 是唯一不连接 daemon 的动作：只写配置文件并提示重启。</li>
   <li>每个动作等待对应响应或超时；错误以 stderr + 退出码 1 返回。</li>
   <li>TUI 使用同一 <code>Client</code>，但以 <code>tui</code> 角色连接。</li>
 </ul>
@@ -74,6 +80,7 @@
 <h3 id="u4-1">4.1 命令行</h3>
 <pre><code>voime [--endpoint &lt;ENDPOINT&gt;]
 voime ctl &lt;start|stop|toggle|status|clear|quit&gt; [--endpoint &lt;ENDPOINT&gt;]
+voime ctl backend &lt;cpu|firered|qwen3&gt;
 voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
 
 <table>
@@ -82,18 +89,19 @@ voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
   <tr><td><code>voime ctl start</code></td><td>发送 <code>Start { segment_id: 0, source: Cli }</code>；等待 State 或 Error。</td></tr>
   <tr><td><code>voime ctl stop</code></td><td>发送 <code>Stop { segment_id: 0, source: Cli }</code>。</td></tr>
   <tr><td><code>voime ctl toggle</code></td><td>发送 <code>Toggle { segment_id: 0, source: Cli }</code>。</td></tr>
-  <tr><td><code>voime ctl status</code></td><td>发送 <code>Status</code>；打印一行状态。</td></tr>
+  <tr><td><code>voime ctl status</code></td><td>发送 <code>Status</code>；打印一行状态；不显示 Final 后端。</td></tr>
   <tr><td><code>voime ctl clear</code></td><td>发送 <code>ClearHistory</code>；等待 <code>HistoryCleared</code>。</td></tr>
   <tr><td><code>voime ctl quit</code></td><td>发送 <code>Quit</code>；等待 <code>Bye</code>。</td></tr>
+  <tr><td><code>voime ctl backend &lt;id&gt;</code></td><td>原子写入 <code>[final].backend</code>；不连接 daemon；输出重启提示；非法值退出码 2。</td></tr>
   <tr><td><code>voime doctor</code></td><td>只读检查；退出码 0 表示全部通过，1 表示存在 FAIL。</td></tr>
-  <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名。</td></tr>
+  <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名。<code>--socket</code> 保留为兼容别名；<code>ctl backend</code> 不接受该选项。</td></tr>
 </table>
 
 <table>
   <tr><th>退出码</th><th>含义</th></tr>
   <tr><td><code>0</code></td><td>命令成功 / doctor 全部通过。</td></tr>
-  <tr><td><code>1</code></td><td>连接失败、daemon 错误、超时、TUI 不可用或 doctor 存在 FAIL。</td></tr>
-  <tr><td><code>2</code></td><td>命令行参数非法（clap）。</td></tr>
+  <tr><td><code>1</code></td><td>连接失败、daemon 错误、超时、配置文件写入失败、TUI 不可用或 doctor 存在 FAIL。</td></tr>
+  <tr><td><code>2</code></td><td>命令行参数非法（clap），包括非法 backend 值。</td></tr>
 </table>
 
 <h3 id="u4-2">4.2 TUI 按键</h3>
@@ -108,6 +116,9 @@ voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
   <tr><td><code>Home</code></td><td>跳到顶部；停止跟随。</td></tr>
   <tr><td><code>End</code></td><td>跳到最新；恢复跟随。</td></tr>
 </table>
+<ul class="note">
+  <li>TUI 不提供 backend 切换、worker 状态或 GPU 配置；这些只在 <code>ctl backend</code> / <code>doctor</code>。</li>
+</ul>
 
 <h3 id="u4-3">4.3 ctl 输出</h3>
 <pre><code># start / stop / toggle
@@ -120,13 +131,18 @@ recording=false finalizing=false segment=None mode=ptt hotkey=Super+F2 addon=Con
 history cleared
 
 # quit
-voimed stopped</code></pre>
+voimed stopped
+
+# backend
+final.backend = firered
+restart voimed to apply</code></pre>
 
 <table>
   <tr><th>输出</th><th>契约</th></tr>
   <tr><td>start / stop / toggle</td><td>打印 <code>State</code> 的 recording / finalizing / segment；Error 走 stderr。</td></tr>
-  <tr><td>status</td><td><code>Status</code> 的所有字段；未知 mode / hotkey 显示 <code>-</code>。</td></tr>
+  <tr><td>status</td><td><code>Status</code> 的所有字段；未知 mode / hotkey 显示 <code>-</code>；不新增 backend 字段。</td></tr>
   <tr><td>clear / quit</td><td>成功标记；Error 或 Bye 走 stderr / 退出码 1。</td></tr>
+  <tr><td>backend</td><td>打印写入值与重启提示；不声称已生效；写入失败退出码 1。</td></tr>
   <tr><td>超时</td><td>超时时间内没有响应则报错退出；具体值见 <a href="CORE.html#c2">CORE §2</a>。</td></tr>
 </table>
 
@@ -134,8 +150,14 @@ voimed stopped</code></pre>
 <pre><code>endpoint: /run/user/1000/voime/voimed.sock
   OK   权限 0600
   OK   daemon 在线
+final:
+  OK   backend = cpu
+  OK   CPU Final 可用（SenseVoice）
+  WARN firered 已安装但未选择（worker 未运行）
+  WARN qwen3 已安装但未选择（worker 未运行）
 model: /home/user/.local/share/voime/models
-  OK   manifest 与 SHA-256 校验通过
+  OK   firered-vad manifest 与 SHA-256 校验通过
+  OK   sensevoice-small manifest 与 SHA-256 校验通过
 audio:
   OK   2 个输入设备，默认 ...
 log:
@@ -144,7 +166,7 @@ fcitx:
   OK   fcitx5 进程运行中
   OK   addon 描述 /usr/share/fcitx5/addon/voime.conf
   OK   voime.so /usr/lib/fcitx5/voime.so
-  OK   未注册输入法条目（Shift 不会切换到 Voime）
+  OK   系统 addon ABI 与 Fcitx5 匹配
   OK   用户配置 /home/user/.config/fcitx5/conf/voime.conf
   OK   Mode=ptt Hotkey=Super+F2 addon=connected</code></pre>
 
@@ -152,15 +174,18 @@ fcitx:
   <tr><th>检查</th><th>契约</th></tr>
   <tr><td>端点</td><td>检查默认端点 / <code>--endpoint</code> 指定端点；Unix 上检查权限是否 0600。</td></tr>
   <tr><td>daemon</td><td>以 <code>control</code> 角色连接并读取 Snapshot。</td></tr>
-  <tr><td>模型</td><td>固定检查默认模型目录；不读取 <code>--model-dir</code>。</td></tr>
+  <tr><td>Final 后端</td><td>读取 <code>~/.config/voime/config.toml</code>，显示 <code>cpu</code> / <code>firered</code> / <code>qwen3</code> 的选择结果；不修改配置。</td></tr>
+  <tr><td>worker</td><td>分别检查 CPU / FireRed / Qwen 的可用性、worker 可执行文件与模型目录；从 daemon 日志读取 ready / running；未选择的后端不要求运行，不计为 FAIL。</td></tr>
+  <tr><td>模型</td><td>固定检查默认模型根目录的核心模型 manifest 与 SHA-256；已安装的 GPU 模型只校验 manifest，不加载权重。</td></tr>
   <tr><td>音频</td><td>枚举输入设备并显示默认设备名；不打开流。</td></tr>
   <tr><td>日志</td><td>报告 <code>VOIME_LOG</code> 启用状态与日志文件位置；未启用时给出默认目录，不计为 FAIL。</td></tr>
-  <tr><td>平台前端</td><td>当前 Linux 检查 fcitx5 进程、addon 描述、<code>voime.so</code>、旧 inputmethod 条目与用户配置。</td></tr>
+  <tr><td>平台前端</td><td>Linux 检查 fcitx5 进程、系统 addon 描述、<code>voime.so</code> 与系统 ABI、用户配置；不检查旧 inputmethod 条目；不检查 <code>FCITX_ADDON_DIRS</code>。</td></tr>
   <tr><td>输出</td><td>每项 <code>OK</code> / <code>WARN</code> / <code>FAIL</code>；存在 FAIL 时退出码 1。</td></tr>
 </table>
 <ul class="note">
-  <li>doctor 当前是 Linux 实现；Windows 前端落地后按 <a href="../../frontends/windows/USER.html#u4-4">windows USER §4.4</a> 增加平台检查。</li>
+  <li>doctor 当前是 Linux 实现；Windows 版按 <a href="../../frontends/windows/USER.html#u4-4">windows USER §4.4</a> 检查命名管道、麦克风隐私、设备、前端进程、模型与 TSF 注册。</li>
   <li>自定义前缀或 <code>--model-dir</code> 部署需要手工确认；doctor 固定检查默认路径。</li>
+  <li>worker ready / running 只来自日志与进程状态；doctor 不触发 worker 启动或模型加载。</li>
 </ul>
 
 <h2 id="u5">5. UI</h2>

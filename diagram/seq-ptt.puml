@@ -20,6 +20,11 @@ end
 
 User -> Host : 松开 / 再按 Hotkey
 Host -> Voime : 结束事件
+note over Voime
+  Finalizing：停止产生 Partial 并取消未开始的 Preview 推理；
+  保留最后一条 Partial；按 final.backend 执行一次 CPU / GPU Final；
+  GPU 失败回退 CPU SenseVoice。
+end note
 
 alt 目标仍有效
   Voime -> Host : Final

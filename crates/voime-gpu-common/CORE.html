@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — voime-gpu-common</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — voime-gpu-common</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>crates/voime-gpu-common/
+├── Cargo.toml
+└── src/
+    ├── <a href="#c4-1">lib.rs</a>          // 版本、长度与超时常量；公开重导出
+    ├── <a href="#c4-2">frame.rs</a>        // Frame、read_frame / write_frame
+    ├── <a href="#c4-3">message.rs</a>      // Request / Response / ErrorCode / GpuBackend
+    └── <a href="#c4-4">lifecycle.rs</a>    // handshake、结果校验、错误响应辅助</code></pre>
+
+<ul class="note">
+  <li>没有 runtime、模型、manifest、VAD 或前端模块；本 crate 只处理帧与协议消息。</li>
+  <li>文件树只列源码与构建清单；文档与图表不属于源码结构。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>无 runtime 依赖</td><td>只依赖 serde、serde_json 与 anyhow；不引用 ORT、llama.cpp、GGML、tokenizers 或任何模型库。</td></tr>
+  <tr><td>无 OS 进程 / 传输</td><td>不调用 <code>std::process</code>，不打开 socket / pipe，不访问文件系统；调用方提供实现了 <code>Read</code> / <code>Write</code> 的流。</td></tr>
+  <tr><td>同步 IO</td><td>使用阻塞的 <code>std::io</code> 与 <code>std::time::Duration</code>；不引入 tokio / async-std，也不自带线程。</td></tr>
+  <tr><td>单一来源</td><td>Request、Response、ErrorCode 与帧布局只在此 crate 定义；两个 worker 与 daemon 通过依赖使用，不复制消息结构。</td></tr>
+  <tr><td>序列化策略</td><td>serde 外部标签；结构体字段使用 snake_case；枚举线值使用 snake_case；不使用 <code>deny_unknown_fields</code>，便于忽略新增字段。</td></tr>
+  <tr><td>长度检查</td><td>先读长度，检查上限与 4 字节对齐，再分配；不得按未校验的 <code>u32</code> 直接分配缓冲区。</td></tr>
+  <tr><td>错误分层</td><td>IO、长度、UTF-8 与 JSON 错误用 <code>anyhow::Result</code> 返回；协议层失败用 <code>Response::Error</code> 与 <code>ErrorCode</code> 表达。</td></tr>
+  <tr><td>不记录文本</td><td>库不写日志；调用方不得对 <code>Result.text</code> 或 <code>Frame.audio</code> 使用默认 <code>Debug</code> 输出，只记录长度、耗时、错误码与后端名称；加载失败可附加模型路径与 SHA 前缀。</td></tr>
+  <tr><td>stdout 由调用方选择</td><td><code>write_frame</code> 写入调用方给出的 writer；worker 二进制负责把协议帧写到 stdout，把日志写到 stderr。</td></tr>
+  <tr><td>超时由调用方执行</td><td>库只提供 <code>HANDSHAKE_TIMEOUT</code> / <code>TRANSCRIBE_TIMEOUT</code> / <code>SHUTDOWN_TIMEOUT</code> 常量；阻塞读的计时与杀进程属于 daemon。</td></tr>
+  <tr><td>平台无关</td><td>Linux 与 Windows 使用同一帧格式；路径只按 UTF-8 字符串透传，不做平台路径解析。</td></tr>
+  <tr><td>无持久化</td><td>不写音频、文本或协议日志到磁盘。</td></tr>
+</table>
+<ul class="note">
+  <li>协议行为与字段语义见 <a href="USER.html#u2">USER §2</a>；帧布局见 <a href="USER.html#u4-1">USER §4.1</a>。</li>
+  <li>仓库级依赖方向见 <a href="../../CORE.html#c2">根 CORE §2</a>。</li>
+</ul>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td><code>serde</code></td><td>Request / Response / ErrorCode / GpuBackend 的 Serialize / Deserialize 派生。</td></tr>
+  <tr><td><code>serde_json</code></td><td>帧 header 的 JSON 序列化与反序列化。</td></tr>
+  <tr><td><code>anyhow</code></td><td>帧读写、长度校验、UTF-8 与握手错误上下文。</td></tr>
+</table>
+<ul class="note">
+  <li>仅使用标准库的 <code>std::io</code> 与 <code>std::time::Duration</code>；没有异步运行时。</li>
+  <li>不依赖 ORT / llama.cpp / GGML；这些 runtime 只出现在 <code>voime-gpu-firered</code> 与 <code>voime-gpu-qwen3</code>。</li>
+  <li>当前没有 dev-dependency；单测可使用内存 <code>Cursor</code>，不需要临时文件。</li>
+</ul>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<p>
+本 crate 尚无源码可参考；以下签名<strong>待实现，可以根据实际情况调整</strong>。
+已在 <a href="USER.html#u4">USER §4</a> 定义的消息与常量只保留一行声明，内部辅助给出草案签名。
+</p>
+
+<h3 id="c4-1">4.1 lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const GPU_PROTOCOL_VERSION: u32;        // 见 USER §4.1
+pub const MAX_HEADER_BYTES: usize;          // 见 USER §4.1
+pub const MAX_AUDIO_BYTES: usize;           // 见 USER §4.1
+pub const HANDSHAKE_TIMEOUT: Duration;      // 见 USER §4.7
+pub const TRANSCRIBE_TIMEOUT: Duration;     // 见 USER §4.7
+pub const SHUTDOWN_TIMEOUT: Duration;       // 见 USER §4.7
+
+pub use frame::{read_frame, write_frame, Frame};
+pub use lifecycle::{error_response, expect_result, handshake, ReadyInfo};
+pub use message::{ErrorCode, GpuBackend, Request, Response};</code></pre>
+
+<h3 id="c4-2">4.2 frame.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Frame { /* 见 USER §4.1 */ }
+
+impl Frame {
+    pub fn from_request(request: &amp;Request, audio: &amp;[f32]) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn from_response(response: &amp;Response) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn request(&amp;self) -&gt; anyhow::Result&lt;Request&gt;;     // 见 USER §4.1
+    pub fn response(&amp;self) -&gt; anyhow::Result&lt;Response&gt;;   // 见 USER §4.1
+}
+
+pub fn read_frame&lt;R: Read&gt;(reader: &amp;mut R) -&gt; anyhow::Result&lt;Option&lt;Frame&gt;&gt;;  // 见 USER §4.1
+pub fn write_frame&lt;W: Write&gt;(writer: &amp;mut W, frame: &amp;Frame) -&gt; anyhow::Result&lt;()&gt;;  // 见 USER §4.1</code></pre>
+<ul class="note">
+  <li><code>from_request</code> 序列化 Request；只有 Transcribe 附带 PCM，其他请求要求音频为空。 <code>from_response</code> 序列化 Response，音频为空。</li>
+  <li><code>request</code> / <code>response</code> 解析 header，并按 USER §4.1 校验音频长度约束；不检查 PCM 数值范围或时长。</li>
+</ul>
+
+<h3 id="c4-3">4.3 message.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum GpuBackend { Firered, Qwen3 }        // 见 USER §4.4
+pub enum Request { /* 见 USER §4.2 */ }
+pub enum Response { /* 见 USER §4.3 */ }
+pub enum ErrorCode { /* 见 USER §4.4 */ }
+
+impl GpuBackend {
+    pub fn as_str(self) -&gt; &amp;'static str;
+}
+
+impl ErrorCode {
+    pub fn as_str(self) -&gt; &amp;'static str;
+    pub fn from_wire(value: &amp;str) -&gt; Option&lt;Self&gt;;
+}</code></pre>
+<ul class="note">
+  <li><code>as_str</code> 返回线协议字符串，用于日志与 <code>doctor</code>；<code>from_wire</code> 只接受本版本定义的六个错误码。</li>
+  <li>序列化使用派生实现；枚举重命名集中在类型定义处，不在调用点手写字符串。</li>
+</ul>
+
+<h3 id="c4-4">4.4 lifecycle.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct ReadyInfo {
+    pub backend: GpuBackend,
+    pub runtime: String,
+    pub device: String,
+    pub vram_mb: u32,
+    pub punc: bool,
+}
+
+pub fn handshake&lt;R: Read, W: Write&gt;(
+    reader: &amp;mut R,
+    writer: &amp;mut W,
+    hello: &amp;Request,
+) -&gt; anyhow::Result&lt;ReadyInfo&gt;;
+
+pub fn expect_result(response: Response, id: u64) -&gt; anyhow::Result&lt;Response&gt;;
+
+pub fn error_response(id: u64, code: ErrorCode, message: impl Into&lt;String&gt;) -&gt; Response;</code></pre>
+<ul class="note">
+  <li><code>handshake</code> 要求 <code>hello</code> 是 <code>Request::Hello</code>；写入后读取第一个响应，只接受 Ready，校验 <code>protocol</code> 与 <code>backend</code> 后返回 <code>ReadyInfo</code>。不内置超时。</li>
+  <li><code>expect_result</code> 校验响应 <code>id</code> 与终态类型，返回原 Response 供 daemon 映射错误码。</li>
+  <li><code>error_response</code> 构造单行 <code>Error</code>；不携带识别文本，消息长度由实现截断到上限。</li>
+</ul>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 握手</h3>
+<pre><code>voimed::worker::Worker::spawn(model_dir, device)
+├── std::process::Command::spawn()
+└── voime_gpu_common::handshake(stdin, stdout, &amp;Request::Hello { ... })
+    ├── voime_gpu_common::write_frame(writer, &amp;Frame::from_request(hello, &amp;[]))
+    ├── voime_gpu_common::read_frame(reader)
+    ├── 判断 Response::Ready { protocol, backend, .. } → 校验 protocol 与 backend
+    ├── 判断 Response::Error { code, .. } → anyhow::bail!(code)
+    └── ReadyInfo { backend, runtime, device, vram_mb, punc }</code></pre>
+<ul class="note">
+  <li><code>handshake</code> 是阻塞读；daemon 在独立 reader 线程或带超时的等待中执行 <code>HANDSHAKE_TIMEOUT</code>，到期后 kill worker。</li>
+  <li>加载失败时 worker 发送 <code>Error { id: 0, code: load_failed | runtime_missing | device_unavailable }</code> 后退出；daemon 标记后端不可用。</li>
+  <li>握手成功只表示 Ready；模型常驻与后续 Transcribe 由 daemon 的 worker 循环驱动。</li>
+</ul>
+
+<h3 id="c5-2">5.2 读帧与解析</h3>
+<pre><code>worker::run()
+├── voime_gpu_common::read_frame(stdin)
+│   ├── let n = std::io::Read::read(&amp;mut header_len_bytes)
+│   ├── 判断 n == 0 → Ok(None)
+│   ├── std::io::Read::read_exact(&amp;mut header_len_bytes[n..])
+│   ├── u32::from_le_bytes(header_len_bytes)
+│   ├── 判断 header_len == 0 || header_len &gt; MAX_HEADER_BYTES → anyhow::bail!
+│   ├── std::io::Read::read_exact(&amp;mut header)
+│   ├── std::str::from_utf8(&amp;header)
+│   ├── std::io::Read::read_exact(&amp;mut audio_len_bytes)
+│   ├── u32::from_le_bytes(audio_len_bytes)
+│   ├── 判断 audio_len % 4 != 0 || audio_len &gt; MAX_AUDIO_BYTES → anyhow::bail!
+│   ├── std::io::Read::read_exact(&amp;mut audio)
+│   └── audio.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect::&lt;Vec&lt;f32&gt;&gt;()
+└── voime_gpu_common::Frame::request(&amp;frame)
+    ├── serde_json::from_str::&lt;Request&gt;(&amp;frame.header)
+    ├── 判断 非 Transcribe → 校验 frame.audio.is_empty()
+    └── 判断 Transcribe → 校验 !frame.audio.is_empty()</code></pre>
+<ul class="note">
+  <li>帧起点读到干净 EOF 时 <code>read_frame</code> 返回 <code>Ok(None)</code>；帧中间 EOF 是截断帧，返回错误。</li>
+  <li>两个长度都在分配前检查；<code>audio_len</code> 不是 4 的倍数时不进入解码。</li>
+  <li>header 解析失败、未知标签或字段类型不符都关闭连接；不要尝试跳过该帧继续读取。</li>
+</ul>
+
+<h3 id="c5-3">5.3 写响应</h3>
+<pre><code>worker::reply(stdout, response)
+├── voime_gpu_common::Frame::from_response(&amp;response)
+│   └── serde_json::to_string(&amp;response)
+└── voime_gpu_common::write_frame(stdout, &amp;frame)
+    ├── 判断 frame.header.is_empty() || frame.header.len() &gt; MAX_HEADER_BYTES → anyhow::bail!
+    ├── 判断 frame.audio.len() * 4 &gt; MAX_AUDIO_BYTES → anyhow::bail!
+    ├── std::io::Write::write_all(&amp;(frame.header.len() as u32).to_le_bytes())
+    ├── std::io::Write::write_all(frame.header.as_bytes())
+    ├── 判断 frame.audio.is_empty() → std::io::Write::write_all(&amp;0u32.to_le_bytes())
+    ├── 判断 frame.audio 非空 → std::io::Write::write_all(&amp;((frame.audio.len() * 4) as u32).to_le_bytes())
+    ├── 判断 frame.audio 非空 → frame.audio.iter().try_for_each(|s| writer.write_all(&amp;s.to_le_bytes()))
+    └── std::io::Write::flush()</code></pre>
+<ul class="note">
+  <li>Response 的 <code>audio_len</code> 恒为 0；Request 的 Transcribe 才写入 PCM。</li>
+  <li>每帧写完立即 flush，避免 daemon 等待长度前缀时死锁。</li>
+  <li>写入失败（broken pipe）直接返回错误；worker 退出，daemon 按崩溃路径处理。</li>
+</ul>
+
+<h3 id="c5-4">5.4 取消</h3>
+<pre><code>voimed::worker::Worker::cancel(id)
+├── voime_gpu_common::write_frame(stdin, &amp;Frame::from_request(&amp;Request::Cancel { id }, &amp;[]))
+├── 判断 该 id 在途 → 标记 cancelled
+└── voime_gpu_common::read_frame(stdout)
+    └── 判断 终态响应 id == cancelled → 丢弃，不触发 CPU 回退</code></pre>
+
+<pre><code>worker::run()
+├── 判断 Request::Cancel { id } == current.id → inference.abort()
+└── voime_gpu_common::error_response(id, ErrorCode::InferenceFailed, "cancelled")
+    └── voime_gpu_common::write_frame(stdout, &amp;Frame::from_response(&amp;response))</code></pre>
+<ul class="note">
+  <li>Cancel 不产生新的响应类型；worker 用 <code>Error { code: inference_failed, message: "cancelled" }</code> 结束被取消的 <code>id</code>。</li>
+  <li>没有匹配 <code>id</code> 时 worker 忽略 Cancel，不回写任何帧。</li>
+  <li>取消是协作式的；识别预算到期后 daemon 仍会强杀 worker。</li>
+</ul>
+
+<h3 id="c5-5">5.5 关闭</h3>
+<pre><code>voimed::worker::Worker::shutdown(self)
+├── voime_gpu_common::write_frame(stdin, &amp;Frame::from_request(&amp;Request::Shutdown, &amp;[]))
+├── 判断 等待 Bye 超过 SHUTDOWN_TIMEOUT → child.kill()
+├── 循环 voime_gpu_common::read_frame(stdout)  // 丢弃在途终态，直到 Bye
+├── 判断 Response::Bye → child.wait()
+└── 判断 退出码非零 → 记录错误并回收</code></pre>
+
+<pre><code>worker::run()
+├── 判断 Request::Shutdown → runtime.release()
+├── voime_gpu_common::write_frame(stdout, &amp;Frame::from_response(&amp;Response::Bye))
+└── std::process::exit(0)</code></pre>
+<ul class="note">
+  <li>Shutdown 可以中断在途 Transcribe；worker 不再发送该 <code>id</code> 的 Result / Error，直接释放资源并回 Bye。</li>
+  <li>关闭预算 5 s；超时由 daemon 强杀，确保无孤儿进程。</li>
+  <li>daemon 未发送 Shutdown 就关闭管道时，worker 以非零退出；该路径不属于正常关闭。</li>
+</ul>
+
+</body>
+</html>

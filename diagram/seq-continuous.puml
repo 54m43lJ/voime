@@ -15,6 +15,11 @@ loop VAD 持续监听
   Voime -> Host : Partial
   Host -> Host : 临时文本
   Voime -> Voime : 内部处理
+  note over Voime
+    VAD 终点 → Finalizing：停止 Preview 计算；
+    按 final.backend 执行 CPU / GPU Final；
+    GPU 失败回退 CPU。
+  end note
   alt 目标仍有效
     Voime -> Host : Final
     Host -> App : 提交文本

@@ -2,20 +2,37 @@
 skinparam defaultFontName "Noto Sans CJK SC"
 skinparam shadowing false
 skinparam componentStyle rectangle
+skinparam packageStyle rectangle
 left to right direction
 
 actor "用户" as User
 component "平台宿主\nFcitx5 / Windows 输入栈" as Host
-component "Voime\n平台前端 + ASR daemon" as Voime
 component "目标应用" as App
 component "麦克风" as Mic
-component "本地模型包\nFireRedVAD / FireRedASR2-CTC / FireRedPunc" as Models
+
+package "核心安装（必需，CPU）" {
+  component "平台前端\nFcitx5 addon / Windows 前端" as Frontend
+  component "voimed\n音频 / 会话 / Final 调度" as Daemon
+  component "voime-core\nFireRedVAD + SenseVoice" as Core
+  database "核心模型\nfirered-vad / sensevoice-small" as CoreModels
+}
+
+package "GPU 推理模块（可选，Final-only）" {
+  component "voime-gpu-firered\nORT GPU + FP32 ONNX" as Firered
+  component "voime-gpu-qwen3\nllama.cpp + BF16 GGUF" as Qwen
+  database "GPU 模型\nfireredasr2-aed / fireredpunc\nqwen3-asr-1.7b + mmproj" as GpuModels
+}
 
 User --> Host : 键盘 / 热键
-Host --> Voime : 按键 / 焦点
-Voime --> Host : Partial / Final
-Host --> App : 普通按键 / 最终文本
-Host --> User : 临时窗口 / 状态
-Voime --> Mic : PCM
-Voime --> Models : 只读加载
+Host --> Frontend : 按键 / 焦点
+Frontend --> Host : 临时文本 / 最终文本
+Host --> App : 普通按键 / 最终提交
+Frontend <--> Daemon : 本机 IPC
+Daemon --> Core : PCM / VAD / Preview / CPU Final
+Core --> CoreModels : 只读
+Daemon --> Mic : PCM
+Daemon --> Firered : Final 语音段
+Daemon --> Qwen : Final 语音段
+Firered --> GpuModels : 只读
+Qwen --> GpuModels : 只读
 @enduml

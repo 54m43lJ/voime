@@ -1,0 +1,29 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed" as Daemon
+participant "voime-gpu-firered" as Worker
+
+note over Daemon, Worker
+  worker 已 Ready；同一时刻只处理一个 Final
+end note
+
+Daemon -> Worker : Transcribe(PCM)
+Worker -> Worker : 内部处理
+
+alt 正常完成
+  Worker --> Daemon : Result(text)
+else 取消
+  Daemon -> Worker : Cancel(id)
+  Worker --> Daemon : Error（取消）
+else 超时
+  Daemon -> Worker : 超时终止
+end
+
+note over Daemon, Worker
+  超时由 daemon 计时；取消与超时只改变边界消息，
+  不展开 AED / FireRedPunc 阶段
+end note
+@enduml

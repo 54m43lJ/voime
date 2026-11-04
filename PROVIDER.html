@@ -17,7 +17,7 @@
 </p>
 
 <p>
-根 PROVIDER 定义产品与外部世界之间的下边界：平台宿主、音频设备、推理运行时与模型包。
+根 PROVIDER 定义产品与外部世界之间的下边界：平台宿主、音频设备、推理运行时与模型目录。
 具体消费的 API、消息和张量契约由各组件的 <code>PROVIDER</code> 定义；本文只做边界映射与全局约束。
 </p>
 
@@ -28,7 +28,7 @@
   <tr><th>术语</th><th>定义</th></tr>
   <tr>
     <td>外部 provider</td>
-    <td>Voime 不能拥有、只能消费的下层系统：桌面输入框架 / OS 输入栈、音频设备与驱动、ONNX Runtime、模型文件、终端。</td>
+    <td>Voime 不能拥有、只能消费的下层系统：桌面输入框架 / OS 输入栈、音频设备与驱动、ONNX Runtime、llama.cpp、模型文件、终端。</td>
   </tr>
   <tr>
     <td>平台宿主</td>
@@ -39,12 +39,20 @@
     <td>从麦克风到 cpal 的整条采集链路；Voime 只消费设备枚举、默认配置与 PCM 回调。</td>
   </tr>
   <tr>
-    <td>推理运行时</td>
-    <td>执行 ONNX 模型的进程内库；本项目只使用 CPU Execution Provider。</td>
+    <td>CPU ORT</td>
+    <td>核心安装内的 ONNX Runtime CPU Execution Provider；只执行 FireRedVAD 与 SenseVoice。</td>
   </tr>
   <tr>
-    <td>模型包</td>
-    <td>FireRedVAD、FireRedASR2-CTC、FireRedPunc 的 ONNX、词表、标签与清单；运行期只读。</td>
+    <td>FireRed ORT GPU</td>
+    <td>FireRed worker 使用的 ONNX Runtime GPU Execution Provider：Linux NVIDIA 为 CUDA，Linux AMD 为 MIGraphX，Windows 为 CUDA / DirectML。</td>
+  </tr>
+  <tr>
+    <td>Qwen llama.cpp / Vulkan</td>
+    <td>Qwen worker 使用的 llama.cpp / GGML runtime；AMD Linux 固定 Vulkan，不安装 ROCm / HIP。</td>
+  </tr>
+  <tr>
+    <td>模型目录</td>
+    <td><code>~/.local/share/voime/models/&lt;model&gt;/</code> 的一模型一目录；每个目录自包含 <code>manifest.json</code>、权重与辅助文件，运行期只读。</td>
   </tr>
   <tr>
     <td>本地端点</td>
@@ -62,12 +70,17 @@
 <table>
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>本地性</td><td>运行期所有 provider 调用在本机完成；模型、音频与 IPC 不经过网络。</td></tr>
-  <tr><td>模型不可变</td><td>模型包运行期只读；启动时校验 SHA-256 与张量签名，失败不进入运行态。</td></tr>
-  <tr><td>CPU 推理</td><td>只启用 CPU Execution Provider；不注册 GPU / NPU 后端。</td></tr>
-  <tr><td>OS API 收敛</td><td>OS 输入、传输与权限 API 只出现在 <code>voime-transport</code> 与平台前端；核心、协议与 daemon 业务代码不直接调用。</td></tr>
+  <tr><td>核心只 CPU ORT</td><td>核心安装只加载 CPU Execution Provider；核心二进制不链接、不探测 CUDA / MIGraphX / DirectML / Vulkan。</td></tr>
+  <tr><td>GPU runtime 隔离</td><td>FireRed 的 ORT GPU 与 Qwen 的 llama.cpp 各自放在独立 worker 的 runtime 目录；不共享打包库，不写全局 <code>LD_LIBRARY_PATH</code>。</td></tr>
+  <tr><td>Qwen AMD 只 Vulkan</td><td>AMD Linux 的 Qwen worker 只接受 Vulkan；不构建、不安装、不探测 ROCm / HIP。</td></tr>
+  <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest、SHA-256 与文件大小，失败不进入运行态。</td></tr>
+  <tr><td>模型布局</td><td>一模型一目录；目录名是稳定标识，版本写在 <code>manifest.json</code>，不把版本号拼进目录名。</td></tr>
+  <tr><td>运行期不联网</td><td>不下载、不转换、不量化、不改写模型；这些只发生在安装脚本与发布流程。</td></tr>
+  <tr><td>下载失败</td><td>安装脚本非零退出并清理临时目录；不写 manifest、不做 rename，不留下半成品模型目录。</td></tr>
+  <tr><td>OS API 收敛</td><td>OS 输入、传输与权限 API 只出现在 <code>voime-transport</code> 与平台前端；核心、协议、daemon 与 worker 业务代码不直接调用。</td></tr>
   <tr><td>键盘最小化</td><td>Fcitx 持有键盘；Windows 前端只监听配置热键，不记录、不转发普通按键。</td></tr>
-  <tr><td>音频不落盘</td><td>设备 PCM 只在内存中重采样、分段与推理；不写文件、不做网络上传。</td></tr>
-  <tr><td>错误映射</td><td>Provider 错误在边界处转换为项目错误类型并附上下文；启动期失败写日志并阻止进入运行态，运行期单段失败丢弃该段。</td></tr>
+  <tr><td>音频不落盘</td><td>设备 PCM 只在内存中重采样、分段、预览与推理；不写文件、不做网络上传。</td></tr>
+  <tr><td>错误映射</td><td>Provider 错误在边界处转换为项目错误类型并附上下文；核心模型失败阻止核心进入运行态，GPU 模型 / runtime 失败只标记对应后端不可用。</td></tr>
   <tr><td>版本契约</td><td>Provider 版本要求写在各组件 PROVIDER；实现只消费已声明的子集，不依赖未记录行为。</td></tr>
 </table>
 
@@ -78,15 +91,17 @@
 <div class="diagram"><img src="diagram/provider-map.svg" alt="Voime 与外部 provider 的组件图"></div>
 <ul class="note">
   <li>Voime 作为单一参与者；内部组件不展开。</li>
-  <li>平台宿主、音频栈、推理运行时与模型包是外部 provider；本地端点是 daemon 与客户端之间的传输 provider。</li>
-  <li>每条边的消费 API 由对应组件 PROVIDER 定义。</li>
+  <li>平台宿主、音频栈、CPU ORT、FireRed ORT GPU、Qwen llama.cpp 与模型目录是外部 provider；本地端点是 daemon 与客户端之间的传输 provider。</li>
+  <li>每条边的消费 API 由对应组件 PROVIDER 定义；GPU runtime 只由对应 worker 消费。</li>
 </ul>
 
 <h3 id="p3-2">3.2 模型加载与推理边界</h3>
-<div class="diagram"><img src="diagram/provider-inference.svg" alt="Voime 消费模型包与推理运行时的时序图"></div>
+<div class="diagram"><img src="diagram/provider-inference.svg" alt="Voime 分别消费 CPU ORT、FireRed ORT GPU 与 Qwen llama.cpp 的时序图"></div>
 <ul class="note">
-  <li>启动时读取模型包并校验；每个语音段只重置解码状态，不重新加载权重。</li>
-  <li>具体张量名、形状、CMVN 与 fbank 参数见 <a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a>。</li>
+  <li>核心启动时读取并校验 <code>firered-vad</code> / <code>sensevoice-small</code>，创建 CPU 会话；每个语音段只重置解码状态，不重新加载权重。</li>
+  <li>FireRed worker 启动时校验 <code>fireredasr2-aed</code> / <code>fireredpunc</code>，创建 ORT GPU 会话。</li>
+  <li>Qwen worker 启动时校验 <code>qwen3-asr-1.7b</code>，加载 BF16 GGUF 主模型与 BF16 mmproj；能力自检失败只使该后端不可用。</li>
+  <li>具体张量名、形状、CMVN 与 fbank 参数见 <a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a>、<a href="crates/voime-gpu-firered/PROVIDER.html#p4-1">voime-gpu-firered PROVIDER §4.1</a> 与 <a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-1">voime-gpu-qwen3 PROVIDER §4.1</a>。</li>
 </ul>
 
 <h2 id="p4">4. INTERFACES</h2>
@@ -96,8 +111,12 @@
 <table>
   <tr><th>Provider</th><th>消费方</th><th>契约所有者</th><th>边界摘要</th></tr>
   <tr><td>cpal / 系统音频</td><td><code>voime-core</code></td><td><a href="crates/voime-core/PROVIDER.html#p4-1">voime-core PROVIDER §4.1</a></td><td>设备枚举、默认输入配置、PCM 回调、流错误。</td></tr>
-  <tr><td>ONNX Runtime</td><td><code>voime-core</code></td><td><a href="crates/voime-core/PROVIDER.html#p4-3">voime-core PROVIDER §4.3</a></td><td>CPU 会话、张量输入输出、metadata。</td></tr>
-  <tr><td>模型包</td><td><code>voime-core</code></td><td><a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a></td><td>manifest、SHA-256、VAD / CTC / Punc 文件与张量。</td></tr>
+  <tr><td>ONNX Runtime CPU</td><td><code>voime-core</code></td><td><a href="crates/voime-core/PROVIDER.html#p4-3">voime-core PROVIDER §4.3</a></td><td>CPU 会话、张量输入输出、metadata。</td></tr>
+  <tr><td>核心模型目录</td><td><code>voime-core</code></td><td><a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a></td><td><code>firered-vad</code> / <code>sensevoice-small</code> 的 manifest、SHA-256 与张量。</td></tr>
+  <tr><td>ONNX Runtime GPU EP</td><td><code>voime-gpu-firered</code></td><td><a href="crates/voime-gpu-firered/PROVIDER.html#p4-3">voime-gpu-firered PROVIDER §4.3</a></td><td>CUDA / MIGraphX / DirectML 会话、<code>api-29</code>、<code>load-dynamic</code>。</td></tr>
+  <tr><td>FireRed 模型目录</td><td><code>voime-gpu-firered</code></td><td><a href="crates/voime-gpu-firered/PROVIDER.html#p4-1">voime-gpu-firered PROVIDER §4.1</a></td><td><code>fireredasr2-aed</code> / <code>fireredpunc</code> 的 ONNX、词表、标签与 manifest。</td></tr>
+  <tr><td>llama.cpp / GGML</td><td><code>voime-gpu-qwen3</code></td><td><a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-3">voime-gpu-qwen3 PROVIDER §4.3</a></td><td>Vulkan / CUDA、BF16、mtmd 音频输入。</td></tr>
+  <tr><td>Qwen 模型目录</td><td><code>voime-gpu-qwen3</code></td><td><a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-1">voime-gpu-qwen3 PROVIDER §4.1</a></td><td>BF16 GGUF 主模型、BF16 mmproj、manifest。</td></tr>
   <tr><td>Unix socket / named pipe</td><td><code>voimed</code>、<code>voime</code>、前端</td><td><a href="crates/voime-transport/PROVIDER.html">voime-transport PROVIDER</a></td><td>端点、权限、accept / connect、关闭唤醒。</td></tr>
   <tr><td>Fcitx5</td><td><code>fcitx-addon</code></td><td><a href="frontends/fcitx/PROVIDER.html">fcitx-addon PROVIDER</a></td><td>按键事件、InputContext、InputPanel、commitString。</td></tr>
   <tr><td>终端 / crossterm</td><td><code>voime</code></td><td><a href="crates/voime/PROVIDER.html">voime PROVIDER</a></td><td>TTY、raw mode、备用屏幕、尺寸与事件。</td></tr>
@@ -108,19 +127,27 @@
 <table>
   <tr><th>数据</th><th>来源</th><th>项目内对象</th><th>所有者</th></tr>
   <tr><td>设备 PCM</td><td>cpal 回调</td><td><code>AudioChunk</code></td><td><a href="crates/voime-core/USER.html#u4-2">voime-core USER §4.2</a></td></tr>
-  <tr><td>模型文件</td><td>模型包目录</td><td><code>ModelManifest</code> / <code>Artifact</code></td><td><a href="crates/voime-core/USER.html#u4-3">voime-core USER §4.3</a></td></tr>
+  <tr><td>核心模型文件</td><td><code>firered-vad</code> / <code>sensevoice-small</code></td><td><code>ModelManifest</code> / <code>FileSpec</code></td><td><a href="crates/voime-core/USER.html#u4-3">voime-core USER §4.3</a></td></tr>
+  <tr><td>FireRed 模型文件</td><td><code>fireredasr2-aed</code> / <code>fireredpunc</code></td><td>ONNX 张量 / 词表 / 标签</td><td><a href="crates/voime-gpu-firered/PROVIDER.html#p4-1">voime-gpu-firered PROVIDER §4.1</a></td></tr>
+  <tr><td>Qwen 模型文件</td><td><code>qwen3-asr-1.7b</code></td><td>GGUF 主模型 / mmproj</td><td><a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-1">voime-gpu-qwen3 PROVIDER §4.1</a></td></tr>
+  <tr><td>Final 音频段</td><td>daemon</td><td><code>Frame { Transcribe, f32le PCM }</code></td><td><a href="crates/voime-gpu-common/USER.html#u4-1">voime-gpu-common USER §4.1</a></td></tr>
+  <tr><td>Final 文本</td><td>CPU Final / GPU worker</td><td><code>Final { segment_id, text }</code></td><td><a href="crates/voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a></td></tr>
   <tr><td>按键 / 焦点</td><td>Fcitx / Win32</td><td>前端私有目标类型</td><td><a href="frontends/fcitx/USER.html#u4-4">fcitx-addon USER §4.4</a> · <a href="frontends/windows/USER.html#u4-2">windows USER §4.2</a></td></tr>
-  <tr><td>最终文本</td><td>daemon IPC</td><td><code>Final { segment_id, text }</code></td><td><a href="crates/voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a></td></tr>
   <tr><td>本机端点</td><td>传输 provider</td><td><code>Endpoint</code> / <code>Stream</code></td><td><a href="crates/voime-transport/USER.html#u4">voime-transport USER §4</a></td></tr>
 </table>
 
 <h3 id="p4-3">4.3 Provider 失败策略</h3>
 <table>
   <tr><th>失败</th><th>阶段</th><th>行为</th></tr>
-  <tr><td>没有输入设备 / 设备名不存在</td><td>启动</td><td>daemon 启动失败，stderr + 非零退出；doctor 显示原因。</td></tr>
+  <tr><td>没有输入设备 / 设备名不存在</td><td>核心启动</td><td>daemon 启动失败，stderr + 非零退出；doctor 显示原因。</td></tr>
   <tr><td>音频流错误</td><td>运行</td><td>丢弃当前段；连续失败达到阈值后 daemon 退出。</td></tr>
-  <tr><td>模型缺失 / SHA 不匹配 / 张量不符</td><td>启动</td><td>daemon 启动失败；不进入 TUI / runtime。</td></tr>
-  <tr><td>推理失败</td><td>运行</td><td>丢弃当前段并继续监听；错误进入日志 / IPC Error。</td></tr>
+  <tr><td>核心模型缺失 / SHA 不匹配 / schema 不符</td><td>核心启动</td><td>daemon 启动失败；不进入 TUI / runtime。</td></tr>
+  <tr><td>核心模型推理失败</td><td>运行</td><td>丢弃当前段并继续监听；错误进入日志 / IPC Error。</td></tr>
+  <tr><td>GPU 模型 / runtime 缺失</td><td>启动</td><td>对应后端标记为不可用；daemon 以 CPU Final 启动，<code>doctor</code> 报原因。</td></tr>
+  <tr><td>GPU 设备不可用 / BF16 不支持</td><td>启动</td><td>不启动 worker；对应后端不可用；Final 回退 CPU SenseVoice。</td></tr>
+  <tr><td>GPU 推理失败 / 超时 / 崩溃</td><td>运行</td><td>当前段回退 CPU SenseVoice；按崩溃路径重启 worker，连续失败标记不可用。</td></tr>
+  <tr><td>worker 协议版本不匹配</td><td>启动</td><td>拒绝 worker；后端不可用；提示重装 GPU 模块。</td></tr>
+  <tr><td>模型下载失败</td><td>安装</td><td>安装脚本非零退出并清理临时目录；不留下半成品目录。</td></tr>
   <tr><td>端点被占用 / 无法绑定</td><td>启动</td><td>已有 daemon 时幂等退出；其他绑定错误启动失败。</td></tr>
   <tr><td>平台宿主不可用</td><td>运行</td><td>前端放行热键、清空临时文本；不影响普通输入。</td></tr>
   <tr><td>TSF 注册 / 编辑会话失败</td><td>运行</td><td>不提交；保留 daemon 历史；前端记录平台错误。</td></tr>
@@ -128,6 +155,7 @@
 <ul class="note">
   <li>各 provider 的具体错误码与建议动作见对应组件 PROVIDER。</li>
   <li>任何失败都不得把文本注入到非目标窗口。</li>
+  <li>GPU 失败只影响 Final 路径；VAD 与 Preview 始终由核心提供。</li>
 </ul>
 
 </body>

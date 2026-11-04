@@ -28,14 +28,15 @@
     ├── <a href="#c4-1">lib.rs</a>
     ├── <a href="#c4-2">main.rs</a>
     ├── <a href="#c4-3">cli.rs</a>
-    ├── <a href="#c4-4">daemon.rs</a>
-    ├── <a href="#c4-5">state.rs</a>
-    └── <a href="#c4-6">ipc_server.rs</a></code></pre>
+    ├── <a href="#c4-4">config.rs</a>
+    ├── <a href="#c4-5">backend.rs</a>
+    ├── <a href="#c4-6">worker.rs</a>
+    ├── <a href="#c4-7">daemon.rs</a>
+    ├── <a href="#c4-8">state.rs</a>
+    └── <a href="#c4-9">ipc_server.rs</a></code></pre>
 <ul class="note">
-  <li><code>lib.rs</code> 导出 <code>daemon</code> / <code>ipc_server</code> / <code>state</code>，供根集成测试使用；<code>main.rs</code> 只做启动编排。</li>
-</ul>
-
-<ul class="note">
+  <li><code>lib.rs</code> 导出 <code>backend</code> / <code>config</code> / <code>daemon</code> / <code>ipc_server</code> / <code>state</code> / <code>worker</code>，供根集成测试使用；<code>main.rs</code> 只做启动编排。</li>
+  <li><code>worker.rs</code> 只管理进程与协议；FireRed / Qwen 的模型与 runtime 细节在各自 crate。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -50,13 +51,19 @@
   <tr><td>状态机</td><td><code>State.phase</code> 只由 daemon 主线程修改；pipeline 事件与客户端命令都在同一线程串行处理。</td></tr>
   <tr><td>段 ID</td><td><code>next_segment</code> 单调递增，wrapping 后跳过 0；当前段在 Final / 丢弃后清空。</td></tr>
   <tr><td>模式生效</td><td>Idle 时立即 <code>pipeline.set_mode</code>；非 Idle 时暂存到 <code>pending_mode</code>，段结束后应用。</td></tr>
+  <tr><td>Final 后端</td><td><code>Config::load</code> 在启动时读取一次 <code>[final].backend</code>；运行期不重新读取，不提供 IPC 热切换。</td></tr>
+  <tr><td>worker 生命周期</td><td>只启动选中的 worker；默认 <code>cpu</code> 时 <code>worker = None</code>。spawn → Hello / Ready → 常驻 → Transcribe → Shutdown。</td></tr>
+  <tr><td>Finalizing 门禁</td><td>Stop / VAD 终点后调用 <code>pipeline.finish_segment()</code> 与 <code>pipeline.cancel_preview()</code>；在 <code>SegmentReady</code> 之前不再接受 Start。</td></tr>
+  <tr><td>Final 调度</td><td><code>SegmentReady</code> 后由 <code>Daemon::finalize</code> 选择 CPU / GPU；GPU 失败当前段回退 CPU；一次只执行一个 Final。</td></tr>
   <tr><td>前端断开</td><td>前端状态置 disconnected；Continuous 退 PTT；结束当前段；广播 Snapshot。</td></tr>
-  <tr><td>退出顺序</td><td>广播 Bye → IPC shutdown → pipeline shutdown → audio stop → 删除端点。</td></tr>
+  <tr><td>退出顺序</td><td>worker shutdown → 广播 Bye → IPC shutdown → pipeline shutdown → audio stop → 删除端点。</td></tr>
   <tr><td>传输边界</td><td><code>ipc_server.rs</code> 只使用 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Listener</code> / <code>Stream</code>；daemon 不 import <code>std::os::unix</code> 或 Win32。</td></tr>
-  <tr><td>运行日志</td><td>状态机、IPC 生命周期与段事件经 <code>voime_log::vlog!</code> 记录；机制见 <a href="../voime-log/CORE.html">voime-log CORE</a>，隐私约定见 <a href="../voime-log/USER.html#u2">voime-log USER §2</a>。</td></tr>
+  <tr><td>GPU 边界</td><td>daemon 只通过 <a href="../voime-gpu-common/CORE.html">voime-gpu-common</a> 的帧类型与 io 函数与 worker 通信；不链接 ORT / llama.cpp，不读取 GPU runtime 细节。</td></tr>
+  <tr><td>运行日志</td><td>状态机、IPC 生命周期、段事件与 worker 状态经 <code>voime_log::vlog!</code> 记录；机制见 <a href="../voime-log/CORE.html">voime-log CORE</a>，隐私约定见 <a href="../voime-log/USER.html#u2">voime-log USER §2</a>。</td></tr>
 </table>
 <ul class="note">
   <li>仓库级进程 / 线程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>
+  <li><code>worker.rs</code> 中无源码参考的签名标注“待实现，可以根据实际情况调整”。</li>
 </ul>
 
 <h2 id="c3">3. SBOM</h2>
@@ -64,33 +71,40 @@
 
 <table>
   <tr><th>依赖</th><th>在本组件中的作用</th></tr>
-  <tr><td><code>voime-core</code></td><td>配置、音频、模型、pipeline。</td></tr>
+  <tr><td><code>voime-core</code></td><td>配置、音频、模型、pipeline、CPU Final。</td></tr>
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
   <tr><td><code>voime-log</code></td><td>运行日志（<code>VOIME_LOG</code> 启用）。</td></tr>
   <tr><td><code>voime-transport</code></td><td>本机端点与字节流。</td></tr>
+  <tr><td><code>voime-gpu-common</code></td><td>GPU worker 帧、请求 / 响应与错误码。</td></tr>
   <tr><td><code>clap</code></td><td>命令行参数。</td></tr>
   <tr><td><code>crossbeam-channel</code></td><td>IPC 事件、pipeline 事件与客户端发送队列。</td></tr>
-  <tr><td><code>serde_json</code></td><td>当前 reader 线程直接反序列化 ClientMessage。</td></tr>
+  <tr><td><code>serde</code> / <code>serde_json</code> / <code>toml</code></td><td>配置文件与 IPC 反序列化。</td></tr>
   <tr><td><code>anyhow</code></td><td>启动 / 运行期错误上下文。</td></tr>
   <tr><td><code>tempfile</code>（dev）</td><td>临时 socket 测试。</td></tr>
 </table>
+<ul class="note">
+  <li>不依赖 <code>voime-gpu-firered</code> / <code>voime-gpu-qwen3</code>，也不链接 ORT GPU / llama.cpp。</li>
+</ul>
 
 <h2 id="c4">4. Internal types &amp; method signatures</h2>
 <p><a href="#top">↑</a></p>
 
 <h3 id="c4-1">4.1 lib.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub mod cli;
+<pre><code>pub mod backend;
+pub mod cli;
+pub mod config;
 pub mod daemon;
 pub mod ipc_server;
-pub mod state;</code></pre>
+pub mod state;
+pub mod worker;</code></pre>
 
 <h3 id="c4-2">4.2 main.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>fn main() -&gt; std::process::ExitCode;
 fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;
 fn stop_audio(audio: CaptureHandle);</code></pre>
 <ul class="note">
-  <li><code>main</code> 先检查端点是否已有 daemon，再调用 <code>run</code>；<code>run</code> 按配置 → 会话工厂 → pipeline → 音频 → IPC → daemon 顺序初始化。</li>
-  <li>初始化失败按逆序释放已创建资源；音频打开失败时先关闭 pipeline。</li>
+  <li><code>main</code> 先检查端点是否已有 daemon，再调用 <code>run</code>；<code>run</code> 按配置 → 核心 → worker → pipeline → 音频 → IPC → daemon 顺序初始化。</li>
+  <li>初始化失败按逆序释放已创建资源；音频打开失败时先关闭 pipeline 与 worker。</li>
 </ul>
 
 <h3 id="c4-3">4.3 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -104,14 +118,107 @@ fn stop_audio(audio: CaptureHandle);</code></pre>
 
 pub fn parse() -&gt; Cli;
 fn parse_positive_usize(value: &amp;str) -&gt; Result&lt;usize, String&gt;;</code></pre>
+<ul class="note">
+  <li>没有 <code>--backend</code>；Final 后端只从配置文件读取。</li>
+</ul>
 
-<h3 id="c4-4">4.4 daemon.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-4">4.4 config.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct FinalConfig {
+    pub backend: BackendId,
+}
+
+pub struct Config {
+    pub final_config: FinalConfig,
+    pub model_dir: PathBuf,
+    pub input_device: Option&lt;String&gt;,
+    pub threads: usize,
+    pub endpoint: Option&lt;String&gt;,
+}
+
+impl FinalConfig {
+    pub fn load() -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn path() -&gt; PathBuf;
+}
+impl Default for FinalConfig { /* backend: Cpu */ }
+
+pub fn load() -&gt; anyhow::Result&lt;Config&gt;;
+fn read_toml(path: &amp;Path) -&gt; anyhow::Result&lt;FinalConfig&gt;;</code></pre>
+<ul class="note">
+  <li>配置路径为 <code>~/.config/voime/config.toml</code>（Windows 使用 <code>%APPDATA%\voime\config.toml</code>）；缺失时使用默认 <code>cpu</code>，非法值返回错误。</li>
+  <li>本模块只读配置；写入由 <code>voime ctl backend</code> 完成。</li>
+</ul>
+
+<h3 id="c4-5">4.5 backend.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum BackendId { Cpu, Firered, Qwen3 }       // 见 USER §4.4
+impl BackendId {
+    pub fn parse(value: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn as_str(self) -&gt; &amp;'static str;
+    pub fn worker_binary(self) -&gt; Option&lt;&amp;'static str&gt;;
+    pub fn model_dirs(self) -&gt; &amp;'static [&amp;'static str];
+}</code></pre>
+<ul class="note">
+  <li><code>worker_binary</code> 返回 <code>voime-gpu-firered</code> / <code>voime-gpu-qwen3</code> 的可执行文件名；<code>cpu</code> 返回 <code>None</code>。</li>
+  <li><code>model_dirs</code> 只用于启动前存在性检查；模型 manifest 由 worker 自己校验。</li>
+</ul>
+
+<h3 id="c4-6">4.6 worker.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const LOAD_TIMEOUT: Duration;                // 推荐值 120 s
+pub const TRANSCRIBE_TIMEOUT: Duration;           // 推荐值 60 s
+pub const SHUTDOWN_TIMEOUT: Duration;             // 推荐值 5 s
+pub const MAX_RESTARTS: u32;                      // 推荐值 3
+
+pub enum WorkerStatus { Starting, Ready, Running, Unavailable }
+
+pub struct ReadyInfo {
+    pub runtime: String,
+    pub device: String,
+    pub vram_mb: u32,
+    pub punc: bool,
+}
+
+pub struct Worker {
+    id: BackendId,
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader&lt;ChildStdout&gt;,
+    status: WorkerStatus,
+    next_id: u64,
+}
+
+impl Worker {
+    pub fn spawn(id: BackendId, model_root: &amp;Path,
+                 log_level: &amp;str) -&gt; anyhow::Result&lt;Self&gt;; // 待实现，可以根据实际情况调整
+    pub fn handshake(&amp;mut self, device: Option&lt;&amp;str&gt;)
+        -&gt; anyhow::Result&lt;ReadyInfo&gt;;                       // 待实现，可以根据实际情况调整
+    pub fn transcribe(&amp;mut self, samples: &amp;[f32])
+        -&gt; anyhow::Result&lt;String&gt;;                            // 待实现，可以根据实际情况调整
+    pub fn restart(&mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn shutdown(mut self);
+    pub fn status(&amp;self) -&gt; WorkerStatus;
+}
+
+fn write_request(worker: &amp;mut Worker, request: &amp;Request)
+    -&gt; anyhow::Result&lt;()&gt;;
+fn read_response(worker: &amp;mut Worker, timeout: Duration)
+    -&gt; anyhow::Result&lt;Response&gt;;
+fn map_error(code: ErrorCode, message: &amp;str) -&gt; anyhow::Error;</code></pre>
+<ul class="note">
+  <li><code>spawn</code> 使用 <code>voime-gpu-common</code> 的帧格式；worker 的 stdout 只读协议，stderr 转发到 <code>voime-log</code>。</li>
+  <li>加载超时、握手失败、进程退出都转为“后端不可用”；当前段由 daemon 回退 CPU。</li>
+  <li>同一 worker 一次只处理一个 Transcribe；daemon 在上一段完成前不发送下一段。</li>
+</ul>
+
+<h3 id="c4-7">4.7 daemon.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Daemon {
     _config: Config,
     state: State,
     pipeline: Pipeline,
+    finalizer: Final,
     audio: CaptureHandle,
     ipc: IpcServer,
+    backend: BackendId,
+    worker: Option&lt;Worker&gt;,
+    worker_status: WorkerStatus,
     current_segment: Option&lt;u64&gt;,
     next_segment: u64,
     pending_mode: Option&lt;Mode&gt;,
@@ -122,8 +229,9 @@ fn parse_positive_usize(value: &amp;str) -&gt; Result&lt;usize, String&gt;;</cod
 }
 
 impl Daemon {
-    pub fn new(config: Config, pipeline: Pipeline,
-               audio: CaptureHandle, ipc: IpcServer) -&gt; Self;
+    pub fn new(config: Config, pipeline: Pipeline, finalizer: Final,
+               audio: CaptureHandle, ipc: IpcServer,
+               worker: Option&lt;Worker&gt;) -&gt; Self;
     pub fn run(mut self) -&gt; anyhow::Result&lt;()&gt;;
     fn on_server_event(&amp;mut self, event: ServerEvent);
     fn on_client(&amp;mut self, client_id: u64, message: ClientMessage);
@@ -131,6 +239,11 @@ impl Daemon {
                      source: TriggerSource);
     fn request_stop(&amp;mut self, client_id: u64, segment_id: u64);
     fn on_pipeline(&amp;mut self, event: PipelineEvent);
+    fn finalize(&amp;mut self, segment: Segment) -&gt; anyhow::Result&lt;()&gt;;
+    fn transcribe_cpu(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;String&gt;;
+    fn transcribe_gpu(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;String&gt;;
+    fn fallback_cpu(&amp;mut self, samples: &amp;[f32], error: &amp;anyhow::Error)
+        -&gt; anyhow::Result&lt;String&gt;;
     fn allocate_segment(&amp;mut self) -&gt; u64;
     fn broadcast_state(&amp;self);
     fn broadcast_snapshot(&amp;self);
@@ -145,8 +258,12 @@ impl Daemon {
 
 fn listens(mode: Mode, session_active: bool) -&gt; bool;
 fn continuation_source(mode: Option&lt;Mode&gt;) -&gt; TriggerSource;</code></pre>
+<ul class="note">
+  <li><code>finalize</code> 只由 <code>SegmentReady</code> 触发；<code>backend</code> 在启动时固定。</li>
+  <li><code>transcribe_gpu</code> 失败时调用 <code>fallback_cpu</code>；成功后记录错误码并继续尝试所选后端。</li>
+</ul>
 
-<h3 id="c4-5">4.5 state.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-8">4.8 state.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct State {
     pub mode: Option&lt;Mode&gt;,
     pub hotkey: Option&lt;String&gt;,
@@ -164,8 +281,11 @@ impl State {
     pub fn status(&amp;self, recording: bool, finalizing: bool,
                   segment_id: Option&lt;u64&gt;) -&gt; Status;
 }</code></pre>
+<ul class="note">
+  <li>State 不保存 Final 后端；backend 由 daemon 的配置字段持有，避免扩展 IPC 形状。</li>
+</ul>
 
-<h3 id="c4-6">4.6 ipc_server.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-9">4.9 ipc_server.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub enum ServerEvent {
     Connected { client_id: u64 },
     Message { client_id: u64, message: ClientMessage },
@@ -212,17 +332,25 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
 └── voimed::main()
     ├── voime_log::init("voimed")
     ├── voimed::cli::parse()
+    ├── voimed::config::load()
+    │   └── FinalConfig::load() → backend
     ├── ipc_server::daemon_running(&amp;endpoint)
     │   └── 判断已运行 → ExitCode::SUCCESS
     ├── voimed::run(args)
     │   ├── voime_core::config::resolve(args)
     │   ├── voime_core::infer::session::SessionFactory::new(config.threads)
-    │   ├── voime_core::pipeline::spawn(&amp;config, factory, audio_rx)
+    │   ├── voime_core::pipeline::spawn() → (Pipeline, Final)
+    │   ├── 判断 backend != Cpu → voimed::worker::Worker::spawn(backend, model_root)
+    │   │   └── Worker::handshake()
     │   ├── voime_core::audio::capture::start(config.input_device, audio_tx)
     │   │   └── 构建输入流并保持暂停，等待 Daemon::sync_audio_result()
     │   ├── ipc_server::IpcServer::bind(&amp;endpoint)
-    │   └── daemon::Daemon::new(config, pipeline, audio, ipc).run()
+    │   └── daemon::Daemon::new(config, pipeline, final, audio, ipc, worker).run()
     └── 判断 Err → eprintln! + ExitCode::from(1)</code></pre>
+<ul class="note">
+  <li>默认 <code>backend = Cpu</code> 时 <code>worker = None</code>，不探测 GPU。</li>
+  <li>GPU worker 握手失败只标记不可用，不阻止 daemon 启动；核心模型失败才阻止启动。</li>
+</ul>
 
 <h3 id="c5-2">5.2 连接、Hello 与角色</h3>
 <pre><code>IpcServer accept thread
@@ -240,7 +368,7 @@ Daemon::run()
     └── Daemon::on_client(client_id, Hello { role, version, config })
         ├── 判断 version != PROTOCOL_VERSION → send Error(version_mismatch) + disconnect
         ├── IpcServer::set_role(client_id, role)
-        ├── 判断 role == Fcitx → state.addon = Connected
+        ├── 判断 role == Frontend → state.addon = Connected
         ├── State::apply_mode(config.mode)
         ├── Daemon::apply_pipeline_mode()
         ├── Daemon::sync_audio_result()
@@ -257,7 +385,7 @@ Daemon::run()
     ├── IpcServer::broadcast(SegmentStarted { segment_id, source })
     └── Daemon::broadcast_state()</code></pre>
 
-<h3 id="c5-4">5.4 Stop、Toggle 与连续段</h3>
+<h3 id="c5-4">5.4 Stop、Toggle 与 Continuous</h3>
 <pre><code>Daemon::on_client(client_id, Stop { segment_id, source })
 └── Daemon::request_stop(client_id, segment_id)
     ├── 判断 phase != Recording
@@ -267,7 +395,9 @@ Daemon::run()
     ├── 判断 segment_id != 0 &amp;&amp; segment_id != current
     │   └── 判断 mode != Toggle → send Error(busy)
     ├── 判断 mode != Continuous → session_active = false
+    ├── state.phase = Finalizing
     ├── Pipeline::finish_segment()
+    ├── Pipeline::cancel_preview()
     └── Daemon::sync_audio()
 
 Daemon::on_client(client_id, Toggle { segment_id, source })
@@ -279,26 +409,45 @@ pipeline::PipelineEvent::Recording(true)
 ├── 判断 current_segment.is_none() → allocate_segment + broadcast SegmentStarted
 ├── state.phase = Recording
 ├── broadcast_state()
-└── 判断 pending_stop → Pipeline::finish_segment()</code></pre>
+└── 判断 pending_stop → Pipeline::finish_segment() + Pipeline::cancel_preview()
 
-<h3 id="c5-5">5.5 Pipeline 事件</h3>
-<pre><code>Daemon::run()
-└── Daemon::on_pipeline(event)
-    ├── Recording(true) → phase=Recording + broadcast_state
-    ├── Recording(false) → phase=Finalizing + broadcast_state
-    ├── Partial(text) → state.partial=Some + broadcast Partial
-    ├── Final(text) → transcript.push + phase=Idle + broadcast Final + broadcast_state + Daemon::apply_pending_mode()
-    ├── SegmentDropped(reason) → phase=Idle + current_segment=None + broadcast Error(inference) + Daemon::apply_pending_mode()
-    └── Fatal(error) → fatal=Some + shutdown=true</code></pre>
+pipeline::PipelineEvent::SegmentReady(segment)
+└── Daemon::finalize(segment)</code></pre>
+
+<h3 id="c5-5">5.5 Finalizing 与 Final 调度</h3>
+<pre><code>Daemon::finalize(segment)
+├── 判断 segment.samples.is_empty() → SegmentDropped("空语音段")
+├── 判断 state.phase == Finalizing
+├── 判断 backend == Cpu
+│   └── Daemon::transcribe_cpu(segment.samples)
+│       └── voime_core::Final::transcribe(segment.samples)
+├── 判断 backend == Firered / Qwen3
+│   └── Daemon::transcribe_gpu(segment.samples)
+│       └── voimed::worker::Worker::transcribe(segment.samples)
+│           ├── 判断成功 → Result { text }
+│           └── 判断失败 → Daemon::fallback_cpu(segment.samples, error)
+│               ├── worker.restart() / 标记不可用
+│               └── voime_core::Final::transcribe(segment.samples)
+├── 判断 text.trim().is_empty() → SegmentDropped("空识别结果")
+├── state.transcript.push(text)
+├── IpcServer::broadcast(Final { segment_id, text })
+├── state.phase = Idle
+├── Daemon::broadcast_state()
+└── Daemon::apply_pending_mode()</code></pre>
+<ul class="note">
+  <li>GPU Final 路径不调用 <code>Final::transcribe</code>；只有失败回退时调用一次。</li>
+  <li><code>cpu</code> Final 只执行一次；Finalizing 期间 pipeline 的 Preview 门禁保持关闭。</li>
+  <li>GPU 错误只记录错误码、后端名与耗时；不记录识别文本。</li>
+</ul>
 
 <h3 id="c5-6">5.6 前端断开与模式回退</h3>
 <pre><code>ipc_server reader loop 退出
 └── events.send(ServerEvent::Disconnected { client_id, role })
     └── Daemon::on_server_event(Disconnected)
-        ├── 判断 role == Fcitx → state.addon = Disconnected
+        ├── 判断 role == Frontend → state.addon = Disconnected
         ├── session_active = false
         ├── 判断 state.mode == Continuous → Pipeline::set_mode(Ptt)
-        ├── 判断 current_segment.is_some() → Pipeline::finish_segment()
+        ├── 判断 current_segment.is_some() → Pipeline::finish_segment() + Pipeline::cancel_preview()
         ├── Daemon::sync_audio()
         └── Daemon::broadcast_snapshot()</code></pre>
 
@@ -306,6 +455,7 @@ pipeline::PipelineEvent::Recording(true)
 <pre><code>Daemon::on_client(Quit)（role=Control）
 └── shutdown = true
     └── Daemon::run() 跳出循环
+        ├── 判断 worker.is_some() → Worker::shutdown()
         ├── IpcServer::broadcast(Bye)
         ├── IpcServer::shutdown()
         │   ├── shutdown.store(true)
@@ -315,6 +465,9 @@ pipeline::PipelineEvent::Recording(true)
         │   └── listener.take()
         ├── Pipeline::shutdown()
         └── CaptureHandle::stop()</code></pre>
+<ul class="note">
+  <li>先停 worker 再停 pipeline / 音频，确保没有新的 Final 请求进入 worker。</li>
+</ul>
 
 </body>
 </html>

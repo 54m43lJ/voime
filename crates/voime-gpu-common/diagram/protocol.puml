@@ -1,0 +1,26 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+title voime-gpu-common：daemon 与 GPU worker 的帧协议
+
+participant "voimed（daemon）" as Daemon
+participant "GPU worker" as Worker
+
+Daemon --> Worker : spawn（model_dir / device）
+Daemon -> Worker : Hello { protocol, backend, model_dir, device }
+Worker --> Daemon : Ready { protocol, backend, runtime, device, vram_mb, punc }
+Daemon -> Worker : Transcribe { id, sample_rate, language } + PCM
+Worker -> Worker : 内部处理
+Worker --> Daemon : Result { id, text, latency_ms, rtf }
+Daemon -> Worker : Transcribe { id, sample_rate, language } + PCM
+Worker --> Daemon : Error { id, code, message }
+Daemon -> Worker : Shutdown
+Worker --> Daemon : Bye
+
+note over Daemon, Worker
+  Ready 表示加载完成；Result 与 Error 是 Transcribe 的二选一终态。
+  Hello → Ready 120 s；Transcribe → 终态 60 s；Shutdown → Bye 5 s。
+  Cancel 不引入新的响应类型；关闭超时由 daemon 强杀 worker。
+end note
+@enduml

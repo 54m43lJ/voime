@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CORE — voime-gpu-firered</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>CORE — voime-gpu-firered</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="PROVIDER.html">PROVIDER</a>
+</p>
+
+<h2 id="c1">1. File tree</h2>
+<p><a href="#top">↑</a></p>
+
+<pre><code>crates/voime-gpu-firered/
+├── Cargo.toml
+└── src/
+    ├── <a href="#c4-1">main.rs</a>
+    ├── <a href="#c4-2">lib.rs</a>
+    ├── <a href="#c4-3">config.rs</a>
+    ├── <a href="#c4-4">model.rs</a>
+    ├── <a href="#c4-5">runtime.rs</a>
+    ├── <a href="#c4-6">worker.rs</a>
+    ├── <a href="#c4-7">error.rs</a>
+    ├── <a href="#c4-8">asr.rs</a>
+    ├── <a href="#c4-9">asr/fbank.rs</a>
+    ├── <a href="#c4-10">asr/cmvn.rs</a>
+    ├── <a href="#c4-11">asr/aed.rs</a>
+    ├── <a href="#c4-12">asr/tokenizer.rs</a>
+    ├── <a href="#c4-13">punc.rs</a>
+    ├── <a href="#c4-14">punc/tokenizer.rs</a>
+    └── <a href="#c4-15">punc/labels.rs</a></code></pre>
+<ul class="note">
+  <li><code>main.rs</code> 只做参数解析、模型 / runtime 加载与 worker 启动编排；请求循环在 <code>worker.rs</code>。</li>
+  <li>没有 <code>ctc.rs</code>：<code>ctc.onnx</code> 虽在模型目录中，但不创建会话、不进入产品路径。</li>
+  <li>文档与图表不属于源码结构；模型目录由启动参数注入，不在 crate 内硬编码。</li>
+</ul>
+
+<h2 id="c2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>进程模型</td><td>一个 worker 进程只服务一个 daemon；读帧线程与推理线程分离，推理串行，不引入异步运行时。</td></tr>
+  <tr><td>单请求</td><td>同一时刻只处理一个 <code>Transcribe</code>；请求循环在收到 <code>Result</code> / <code>Error</code> 前不读下一段音频。</td></tr>
+  <tr><td>ORT runtime</td><td><code>ort</code> 固定 <code>default-features=false</code> + <code>api-29</code> + <code>load-dynamic</code>；EP feature 按平台只启用一个。</td></tr>
+  <tr><td>EP 固定</td><td>进程内只注册安装时选定的 EP；不注册 CPU EP，不在运行期注册第二个 EP，不回退到 CPU ORT。</td></tr>
+  <tr><td>runtime 目录</td><td>ORT 动态库从 worker 自己的 runtime 目录加载；不写全局 <code>LD_LIBRARY_PATH</code>，不与 Qwen 共享库目录。</td></tr>
+  <tr><td>精度</td><td>两个模型只加载 FP32 ONNX；不加载 int8 / FP16 变体，不做运行期量化。</td></tr>
+  <tr><td>模型目录来源</td><td>模型根目录与设备只来自 <code>Hello</code> 的 <code>model_dir</code> / <code>device</code>；启动参数只带 runtime 与日志级别，不从全局配置或环境变量猜路径。</td></tr>
+  <tr><td>模型校验</td><td>启动时校验 schema 5、id、kind、文件存在 / 大小 / SHA-256、相对路径；任一失败不创建会话。</td></tr>
+  <tr><td>模型只读</td><td>模型目录与文件只读；不允许可执行文件、脚本、系统库或符号链接逃逸。</td></tr>
+  <tr><td>fbank</td><td>Kaldi fbank，80-bin、25 / 10 ms、<code>snip_edges</code>、无 dither、16-bit 缩放；每次从完整段独立计算。</td></tr>
+  <tr><td>CMVN</td><td><code>cmvn.ark</code> 只读一次；按 Kaldi 统计计算 80 维 mean / inverse stddev，逐帧应用。</td></tr>
+  <tr><td>AED 解码</td><td>greedy；<code>&lt;sos&gt;</code> 3 开始、<code>&lt;eos&gt;</code> 4 停止；decoder cache 在段内传递，段间清零。</td></tr>
+  <tr><td>FireRedPunc</td><td>5 类 token 标签；按 tokenizer 的字符偏移插回原文；分块处理，返回前完成全部标点。</td></tr>
+  <tr><td>取消</td><td>读帧线程收到 <code>Cancel</code> 时只在 id 匹配时置位；推理线程在 decoder 步之间与分块标点之间检查，不中断正在执行的 ORT <code>run</code>。</td></tr>
+  <tr><td>错误边界</td><td>内部使用 <code>anyhow::Result</code> + 上下文；边界映射到 common 错误码，不新增后端私有码。</td></tr>
+  <tr><td>日志与隐私</td><td>stdout 只写协议帧；stderr 日志只记长度、耗时、错误码、模型路径与 SHA 前缀，不记文本。</td></tr>
+  <tr><td>无网络</td><td>运行期不联网、不下载、不改写模型；安装与发布流程负责获取权重。</td></tr>
+  <tr><td>依赖隔离</td><td>不依赖 <code>voime-core</code>、VAD、Preview、前端 IPC、llama.cpp、GGML 或 <code>voime-gpu-qwen3</code>。</td></tr>
+</table>
+<ul class="note">
+  <li>仓库级进程 / 线程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；协议字段与错误码见 <a href="../voime-gpu-common/USER.html">voime-gpu-common USER</a>。</li>
+  <li>工程常量不在此表赋值；推荐值只出现在签名注释中，具体值以源码为准。</li>
+</ul>
+
+<h2 id="c3">3. SBOM</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>依赖</th><th>在本组件中的作用</th></tr>
+  <tr><td><code>ort</code></td><td>ORT GPU Environment、CUDA / MIGraphX / DirectML 会话、张量输入输出；<code>api-29</code> + <code>load-dynamic</code>。</td></tr>
+  <tr><td><code>tokenizers</code></td><td>FireRedPunc 的 WordPiece 分词与 token 偏移。</td></tr>
+  <tr><td><code>sentencepiece</code></td><td>FireRedASR2-AED 的 <code>train_bpe1000.model</code> 英文子词还原。</td></tr>
+  <tr><td><code>kaldi-native-fbank</code></td><td>与 FireRedASR2-AED 对齐的 Kaldi fbank 特征。</td></tr>
+  <tr><td><code>serde</code> / <code>serde_json</code></td><td>模型 manifest、<code>punc.json</code> 与运行参数解析；<code>out_dict</code> 按行解析。</td></tr>
+  <tr><td><code>sha2</code></td><td>模型文件 SHA-256 校验。</td></tr>
+  <tr><td><code>crossbeam-channel</code></td><td>读帧线程与推理线程之间的 <code>WorkerCommand</code> 通道。</td></tr>
+  <tr><td><code>anyhow</code> / <code>thiserror</code></td><td>错误传播与边界错误类型。</td></tr>
+  <tr><td><code>voime-gpu-common</code></td><td>帧读写、Request / Response、错误码与生命周期辅助。</td></tr>
+</table>
+<ul class="note">
+  <li>不依赖 <code>llama-cpp-4</code>、GGML、GGUF、<code>voime-core</code> 或任一前端库；本组件的动态依赖中不应出现 llama.cpp 库。</li>
+  <li>版本与许可证以 <code>Cargo.toml</code> / <code>Cargo.lock</code> 为准。</li>
+</ul>
+
+<h2 id="c4">4. Internal types &amp; method signatures</h2>
+<p><a href="#top">↑</a></p>
+
+<p>
+以下签名是设计草案；本组件没有可引用的源码，<strong>待实现，可以根据实际情况调整</strong>。
+类型名与函数名可以随实现变化，但模块边界、调用顺序与错误语义不变。
+</p>
+
+<h3 id="c4-1">4.1 main.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>fn main() -&gt; std::process::ExitCode;
+fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+<ul class="note">
+  <li><code>main</code> 把 <code>run</code> 的错误写 stderr 并返回非零退出码；成功关闭返回 0。</li>
+  <li><code>run</code> 按参数解析 → 读取 <code>Hello</code> → 校验 protocol / backend / model_dir / device → 模型校验 → runtime 加载 → 会话创建 → <code>Ready</code> → 请求循环的顺序执行。</li>
+</ul>
+
+<h3 id="c4-2">4.2 lib.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod asr;
+pub mod config;
+pub mod error;
+pub mod model;
+pub mod punc;
+pub mod runtime;
+pub mod worker;</code></pre>
+
+<h3 id="c4-3">4.3 config.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum OrtEp {
+    Cuda,
+    Migraphx,
+    Directml,
+}
+
+pub struct Args {
+    pub runtime: OrtEp,
+    pub log_level: String,
+}
+
+pub fn parse() -&gt; anyhow::Result&lt;Args&gt;;</code></pre>
+<ul class="note">
+  <li><code>runtime</code> 与 <code>log_level</code> 来自 daemon 的启动参数；运行期没有 EP 切换入口。</li>
+  <li>模型根目录与设备来自 <code>Hello</code> 的 <code>model_dir</code> / <code>device</code>；worker 不从全局配置或环境变量猜路径。</li>
+</ul>
+
+<h3 id="c4-4">4.4 model.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const MANIFEST_FILE: &amp;str;
+pub const SCHEMA_VERSION: u32;
+
+pub enum ModelKind {
+    Asr,
+    Punc,
+}
+
+pub struct FileSpec {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub size: u64,
+}
+
+pub struct RuntimeSpec {
+    pub backend: String,
+    pub format: String,
+    pub precision: String,
+    pub max_segment_ms: u32,
+}
+
+pub struct TensorSpec {
+    pub name: String,
+    pub dtype: String,
+    pub shape: Vec&lt;i64&gt;,
+}
+
+pub struct ModelManifest {
+    pub schema: u32,
+    pub id: String,
+    pub kind: ModelKind,
+    pub version: String,
+    pub license: String,
+    pub files: Vec&lt;FileSpec&gt;,
+    pub runtime: RuntimeSpec,
+}
+
+pub struct ModelSet {
+    pub asr: ModelManifest,
+    pub punc: ModelManifest,
+}
+
+pub fn load(root: &amp;Path) -&gt; anyhow::Result&lt;ModelSet&gt;;
+pub fn resolve_inside(dir: &amp;Path, relative: &amp;Path) -&gt; anyhow::Result&lt;PathBuf&gt;;
+
+impl ModelManifest {
+    pub fn load(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn verify(&amp;self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn rebase(&amp;mut self, dir: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
+}</code></pre>
+<ul class="note">
+  <li><code>load</code> 只读取 <code>&lt;root&gt;/fireredasr2-aed/manifest.json</code> 与 <code>&lt;root&gt;/fireredpunc/manifest.json</code>，并校验 id / kind。</li>
+  <li><code>verify</code> 逐文件校验存在、非空、大小与 SHA-256；<code>rebase</code> 拒绝绝对路径、<code>..</code> 与空路径。</li>
+  <li><code>TensorSpec</code> 用于启动时校验 ONNX 图签名；不是 manifest 的可写字段。</li>
+</ul>
+
+<h3 id="c4-5">4.5 runtime.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Runtime {
+    env: Environment,
+    ep: OrtEp,
+}
+
+impl Runtime {
+    pub fn load(ep: OrtEp, device: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn ep_name(&amp;self) -&gt; &amp;'static str;
+    pub fn create(&amp;self, model: &amp;Path) -&gt; anyhow::Result&lt;Session&gt;;
+    pub fn create_with_spec(&amp;self, model: &amp;Path,
+                            inputs: &amp;[TensorSpec],
+                            outputs: &amp;[TensorSpec])
+        -&gt; anyhow::Result&lt;Session&gt;;
+}
+
+fn register_ep(env: &amp;Environment, ep: OrtEp) -&gt; anyhow::Result&lt;()&gt;;
+fn validate_io(session: &amp;Session, inputs: &amp;[TensorSpec],
+               outputs: &amp;[TensorSpec]) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+<ul class="note">
+  <li><code>load</code> 创建进程级 Environment、解析 <code>Hello.device</code> 并注册唯一 EP；目标 EP 不在可用 provider 列表中时返回 <code>RuntimeMissing</code> / <code>DeviceUnavailable</code>。</li>
+  <li><code>create_with_spec</code> 在会话创建后校验输入 / 输出名称、类型与形状；失败返回 <code>LoadFailed</code>。</li>
+</ul>
+
+<h3 id="c4-6">4.6 worker.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum WorkerCommand {
+    Transcribe {
+        request: Transcribe,
+        audio: Vec&lt;f32&gt;,
+    },
+    Shutdown,
+}
+
+#[derive(Clone)]
+pub struct CancelFlag { /* Arc&lt;AtomicBool&gt; + current id */ }
+impl CancelFlag {
+    pub fn new() -&gt; Self;
+    pub fn arm(&amp;self, id: u64);
+    pub fn cancel(&amp;self, id: u64);
+    pub fn is_cancelled(&amp;self) -&gt; bool;
+    pub fn flag(&amp;self) -&gt; &amp;AtomicBool;
+    pub fn clear(&amp;self);
+}
+
+pub struct Worker {
+    runtime: Runtime,
+    aed: Aed,
+    punc: Punc,
+    cancel: CancelFlag,
+}
+
+pub fn validate_hello(hello: &amp;Hello) -&gt; anyhow::Result&lt;()&gt;;
+pub fn read_loop(tx: Sender&lt;WorkerCommand&gt;, cancel: CancelFlag);
+
+impl Worker {
+    pub fn new(models: ModelSet, runtime: Runtime) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn run(&amp;mut self, commands: Receiver&lt;WorkerCommand&gt;)
+        -&gt; anyhow::Result&lt;()&gt;;
+    fn handle(&amp;mut self, request: Transcribe, audio: &amp;[f32]) -&gt; Response;
+    fn transcribe(&amp;mut self, id: u64, samples: &amp;[f32])
+        -&gt; anyhow::Result&lt;String&gt;;
+    fn shutdown(&amp;mut self);
+}</code></pre>
+<ul class="note">
+  <li><code>Request</code> / <code>Response</code> 来自 <a href="../voime-gpu-common/USER.html#u4-2">voime-gpu-common USER §4.2</a> / <a href="../voime-gpu-common/USER.html#u4-3">§4.3</a>；本文不复制字段。</li>
+  <li><code>validate_hello</code> 校验 protocol / backend / model_dir；<code>device</code> 前缀必须与安装时 EP 匹配，否则返回 <code>device_unavailable</code>。</li>
+  <li><code>read_loop</code> 只读帧并投递命令；<code>Cancel</code> 不进入命令通道，只置位 <code>CancelFlag</code>。EOF 按 <code>Shutdown</code> 处理。</li>
+  <li><code>run</code> 从命令通道取 <code>Transcribe</code> / <code>Shutdown</code>；推理串行，取消标志在 decoder 步之间检查。</li>
+  <li>每个 <code>Transcribe</code> 以 <code>Result</code> / <code>Error</code> 结束；随后 <code>clear</code> 当前 id，准备下一段。</li>
+</ul>
+
+<h3 id="c4-7">4.7 error.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub enum WorkerError {
+    RuntimeMissing(String),
+    DeviceUnavailable(String),
+    LoadFailed(String),
+    InferenceFailed(String),
+}
+
+impl WorkerError {
+    pub fn code(&amp;self) -&gt; &amp;'static str;
+}</code></pre>
+<ul class="note">
+  <li><code>code</code> 返回 common 错误码字符串；<code>message</code> 只带路径、SHA 前缀与阶段，不带识别文本。</li>
+  <li>取消与协议错误由 common 的请求循环处理，不进入本枚举。</li>
+</ul>
+
+<h3 id="c4-8">4.8 asr.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod aed;
+pub mod cmvn;
+pub mod fbank;
+pub mod tokenizer;</code></pre>
+
+<h3 id="c4-9">4.9 asr/fbank.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const NUM_BINS: usize;        // 推荐值 80
+pub const FRAME_MS: u32;          // 推荐值 25
+pub const SHIFT_MS: u32;          // 推荐值 10
+pub const SAMPLE_SCALE: f32;      // 推荐值 32768.0
+
+pub struct FbankConfig {
+    pub sample_rate: u32,
+    pub num_bins: usize,
+    pub frame_ms: u32,
+    pub shift_ms: u32,
+    pub snip_edges: bool,
+}
+
+impl Default for FbankConfig { /* 16 kHz / 80 / 25 / 10 / true */ }
+
+pub struct Fbank { /* options */ }
+
+impl Fbank {
+    pub fn new(config: FbankConfig) -&gt; Self;
+    pub fn compute(&amp;mut self, samples: &amp;[f32])
+        -&gt; anyhow::Result&lt;Vec&lt;Vec&lt;f32&gt;&gt;&gt;;
+}
+
+fn fbank_options(config: FbankConfig) -&gt; FbankOptions;</code></pre>
+<ul class="note">
+  <li>输入在计算前乘 <code>SAMPLE_SCALE</code>；dither 为 0，low / high frequency 与上游配置一致。</li>
+  <li><code>compute</code> 对完整语音段独立计算，不跨段保留窗口。</li>
+</ul>
+
+<h3 id="c4-10">4.10 asr/cmvn.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Cmvn {
+    pub mean: Vec&lt;f32&gt;,
+    pub inv_stddev: Vec&lt;f32&gt;,
+}
+
+impl Cmvn {
+    pub fn load(path: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn apply(&amp;self, features: &amp;mut [Vec&lt;f32&gt;])
+        -&gt; anyhow::Result&lt;()&gt;;
+}
+
+fn read_ark(path: &amp;Path) -&gt; anyhow::Result&lt;(Vec&lt;f32&gt;, Vec&lt;f32&gt;, f64)&gt;;</code></pre>
+<ul class="note">
+  <li><code>read_ark</code> 读取 Kaldi 二进制统计矩阵；<code>mean = sum / count</code>，<code>inv_stddev = 1 / sqrt(var + eps)</code>。</li>
+  <li>维度必须等于 fbank bin 数；否则返回 <code>LoadFailed</code>。</li>
+</ul>
+
+<h3 id="c4-11">4.11 asr/aed.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub const CACHE_LAYERS: usize;    // 推荐值 16
+
+pub struct AedConfig {
+    pub max_tokens: usize,
+    pub sos_id: i64,
+    pub eos_id: i64,
+}
+
+pub struct EncoderOutput {
+    pub output: Tensor,
+    pub mask: Tensor,
+    pub frames: usize,
+}
+
+pub struct Aed {
+    encoder: Session,
+    decoder: Session,
+    tokenizer: AedTokenizer,
+    cmvn: Cmvn,
+    fbank: Fbank,
+    config: AedConfig,
+}
+
+impl Aed {
+    pub fn new(manifest: &amp;ModelManifest,
+               runtime: &amp;Runtime) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn transcribe(&amp;mut self, samples: &amp;[f32],
+                      cancel: &amp;AtomicBool)
+        -&gt; anyhow::Result&lt;String&gt;;
+    fn encode(&amp;mut self, features: &amp;[Vec&lt;f32&gt;])
+        -&gt; anyhow::Result&lt;EncoderOutput&gt;;
+    fn decode_greedy(&amp;mut self, encoder: &amp;EncoderOutput,
+                     cancel: &amp;AtomicBool)
+        -&gt; anyhow::Result&lt;Vec&lt;i64&gt;&gt;;
+    fn empty_cache(&amp;self) -&gt; Vec&lt;Tensor&gt;;
+}</code></pre>
+<ul class="note">
+  <li><code>new</code> 创建 encoder / decoder 会话，读取 <code>config.json</code> 的特殊 token id 与最大输出长度；<code>ctc.onnx</code> 不创建会话。</li>
+  <li><code>decode_greedy</code> 每步取 logits argmax，命中 <code>eos_id</code> 或达到 <code>max_tokens</code> 停止；每个新段用 <code>empty_cache</code> 重建 cache。</li>
+  <li><code>cancel</code> 在每一步 decoder 前检查；命中时返回取消错误，由 worker 映射到 common 语义。</li>
+  <li>worker 不再分段；假设 daemon 已按 30 s 上限切分。仍校验输入帧数，超过上游 <code>max_encoder_frames</code> 时返回 <code>inference_failed</code>。</li>
+</ul>
+
+<h3 id="c4-12">4.12 asr/tokenizer.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct AedTokenizer { /* dict + sentencepiece */ }
+
+impl AedTokenizer {
+    pub fn load(dict: &amp;Path, bpe: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn decode(&amp;self, ids: &amp;[i64]) -&gt; anyhow::Result&lt;String&gt;;
+}
+
+fn is_special(id: i64) -&gt; bool;
+fn join_pieces(text: &amp;str) -&gt; String;</code></pre>
+<ul class="note">
+  <li><code>dict.txt</code> 提供 id → token；英文子词用 <code>train_bpe1000.model</code> 还原，中文按字符直接拼接。</li>
+  <li><code>decode</code> 去掉 <code>&lt;blank&gt;</code> / <code>&lt;pad&gt;</code> / <code>&lt;sos&gt;</code> / <code>&lt;eos&gt;</code> / <code>&lt;unk&gt;</code>，把 <code>▁</code> 转为空格并合并空白。</li>
+</ul>
+
+<h3 id="c4-13">4.13 punc.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub mod labels;
+pub mod tokenizer;
+
+pub const MAX_TOKENS: usize;      // 推荐值 510
+
+pub struct Punc {
+    session: Session,
+    tokenizer: PuncTokenizer,
+    labels: PuncLabels,
+}
+
+impl Punc {
+    pub fn new(manifest: &amp;ModelManifest,
+               runtime: &amp;Runtime) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn punctuate(&amp;mut self, text: &amp;str,
+                     cancel: &amp;AtomicBool)
+        -&gt; anyhow::Result&lt;String&gt;;
+    fn punctuate_chunk(&amp;mut self, text: &amp;str)
+        -&gt; anyhow::Result&lt;String&gt;;
+}
+
+fn split_chunks(text: &amp;str, tokenizer: &amp;PuncTokenizer,
+                max_tokens: usize) -&gt; Vec&lt;&amp;str&gt;;</code></pre>
+<ul class="note">
+  <li><code>punctuate</code> 按 token 上限切块，逐块推理并插入标签；任一块失败则不返回半成品文本。</li>
+  <li>取消在块与块之间检查；不中断正在执行的单次 ORT <code>run</code>。</li>
+</ul>
+
+<h3 id="c4-14">4.14 punc/tokenizer.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct Piece {
+    pub text: String,
+    pub start: usize,
+    pub end: usize,
+    pub id: i64,
+}
+
+pub struct PuncTokenizer { /* WordPiece vocab */ }
+
+impl PuncTokenizer {
+    pub fn load(tokens: &amp;Path) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn encode(&amp;self, text: &amp;str)
+        -&gt; anyhow::Result&lt;(Vec&lt;i64&gt;, Vec&lt;Piece&gt;)&gt;;
+}</code></pre>
+<ul class="note">
+  <li><code>tokens.txt</code> 是 BERT WordPiece 词表；中文按字符，英文按子词。返回的 <code>Piece</code> 带原文字符偏移。</li>
+  <li><code>encode</code> 负责加 <code>[CLS]</code> / <code>[SEP]</code>；模型输入只需要 <code>input_ids</code> 与 <code>lengths</code>，见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>。</li>
+</ul>
+
+<h3 id="c4-15">4.15 punc/labels.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct PuncLabels { /* label id -> punctuation */ }
+
+impl PuncLabels {
+    pub fn load(out_dict: &amp;Path, punc_json: &amp;Path)
+        -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn label(&amp;self, id: usize) -&gt; Option&lt;&amp;str&gt;;
+    pub fn insert(&amp;self, text: &amp;str, pieces: &amp;[Piece],
+                  ids: &amp;[usize]) -&gt; anyhow::Result&lt;String&gt;;
+}
+
+pub fn argmax(values: &amp;[f32]) -&gt; usize;</code></pre>
+<ul class="note">
+  <li><code>out_dict</code> 与 <code>punc.json</code> 的标签必须一致；类别数小于标签表或输出长度不足时返回 <code>LoadFailed</code> / <code>InferenceFailed</code>。</li>
+  <li><code>insert</code> 按 token 结束偏移插入标点；中文全角、英文半角，不改变原文其它字符。</li>
+</ul>
+
+<h2 id="c5">5. Call stack tree</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="c5-1">5.1 启动与加载</h3>
+<pre><code>voimed::worker::Worker::spawn(Firered, model_root)
+└── std::process::Command::new("voime-gpu-firered")
+    └── voime_gpu_firered::main()
+        ├── config::parse()
+        └── voime_gpu_firered::run(args)
+            ├── voime_gpu_common::read_frame(stdin)
+            ├── 判断 Hello -&gt; worker::validate_hello(&amp;hello)
+            ├── model::load(Path::new(&amp;hello.model_dir))
+            │   ├── ModelManifest::load(fireredasr2-aed/manifest.json)
+            │   ├── ModelManifest::verify(fireredasr2-aed)
+            │   ├── ModelManifest::load(fireredpunc/manifest.json)
+            │   └── ModelManifest::verify(fireredpunc)
+            ├── runtime::Runtime::load(args.runtime, &amp;hello.device)
+            │   └── runtime::register_ep(&amp;env, args.runtime)
+            ├── worker::Worker::new(models, runtime)
+            │   ├── Aed::new(&amp;models.asr, &amp;runtime)
+            │   │   ├── Runtime::create_with_spec(encoder.onnx, inputs, outputs)
+            │   │   ├── Runtime::create_with_spec(decoder.onnx, inputs, outputs)
+            │   │   ├── Cmvn::load(cmvn.ark)
+            │   │   └── AedTokenizer::load(dict.txt, train_bpe1000.model)
+            │   └── Punc::new(&amp;models.punc, &amp;runtime)
+            │       ├── Runtime::create_with_spec(model.onnx, inputs, outputs)
+            │       ├── PuncTokenizer::load(tokens.txt)
+            │       └── PuncLabels::load(out_dict, punc.json)
+            ├── crossbeam_channel::unbounded()
+            ├── worker::read_loop(tx, worker.cancel.clone())   // 独立读帧线程
+            ├── voime_gpu_common::write_frame(Ready)
+            └── worker::Worker::run(rx)</code></pre>
+<ul class="note">
+  <li><code>Hello</code> 之前不加载模型；模型根目录与设备只取 <code>hello.model_dir</code> / <code>hello.device</code>。</li>
+  <li>Hello 校验失败返回 <code>protocol_mismatch</code>（id 0）；模型 / runtime / 会话失败返回 <code>load_failed</code> / <code>runtime_missing</code> / <code>device_unavailable</code>，均在 <code>Ready</code> 前。</li>
+  <li>任何一步失败都不阻塞 daemon：daemon 标记 <code>firered</code> 不可用并继续 CPU Final。</li>
+  <li><code>ctc.onnx</code> 只参与 manifest 校验，不创建会话。</li>
+  <li>模型与 runtime 常驻；每个 Final 不重新加载权重。</li>
+</ul>
+
+<h3 id="c5-2">5.2 Final 识别</h3>
+<pre><code>worker::read_loop(tx, cancel)
+├── voime_gpu_common::read_frame(stdin)
+└── 判断 Request::Transcribe
+    ├── cancel.arm(id)
+    └── tx.send(WorkerCommand::Transcribe { request, audio })
+
+worker::Worker::run(rx)
+└── 判断 WorkerCommand::Transcribe -&gt; Worker::handle(request, audio)
+    ├── Worker::transcribe(id, samples)
+    │   ├── Aed::transcribe(samples, self.cancel.flag())
+    │   │   ├── Fbank::compute(samples)
+    │   │   ├── Cmvn::apply(&amp;mut features)
+    │   │   ├── Aed::encode(features)
+    │   │   │   └── Session::run(encoder, input, input_lengths)
+    │   │   ├── Aed::decode_greedy(&amp;encoder, cancel)
+    │   │   │   ├── Session::run(decoder, ys, encoder_output, src_mask, caches)
+    │   │   │   └── 判断 token == eos_id -&gt; 停止
+    │   │   └── AedTokenizer::decode(ids)
+    │   ├── Punc::punctuate(text, self.cancel.flag())
+    │   └── 判断 text.trim().is_empty() -&gt; 返回空文本
+    └── voime_gpu_common::write_frame(Result)</code></pre>
+<ul class="note">
+  <li><code>Fbank</code> 与 <code>Cmvn</code> 每次从完整段独立计算；decoder cache 只在本段内传递。</li>
+  <li>空文本仍返回 <code>Result</code>，由 daemon 按空段丢弃；worker 不伪造 Final。</li>
+  <li>失败在边界映射为 common 错误码；当前段是否回退 CPU 由 daemon 决定。</li>
+</ul>
+
+<h3 id="c5-3">5.3 标点</h3>
+<pre><code>Punc::punctuate(text, cancel)
+├── PuncTokenizer::encode(text)
+├── split_chunks(text, &amp;tokenizer, MAX_TOKENS)
+└── 逐块 Punc::punctuate_chunk(chunk)
+    ├── PuncTokenizer::encode(chunk)
+    ├── Session::run(model.onnx, input_ids, lengths)
+    ├── labels::argmax(logits)
+    └── PuncLabels::insert(text, pieces, ids)</code></pre>
+<ul class="note">
+  <li>空文本直接返回空字符串，不调用 tokenizer / session。</li>
+  <li>每个块独立推理；块与块之间不共享上下文，只在最终文本上按偏移插入标点。</li>
+  <li>任一块推理失败则不返回部分加标点文本；错误交给 worker 边界。</li>
+</ul>
+
+<h3 id="c5-4">5.4 取消与超时</h3>
+<pre><code>worker::read_loop(tx, cancel)
+├── voime_gpu_common::read_frame(stdin)
+└── 判断 Request::Cancel(id) -&gt; cancel.cancel(id)
+
+worker::Worker::run(rx)
+├── 判断 cancel.is_cancelled() -&gt; Aed::decode_greedy 提前返回
+│   └── voime_gpu_common::write_frame(Error)
+└── 判断 daemon 超时 -&gt; 进程被终止（worker 不发送响应）</code></pre>
+<ul class="note">
+  <li>取消是协作式的：只在下一次检查点生效，不保证立即停止当前 ORT <code>run</code>。</li>
+  <li>加载与识别的超时预算由 daemon 计时；worker 不自行定义墙钟超时，也不在超时后切换 EP。</li>
+  <li>取消 / 超时后的重启与 CPU 回退由 <a href="../voimed/USER.html#u4-5">voimed USER §4.5</a> 负责。</li>
+</ul>
+
+<h3 id="c5-5">5.5 关闭</h3>
+<pre><code>worker::read_loop(tx, cancel)
+└── 判断 Request::Shutdown -&gt; tx.send(WorkerCommand::Shutdown)
+
+worker::Worker::run(rx)
+└── 判断 WorkerCommand::Shutdown -&gt; Worker::shutdown()
+    ├── drop(Punc)
+    ├── drop(Aed)
+    ├── drop(Runtime)
+    └── voime_gpu_common::write_frame(Bye)</code></pre>
+<ul class="note">
+  <li>Shutdown 与 Cancel 都是协作式的：命令在下一个检查点生效；若推理未在 5 s 关闭预算内退出，daemon 强杀 worker。</li>
+  <li>关闭顺序先释放会话与 runtime，再写 <code>Bye</code>；不删除模型文件、不写配置。</li>
+  <li>worker 不创建子进程，不留下孤儿进程。</li>
+</ul>
+
+</body>
+</html>

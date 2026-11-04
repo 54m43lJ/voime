@@ -22,7 +22,8 @@
 
 <p>
 <strong>状态：</strong>已实现；TSF 为可选扩展。本文只记录前端消费的 Win32 / UIA / TSF 子集；
-完整定义以 Microsoft 官方文档为准。命名管道契约见 <a href="../../crates/voime-transport/PROVIDER.html">voime-transport PROVIDER</a>。
+完整定义以 Microsoft 官方文档为准。DirectML / Vulkan / CUDA 是 GPU 模块所在平台的 runtime 约束，
+不属于前端消费。命名管道契约见 <a href="../../crates/voime-transport/PROVIDER.html">voime-transport PROVIDER</a>。
 </p>
 
 <h2 id="p1">1. TERMS</h2>
@@ -44,6 +45,8 @@
   <tr><td>edit session</td><td><code>ITfContext::RequestEditSession</code> 调度的读写会话。</td></tr>
   <tr><td>keyboard TIP / speech TIP</td><td>TSF 文本服务类别；keyboard TIP 需成为当前输入法，speech TIP 的并行能力待验证。</td></tr>
   <tr><td>CLSID / InprocServer32</td><td>COM 类标识与进程内 DLL 注册表项。</td></tr>
+  <tr><td>DirectML / Vulkan / CUDA</td><td>Windows 上 GPU 模块的 runtime 约束：FireRed 使用 ONNX Runtime 的 DirectML / CUDA EP，Qwen 使用 llama.cpp 的 Vulkan / CUDA backend；前端不加载、不探测、不选择。</td></tr>
+  <tr><td>Session 0 服务</td><td>Windows 服务宿主会话；Voime 不把前端或 daemon 装成 Session 0 服务，所有进程在当前用户桌面会话运行。</td></tr>
 </table>
 
 <h2 id="p2">2. CONVENTIONS</h2>
@@ -51,7 +54,9 @@
 
 <table>
   <tr><th>约定</th><th>内容</th></tr>
-  <tr><td>进程模型</td><td>每用户桌面进程；不使用 Session 0 Windows 服务采集音频或注入文本。</td></tr>
+  <tr><td>进程模型</td><td>每用户桌面进程；不使用 Session 0 Windows 服务采集音频或注入文本；GPU worker 由 <code>voimed</code> 拉起的独立进程，前端不管理。</td></tr>
+  <tr><td>安装与权限</td><td>核心安装脚本 <code>scripts/install-core.ps1</code> 负责托盘、daemon 与核心模型，并写入登录启动；GPU 安装脚本 <code>scripts/install-gpu.ps1</code> 负责 worker、runtime 与 GPU 模型。每用户安装；不装 Session 0 服务；不绕过 UIPI。</td></tr>
+  <tr><td>GPU runtime 边界</td><td>DirectML / Vulkan / CUDA 只属于 GPU 模块；前端只链接 Win32 / UIA / TSF 与命名管道，不链接、不探测、不选择 GPU runtime。</td></tr>
   <tr><td>热键</td><td>全局热键用 <code>RegisterHotKey</code>；PTT 的 key-up 用 <code>GetAsyncKeyState</code> 轮询；录制使用设置窗口的 winit 键盘事件，不安装低级钩子，不记录其他按键。</td></tr>
   <tr><td>目标</td><td>前台窗口 + UIA 焦点元素；提交前复核 HWND 与 RuntimeId。</td></tr>
   <tr><td>编码</td><td>UTF-8 内部字符串转 UTF-16；emoji 代理对不拆分；长文本分批。</td></tr>
@@ -70,6 +75,7 @@
 <ul class="note">
   <li>端点、DACL 与拒绝远程客户端由 <a href="../../crates/voime-transport/PROVIDER.html">voime-transport PROVIDER</a> 定义。</li>
   <li>前端只处理字节流上的 JSON lines；消息语义见 <a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>。</li>
+  <li>GPU worker 只与 <code>voimed</code> 通信，不经过前端 IPC；worker 帧协议不属于本边界。</li>
 </ul>
 
 <h3 id="p3-2">3.2 目标绑定与 SendInput</h3>
@@ -77,6 +83,7 @@
 <ul class="note">
   <li>目标绑定使用前台 HWND + UIA RuntimeId；提交前复核。</li>
   <li><code>SendInput</code> 只注入目标；失败不重试其他窗口。</li>
+  <li>本图只包含 Win32 / UIA / SendInput；DirectML / Vulkan / CUDA 属于 GPU worker，不出现在前端边界。</li>
 </ul>
 
 <h3 id="p3-3">3.3 TSF 编辑会话</h3>
@@ -104,6 +111,9 @@
   <tr><td>DPI / monitor API</td><td>浮层定位与缩放。</td></tr>
   <tr><td>Shell 通知区域 API</td><td>托盘图标与菜单。</td></tr>
 </table>
+<ul class="note">
+  <li>上表是前端消费的全部 OS 边界：Win32 / UIA / TSF 与命名管道。DirectML / Vulkan / CUDA 不在其中，只由 GPU worker 消费。</li>
+</ul>
 
 <h3 id="p4-2">4.2 TSF 接口（可选）</h3>
 <table>
@@ -135,10 +145,26 @@
   <tr><td>热键注册失败</td><td>组合被系统或其他应用占用、系统保留或缺少修饰键。</td><td>设置窗口内提示；要求重新录制或清除 Hotkey；不静默吞键。</td></tr>
   <tr><td>UIA 焦点不可用</td><td>应用不暴露 UIA 或焦点元素为空。</td><td>只绑定前台 HWND；提交前尽力复核。</td></tr>
   <tr><td>UIPI 拒绝</td><td>目标窗口完整性级别更高。</td><td>不注入；保留历史；提示用户。</td></tr>
-  <tr><td><code>SendInput</code> 部分失败</td><td>目标拒绝或以 Unicode 处理异常。</td><td>停止后续输入；不重复注入；记录错误码。</td></tr>
+  <tr><td><code>SendInput</code> 部分失败</td><td>目标拒绝或以 Unicode 处理异常。</td><td>停止继续注入；不重复注入；记录错误码。</td></tr>
   <tr><td>TSF 编辑会话失败</td><td>只读、选区变化、上下文销毁。</td><td>不提交；保留历史；不跨窗口重试。</td></tr>
   <tr><td>管道断开</td><td>daemon 退出或权限变化。</td><td>隐藏浮层；放行热键；定时重连。</td></tr>
 </table>
+
+<h3 id="p4-5">4.5 安装与权限</h3>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>核心安装</td><td><code>scripts/install-core.ps1</code> 安装 <code>voime-tray.exe</code> 与 <code>voimed.exe</code> 到默认前缀 <code>%LOCALAPPDATA%\Programs\Voime</code>，核心模型写入 <code>%LOCALAPPDATA%\voime\models</code>，并写入当前用户登录启动项。</td></tr>
+  <tr><td>GPU 模块安装</td><td><code>scripts/install-gpu.ps1</code> 安装 GPU worker、对应 GPU runtime（DirectML / Vulkan / CUDA）与 GPU 模型；GPU 模块独立于前端，前端不参与安装。</td></tr>
+  <tr><td>安装范围</td><td>核心与 GPU 模块每用户安装；不安装系统级常驻服务、不装 Session 0 服务；卸载由对应安装脚本按同一范围删除。</td></tr>
+  <tr><td>登录启动</td><td>核心安装脚本只写当前用户 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code> 启动 <code>voime-tray.exe</code>。</td></tr>
+  <tr><td>TSF 注册</td><td>可选子工程；启用时按 COM <code>InprocServer32</code> 注册，通常需要管理员权限；不启用不影响托盘前端。</td></tr>
+  <tr><td>UIPI</td><td>普通完整性进程；不自动提权、不绕过 UIPI、不向高完整性窗口注入。</td></tr>
+  <tr><td>GPU runtime 变更</td><td>只由 GPU 安装脚本管理；前端不安装、不升级、不探测 runtime。</td></tr>
+</table>
+<ul class="note">
+  <li>核心安装与 GPU 安装是独立单元；卸载 GPU 模块不影响托盘、daemon 或核心模型。</li>
+  <li>安装权限只覆盖写入目标；运行期所有进程仍在当前用户会话。</li>
+</ul>
 
 </body>
 </html>

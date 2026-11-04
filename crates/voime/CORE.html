@@ -29,12 +29,14 @@
     ├── <a href="#c4-1">main.rs</a>
     ├── <a href="#c4-2">cli.rs</a>
     ├── <a href="#c4-3">client.rs</a>
-    ├── <a href="#c4-4">app.rs</a>
-    ├── <a href="#c4-5">ui.rs</a>
-    ├── <a href="#c4-6">ui/theme.rs</a>
-    └── <a href="#c4-7">doctor.rs</a></code></pre>
-
+    ├── <a href="#c4-4">config.rs</a>
+    ├── <a href="#c4-5">app.rs</a>
+    ├── <a href="#c4-6">ui.rs</a>
+    ├── <a href="#c4-7">ui/theme.rs</a>
+    └── <a href="#c4-8">doctor.rs</a></code></pre>
 <ul class="note">
+  <li><code>config.rs</code> 只服务 <code>ctl backend</code> 与 doctor 的只读检查；不读取 Final 后端到 TUI。</li>
+  <li>本 crate 不加载模型、不启动 worker、不链接 GPU runtime。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -47,11 +49,13 @@
   <tr><td>终端恢复</td><td><code>Tui::init</code> 启用 raw mode / 备用屏幕 / 隐藏光标；<code>Drop</code> 与 panic hook 都恢复终端。</td></tr>
   <tr><td>文本清洗</td><td>Final / Partial 去掉 <code>\r</code> / <code>\n</code> 并 trim；空文本不进入历史 / 不覆盖 partial。</td></tr>
   <tr><td>滚动</td><td><code>ScrollState</code> 保存 offset 与 follow；上翻停止跟随，End 恢复；绘制时按内容高度夹取 offset。</td></tr>
-  <tr><td>角色</td><td>TUI 以 <code>tui</code> 连接；<code>ctl</code> / <code>doctor</code> 以 <code>control</code> 连接。</td></tr>
-  <tr><td>doctor 只读</td><td>不发送 Start / Stop / Quit，不修改配置；只连接读 Snapshot 与调用 core 只读 API。</td></tr>
+  <tr><td>角色</td><td>TUI 以 <code>tui</code> 连接；<code>ctl</code> / <code>doctor</code> 以 <code>control</code> 连接；<code>ctl backend</code> 不连接。</td></tr>
+  <tr><td>doctor 只读</td><td>不发送 Start / Stop / Quit，不修改配置，不启动 worker；只连接读 Snapshot、读配置 / 日志并调用 core 只读 API。</td></tr>
+  <tr><td>ctl 写配置</td><td>只有 <code>ctl backend</code> 写 <code>[final].backend</code>；其他 ctl 动作只发送控制消息。</td></tr>
   <tr><td>ctl 超时</td><td>每次 ctl 动作等待响应的超时由 <code>main.rs</code> 拥有；具体值见 <a href="#c4-1">§4.1</a>。</td></tr>
-  <tr><td>端点</td><td><code>Client</code> 通过 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Stream</code> 连接 daemon。</td></tr>
-  <tr><td>无模型</td><td>不加载 ONNX；doctor 只读模型清单与设备列表。</td></tr>
+  <tr><td>端点</td><td><code>Client</code> 通过 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Stream</code> 连接 daemon；<code>ctl backend</code> 不使用端点。</td></tr>
+  <tr><td>无模型</td><td>不加载 ONNX / GGUF；doctor 只读模型 manifest、设备列表与 worker 日志。</td></tr>
+  <tr><td>Fcitx 系统安装</td><td>doctor 检查 <code>/usr</code> 系统 addon 路径与 ABI；不设置、不检查 <code>FCITX_ADDON_DIRS</code>，不检查旧 inputmethod 条目。</td></tr>
 </table>
 <ul class="note">
   <li>仓库级线程 / 进程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>
@@ -70,8 +74,12 @@
   <tr><td><code>voime-ipc</code></td><td>ClientMessage / ServerMessage 与 framing。</td></tr>
   <tr><td><code>voime-core</code></td><td>doctor 的默认模型目录、模型清单与音频设备列表。</td></tr>
   <tr><td><code>voime-transport</code></td><td>本机端点与字节流。</td></tr>
-  <tr><td><code>anyhow</code></td><td>命令 / 终端 / 连接错误。</td></tr>
+  <tr><td><code>serde</code> / <code>toml</code></td><td><code>ctl backend</code> 读写 <code>config.toml</code>。</td></tr>
+  <tr><td><code>anyhow</code></td><td>命令 / 终端 / 连接 / 配置错误。</td></tr>
 </table>
+<ul class="note">
+  <li>不依赖 <code>voimed</code>，也不链接 ORT / llama.cpp；Final 后端的合法值由本 crate 的 CLI 枚举与 daemon 的配置解析共同约束。</li>
+</ul>
 
 <h2 id="c4">4. Internal types &amp; method signatures</h2>
 <p><a href="#top">↑</a></p>
@@ -84,6 +92,9 @@ fn run_ctl(endpoint: &amp;Endpoint, action: CtlAction) -&gt; ExitCode;
 fn run_ctl_inner(endpoint: &amp;Endpoint, action: CtlAction) -&gt; anyhow::Result&lt;()&gt;;
 // ctl 动作等待响应的超时由 main.rs 拥有；推荐值 3 s
 fn print_state(message: ServerMessage);</code></pre>
+<ul class="note">
+  <li><code>run_ctl</code> 先分流 <code>Backend</code>：该动作不需要 <code>Endpoint</code>，只调用 <code>config::write_backend</code>。</li>
+</ul>
 
 <h3 id="c4-2">4.2 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Cli {
@@ -93,9 +104,21 @@ fn print_state(message: ServerMessage);</code></pre>
 
 pub enum Command { Ctl(CtlArgs), Doctor }
 pub struct CtlArgs { pub action: CtlAction }
-pub enum CtlAction { Start, Stop, Toggle, Status, Clear, Quit }
+pub enum CtlAction {
+    Start,
+    Stop,
+    Toggle,
+    Status,
+    Clear,
+    Quit,
+    Backend(BackendId),
+}
+pub enum BackendId { Cpu, Firered, Qwen3 }
 
 pub fn parse() -&gt; Cli;</code></pre>
+<ul class="note">
+  <li><code>BackendId</code> 的字符串值与 daemon 配置一致：<code>cpu</code> / <code>firered</code> / <code>qwen3</code>。</li>
+</ul>
 
 <h3 id="c4-3">4.3 client.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub struct Client {
@@ -119,7 +142,24 @@ impl Client {
 }
 impl Drop for Client { /* Stream::shutdown */ }</code></pre>
 
-<h3 id="c4-4">4.4 app.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-4">4.4 config.rs <a class="backlink" href="#c1">文件树</a></h3>
+<pre><code>pub struct FinalConfig {
+    pub backend: BackendId,
+}
+
+impl FinalConfig {
+    pub fn path() -&gt; PathBuf;
+    pub fn load() -&gt; anyhow::Result&lt;Self&gt;;
+}
+
+pub fn write_backend(backend: BackendId) -&gt; anyhow::Result&lt;()&gt;;</code></pre>
+<ul class="note">
+  <li><code>path</code> 为 <code>~/.config/voime/config.toml</code>（Windows <code>%APPDATA%\voime\config.toml</code>）。</li>
+  <li><code>write_backend</code> 先读现有 TOML，仅替换 <code>[final].backend</code>，再写同目录临时文件并 rename，保留其它配置段。</li>
+  <li><code>load</code> 只供 doctor 读取；TUI / ctl 控制命令不读取。</li>
+</ul>
+
+<h3 id="c4-5">4.5 app.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub enum Control { Continue, Detach }
 
 pub struct App {
@@ -159,7 +199,7 @@ impl ScrollState {
 fn sanitize(text: &amp;str) -&gt; String;
 fn page_step(height: u16) -&gt; usize;</code></pre>
 
-<h3 id="c4-5">4.5 ui.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-6">4.6 ui.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub const GUTTER_WIDTH: u16;
 pub const MARKER: &amp;str;
 pub const FOOTER_HEIGHT: u16;
@@ -181,17 +221,31 @@ fn push_wrapped&lt;'a&gt;(lines: &amp;mut Vec&lt;Line&lt;'a&gt;&gt;, text: &amp;
 pub fn wrap_text(text: &amp;str, width: usize) -&gt; Vec&lt;String&gt;;
 fn install_panic_hook();</code></pre>
 
-<h3 id="c4-6">4.6 ui/theme.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-7">4.7 ui/theme.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub const RECORDING: Color;
 pub const TEXT: Color;</code></pre>
 
-<h3 id="c4-7">4.7 doctor.rs <a class="backlink" href="#c1">文件树</a></h3>
+<h3 id="c4-8">4.8 doctor.rs <a class="backlink" href="#c1">文件树</a></h3>
 <pre><code>pub fn run(endpoint: &amp;Endpoint) -&gt; bool;
 
+fn check_final_backend() -&gt; CheckResult;
+fn check_workers() -&gt; [CheckResult; 3];
+fn check_worker(backend: BackendId) -&gt; CheckResult;
+fn check_models(root: &amp;Path) -&gt; CheckResult;
+fn check_fcitx() -&gt; CheckResult;
 fn fcitx_running() -&gt; bool;
 fn addon_path(relative: &amp;str) -&gt; Option&lt;PathBuf&gt;;
 fn library_path() -&gt; Option&lt;PathBuf&gt;;
-fn user_config_path() -&gt; Option&lt;PathBuf&gt;;</code></pre>
+fn user_config_path() -&gt; Option&lt;PathBuf&gt;;
+fn system_addon_abi() -&gt; CheckResult;
+fn worker_log_status(backend: BackendId) -&gt; WorkerStatus;
+
+pub enum WorkerStatus { Missing, Ready, Running, Unavailable }</code></pre>
+<ul class="note">
+  <li><code>check_final_backend</code> 只读 <code>FinalConfig::load</code>，并列出 CPU / FireRed / Qwen 的安装与选择状态。</li>
+  <li><code>check_workers</code> 依次检查 CPU / FireRed / Qwen：worker 可执行文件、模型目录与 daemon 日志中的状态；不启动 worker。</li>
+  <li><code>check_fcitx</code> 只检查系统 addon 描述 / 库与 ABI；不检查旧 inputmethod 条目或 <code>FCITX_ADDON_DIRS</code>。</li>
+</ul>
 
 <h2 id="c5">5. Call stack tree</h2>
 <p><a href="#top">↑</a></p>
@@ -250,9 +304,15 @@ Tui::draw(&amp;mut app)
 ├── Paragraph::new(lines).scroll((offset, 0))
 └── footer_text(app) → Paragraph（DIM）</code></pre>
 
-<h3 id="c5-4">5.4 ctl 命令</h3>
+<h3 id="c5-4">5.4 ctl 命令与 backend 写入</h3>
 <pre><code>voime::run_ctl(endpoint, action)
-└── voime::run_ctl_inner(endpoint, action)
+├── 判断 action == Backend(id)
+│   └── voime::config::write_backend(id)
+│       ├── FinalConfig::path()
+│       ├── 读取现有 TOML
+│       ├── 替换 [final].backend
+│       └── 写临时文件 + rename
+└── 其他动作为 voime::run_ctl_inner(endpoint, action)
     ├── Client::connect_as(endpoint, Role::Control)
     ├── Client::snapshot()
     ├── 判断 Start / Stop / Toggle → Client::send(...) + Client::wait_for_state(3 s)
@@ -266,15 +326,26 @@ Tui::draw(&amp;mut app)
     ├── std::fs::metadata(endpoint.as_unix_path()) → 检查 Unix 0600
     ├── Client::connect_as(endpoint, Role::Control)
     │   └── Client::snapshot() → daemon 在线
-    ├── voime_core::config::default_model_dir()
-    │   └── ModelManifest::load / verify
+    ├── voime::config::FinalConfig::load()
+    │   └── doctor::check_final_backend() → cpu / firered / qwen3
+    ├── doctor::check_workers() → CPU / FireRed / Qwen
+    │   ├── doctor::check_worker(backend)
+    │   │   └── 检查 worker 可执行文件与模型目录
+    │   └── doctor::worker_log_status(backend) → daemon 日志中的 ready / running
+    ├── voime_core::config::default_model_root()
+    │   └── doctor::check_models(root) → 核心模型 manifest / SHA
     ├── voime_core::audio::capture::list_input_devices()
     ├── voime_core::audio::capture::default_input_device_name()
     ├── doctor::fcitx_running() → 遍历 /proc
-    ├── doctor::addon_path("addon/voime.conf")
-    ├── doctor::library_path() → /usr / /usr/local
-    ├── doctor::addon_path("inputmethod/voime.conf") → 旧条目检查
+    ├── doctor::addon_path("addon/voime.conf") → /usr/share/fcitx5/addon
+    ├── doctor::library_path() → /usr/lib/fcitx5/voime.so
+    ├── doctor::system_addon_abi() → Fcitx5 ABI / 依赖解析
     └── doctor::user_config_path() → XDG_CONFIG_HOME / HOME</code></pre>
+<ul class="note">
+  <li>doctor 不再检查 <code>/usr/share/fcitx5/inputmethod/voime.conf</code>；Voime 不注册输入法条目。</li>
+  <li>worker 状态只读日志与进程，不通过 IPC 扩展字段；<code>Status</code> 形状保持不变。</li>
+  <li>doctor 不加载模型权重，只校验 manifest 与文件；模型缺失计为 FAIL，GPU 未选择只计为 WARN。</li>
+</ul>
 
 <h3 id="c5-6">5.6 断线与退出</h3>
 <pre><code>Client reader thread

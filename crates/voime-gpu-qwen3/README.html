@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>README — voime-gpu-qwen3</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>README — voime-gpu-qwen3</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+｜ 本组件：<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+</p>
+
+<p>
+<code>voime-gpu-qwen3</code> 是 Voime 的可选 GPU Final 后端 worker。
+它由 <code>voimed</code> 按 <code>final.backend = qwen3</code> 拉起，使用 llama-cpp-rs / llama.cpp
+加载 Qwen3-ASR 1.7B BF16 GGUF 主模型与 BF16 mmproj，只把完整语音段识别成最终文本。
+</p>
+
+<h2 id="r1">1. WHAT &amp; WHY</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="r1-1">1.1 IDEAL：要解决的问题</h3>
+<p>
+本地语音输入需要在 GPU 上获得比 CPU 小模型更好的最终识别质量，而 GPU runtime 不能在
+核心进程里加载。Qwen3-ASR 1.7B 以 BF16 GGUF 形式发布，可以由 llama-cpp-rs / llama.cpp
+直接加载；它自带标点与大小写，适合作为一条独立的 Final 后端。在 AMD Linux 上，
+llama.cpp 的 Vulkan 路径使用系统 Vulkan loader 与 GPU 驱动，不需要 ROCm / HIP 栈。
+</p>
+
+<h3 id="r1-2">1.2 GOAL：什么算成功</h3>
+<ul>
+  <li>只做 Final：接收 daemon 传来的完整语音段，返回最终文本；不接收活动段、Partial 或 VAD 状态。</li>
+  <li>固定使用 Qwen3-ASR 1.7B BF16 主模型（约 4.07 GB）与 BF16 mmproj（约 642 MB），合计约 4.7 GB；两者必须来自同一模型版本。</li>
+  <li>由 <code>llama-cpp-4</code> 0.11.0 的 <code>mtmd</code> feature 与一个 backend feature（<code>vulkan</code> 或 <code>cuda</code>）构建；不链接 ORT / ONNX。</li>
+  <li>输入为 16 kHz、单声道、<code>f32</code> PCM；直接进入模型音频输入，不写临时 WAV。</li>
+  <li>输出保留模型自带的标点与大小写；worker 只清洗 <code>language ...</code> / <code>asr_text</code> 包装，不做第二套标点或文本润色。</li>
+  <li>AMD Linux 只提供 Vulkan；不构建、不安装、不探测 HIP / ROCm。NVIDIA 可使用 CUDA 或 Vulkan。</li>
+  <li>属于 GPU 模块，不是默认 Final：只有 <code>scripts/install-gpu.sh --backend qwen3</code> / <code>scripts/install-gpu.ps1 --backend qwen3</code> 或 <code>voime ctl backend qwen3</code> 才启用；安装 GPU 模块本身不改变默认 <code>cpu</code>。</li>
+  <li>worker 不可用、加载失败、超时或崩溃时，daemon 的当前段回退 CPU SenseVoice；核心 Preview 与 VAD 不受影响。</li>
+  <li>运行期模型常驻；同一时刻只处理一个 Final，不在上一段未完成时接收下一段。</li>
+  <li>独立 crate、二进制、进程与 runtime 目录；不与 FireRed 后端共享链接单元或 runtime。</li>
+</ul>
+
+<h3 id="r1-3">1.3 非目标</h3>
+<ul>
+  <li>不加载 VAD、不产生 Partial、不做 Preview、不包含平台前端或 UI。</li>
+  <li>不接收活动段增量音频、流式请求或前端 IPC；只处理完整语音段。</li>
+  <li>不加载 ONNX / ONNX Runtime，也不提供 ORT GPU 路径；FireRed 后端与本 worker 相互独立。</li>
+  <li>不提供 HIP / ROCm runtime；AMD Linux 的 Qwen 后端只走 Vulkan。</li>
+  <li>不做 CPU Qwen3-ASR 大模型推理；GPU 不可用时由 daemon 回退核心 CPU SenseVoice，而不是在 worker 内跑 CPU 大模型。</li>
+  <li>不做流式识别、增量解码或边录边出字。</li>
+  <li>不做运行期模型 / runtime 下载、转换、量化或格式迁移；这些只发生在安装 / 发布阶段。</li>
+  <li>不静默降级到 Q8_0 / FP16，也不混用 Q8 mmproj；精度或 runtime 不满足时该后端直接不可用。</li>
+  <li>不加载 FireRedPunc 或任何第二个标点 / 文本模型；标点与大小写由 Qwen3-ASR 自身产生。</li>
+  <li>不做文本润色、纠错、翻译、摘要或规则后处理；只做输出包装清洗。</li>
+  <li>不支持运行中切换 Final 后端或同时运行两个 GPU worker；切换通过配置 + daemon 重启生效。</li>
+</ul>
+
+<h2 id="r2">2. 用户交互</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>场景</th><th>行为</th><th>详细契约</th></tr>
+  <tr>
+    <td>安装 Qwen 后端</td>
+    <td>运行 <code>scripts/install-gpu.sh --qwen3</code> 或 <code>scripts/install-gpu.ps1 --qwen3</code>；安装 Qwen worker、所选 llama.cpp runtime 与 <code>qwen3-asr-1.7b</code> 模型目录。安装 GPU 模块不自动切换 <code>final.backend</code>。</td>
+    <td><a href="USER.html#u4-4">USER §4.4</a></td>
+  </tr>
+  <tr>
+    <td>选择 runtime</td>
+    <td>用 <code>--qwen-runtime vulkan</code> 或 <code>--qwen-runtime cuda</code> 选择预编译 worker / runtime；AMD Linux 只接受 <code>vulkan</code>，不提供 <code>hip</code> / <code>rocm</code>。</td>
+    <td><a href="USER.html#u4-2">USER §4.2</a> · <a href="PROVIDER.html#p4-4">PROVIDER §4.4</a></td>
+  </tr>
+  <tr>
+    <td>启用 Qwen Final</td>
+    <td>安装时用 <code>--backend qwen3</code>，或之后运行 <code>voime ctl backend qwen3</code>；下一次 daemon 启动才生效，运行中不热切换。</td>
+    <td><a href="../../USER.html#u4-4">根 USER §4.4</a> · <a href="../voime/USER.html#u4-1">voime USER §4.1</a></td>
+  </tr>
+  <tr>
+    <td>日常使用</td>
+    <td>用户不直接启动或操作 worker；daemon 在启动时拉起它，前端只显示最终文本。worker 没有窗口、托盘、TUI 或命令行交互。</td>
+    <td><a href="USER.html#u3-1">USER §3.1</a></td>
+  </tr>
+  <tr>
+    <td>诊断</td>
+    <td><code>voime doctor</code> 显示 Qwen worker 的 ready / running 状态与不可用原因；不读取 worker 内部模型状态。</td>
+    <td><a href="../voime/USER.html#u4-4">voime USER §4.4</a></td>
+  </tr>
+  <tr>
+    <td>卸载</td>
+    <td><code>scripts/install-gpu.sh --qwen3 --uninstall</code> 或对应 <code>.ps1</code>；只删除 Qwen worker、runtime 与 <code>qwen3-asr-1.7b</code> 模型，不触碰核心与 FireRed 后端。</td>
+    <td><a href="USER.html#u4-4">USER §4.4</a></td>
+  </tr>
+  <tr>
+    <td>失败回退</td>
+    <td>worker 不可用、模型 / runtime 缺失、超时或崩溃时，当前段回退 CPU SenseVoice；用户仍能完成输入。</td>
+    <td><a href="USER.html#u4-3">USER §4.3</a> · <a href="../../USER.html#u4-4">根 USER §4.4</a></td>
+  </tr>
+</table>
+<ul class="note">
+  <li>worker 不向用户输出识别文本或模型细节；最终文本只通过 daemon 返回前端。</li>
+  <li>默认 <code>final.backend = cpu</code>；安装 Qwen 后端不等于启用它。</li>
+  <li>Qwen 后端不改变热键、目标、Preview 或提交语义；这些仍由核心与平台前端负责。</li>
+</ul>
+
+<h2 id="r3">3. Credits</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>在本项目中的角色</th><th>技术栈 / 许可</th></tr>
+  <tr>
+    <td><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR</a></td>
+    <td>Qwen GPU Final 的识别模型；提供内置标点与大小写。</td>
+    <td>GGUF · Apache-2.0</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/eugenehp/llama-cpp-rs">llama-cpp-rs</a> / <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a></td>
+    <td>Qwen3-ASR 的 GGUF 加载、<code>mtmd</code> 音频输入与 Vulkan / CUDA 推理。</td>
+    <td>Rust / C++ · MIT</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/ggml-org/ggml/blob/master/docs/gguf.md">GGUF</a></td>
+    <td>主模型与 mmproj 的容器格式；tokenizer 与模型配置随 GGUF 提供。</td>
+    <td>GGML 生态 · MIT</td>
+  </tr>
+</table>
+<ul class="note">
+  <li>模型权重及其许可证随模型目录分发；本仓库不提交权重文件。</li>
+  <li>Qwen 模型来源固定为 <code>ggml-org/Qwen3-ASR-1.7B-GGUF</code>；具体 revision、文件体积与 SHA-256 见 <a href="PROVIDER.html#p4-1">PROVIDER §4.1</a> / <a href="PROVIDER.html#p4-2">§4.2</a>。</li>
+</ul>
+
+</body>
+</html>

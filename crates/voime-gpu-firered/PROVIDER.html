@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PROVIDER — voime-gpu-firered</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>PROVIDER — voime-gpu-firered</h1>
+
+<p class="doc-links">
+根：<a href="../../README.html">README</a>
+<a href="../../USER.html">USER</a>
+<a href="../../CORE.html">CORE</a>
+<a href="../../PROVIDER.html">PROVIDER</a>
+｜ 本组件：<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+</p>
+
+<p>
+本文只记录 <code>voime-gpu-firered</code> 实际消费的外部子集：FireRedASR2-AED 与 FireRedPunc
+两个 FP32 ONNX 模型，以及 ONNX Runtime 的 GPU Execution Provider。完整定义以官方文档与
+模型导出包为准；产品级下边界见 <a href="../../PROVIDER.html">根 PROVIDER</a>。
+</p>
+
+<h2 id="p1">1. TERMS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>术语</th><th>定义</th></tr>
+  <tr><td>ONNX 图（graph）</td><td>一个 <code>.onnx</code> 文件中的计算图；权重可以内嵌，也可以放在同名 <code>.data</code> 外部文件中。</td></tr>
+  <tr><td>ONNX 会话（session）</td><td>ONNX Runtime 加载一个图后可执行推理的运行时对象；本组件创建 encoder、decoder、FireRedPunc 三个会话。</td></tr>
+  <tr><td>张量（tensor）</td><td>ONNX 的输入 / 输出多维数组；名称、元素类型与形状构成会话的 I/O 签名。</td></tr>
+  <tr><td>Execution Provider（EP）</td><td>ONNX Runtime 的推理后端；本组件只使用 CUDA、MIGraphX 或 DirectML 之一，不使用 CPU EP。</td></tr>
+  <tr><td>ORT GPU runtime</td><td>包含 ONNX Runtime 动态库与目标 EP provider 的运行时；由安装脚本放在 worker 自己的 runtime 目录。</td></tr>
+  <tr><td><code>api-29</code></td><td><code>ort</code> crate 的 API 版本选择；与 ONNX Runtime 1.29 的 C API 对齐。</td></tr>
+  <tr><td><code>load-dynamic</code></td><td><code>ort</code> 的运行时动态加载模式；worker 不在构建期链接 ORT，而是在启动时从 runtime 目录加载。</td></tr>
+  <tr><td>FP32</td><td>32 位浮点；本组件的两个模型均为上游 FP32 ONNX，不回退 int8 / FP16。</td></tr>
+  <tr><td>Kaldi fbank</td><td>Kaldi 风格梅尔滤波器组特征；80-bin、25 ms 窗、10 ms 帧移、<code>snip_edges</code>、16-bit 缩放。</td></tr>
+  <tr><td>CMVN</td><td>倒谱均值方差归一化；统计量来自 <code>cmvn.ark</code>，逐帧应用后再进入 encoder。</td></tr>
+  <tr><td>Kaldi ark</td><td>Kaldi 的二进制矩阵容器；<code>cmvn.ark</code> 保存 80 维 CMVN 统计。</td></tr>
+  <tr><td>AED</td><td>FireRedASR2-AED 的 attention encoder-decoder；encoder 输出帧级表示，decoder 自回归生成 token。</td></tr>
+  <tr><td>decoder cache</td><td>decoder 每层的自注意力缓存；第一步为空，之后每一步用上一步的 <code>new_cache_*</code>。</td></tr>
+  <tr><td><code>&lt;sos&gt;</code> / <code>&lt;eos&gt;</code></td><td>AED 的特殊 token；id 3 / 4。greedy 从 <code>&lt;sos&gt;</code> 开始，遇到 <code>&lt;eos&gt;</code> 停止。</td></tr>
+  <tr><td>greedy</td><td>每步取 decoder logits 的 argmax；不做 beam search。</td></tr>
+  <tr><td>CTC head</td><td>FireRedASR2-AED 的辅助 CTC 输出；<code>ctc.onnx</code> 存在但不加载，不作为产品路径。</td></tr>
+  <tr><td>FireRedPunc tokenizer</td><td>BERT WordPiece 分词器；词表为 <code>tokens.txt</code>，中文按字符、英文按子词。</td></tr>
+  <tr><td>标点标签</td><td>5 类：<code>&lt;space&gt;</code>、<code>，</code>、<code>。</code>、<code>？</code>、<code>！</code>；由 <code>out_dict</code> / <code>punc.json</code> 固定。</td></tr>
+  <tr><td>manifest</td><td>模型目录的权威描述：schema 5、id、kind、文件 SHA-256 / 大小与 runtime 声明。</td></tr>
+  <tr><td>SHA-256</td><td>模型文件内容摘要；启动时逐文件校验，失败不创建会话。</td></tr>
+</table>
+
+<h2 id="p2">2. CONVENTIONS</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>约定</th><th>内容</th></tr>
+  <tr><td>清单权威</td><td>模型目录、文件列表、SHA-256、精度与最长段由 <code>manifest.json</code> 声明；代码不硬编码可替换路径。</td></tr>
+  <tr><td>模型不可变</td><td>两个模型目录运行期只读；不下载、不转换、不量化、不改写 manifest。</td></tr>
+  <tr><td>张量校验</td><td>会话创建后校验输入 / 输出名称、元素类型与形状；与本文或 manifest 不符即 <code>load_failed</code>。</td></tr>
+  <tr><td>GPU only</td><td>只注册一个 GPU EP；不注册 CPU EP，不回退到 CPU ORT。</td></tr>
+  <tr><td>runtime 固定</td><td><code>ort</code> 固定 <code>default-features=false</code> + <code>api-29</code> + <code>load-dynamic</code>；EP feature 按平台只开一个。</td></tr>
+  <tr><td>动态库位置</td><td>ORT 动态库只从 worker 自己的 runtime 目录加载；不写全局 <code>LD_LIBRARY_PATH</code>，不与 Qwen 共享目录。</td></tr>
+  <tr><td>精度固定</td><td>只加载 FP32 ONNX；不加载 int8 / FP16，不做运行期精度回退。</td></tr>
+  <tr><td>fbank 固定</td><td>Kaldi fbank 80-bin、25 / 10 ms、<code>snip_edges</code>、dither 0、16-bit 缩放；音频必须是 16 kHz 单声道 <code>f32</code>。</td></tr>
+  <tr><td>CMVN 固定</td><td>从 <code>cmvn.ark</code> 读取 80 维统计；mean / inverse stddev 维度必须与 fbank 一致。</td></tr>
+  <tr><td>AED 解码</td><td>greedy；<code>&lt;sos&gt;</code> 3 开始、<code>&lt;eos&gt;</code> 4 停止；<code>ctc.onnx</code> 不加载。</td></tr>
+  <tr><td>Punc 二次推理</td><td>FireRedPunc 在 AED 文本上单独运行；标签按 tokenizer 偏移插回原文，返回前完成全部标点。</td></tr>
+  <tr><td>Punc 分块</td><td>单块最多 512 个位置（含 <code>[CLS]</code> / <code>[SEP]</code>）；超长文本按 token 边界切块，块间不共享上下文。</td></tr>
+  <tr><td>错误映射</td><td>Provider 错误在边界转换为 common 错误码；不新增后端私有码，不向 daemon 返回半成品文本。</td></tr>
+  <tr><td>运行期不联网</td><td>不访问网络、不下载模型、不检查更新；所有文件在安装时已就位。</td></tr>
+  <tr><td>日志</td><td>只记录路径、SHA 前缀、张量名、耗时与错误码；不记录识别文本或音频样本。</td></tr>
+</table>
+<ul class="note">
+  <li>模型目录与 runtime 的安装入口见 <a href="USER.html#u4-1">USER §4.1</a> / <a href="USER.html#u4-4">§4.4</a>；本文不重复安装选项。</li>
+  <li>运行期不切换 EP / runtime；切换需要重新安装并重启 daemon。</li>
+</ul>
+
+<h2 id="p3">3. DIAGRAMS</h2>
+<p><a href="#top">↑</a></p>
+
+<p>
+本组件的两张边界图分别是：daemon ↔ worker 的 Final 时序（见 <a href="USER.html#u3">USER §3</a>）
+与 worker ↔ ORT / 模型目录的加载边界（见本节）。两张图都只画跨边界调用，不展开 AED / FireRedPunc 内部阶段。
+</p>
+
+<h3 id="p3-1">3.1 worker ↔ ORT / 模型目录</h3>
+<div class="diagram"><img src="diagram/runtime-load.svg" alt="voime-gpu-firered 加载模型、创建 ORT GPU 会话并执行推理的边界时序图"></div>
+<ul class="note">
+  <li><code>Hello</code> 校验通过后，worker 读取两个 <code>manifest.json</code> 并逐文件校验 SHA-256 与大小；任一失败不加载 runtime、不发送 <code>Ready</code>。</li>
+  <li>加载阶段创建进程级 ORT Environment，注册安装时选定的 GPU EP，然后创建 encoder、decoder 与 FireRedPunc 三个会话；<code>ctc.onnx</code> 不创建会话。</li>
+  <li>识别阶段只画一次“运行已加载的会话”调用；encoder / decoder / Punc 的内部阶段与 AED 自回归循环不在图中展开。</li>
+  <li>三个会话常驻；每个 Final 只重置解码状态与 cache，不重新加载权重、不重新注册 EP。</li>
+  <li>图中没有 CPU EP、没有第二个 runtime；加载失败只返回错误，由 daemon 决定是否回退 CPU。</li>
+</ul>
+
+<h2 id="p4">4. INTERFACES</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="p4-1">4.1 FireRedASR2-AED</h3>
+<p>
+来源为 <a href="https://huggingface.co/Ciwiruk/FireRedASR2-AED-onnx">Ciwiruk/FireRedASR2-AED-onnx</a>
+的 FP32 ONNX 导出，上游模型是 <a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedTeam 的 FireRedASR2-AED</a>（1.15B 参数，Apache-2.0）。
+导出包使用 opset 17，权重约 4.5 GB；本产品只在安装时获取一次，运行期只读。
+</p>
+
+<table>
+  <tr><th>文件</th><th>作用</th><th>大小（bytes）</th></tr>
+  <tr><td><code>encoder.onnx</code></td><td>Conformer encoder 图</td><td>564,553</td></tr>
+  <tr><td><code>encoder.data</code></td><td>encoder 外部权重</td><td>2,893,370,496</td></tr>
+  <tr><td><code>ctc.onnx</code></td><td>CTC head；存在但不加载</td><td>44,410,182</td></tr>
+  <tr><td><code>decoder.onnx</code></td><td>单步 decoder 图</td><td>392,235</td></tr>
+  <tr><td><code>decoder.data</code></td><td>decoder 外部权重</td><td>1,793,474,560</td></tr>
+  <tr><td><code>dict.txt</code></td><td>8667 个 token 的 id → token 表</td><td>79,172</td></tr>
+  <tr><td><code>train_bpe1000.model</code></td><td>英文子词 SentencePiece 模型</td><td>251,707</td></tr>
+  <tr><td><code>cmvn.ark</code></td><td>Kaldi CMVN 统计</td><td>1,311</td></tr>
+  <tr><td><code>config.json</code></td><td>维度、特殊 token id、特征与参考解码参数</td><td>1,203</td></tr>
+  <tr><td><code>manifest.json</code></td><td>本产品的 schema 5 清单</td><td>—</td></tr>
+</table>
+
+<pre><code>encoder.onnx         4275797da7515ab7d112b684cc1a1589ccf4efdca5c8b97165e3f7b195e46e6e
+encoder.data         d9658f82e025b4fd44b9ad94ef10406a5919bdd006d0b7102e5193ce37ad8e6c
+ctc.onnx             ec3f28bd4376cfbded7319e34203b6e9f503a6c12731a15a8f485038fbfb4a75
+decoder.onnx         3e426f8fa9e60242d2fa570896eae1539e8859a82d544c50fc5f3b186323bfa0
+decoder.data         c9a46fba63fd90dacf226169a6573b2df34c910178aff4f2a8a4d62d5fc5e6ff
+dict.txt             1bc613de2112d257e61a349c3e72d1b1a9cf19c33d3ca954197ad2171e5ea07b
+train_bpe1000.model  473bbc157cb4eade2059b30a3c877a1c29bd50cadbfbed869ae36eeade7fee07
+cmvn.ark             6efba6105429d1630c05d818d956bfe4edfad37a04b3b27bb5a029b9adb37945
+config.json          2a38d390e6bde9807466c765d012daca4d5d66d2019890dffafec95f62310e4f</code></pre>
+<ul class="note">
+  <li>上面的 SHA-256 取自上游导出清单；安装脚本把它们写入产品 schema 5 manifest，运行期按该清单校验。</li>
+  <li>上游导出包的 <code>manifest.json</code> 只作为安装源；产品模型目录写入 schema 5 清单，字段语义见 <a href="../voime-core/USER.html#u4-3">voime-core USER §4.3</a>。</li>
+  <li><code>encoder.data</code> 与 <code>decoder.data</code> 必须与对应 <code>.onnx</code> 同目录；不要单独移动或改名。</li>
+  <li><code>ctc.onnx</code> 参与文件校验，但运行期不创建会话；CTC 不作为产品路径。</li>
+</ul>
+
+<h4>4.1.1 ONNX 张量</h4>
+<table>
+  <tr><th>图</th><th>方向</th><th>名称</th><th>类型 / 形状</th><th>说明</th></tr>
+  <tr><td>encoder</td><td>输入</td><td><code>input</code></td><td><code>float32[batch, frames, 80]</code></td><td>fbank + CMVN 后的特征。</td></tr>
+  <tr><td>encoder</td><td>输入</td><td><code>input_lengths</code></td><td><code>int64[batch]</code></td><td>有效帧数。</td></tr>
+  <tr><td>encoder</td><td>输出</td><td><code>output</code></td><td><code>float32[batch, T, 1280]</code></td><td>4 倍下采样后的帧级表示；<code>T</code> 约为 <code>frames / 4</code>。</td></tr>
+  <tr><td>encoder</td><td>输出</td><td><code>output_lengths</code></td><td><code>int64[batch]</code></td><td>有效输出帧数。</td></tr>
+  <tr><td>encoder</td><td>输出</td><td><code>mask</code></td><td><code>float32[batch, 1, T]</code></td><td>decoder 的 <code>src_mask</code>。</td></tr>
+  <tr><td>decoder</td><td>输入</td><td><code>ys</code></td><td><code>int64[batch, L]</code></td><td>已生成 token；第一步为 <code>&lt;sos&gt;</code> 3。</td></tr>
+  <tr><td>decoder</td><td>输入</td><td><code>encoder_output</code></td><td><code>float32[batch, T, 1280]</code></td><td>encoder 的 <code>output</code>。</td></tr>
+  <tr><td>decoder</td><td>输入</td><td><code>src_mask</code></td><td><code>float32[batch, 1, T]</code></td><td>encoder 的 <code>mask</code>。</td></tr>
+  <tr><td>decoder</td><td>输入</td><td><code>cache_0</code> … <code>cache_15</code></td><td><code>float32[batch, L-1, 1280]</code></td><td>16 层自注意力缓存；第一步为空。</td></tr>
+  <tr><td>decoder</td><td>输出</td><td><code>logits</code></td><td><code>float32[batch, 8667]</code></td><td>最后一个位置的原始分数；greedy 直接 argmax。</td></tr>
+  <tr><td>decoder</td><td>输出</td><td><code>new_cache_0</code> … <code>new_cache_15</code></td><td><code>float32[batch, L, 1280]</code></td><td>下一步的 cache。</td></tr>
+  <tr><td>ctc</td><td>输入</td><td><code>encoder_output</code></td><td><code>float32[batch, T, 1280]</code></td><td>仅记录；本产品不加载。</td></tr>
+  <tr><td>ctc</td><td>输出</td><td><code>log_probs</code></td><td><code>float32[batch, T, 8667]</code></td><td>仅记录；id 0 为 blank。</td></tr>
+</table>
+<ul class="note">
+  <li>batch 固定为 1；<code>frames</code> 由段长决定。<code>T</code> 是 encoder 输出帧数；每帧约 40 ms，最大 5000 帧（上游约 200 s）。本产品段长上限 30 s。</li>
+  <li><code>logits</code> 未做 softmax；greedy 只需 argmax，不改变结果。</li>
+  <li>decoder 每次只返回最后一个位置的 logits；<code>ys</code> 随生成逐步增长，cache 同步更新。</li>
+</ul>
+
+<h4>4.1.2 Tokenizer、特殊 token 与文本还原</h4>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>词表</td><td><code>dict.txt</code> 每行 <code>token id</code>，共 8667 项；id 0 <code>&lt;blank&gt;</code>、1 <code>&lt;unk&gt;</code>、2 <code>&lt;pad&gt;</code>、3 <code>&lt;sos&gt;</code>、4 <code>&lt;eos&gt;</code>。</td></tr>
+  <tr><td>英文子词</td><td><code>train_bpe1000.model</code> 为 SentencePiece 模型；以 <code>▁</code> 开头的 piece 表示词首，还原为空格边界。</td></tr>
+  <tr><td>中文</td><td>词表中的中文字符直接拼接，不额外加空格。</td></tr>
+  <tr><td>特殊 token</td><td>解码输出去掉 <code>&lt;blank&gt;</code> / <code>&lt;unk&gt;</code> / <code>&lt;pad&gt;</code> / <code>&lt;sos&gt;</code> / <code>&lt;eos&gt;</code>；空文本按空段处理。</td></tr>
+  <tr><td>解码策略</td><td>产品固定 greedy；<code>config.json</code> 的 <code>reference_decoding</code>（beam 3 / smoothing 1.25 / length penalty 0.6）只作上游参考，不进入运行期。</td></tr>
+  <tr><td>最长输出</td><td><code>config.json</code> 的 <code>output_length_max</code> 为 300；产品段长上限 30 s，超过时由核心分段器切分。</td></tr>
+</table>
+
+<h4>4.1.3 fbank 与 CMVN</h4>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>输入</td><td>16 kHz、单声道、<code>f32</code> 样本；计算前乘 32768（16-bit 缩放）。</td></tr>
+  <tr><td>fbank</td><td>Kaldi fbank，80 mel bins，25 ms 窗、10 ms 帧移，<code>snip_edges=true</code>，dither 0，low freq 20，high freq 0，use_power / use_log_fbank。</td></tr>
+  <tr><td>CMVN</td><td><code>cmvn.ark</code> 提供 80 维统计；按 Kaldi 约定计算 mean 与 inverse stddev，逐帧做 <code>(x - mean) * inv_stddev</code>。</td></tr>
+  <tr><td>顺序</td><td>fbank → CMVN → encoder；不做 LFR、不加语言 token、不做频谱增强。</td></tr>
+  <tr><td>段长</td><td>产品上限 30 s；上游 <code>input_length_max</code> 为 60 s，超过 60 s 可能产生幻觉，本产品不触发该边界。</td></tr>
+</table>
+
+<h3 id="p4-2">4.2 FireRedPunc</h3>
+<p>
+来源为 ModelScope 的 <a href="https://www.modelscope.cn/models/manyeyes/FireRedPunc-zh-en-onnx">manyeyes/FireRedPunc-zh-en-onnx</a>
+FP32 ONNX 导出；上游为 <a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedTeam 的 FireRedPunc</a>（BERT / LERT 5 类标点模型，Apache-2.0）。
+模型约 407 MB，opset 14，输入只包含 token id 与长度。
+</p>
+
+<table>
+  <tr><th>文件</th><th>作用</th><th>大小（bytes）</th></tr>
+  <tr><td><code>model.onnx</code></td><td>5 类标点 token 分类图</td><td>407,027,716</td></tr>
+  <tr><td><code>tokens.txt</code></td><td>21128 项 BERT WordPiece 词表</td><td>109,540</td></tr>
+  <tr><td><code>out_dict</code></td><td>5 类标签的 label → id 表（每行 <code>label id</code>）</td><td>33</td></tr>
+  <tr><td><code>punc.json</code></td><td>预处理 / 标签配置；<code>punc_list</code> 为 <code>&lt;space&gt;</code>、<code>，</code>、<code>。</code>、<code>？</code>、<code>！</code></td><td>380</td></tr>
+  <tr><td><code>manifest.json</code></td><td>本产品的 schema 5 清单</td><td>—</td></tr>
+</table>
+
+<pre><code>model.onnx   fbcb4dd1e54f07bf770672a9691fb54af41774a130e878e25d105f2f5ba31fde
+tokens.txt   45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c
+out_dict     6f0f7e0004881d617bc6e1d7b5b39972da80dcb49576bca489b1603ee55e20bb
+punc.json    e3cae8dd92ea6cfc52b713238977412e4b7a47aa9b9ae4eaa94156e0984fcb21</code></pre>
+<ul class="note">
+  <li>上面的 SHA-256 取自上游模型仓文件列表；安装脚本把它们写入产品 schema 5 manifest，运行期按该清单校验。</li>
+  <li>上游模型卡与 <code>punc.json</code> 把标点定义为 5 类；本产品不在运行期训练、转换或重新量化。</li>
+  <li><code>out_dict</code> 与 <code>punc.json</code> 的标签必须一致；类别数小于标签表时拒绝加载。</li>
+</ul>
+
+<h4>4.2.1 ONNX 张量</h4>
+<table>
+  <tr><th>方向</th><th>名称</th><th>类型 / 形状</th><th>说明</th></tr>
+  <tr><td>输入</td><td><code>input_ids</code></td><td><code>int64[batch_size, seq_len]</code></td><td>WordPiece token id；含 <code>[CLS]</code> / <code>[SEP]</code>。</td></tr>
+  <tr><td>输入</td><td><code>lengths</code></td><td><code>int64[batch_size]</code></td><td>每条样本的有效 token 数；本导出不接收 <code>attention_mask</code> / <code>token_type_ids</code>。</td></tr>
+  <tr><td>输出</td><td><code>logits</code></td><td><code>float32[batch_size, seq_len, 5]</code></td><td>逐 token 的 5 类分数；argmax 得到标点标签。</td></tr>
+</table>
+<ul class="note">
+  <li>这是当前导出包的签名；会话创建后仍按 ONNX 图校验，名称 / 类型 / 形状不符即 <code>load_failed</code>。</li>
+  <li><code>lengths</code> 是有效长度，不是 attention mask 张量；不要按 BERT 习惯额外构造 <code>attention_mask</code>。</li>
+  <li>batch 固定为 1；<code>seq_len</code> 最大 512（含特殊 token）。</li>
+</ul>
+
+<h4>4.2.2 Tokenizer 与标签</h4>
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td>词表</td><td><code>tokens.txt</code> 为 BERT WordPiece 词表，21128 项；<code>[PAD]</code> 0、<code>[UNK]</code> 100、<code>[CLS]</code> 101、<code>[SEP]</code> 102、<code>[MASK]</code> 103。</td></tr>
+  <tr><td>分词</td><td>中文按字符，英文按 WordPiece 子词；返回每个 token 在原文字符串中的起始 / 结束偏移。</td></tr>
+  <tr><td>最大长度</td><td>单块 512 个位置（含 <code>[CLS]</code> / <code>[SEP]</code>）；超长文本按 token 边界切块，块间不共享上下文。</td></tr>
+  <tr><td>标签</td><td><code>out_dict</code> 每行 <code>label id</code>，共 5 项；<code>punc.json</code> 的 <code>punc_list</code> 固定为 <code>&lt;space&gt;</code>、<code>，</code>、<code>。</code>、<code>？</code>、<code>！</code>。</td></tr>
+  <tr><td>插入</td><td>label 0 不插入；label 1–4 在对应 token 结束位置插入标点。中文用全角，英文上下文用半角，不改变其它字符。</td></tr>
+  <tr><td>空文本</td><td>不调用 Punc；返回空文本，由 daemon 按空段丢弃。</td></tr>
+</table>
+<ul class="note">
+  <li><code>punc.json</code> 的 <code>ignore_id</code> 是训练配置；推理时 label 0 表示不插入，不改变标签表。</li>
+  <li>分块是工程实现约束，不改变“返回完整已加标点文本”的边界契约。</li>
+</ul>
+
+<h3 id="p4-3">4.3 ORT GPU EP</h3>
+<table>
+  <tr><th>EP</th><th>平台</th><th>依赖</th><th>失败映射</th></tr>
+  <tr><td>CUDA Execution Provider</td><td>Linux / Windows + NVIDIA</td><td>匹配的 NVIDIA 驱动与 CUDA 能力；runtime 由安装脚本准备。</td><td><code>runtime_missing</code> / <code>device_unavailable</code></td></tr>
+  <tr><td>MIGraphX Execution Provider</td><td>Linux + AMD</td><td>MIGraphX / ROCm 运行时与设备；AMD Linux 的验收基线。</td><td><code>runtime_missing</code> / <code>device_unavailable</code></td></tr>
+  <tr><td>DirectML Execution Provider</td><td>Windows + AMD / Intel</td><td>DirectML 运行时；只随 Windows FireRed 包提供。</td><td><code>device_unavailable</code></td></tr>
+  <tr><td>CPU Execution Provider</td><td>—</td><td>不注册；worker 没有 CPU 推理路径。</td><td>—</td></tr>
+</table>
+
+<table>
+  <tr><th>项目</th><th>契约</th></tr>
+  <tr><td><code>ort</code> features</td><td><code>default-features=false</code>、<code>api-29</code>、<code>load-dynamic</code>，再加一个平台 EP feature；不启用多个 EP。</td></tr>
+  <tr><td>API 版本</td><td>固定 <code>api-29</code>；加载的 ORT 动态库必须与 1.29 的 C API 兼容。</td></tr>
+  <tr><td>动态加载</td><td>启动时从 worker 自己的 runtime 目录加载 ORT 动态库；不依赖构建期链接或全局库搜索路径。</td></tr>
+  <tr><td>Environment</td><td>进程级单例；创建一次，所有会话共享。设备来自 <code>Hello.device</code>，不支持的设备返回 <code>device_unavailable</code>。目标 EP 注册失败即失败，不尝试第二个 EP。</td></tr>
+  <tr><td>会话</td><td>encoder、decoder、FireRedPunc 三个会话；<code>ctc.onnx</code> 不创建会话。</td></tr>
+  <tr><td>版本 / provider 校验</td><td>启动时检查 ORT 版本兼容性与目标 EP 是否在可用 provider 列表；缺失即 <code>runtime_missing</code> / <code>device_unavailable</code>。</td></tr>
+  <tr><td>运行期</td><td>不切换 EP / runtime，不重新加载动态库，不降级到 CPU ORT。</td></tr>
+</table>
+<ul class="note">
+  <li>runtime 的部署细节由安装 / 准备阶段决定，不属于本 PROVIDER 契约。</li>
+  <li>加载失败不创建会话、不发送 <code>Ready</code>；运行期推理失败返回 <code>inference_failed</code>，由 daemon 决定重启与回退。</li>
+</ul>
+
+<h3 id="p4-4">4.4 错误与处理</h3>
+<table>
+  <tr><th>阶段</th><th>触发条件</th><th>common 错误码</th><th>worker 行为</th></tr>
+  <tr><td>加载 runtime</td><td>ORT 动态库缺失、无法加载或 API 版本不匹配。</td><td><code>runtime_missing</code></td><td>不创建会话，不发送 <code>Ready</code>；返回 <code>Error</code> 后退出并记录路径。</td></tr>
+  <tr><td>加载 runtime</td><td>目标 EP 未注册、无可用 GPU、驱动不匹配或显存不足。</td><td><code>device_unavailable</code></td><td>不创建会话，不发送 <code>Ready</code>；返回 <code>Error</code> 后退出。</td></tr>
+  <tr><td>加载模型</td><td>manifest 缺失、schema / id / kind 不符、文件缺失、大小或 SHA-256 不符。</td><td><code>load_failed</code></td><td>不创建会话，不发送 <code>Ready</code>；返回带路径与 SHA 前缀的 <code>Error</code> 后退出。</td></tr>
+  <tr><td>创建会话</td><td>ONNX 张量名称 / 类型 / 形状不符，或 ORT 会话创建失败。</td><td><code>load_failed</code></td><td>释放已建会话，不发送 <code>Ready</code>；返回 <code>Error</code> 后退出。</td></tr>
+  <tr><td>推理</td><td>ORT <code>run</code> 失败、输出形状异常或文本还原失败。</td><td><code>inference_failed</code></td><td>返回 <code>Error</code>；不返回半成品文本；由 daemon 重启 / 回退。</td></tr>
+  <tr><td>超时</td><td>daemon 的加载或识别预算耗尽。</td><td><code>timeout</code></td><td>进程被终止，不发送响应；daemon 走崩溃路径。</td></tr>
+  <tr><td>握手</td><td>worker 与 daemon 协议版本不一致。</td><td><code>protocol_mismatch</code></td><td>daemon 拒绝 worker；worker 不进入 Transcribe。</td></tr>
+</table>
+<ul class="note">
+  <li>错误码定义、线值与 daemon 动作见 <a href="../voime-gpu-common/USER.html#u4-5">voime-gpu-common USER §4.5</a>；本表只记录 FireRed 的触发条件。</li>
+  <li>worker 不做 CPU ORT 回退、不切换第二个 EP、不加载 int8 / FP16、不重新读取另一份模型；这些都不是本组件的失败策略。</li>
+  <li>当前段是否回退 CPU SenseVoice 由 daemon 决定；worker 只负责报告错误并退出或等待下一次请求。</li>
+  <li>日志与错误消息只包含路径、SHA 前缀、张量名、耗时与错误码，不包含识别文本或音频样本。</li>
+</ul>
+
+</body>
+</html>

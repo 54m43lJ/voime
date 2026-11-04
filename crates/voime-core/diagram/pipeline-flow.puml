@@ -4,7 +4,8 @@ skinparam shadowing false
 
 |voimed|
 start
-:发送 Start / Stop / 音频块;
+:发送 Start / Stop / CancelPreview / 音频块;
+
 |pipeline worker|
 repeat
   :select 命令优先，50 ms 超时;
@@ -14,16 +15,38 @@ repeat
   if (StartSegment?) then (是)
     :清空旧音频;
     :collecting = true;
+    :preview_gate = true;
   endif
   if (FinishSegment?) then (是)
     :排空音频;
+    :preview_gate = false;
+    :取消未开始的 Preview;
     :force_end 当前段;
+    :发送 SegmentReady;
+  endif
+  if (CancelPreview?) then (是)
+    :preview_gate = false;
+    :丢弃未开始的 Preview;
   endif
   if (音频块?) then (是)
     :重采样;
     :VAD 批处理;
+    :preview_gate 开启时节流发送 Partial;
   endif
   :drain_queue;
 repeat while (继续)
+stop
+
+|voimed|
+:收到 SegmentReady;
+if (final.backend = cpu?) then (是)
+  :Final::transcribe 一次;
+else (否)
+  :发送 PCM 给 FireRed / Qwen worker;
+  if (GPU 失败?) then (是)
+    :回退 Final::transcribe 一次;
+  endif
+endif
+:发送 Final / SegmentDropped;
 stop
 @enduml

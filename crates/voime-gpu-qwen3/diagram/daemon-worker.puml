@@ -1,0 +1,28 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+hide footbox
+
+participant "voimed（daemon）" as Daemon
+participant "voime-gpu-qwen3" as Worker
+
+Daemon -> Worker : spawn(model_dir, runtime)
+Daemon -> Worker : Hello
+Worker --> Daemon : Ready
+
+Daemon -> Worker : Transcribe(PCM)
+Worker -> Worker : 内部处理
+
+alt 成功
+  Worker --> Daemon : Result(text)
+else 推理失败
+  Worker --> Daemon : Error
+end
+
+opt 超时 / 取消
+  Daemon -> Worker : Cancel / kill
+end
+
+Daemon -> Worker : Shutdown
+Worker --> Daemon : Bye
+@enduml
