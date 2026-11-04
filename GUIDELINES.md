@@ -33,6 +33,7 @@ Documents per project, in HTML — the development docs split by boundary:
 | 7 | Comment budget | an in-code comment with >3 information points → `ul.note` after its code block; the comment keeps only what the signature/call needs |
 | 8 | One block, one flow | a code block is a single continuous content; disjoint pieces → separate blocks/subsections |
 | 9 | CONVENTIONS chapter | USER / CORE / PROVIDER each keep one, right after the first chapter (may stay empty); stated once there, referenced from the affected sections |
+| 10 | BUILD is downstream | BUILD is generated from README / USER / CORE / PROVIDER. Those documents must never link to or cite BUILD; every fact they need lives in them, and BUILD repeats it with links back. Before development, no BUILD document exists in the doc set. |
 
 ## Readme
 
@@ -129,3 +130,5 @@ Sources (`*.puml`) and exports (`*.svg`) live in the owning project's own `diagr
 **Rules**
 - produced once development is complete — not written during the design phase, but kept as part of the project
 - guides other developers in using and building on the project
+- downstream only — generated from README / USER / CORE / PROVIDER; never a source for them and never cited by them
+- absent before development — delete BUILD from the product doc set until development is complete; no other document may link to it

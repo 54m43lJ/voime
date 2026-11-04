@@ -14,7 +14,6 @@
 <a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
-<a href="BUILD.html">BUILD</a>
 <a href="crates/voime-core/README.html">voime-core</a>
 <a href="crates/voime-ipc/README.html">voime-ipc</a>
 <a href="crates/voime-log/README.html">voime-log</a>
@@ -69,7 +68,7 @@
   <tr>
     <td>Linux 安装 addon</td>
     <td>把 <code>voime.so</code> 与 addon 描述文件安装到 Fcitx5，重启 Fcitx；Voime 作为后台 addon 加载，不需要加入输入法组。</td>
-    <td><a href="frontends/fcitx/BUILD.html">fcitx-addon BUILD</a> · <a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td>
+    <td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td>
   </tr>
   <tr>
     <td>配置</td>
@@ -131,25 +130,24 @@
 ├── USER.html                  产品级边界：术语、约定、端到端流程、接口索引
 ├── CORE.html                  仓库级结构：组件依赖、构建根、跨组件调用栈
 ├── PROVIDER.html              产品级下边界：平台宿主、音频、推理、模型
-├── BUILD.html                 多构建根编排、模型安装、发布
 ├── GUIDELINES.md              文档规范
 ├── style.css                  共享样式
 │
 ├── crates/
-│   ├── voime-core/            README · USER · CORE · PROVIDER · BUILD
-│   ├── voime-ipc/             README · USER · CORE · BUILD
-│   ├── voime-log/             README · USER · CORE · BUILD
-│   ├── voime-transport/       README · USER · CORE · PROVIDER · BUILD
-│   ├── voimed/                README · USER · CORE · BUILD
-│   └── voime/                 README · USER · CORE · PROVIDER · BUILD
+│   ├── voime-core/            README · USER · CORE · PROVIDER
+│   ├── voime-ipc/             README · USER · CORE
+│   ├── voime-log/             README · USER · CORE
+│   ├── voime-transport/       README · USER · CORE · PROVIDER
+│   ├── voimed/                README · USER · CORE
+│   └── voime/                 README · USER · CORE · PROVIDER
 │
 ├── frontends/
-│   ├── fcitx/                 README · USER · CORE · PROVIDER · BUILD
-│   └── windows/               README · USER · CORE · PROVIDER · BUILD（P3；TSF 为可选 P4）
+│   ├── fcitx/                 README · USER · CORE · PROVIDER
+│   └── windows/               README · USER · CORE · PROVIDER（P3；TSF 为可选 P4）
 │
 └── diagram/                   产品级图表</code></pre>
 <ul class="note">
-  <li>根 <code>README / USER / CORE / PROVIDER / BUILD</code> 是父文档；每个组件目录下的同名文档是子树。</li>
+  <li>根 <code>README / USER / CORE / PROVIDER</code> 是父文档；每个组件目录下的同名文档是子树。</li>
   <li>父文档只定义产品级边界与组件关系；组件内部类型、签名和调用栈只出现在组件 <code>CORE</code>。</li>
   <li><code>voime-transport</code> 与 <code>frontends/windows</code> 已落地；TSF 保持可选，未启用时不构建。</li>
   <li>Fcitx 文档与源码均位于 <code>frontends/fcitx</code>。</li>
@@ -172,14 +170,13 @@
 </table>
 
 <table>
-  <tr><th>组件</th><th>README</th><th>USER</th><th>CORE</th><th>PROVIDER</th><th>BUILD</th><th>构建根 / 平台</th></tr>
+  <tr><th>组件</th><th>README</th><th>USER</th><th>CORE</th><th>PROVIDER</th><th>构建根 / 平台</th></tr>
   <tr>
     <td><strong>根项目</strong></td>
     <td><a href="README.html">README</a></td>
     <td><a href="USER.html">USER</a></td>
     <td><a href="CORE.html">CORE</a></td>
     <td><a href="PROVIDER.html">PROVIDER</a></td>
-    <td><a href="BUILD.html">BUILD</a></td>
     <td>根 workspace · Linux / Windows</td>
   </tr>
   <tr>
@@ -188,7 +185,6 @@
     <td><a href="crates/voime-core/USER.html">USER</a></td>
     <td><a href="crates/voime-core/CORE.html">CORE</a></td>
     <td><a href="crates/voime-core/PROVIDER.html">PROVIDER</a></td>
-    <td><a href="crates/voime-core/BUILD.html">BUILD</a></td>
     <td>根 Cargo workspace · Linux / Windows</td>
   </tr>
   <tr>
@@ -197,7 +193,6 @@
     <td><a href="crates/voime-ipc/USER.html">USER</a></td>
     <td><a href="crates/voime-ipc/CORE.html">CORE</a></td>
     <td>—</td>
-    <td><a href="crates/voime-ipc/BUILD.html">BUILD</a></td>
     <td>根 Cargo workspace · Linux / Windows</td>
   </tr>
   <tr>
@@ -206,7 +201,6 @@
     <td><a href="crates/voime-log/USER.html">USER</a></td>
     <td><a href="crates/voime-log/CORE.html">CORE</a></td>
     <td>—</td>
-    <td><a href="crates/voime-log/BUILD.html">BUILD</a></td>
     <td>根 Cargo workspace · Linux / Windows</td>
   </tr>
   <tr>
@@ -215,7 +209,6 @@
     <td><a href="crates/voime-transport/USER.html">USER</a></td>
     <td><a href="crates/voime-transport/CORE.html">CORE</a></td>
     <td><a href="crates/voime-transport/PROVIDER.html">PROVIDER</a></td>
-    <td><a href="crates/voime-transport/BUILD.html">BUILD</a></td>
     <td>根 Cargo workspace · Linux / Windows</td>
   </tr>
   <tr>
@@ -224,7 +217,6 @@
     <td><a href="crates/voimed/USER.html">USER</a></td>
     <td><a href="crates/voimed/CORE.html">CORE</a></td>
     <td>—</td>
-    <td><a href="crates/voimed/BUILD.html">BUILD</a></td>
     <td>根 Cargo workspace · Linux / Windows</td>
   </tr>
   <tr>
@@ -233,7 +225,6 @@
     <td><a href="crates/voime/USER.html">USER</a></td>
     <td><a href="crates/voime/CORE.html">CORE</a></td>
     <td><a href="crates/voime/PROVIDER.html">PROVIDER</a></td>
-    <td><a href="crates/voime/BUILD.html">BUILD</a></td>
     <td>根 Cargo workspace · Linux / Windows</td>
   </tr>
   <tr>
@@ -242,7 +233,6 @@
     <td><a href="frontends/fcitx/USER.html">USER</a></td>
     <td><a href="frontends/fcitx/CORE.html">CORE</a></td>
     <td><a href="frontends/fcitx/PROVIDER.html">PROVIDER</a></td>
-    <td><a href="frontends/fcitx/BUILD.html">BUILD</a></td>
     <td>CMake · Linux only</td>
   </tr>
   <tr>
@@ -251,14 +241,12 @@
     <td><a href="frontends/windows/USER.html">USER</a></td>
     <td><a href="frontends/windows/CORE.html">CORE</a></td>
     <td><a href="frontends/windows/PROVIDER.html">PROVIDER</a></td>
-    <td><a href="frontends/windows/BUILD.html">BUILD</a></td>
     <td>独立 Cargo workspace + CMake · Windows only（P3 已实现；TSF 为可选 P4）</td>
   </tr>
 </table>
 <ul class="note">
-  <li>文档树自根向下：根 README → 根 USER / CORE / PROVIDER / BUILD → 组件 README → 组件同名文档；跨组件引用只指向内容所有者。</li>
+  <li>文档树自根向下：根 README → 根 USER / CORE / PROVIDER → 组件 README → 组件同名文档；跨组件引用只指向内容所有者。</li>
   <li><code>PROVIDER</code> 仅在下边界真实存在时创建；<code>voime-ipc</code> 与 <code>voimed</code> 没有直接外部 provider，故省略。</li>
-  <li>根 <a href="BUILD.html">BUILD</a> 只负责多构建根编排、模型安装与发布；单组件命令在各自 <code>BUILD</code> 中维护。</li>
 </ul>
 
 <h2 id="r5">5. Credits</h2>

@@ -15,19 +15,15 @@
 <a href="../../USER.html">USER</a>
 <a href="../../CORE.html">CORE</a>
 <a href="../../PROVIDER.html">PROVIDER</a>
-<a href="../../BUILD.html">BUILD</a>
 ｜ 本组件：<a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
-<a href="BUILD.html">BUILD</a>
 </p>
 
 <p>
 文档树：父文档为根 <a href="../../README.html">README</a> / <a href="../../USER.html">USER</a> /
-<a href="../../CORE.html">CORE</a> / <a href="../../PROVIDER.html">PROVIDER</a> /
-<a href="../../BUILD.html">BUILD</a>；本组件 README 是子树的根，其下为
-<a href="USER.html">USER</a> / <a href="CORE.html">CORE</a> / <a href="PROVIDER.html">PROVIDER</a> /
-<a href="BUILD.html">BUILD</a>。
+<a href="../../CORE.html">CORE</a> / <a href="../../PROVIDER.html">PROVIDER</a>；本组件 README 是子树的根，其下为
+<a href="USER.html">USER</a> / <a href="CORE.html">CORE</a> / <a href="PROVIDER.html">PROVIDER</a>。
 </p>
 
 <p>
@@ -69,7 +65,7 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
 
 <table>
   <tr><th>场景</th><th>行为</th><th>契约</th></tr>
-  <tr><td>安装 / 启动</td><td>每用户安装，登录后启动托盘与 daemon；托盘显示连接状态。</td><td><a href="BUILD.html#b3">BUILD §3</a></td></tr>
+  <tr><td>安装 / 启动</td><td>每用户安装到 <code>%LOCALAPPDATA%\Programs\Voime</code>；登录启动写入 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>；托盘以子进程托管 daemon，退出托盘即停止。</td><td>本组件 §2</td></tr>
   <tr><td>配置</td><td>托盘右键菜单或设置窗口设置 Mode / 浮层 / 登录启动；热键在设置窗口直接按键录制，默认组合避开系统保留键。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
   <tr><td>daemon 生命周期</td><td>登录启动托盘，托盘以子进程托管 daemon（唯一所有者）；托盘菜单与设置窗口提供启动、停止、诊断，退出托盘即停止 daemon。</td><td><a href="USER.html#u4-6">USER §4.6</a></td></tr>
   <tr><td>PTT</td><td>按住热键开始，松开结束；需要 key-up。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
@@ -89,7 +85,7 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
   <tr><td>前台窗口 / UIA 焦点元素绑定</td><td>daemon 会话、<code>segment_id</code> 分配</td></tr>
   <tr><td>浮层窗口与 DPI / 多显示器定位</td><td>协议消息定义（<a href="../../crates/voime-ipc/USER.html">voime-ipc USER</a>）</td></tr>
   <tr><td><code>SendInput</code> / TSF 提交</td><td>本机端点实现（<a href="../../crates/voime-transport/USER.html">voime-transport USER</a>）</td></tr>
-  <tr><td>托盘、配置、登录启动、daemon 生命周期</td><td>模型安装（根 <a href="../../BUILD.html">BUILD</a>）</td></tr>
+  <tr><td>托盘、配置、登录启动、daemon 生命周期</td><td>模型安装：<code>scripts\install_models.ps1</code>，默认 <code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
 </table>
 <ul class="note">
   <li>产品级术语与端到端契约见 <a href="../../USER.html">根 USER</a>；Windows API 细节见 <a href="PROVIDER.html">PROVIDER</a>。</li>

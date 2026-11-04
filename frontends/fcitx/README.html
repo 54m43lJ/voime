@@ -15,19 +15,15 @@
 <a href="../../USER.html">USER</a>
 <a href="../../CORE.html">CORE</a>
 <a href="../../PROVIDER.html">PROVIDER</a>
-<a href="../../BUILD.html">BUILD</a>
 ｜ 本组件：<a href="USER.html">USER</a>
 <a href="CORE.html">CORE</a>
 <a href="PROVIDER.html">PROVIDER</a>
-<a href="BUILD.html">BUILD</a>
 </p>
 
 <p>
 文档树：父文档为根 <a href="../../README.html">README</a> / <a href="../../USER.html">USER</a> /
-<a href="../../CORE.html">CORE</a> / <a href="../../PROVIDER.html">PROVIDER</a> /
-<a href="../../BUILD.html">BUILD</a>；本组件 README 是子树的根，其下为
-<a href="USER.html">USER</a> / <a href="CORE.html">CORE</a> / <a href="PROVIDER.html">PROVIDER</a> /
-<a href="BUILD.html">BUILD</a>。
+<a href="../../CORE.html">CORE</a> / <a href="../../PROVIDER.html">PROVIDER</a>；本组件 README 是子树的根，其下为
+<a href="USER.html">USER</a> / <a href="CORE.html">CORE</a> / <a href="PROVIDER.html">PROVIDER</a>。
 </p>
 
 <p>
@@ -67,7 +63,7 @@ Linux 桌面的键盘、输入焦点与文本提交由 Fcitx5 持有。Voime 需
 
 <table>
   <tr><th>场景</th><th>行为</th><th>契约</th></tr>
-  <tr><td>安装 addon</td><td>安装 <code>voime.so</code> 与 addon 描述文件，重启 Fcitx；在 Addons 页面可见，不加入输入法组。</td><td><a href="BUILD.html#b2">BUILD §2</a></td></tr>
+  <tr><td>安装 addon</td><td>安装 <code>voime.so</code> 与 addon 描述文件，重启 Fcitx；在 Addons 页面可见，不加入输入法组。CMake 构建后以 <code>sudo cmake --install</code> 安装到 Fcitx5 前缀：<code>voime.so</code> 在 <code>$PREFIX/lib/fcitx5/</code>，描述文件在 <code>$PREFIX/share/fcitx5/addon/</code>。</td><td>本组件 §2</td></tr>
   <tr><td>配置</td><td>在 <code>fcitx5-configtool</code> 或 <code>~/.config/fcitx5/conf/voime.conf</code> 设置 <code>Mode</code> / <code>Hotkey</code>。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
   <tr><td>PTT</td><td>按住热键开始，松开结束；静音可自动结束。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>
   <tr><td>Toggle</td><td>按一下开始，再按一下结束；目标失焦自动结束；无语音时保持空白窗口。</td><td><a href="USER.html#u3-1">USER §3.1</a></td></tr>

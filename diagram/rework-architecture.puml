@@ -1,0 +1,32 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+left to right direction
+
+actor "用户" as User
+
+package "核心安装（必需，CPU）" {
+  component "平台前端\nFcitx5 addon / Windows 前端" as Frontend
+  component "voimed\n核心应用" as Daemon
+  component "voime-core\nFireRedVAD + SenseVoice" as Core
+  database "核心模型\nfirered-vad / sensevoice-small" as CoreModels
+}
+
+package "GPU 推理模块（可选，Final-only）" {
+  component "voime-gpu-firered\nORT GPU + FP32 ONNX" as Firered
+  component "voime-gpu-qwen3\nllama.cpp + BF16 GGUF" as Qwen
+  database "GPU 模型\nfireredasr2-aed / fireredpunc\nqwen3-asr-1.7b + mmproj" as GpuModels
+}
+
+User --> Frontend : 热键 / 说话
+Frontend <--> Daemon : Preview / Final
+Daemon --> Core : 音频 / VAD / Preview
+Core --> CoreModels : 只读
+Daemon --> Firered : Final 音频段
+Daemon --> Qwen : Final 音频段
+Firered --> GpuModels : 只读
+Qwen --> GpuModels : 只读
+
+@enduml
