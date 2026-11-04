@@ -37,7 +37,7 @@
 │   └── voime/                         → <a href="crates/voime/CORE.html#c1">voime CORE §1</a>
 ├── frontends/
 │   ├── fcitx/                         → <a href="frontends/fcitx/CORE.html#c1">fcitx-addon CORE §1</a>
-│   └── windows/                       → <a href="frontends/windows/CORE.html#c1">windows CORE §1</a>（P3；TSF 为可选 P4）
+│   └── windows/                       → <a href="frontends/windows/CORE.html#c1">windows CORE §1</a>（TSF 为可选子工程）
 ├── models/
 │   └── manifest.json                  共享模型清单（权重不提交）
 ├── scripts/                           安装入口 / 模型辅助脚本
@@ -196,7 +196,7 @@ struct TargetRef { /* ... */ };
 // 事件处理与调用栈见 fcitx-addon CORE §4 / §5</code></pre>
 
 <h3 id="c4-7">4.7 frontends/windows <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>// P3 已实现；TSF 为可选 P4
+<pre><code>// 已实现；TSF 为可选子工程
 fn main() -&gt; windows::core::Result&lt;()&gt;;
 // 托盘 / 热键 / 目标 / 浮层 / 提交见 windows CORE §4 / §5</code></pre>
 

@@ -25,8 +25,8 @@
 </p>
 
 <p>
-<strong>分支范围：</strong>本分支包含跨平台源码、构建清单、脚本、模型清单与文档；
-<code>frontends/windows</code>（P3 托盘 / 后台听写）与 <code>packaging/windows</code> 已落地；TSF（P4）保持可选，未包含在本分支。
+<strong>项目范围：</strong>项目包含跨平台源码、构建清单、脚本、模型清单与文档；
+<code>frontends/windows</code>（托盘 / 后台听写）与 <code>packaging/windows</code> 已实现；TSF 为可选子工程。
 </p>
 
 <h2 id="r1">1. WHAT &amp; WHY</h2>
@@ -143,7 +143,7 @@
 │
 ├── frontends/
 │   ├── fcitx/                 README · USER · CORE · PROVIDER
-│   └── windows/               README · USER · CORE · PROVIDER（P3；TSF 为可选 P4）
+│   └── windows/               README · USER · CORE · PROVIDER（TSF 为可选子工程）
 │
 └── diagram/                   产品级图表</code></pre>
 <ul class="note">
@@ -241,7 +241,7 @@
     <td><a href="frontends/windows/USER.html">USER</a></td>
     <td><a href="frontends/windows/CORE.html">CORE</a></td>
     <td><a href="frontends/windows/PROVIDER.html">PROVIDER</a></td>
-    <td>独立 Cargo workspace + CMake · Windows only（P3 已实现；TSF 为可选 P4）</td>
+    <td>独立 Cargo workspace + CMake · Windows only（托盘已实现；TSF 为可选子工程）</td>
   </tr>
 </table>
 <ul class="note">

@@ -125,7 +125,7 @@ fn current_user_sddl() -&gt; io::Result&lt;String&gt;;
 pub fn bind(name: &amp;str) -&gt; io::Result&lt;NamedPipeListener&gt;;
 pub fn connect(name: &amp;str) -&gt; io::Result&lt;NamedPipeStream&gt;;</code></pre>
 <ul class="note">
-  <li>Windows 实现优先使用原生 named pipe；<code>uds_windows</code> 只作为 MVP 备选，不进入核心契约。</li>
+  <li>Windows 实现优先使用原生 named pipe；<code>uds_windows</code> 只作为备选，不进入核心契约。</li>
   <li>管道名必须包含会话与用户标识，不能使用 <code>Global\</code> 跨会话暴露。</li>
 </ul>
 

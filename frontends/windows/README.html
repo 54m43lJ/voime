@@ -27,7 +27,7 @@
 </p>
 
 <p>
-<strong>状态：</strong>P3（Rust 托盘 / 后台听写）已实现；P4（TSF DLL）保持可选，当前分支未包含。
+<strong>状态：</strong>Rust 托盘 / 后台听写已实现；TSF DLL 为可选子工程，源码树未包含。
 TSF 是 <code>frontends/windows/tsf</code> 下的可选子工程，文档暂并入本组件；若独立发布，再拆成子树。
 </p>
 
@@ -38,8 +38,8 @@ TSF 是 <code>frontends/windows/tsf</code> 下的可选子工程，文档暂并�
 <p>
 Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提交分散在 Win32、UI Automation
 与 TSF 中。Voime 需要一个独立前端，在不复制识别链路的前提下，把热键、目标输入位置、
-临时浮层与最终文本注入接到 <code>voimed</code>。MVP 是后台听写：普通桌面进程 + 全局热键 +
-<code>SendInput</code>；TSF 是可选阶段，用于需要系统输入法身份的场景。
+临时浮层与最终文本注入接到 <code>voimed</code>。托盘前端提供后台听写：普通桌面进程 + 全局热键 +
+<code>SendInput</code>；TSF 是可选扩展，用于需要系统输入法身份的场景。
 </p>
 
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
@@ -53,7 +53,7 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
 
 <h3 id="r1-3">1.3 非目标</h3>
 <ul>
-  <li>MVP 不做 TSF；TSF 作为可选 P4，且不承诺与 keyboard TIP 并行。</li>
+  <li>TSF 作为可选扩展，且不承诺与 keyboard TIP 并行。</li>
   <li>不承诺覆盖提权窗口、游戏 / Raw Input、锁屏 / 安全桌面、所有 UWP / 终端。</li>
   <li>不做跨平台 UI 抽象；Linux 前端与 Windows 前端各自实现。</li>
   <li>不使用 loopback TCP；默认传输是命名管道。</li>
@@ -97,7 +97,7 @@ Windows 没有 Fcitx 等价的后台 addon 模型：键盘、焦点与文本提�
 <table>
   <tr><th>项目</th><th>在本组件中的角色</th><th>技术栈 / 许可</th></tr>
   <tr><td>Windows Win32 / UIA</td><td>热键、前台窗口、焦点元素、文本注入</td><td>Windows SDK</td></tr>
-  <tr><td>TSF / COM</td><td>可选系统输入法（P4）</td><td>Windows SDK</td></tr>
+  <tr><td>TSF / COM</td><td>可选系统输入法</td><td>Windows SDK</td></tr>
   <tr><td><code>windows</code> crate</td><td>Win32 API 绑定</td><td>Rust · MIT / Apache-2.0</td></tr>
   <tr><td><code>eframe</code> / <code>egui</code></td><td>设置窗口与热键录制界面</td><td>Rust · MIT / Apache-2.0</td></tr>
   <tr><td><code>voime-ipc</code> / <code>voime-transport</code></td><td>协议与命名管道客户端</td><td>本仓库</td></tr>
