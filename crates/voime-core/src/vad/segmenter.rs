@@ -4,7 +4,7 @@ use crate::vad::firered::{VadFrame, FRAME_SHIFT_MS};
 pub const TARGET_SAMPLE_RATE: u64 = 16_000;
 pub const MIN_SPEECH_MS: u32 = 80;
 /// 所有模式共用的自然停顿阈值；PTT / Toggle 的会话仍由 FinishSegment 结束。
-pub const AUTO_END_SILENCE_MS: u32 = 1_200;
+pub const AUTO_END_SILENCE_MS: u32 = 800;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Segment {

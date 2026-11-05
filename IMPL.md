@@ -518,10 +518,10 @@ Continuous 模式由 `Segmenter` 的静音阈值直接决定收句：原实现�
 
 2. **解决方法**
 
-- 将 `MIN_SILENCE_MS` / `PTT_AUTO_END_MS` 合并为 `AUTO_END_SILENCE_MS = 1_200`，所有模式共用；`Segmenter::push` 删除 `mode` 参数，避免再次按模式分叉。
+- 将 `MIN_SILENCE_MS` / `PTT_AUTO_END_MS` 合并为 `AUTO_END_SILENCE_MS = 800`（最初取 1_200，后按交互体感下调），所有模式共用；`Segmenter::push` 删除 `mode` 参数，避免再次按模式分叉。
 - `FbankConfig` 增加 `WindowType` 与 `window` 字段：默认 `povey` 服务 FireRed VAD，`FbankConfig::sensevoice()` 显式返回 `hamming` 服务 SenseVoice。
 - `pipeline::spawn` 用同一份 `FbankConfig::sensevoice()` 创建 SenseVoice 与 Preview fbank；VAD 继续使用默认 povey。
-- 增加 VAD / SenseVoice 窗函数与 1.2 s 分段边界单测；同步更新 CORE / PROVIDER 中的阈值、`push` 签名与 fbank 说明。
+- 增加 VAD / SenseVoice 窗函数与 800 ms 分段边界单测；同步更新 CORE / PROVIDER 中的阈值、`push` 签名与 fbank 说明。
 
 3. **修订建议**
 
