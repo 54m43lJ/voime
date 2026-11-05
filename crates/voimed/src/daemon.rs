@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use voime_core::audio::capture::CaptureHandle;
@@ -522,7 +522,17 @@ impl Daemon {
 
     fn fallback_cpu(&mut self, samples: &[f32], error: &anyhow::Error) -> anyhow::Result<String> {
         vlog!("cpu fallback: {error:#}");
-        self.finalizer.transcribe(samples)
+        let started = Instant::now();
+        let result = self.finalizer.transcribe(samples);
+        let elapsed = started.elapsed().as_millis() as u64;
+        match &result {
+            Ok(text) => vlog!(
+                "cpu fallback result latency_ms={elapsed} chars={}",
+                text.chars().count()
+            ),
+            Err(cpu_error) => vlog!("cpu fallback failed after {elapsed} ms: {cpu_error:#}"),
+        }
+        result
     }
 
     fn drop_current(&mut self, reason: &str) {

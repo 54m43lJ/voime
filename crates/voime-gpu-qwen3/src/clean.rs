@@ -19,9 +19,12 @@ fn strip_asr_text(raw: &str) -> &str {
 
 fn strip_language_prefix(raw: &str) -> &str {
     let trimmed = raw.trim_start();
-    let prefix_len = "language ".len();
-    if trimmed.len() >= prefix_len && trimmed[..prefix_len].eq_ignore_ascii_case("language ") {
-        let rest = &trimmed[prefix_len..];
+    let prefix = "language ";
+    if trimmed
+        .get(..prefix.len())
+        .is_some_and(|value| value.eq_ignore_ascii_case(prefix))
+    {
+        let rest = &trimmed[prefix.len()..];
         if let Some(index) = rest.find('\n') {
             return rest[index + 1..].trim_start();
         }
@@ -72,5 +75,14 @@ mod tests {
     #[test]
     fn empty_output_stays_empty() {
         assert_eq!(clean_text("language English<asr_text></asr_text>"), "");
+    }
+
+    #[test]
+    fn multibyte_text_does_not_panic_on_prefix_check() {
+        assert_eq!(clean_text("现在开始测试。"), "现在开始测试。");
+        assert_eq!(
+            clean_text("现在开始测试。 language zh"),
+            "现在开始测试。 language zh"
+        );
     }
 }

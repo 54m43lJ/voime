@@ -278,6 +278,7 @@ fn trim_edges(raw: &amp;str) -&gt; &amp;str;                </code></pre>
   <li>Qwen3-ASR 的典型包装是 <code>language English&lt;asr_text&gt;And so, ...</code>；<code>clean_text</code> 取 <code>&lt;asr_text&gt;</code> 之后的内容，去掉 <code>language ...</code> 前缀与可选的 <code>&lt;/asr_text&gt;</code> 尾部。</li>
   <li>只做包装清洗、NUL 与首尾空白；模型输出中的标点、大小写、数字与中英文混排保持不变。</li>
   <li>清洗后为空返回空字符串；不构造占位文本，不返回半截句子。</li>
+  <li>所有前缀 / 尾部判断必须按 UTF-8 字符边界处理；禁止对 <code>&amp;str</code> 使用固定字节下标切片。中文输出曾因 <code>trimmed[..9]</code> 落在多字节字符内部而 panic，进而导致 worker 重启与 CPU 回退。</li>
 </ul>
 
 <h2 id="c5">5. Call stack tree</h2>

@@ -581,3 +581,30 @@ M5 曾把 daemon 日志中的 ready / running 作为 `voime doctor` 的唯一 wo
 | `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 改 | 记录 EP 验证结论与 CPU 节点例外。 |
 | `BUILD.html` | §3.3、§3.4 | 改 | 补充 runtime 目录与 AMD 警告。 |
 | `crates/voime-gpu-firered/PROVIDER.html` | §4.1.3 | 不动 | GPU FireRed 的 fbank 已使用 Kaldi 默认 `povey`，与核心 VAD 对齐。 |
+
+### P12. Qwen3 中文输出清洗按字节切分导致 worker panic
+
+1. **问题描述**
+
+Qwen3 worker 在 `clean_text` 中用固定字节长度检查 `"language "` 前缀：`trimmed[..9]`。当模型原始输出不是预期的 `language xx<asr_text>` 包装，而是 `"language"` 后直接跟中文等多字节字符时，字节 9 可能落在 UTF-8 字符内部，触发：
+
+```text
+thread 'main' panicked at src/clean.rs:23:46:
+end byte index 9 is not a char boundary; it is inside '现'
+```
+
+worker 进程退出，daemon 看到 `GPU worker 已关闭连接` 后重启 worker（约 2.8 s），再对当前段回退 CPU SenseVoice。用户感知为约 3.8 s 的偶发高延迟；同一时段的后续段仍由 GPU 正常识别。
+
+2. **解决方法**
+
+- 前缀检查改为 `trimmed.get(..prefix.len())`，非字符边界返回 `None`，不再切片 panic。
+- 增加多字节中文输出回归测试。
+- daemon 日志增加 `gpu worker qwen3 result latency_ms=... rtf=...` 与 `cpu fallback result latency_ms=...`，用于区分 worker 推理耗时和回退耗时。
+- 日志不记录识别文本；worker 的 panic 信息仍由 stderr 转发到 `voime-log`。
+
+3. **修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voime-gpu-qwen3/CORE.html` | §4.7 | 改 | 说明 `clean_text` 必须按 UTF-8 字符边界处理多字节输出，禁止按固定字节切片。 |
+| `crates/voimed/CORE.html` | §2 | 改 | 说明 worker 推理耗时与 CPU 回退耗时会写入日志，便于诊断偶发回退。 |

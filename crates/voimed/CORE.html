@@ -62,7 +62,7 @@
   <tr><td>退出顺序</td><td>worker shutdown → 广播 Bye → IPC shutdown → pipeline shutdown → audio stop → 删除端点。</td></tr>
   <tr><td>传输边界</td><td><code>ipc_server.rs</code> 只使用 <a href="../voime-transport/CORE.html">voime-transport</a> 的 <code>Listener</code> / <code>Stream</code>；daemon 不 import <code>std::os::unix</code> 或 Win32。</td></tr>
   <tr><td>GPU 边界</td><td>daemon 只通过 <a href="../voime-gpu-common/CORE.html">voime-gpu-common</a> 的帧类型与 io 函数与 worker 通信；不链接 ORT / llama.cpp，不读取 GPU runtime 细节。</td></tr>
-  <tr><td>运行日志</td><td>状态机、IPC 生命周期、段事件与 worker 状态经 <code>voime_log::vlog!</code> 记录；机制见 <a href="../voime-log/CORE.html">voime-log CORE</a>，隐私约定见 <a href="../voime-log/USER.html#u2">voime-log USER §2</a>。</td></tr>
+  <tr><td>运行日志</td><td>状态机、IPC 生命周期、段事件、worker 状态、GPU 推理耗时 / RTF 与 CPU 回退耗时经 <code>voime_log::vlog!</code> 记录；机制见 <a href="../voime-log/CORE.html">voime-log CORE</a>，隐私约定见 <a href="../voime-log/USER.html#u2">voime-log USER §2</a>。</td></tr>
 </table>
 <ul class="note">
   <li>仓库级进程 / 线程边界见 <a href="../../CORE.html#c2">根 CORE §2</a>；用户可见行为见 <a href="USER.html#u2">USER §2</a>。</li>

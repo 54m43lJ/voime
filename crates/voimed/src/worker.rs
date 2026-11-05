@@ -188,7 +188,19 @@ impl Worker {
         self.status = WorkerStatus::Ready;
         voime_log::vlog!("gpu worker {} ready", self.id);
         match response {
-            Response::Result { text, .. } => Ok(text),
+            Response::Result {
+                text,
+                latency_ms,
+                rtf,
+                ..
+            } => {
+                voime_log::vlog!(
+                    "gpu worker {} result latency_ms={} rtf={rtf:.3}",
+                    self.id,
+                    latency_ms
+                );
+                Ok(text)
+            }
             Response::Error { code, message, .. } => {
                 self.last_error = Some(format!("{code}: {message}"));
                 Err(map_error(code, &message))
