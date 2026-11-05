@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>BUILD — Voime</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a id="top"></a>
+<h1>BUILD — Voime</h1>
+
+<p class="doc-links">
+<a href="README.html">README</a>
+<a href="USER.html">USER</a>
+<a href="CORE.html">CORE</a>
+<a href="PROVIDER.html">PROVIDER</a>
+</p>
+
+<p>
+本文面向构建、安装、运行与排查 Voime 的开发者。产品行为、接口与内部实现分别以
+<a href="USER.html">USER</a>、<a href="CORE.html">CORE</a> 与各组件 <a href="PROVIDER.html">PROVIDER</a> 为准；
+本文只重复构建入口、路径、命令与验证步骤。
+</p>
+
+<h2 id="b1">1. 构建环境与产物</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>要求 / 说明</th></tr>
+  <tr><td>Rust</td><td>根 workspace 要求 <code>rust-version = 1.92</code>；<code>rust-toolchain.toml</code> 固定工具链，首次构建由 rustup 安装。</td></tr>
+  <tr><td>Cargo</td><td>根 workspace、两个 GPU worker 与 Windows 前端各自使用独立 Cargo workspace / <code>Cargo.lock</code>。</td></tr>
+  <tr><td>Linux 核心依赖</td><td><code>cc</code>、<code>make</code>、<code>pkg-config</code>、ALSA 开发库、OpenSSL 开发库；<code>voimed</code> 需要音频设备与用户会话。</td></tr>
+  <tr><td>Fcitx5 addon</td><td>额外需要 CMake、C++20 编译器、Fcitx5 开发包与 pkg-config；要求 Fcitx5 ≥ 5.1.23。</td></tr>
+  <tr><td>Linux 服务</td><td>user systemd；安装脚本写入 <code>~/.config/systemd/user/voime.service</code>。</td></tr>
+  <tr><td>Windows 核心</td><td>Rust MSVC 工具链与 Windows SDK；Windows 前端使用 <code>windows</code> crate 与 eframe/egui。</td></tr>
+  <tr><td>Python</td><td>仅安装期需要 Python 3.10+：<code>scripts/install-core-models.py</code> 负责核心模型下载、缓存与 schema 5 manifest 生成；运行期不需要 Python。</td></tr>
+  <tr><td>GPU 依赖</td><td>FireRed 需要所选 ONNX Runtime GPU EP（CUDA / MIGraphX / DirectML）；Qwen3 需要所选 llama.cpp backend（Vulkan / CUDA）及系统图形驱动。</td></tr>
+</table>
+
+<h3 id="b1-1">1.1 Workspace 与构建目录</h3>
+
+<pre><code>voime/
+├── Cargo.toml                        根 workspace + voime-tests
+├── target/                           根 workspace 产物
+├── crates/
+│   ├── voimed/                       voimed
+│   ├── voime/                        voime TUI / ctl / doctor
+│   └── voime-gpu-firered/            独立 workspace，产物在 crates/voime-gpu-firered/target/
+│   └── voime-gpu-qwen3/              独立 workspace，产物在 crates/voime-gpu-qwen3/target/
+└── frontends/
+    ├── fcitx/                        CMake 构建，产物 voime.so / voime.conf
+    └── windows/                      独立 workspace，产物在 frontends/windows/target/</code></pre>
+
+<table>
+  <tr><th>构建根</th><th>构建命令</th><th>主要产物</th></tr>
+  <tr><td>根 workspace</td><td><code>cargo build --release -p voimed -p voime</code></td><td><code>target/release/voimed</code>、<code>target/release/voime</code></td></tr>
+  <tr><td>FireRed</td><td><code>cd crates/voime-gpu-firered &amp;&amp; cargo build --release --features cuda</code></td><td><code>crates/voime-gpu-firered/target/release/voime-gpu-firered</code></td></tr>
+  <tr><td>Qwen3</td><td><code>cd crates/voime-gpu-qwen3 &amp;&amp; cargo build --release --features vulkan</code></td><td><code>crates/voime-gpu-qwen3/target/release/voime-gpu-qwen3</code></td></tr>
+  <tr><td>Windows 前端</td><td><code>cd frontends/windows &amp;&amp; cargo build --release</code></td><td><code>frontends/windows/target/release/voime-tray.exe</code></td></tr>
+  <tr><td>Fcitx addon</td><td><code>cmake -S frontends/fcitx -B build/fcitx -DCMAKE_BUILD_TYPE=Release &amp;&amp; cmake --build build/fcitx</code></td><td><code>build/fcitx/voime.so</code>、<code>build/fcitx/voime.conf</code></td></tr>
+</table>
+
+<ul class="note">
+  <li>FireRed 的 EP 在编译 feature 中固定：Linux NVIDIA 用 <code>cuda</code>，Linux AMD 用 <code>migraphx</code>，Windows NVIDIA 用 <code>cuda</code>，Windows AMD / Intel 用 <code>directml</code>；一次构建只包含一个 EP。</li>
+  <li>Qwen3 的 llama.cpp backend 在编译 feature 中固定：<code>vulkan</code> 或 <code>cuda</code>；AMD Linux 只使用 <code>vulkan</code>。</li>
+  <li>独立 workspace 不参与根 <code>cargo test --workspace</code>；需要分别进入目录构建与测试。</li>
+</ul>
+
+<h2 id="b2">2. 从源码运行</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="b2-1">2.1 核心与 CLI</h3>
+
+<pre><code># 构建
+cargo build --release -p voimed -p voime
+
+# 首次准备核心模型；--source-dir 指向包含 firered-vad / sensevoice-small 的离线目录
+python3 scripts/install-core-models.py \
+  --model-root "$HOME/.local/share/voime/models" \
+  --source-dir /path/to/core-models \
+  --no-download
+
+# 直接运行 daemon（不安装 systemd 服务时）
+target/release/voimed \
+  --model-dir "$HOME/.local/share/voime/models" \
+  --endpoint /tmp/voime-dev/voimed.sock \
+  --verbose
+
+# 另开终端连接
+target/release/voime --endpoint /tmp/voime-dev/voimed.sock
+target/release/voime ctl status --endpoint /tmp/voime-dev/voimed.sock</code></pre>
+
+<ul class="note">
+  <li><code>voimed</code> 只从配置文件读取 <code>[final].backend</code>，没有 <code>--backend</code> 选项；默认 <code>cpu</code>。</li>
+  <li>手动运行时的端点只影响当前进程；平台前端默认仍使用各自的默认端点。联调时请让前端与 daemon 使用同一端点。</li>
+  <li>未安装 Fcitx addon 或 Windows 托盘时，仍可用 <code>voime ctl</code> 与 TUI 验证 daemon、音频、模型与 Final 后端。</li>
+</ul>
+
+<h3 id="b2-2">2.2 GPU worker</h3>
+
+<pre><code># FireRed：按平台选择 feature
+cd crates/voime-gpu-firered
+cargo build --release --features cuda
+# 或 --features migraphx / directml
+
+# Qwen3：按平台选择 feature
+cd ../voime-gpu-qwen3
+cargo build --release --features vulkan
+# 或 --features cuda</code></pre>
+
+<p>
+worker 由 <code>voimed</code> 按配置启动，不提供独立用户界面。安装时的 <code>--source-dir/bin/</code>
+可提供预编译 worker；否则安装脚本会在对应 crate 内按 runtime feature 构建。
+</p>
+
+<h3 id="b2-3">2.3 Fcitx5 addon</h3>
+
+<pre><code>cmake -S frontends/fcitx -B build/fcitx -DCMAKE_BUILD_TYPE=Release
+cmake --build build/fcitx -j"$(nproc)"
+
+# 仅 addon 需要 sudo；库与描述文件必须写入 Fcitx5 系统目录
+LIBDIR="$(pkg-config --variable=libdir Fcitx5Core)"
+sudo install -d "$LIBDIR/fcitx5" /usr/share/fcitx5/addon
+sudo install -m 0755 build/fcitx/voime.so "$LIBDIR/fcitx5/voime.so"
+sudo install -m 0644 build/fcitx/voime.conf /usr/share/fcitx5/addon/voime.conf
+
+# 重启 Fcitx5，使系统 addon 生效
+fcitx5 -r</code></pre>
+
+<ul class="note">
+  <li>Voime 不安装 <code>inputmethod/voime.conf</code>，也不加入输入法组；它只作为系统 addon 后台加载。</li>
+  <li>addon 不读取用户目录，不设置 <code>FCITX_ADDON_DIRS</code>；不要用用户级前缀替代系统安装。</li>
+  <li>没有可用 Fcitx UI 时临时窗口不显示，但 <code>commitString</code> 提交仍正常。</li>
+</ul>
+
+<h3 id="b2-4">2.4 Windows 前端</h3>
+
+<pre><code>cd frontends/windows
+cargo build --release
+# 产物：frontends/windows/target/release/voime-tray.exe</code></pre>
+
+<ul class="note">
+  <li>Windows 前端是独立桌面进程；托盘是 <code>voimed.exe</code> 的唯一所有者，退出托盘会停止 daemon。</li>
+  <li>前端不加载模型、不感知 Final 后端；GPU worker 由 <code>voimed</code> 启动。</li>
+  <li>可选 TSF 子工程不参与默认安装；未启用 TSF 时不影响托盘听写。</li>
+</ul>
+
+<h2 id="b3">3. 安装</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="b3-1">3.1 Linux 核心安装</h3>
+
+<table>
+  <tr><th>选项 / 环境变量</th><th>行为</th></tr>
+  <tr><td><code>--prefix &lt;dir&gt;</code></td><td>用户安装前缀，默认 <code>$HOME/.local</code>；可执行文件写入 <code>&lt;prefix&gt;/bin</code>。</td></tr>
+  <tr><td><code>--model-dir &lt;dir&gt;</code></td><td>模型根目录，默认 <code>${XDG_DATA_HOME:-$HOME/.local/share}/voime/models</code>。</td></tr>
+  <tr><td><code>--source-dir &lt;dir&gt;</code></td><td>核心模型离线源；隐含 <code>--no-download</code>。</td></tr>
+  <tr><td><code>--no-addon</code></td><td>跳过系统 Fcitx5 addon；不申请 addon 安装权限。</td></tr>
+  <tr><td><code>--no-models</code></td><td>跳过核心模型安装。</td></tr>
+  <tr><td><code>--no-service</code></td><td>不安装 user systemd 服务。</td></tr>
+  <tr><td><code>--install-deps</code></td><td>在 Arch Linux 上通过 pacman 安装缺失依赖；其他发行版只提示手工检查。</td></tr>
+  <tr><td><code>--uninstall</code></td><td>删除核心二进制、addon 与服务；模型目录保留。</td></tr>
+  <tr><td><code>VOIME_PREFIX</code> / <code>VOIME_MODEL_ROOT</code></td><td>分别覆盖默认前缀与模型根目录。</td></tr>
+</table>
+
+<pre><code># 完整核心安装
+scripts/install-core.sh
+
+# 无系统 addon 的桌面/CI 安装
+scripts/install-core.sh --no-addon
+
+# 离线模型安装
+scripts/install-core.sh --source-dir /path/to/core-models
+
+# 卸载核心（保留模型）
+scripts/install-core.sh --uninstall</code></pre>
+
+<ul class="note">
+  <li>addon 安装失败或拒绝 sudo 时安装失败并提示 <code>--no-addon</code>；不会静默改写到用户目录。</li>
+  <li>核心模型缺失或校验失败会让 daemon 启动失败；GPU 模型 / runtime 缺失只让对应 Final 后端不可用。</li>
+  <li>安装后重启 <code>voimed</code> 与 Fcitx5；用 <code>voime ctl status</code> 与 <code>voime doctor</code> 验证。</li>
+</ul>
+
+<h3 id="b3-2">3.2 Windows 核心安装</h3>
+
+<table>
+  <tr><th>参数</th><th>行为</th></tr>
+  <tr><td><code>-Prefix &lt;dir&gt;</code></td><td>默认 <code>%LOCALAPPDATA%\Programs\Voime</code>；托盘、daemon 与 CLI 安装到同一目录。</td></tr>
+  <tr><td><code>-ModelDir &lt;dir&gt;</code></td><td>默认 <code>%LOCALAPPDATA%\voime\models</code>。</td></tr>
+  <tr><td><code>-SourceDir &lt;dir&gt;</code></td><td>核心模型离线源；通过 Python 模型安装器校验并生成 manifest。</td></tr>
+  <tr><td><code>-NoModels</code></td><td>跳过核心模型安装。</td></tr>
+  <tr><td><code>-Uninstall</code></td><td>删除核心可执行文件与当前用户启动项；模型目录保留。</td></tr>
+</table>
+
+<pre><code>powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1
+powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1 -NoModels
+powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1 -SourceDir D:\voime-core-models
+powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1 -Uninstall</code></pre>
+
+<ul class="note">
+  <li>安装脚本写入当前用户 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code> 的 <code>Voime</code> 值，启动 <code>voime-tray.exe</code>；不使用 Session 0 服务。</li>
+  <li>未提供 <code>-SourceDir</code> 时，模型安装需要 Python 3.10+；运行期仍不需要 Python。</li>
+</ul>
+
+<h3 id="b3-3">3.3 GPU 模块安装</h3>
+
+<table>
+  <tr><th>选项</th><th>Linux</th><th>Windows</th></tr>
+  <tr><td>安装范围</td><td><code>--firered</code> / <code>--qwen3</code>；不指定时两者都安装。</td><td><code>-Firered</code> / <code>-Qwen3</code>；不指定时两者都安装。</td></tr>
+  <tr><td>FireRed runtime</td><td><code>--firered-runtime cuda|migraphx</code>；Linux 拒绝 <code>directml</code>。</td><td><code>-FireredRuntime cuda|directml</code>；未指定时按显卡厂商选择。</td></tr>
+  <tr><td>Qwen runtime</td><td><code>--qwen-runtime vulkan|cuda</code>；AMD Linux 只接受 <code>vulkan</code>。</td><td><code>-QwenRuntime vulkan|cuda</code>。</td></tr>
+  <tr><td>后端选择</td><td><code>--backend cpu|firered|qwen3</code>；只写配置，不热切换。</td><td><code>-Backend cpu|firered|qwen3</code>；只写配置。</td></tr>
+  <tr><td>模型</td><td><code>--model-dir</code> / <code>--source-dir</code> / <code>--no-models</code>。</td><td><code>-ModelDir</code> / <code>-SourceDir</code> / <code>-NoModels</code>。</td></tr>
+  <tr><td>卸载</td><td><code>--uninstall</code>；只删除选中的后端、runtime 与模型目录。</td><td><code>-Uninstall</code>；同样只删除选中后端。</td></tr>
+</table>
+
+<pre><code># Linux：只装 FireRed，NVIDIA CUDA
+scripts/install-gpu.sh --firered --firered-runtime cuda
+
+# Linux：安装 Qwen，AMD Vulkan
+scripts/install-gpu.sh --qwen3 --qwen-runtime vulkan
+
+# 安装后显式选择 Final，重启 daemon 生效
+scripts/install-gpu.sh --firered --backend firered
+systemctl --user restart voime.service
+
+# 卸载 FireRed，不影响 Qwen 与核心
+scripts/install-gpu.sh --firered --uninstall</code></pre>
+
+<ul class="note">
+  <li>GPU 安装脚本要求核心已安装；缺少核心时失败，不创建孤立 GPU 模块。</li>
+  <li>安装 GPU 模块不会自动切换 <code>final.backend</code>；必须显式使用 <code>--backend</code> 或 <code>voime ctl backend</code>。</li>
+  <li>模型包放在 <code>--source-dir</code> 下的固定目录；可选预编译 worker 放在 <code>--source-dir/bin/</code>。没有预编译包时脚本会在对应 crate 内按 runtime feature 构建。</li>
+</ul>
+
+<h3 id="b3-4">3.4 模型准备</h3>
+
+<table>
+  <tr><th>模型目录</th><th>所属</th><th>安装来源 / 说明</th></tr>
+  <tr><td><code>firered-vad/</code></td><td>核心</td><td><code>install-core-models.py</code>；包含 <code>manifest.json</code>、ONNX 权重与可选 <code>cmvn.ark</code>。</td></tr>
+  <tr><td><code>sensevoice-small/</code></td><td>核心</td><td><code>install-core-models.py</code>；包含 <code>manifest.json</code>、int8 ONNX 与 <code>tokens.txt</code>。</td></tr>
+  <tr><td><code>fireredasr2-aed/</code></td><td>FireRed</td><td><code>install-gpu.sh</code> / <code>install-gpu.ps1</code> 从离线源复制。</td></tr>
+  <tr><td><code>fireredpunc/</code></td><td>FireRed</td><td>同上；随 FireRed 模块安装。</td></tr>
+  <tr><td><code>qwen3-asr-1.7b/</code></td><td>Qwen3</td><td>同上；BF16 主模型与 BF16 mmproj 必须同版本。</td></tr>
+</table>
+
+<pre><code># 核心模型安装器的独立用法
+python3 scripts/install-core-models.py \
+  --model-root "$HOME/.local/share/voime/models" \
+  --cache-dir "$HOME/.cache/voime" \
+  --source-dir /path/to/core-models \
+  --no-download
+
+# 强制重新生成 manifest 与复制文件
+python3 scripts/install-core-models.py --model-root /path/to/models --force</code></pre>
+
+<ul class="note">
+  <li>模型根目录下是一模型一目录；目录名是稳定标识，版本写在 <code>manifest.json</code>，不拼进目录名。</li>
+  <li>运行期只读；启动时校验 schema 5、目录 id、kind、文件大小与 SHA-256。</li>
+  <li>仓库不提交权重文件；离线源目录中的每个模型目录必须自带 schema 5 <code>manifest.json</code>。</li>
+</ul>
+
+<h2 id="b4">4. 运行目录、配置与端点</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>项目</th><th>Linux</th><th>Windows</th></tr>
+  <tr><td>模型根目录</td><td><code>${XDG_DATA_HOME:-$HOME/.local/share}/voime/models</code></td><td><code>%LOCALAPPDATA%\voime\models</code></td></tr>
+  <tr><td>Final 配置</td><td><code>${XDG_CONFIG_HOME:-$HOME/.config}/voime/config.toml</code></td><td><code>%APPDATA%\voime\config.toml</code></td></tr>
+  <tr><td>本地端点</td><td><code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>；未设置时为 <code>/tmp/voime-&lt;uid&gt;/voimed.sock</code></td><td><code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code></td></tr>
+  <tr><td>运行日志</td><td><code>$XDG_STATE_HOME/voime/logs</code>；未设置时为 <code>~/.local/state/voime/logs</code></td><td><code>%LOCALAPPDATA%\voime\logs</code></td></tr>
+  <tr><td>用户服务</td><td><code>~/.config/systemd/user/voime.service</code></td><td>托盘登录启动项</td></tr>
+  <tr><td>Fcitx 配置</td><td><code>~/.config/fcitx5/conf/voime.conf</code></td><td>—</td></tr>
+  <tr><td>Windows 前端配置</td><td>—</td><td><code>%APPDATA%\voime\config.json</code></td></tr>
+</table>
+
+<pre><code># Final 后端配置
+[final]
+backend = "cpu"       # cpu | firered | qwen3</code></pre>
+
+<pre><code>~/.local/share/voime/models/
+├── firered-vad/
+│   ├── manifest.json
+│   ├── model.onnx
+│   └── cmvn.ark          # 可选
+├── sensevoice-small/
+│   ├── manifest.json
+│   ├── model.int8.onnx
+│   └── tokens.txt
+├── fireredasr2-aed/      # 安装 FireRed 后
+├── fireredpunc/
+└── qwen3-asr-1.7b/       # 安装 Qwen 后</code></pre>
+
+<ul class="note">
+  <li><code>VOIME_LOG</code> 未设置或为空时完全静默；设为 <code>1</code> / <code>true</code> / <code>on</code> 使用默认日志目录，设为其他非空值是自定义目录。</li>
+  <li>日志按组件分文件，例如 <code>voimed.log</code>、<code>voime-tray.log</code>；识别文本只记录字符数，不记录内容。</li>
+  <li>端点权限在 Unix 上为父目录 0700、socket 0600；Windows named pipe 使用当前用户 DACL 并拒绝远程客户端。</li>
+  <li>修改 <code>final.backend</code> 后必须重启 daemon；运行中不热切换。TUI / 前端配置不写该值。</li>
+</ul>
+
+<h3 id="b4-1">4.1 systemd 用户服务</h3>
+
+<pre><code>systemctl --user daemon-reload
+systemctl --user enable --now voime.service
+systemctl --user status voime.service
+systemctl --user restart voime.service
+
+# 查看服务日志（需先设置 VOIME_LOG）
+journalctl --user -u voime.service -f</code></pre>
+
+<ul class="note">
+  <li>服务文件由 <code>packaging/linux/voime.service</code> 生成，<code>@BINDIR@</code> 替换为用户安装前缀下的 <code>bin</code>。</li>
+  <li>服务默认不设置 <code>VOIME_LOG</code>；需要文件日志时由用户环境或 drop-in 显式启用。</li>
+</ul>
+
+<h2 id="b5">5. 验证与测试</h2>
+<p><a href="#top">↑</a></p>
+
+<table>
+  <tr><th>目标</th><th>命令 / 检查</th></tr>
+  <tr><td>核心与共享 crate</td><td><code>cargo test --workspace</code></td></tr>
+  <tr><td>FireRed worker</td><td><code>cd crates/voime-gpu-firered &amp;&amp; cargo test --features cuda</code></td></tr>
+  <tr><td>Qwen3 worker</td><td><code>cd crates/voime-gpu-qwen3 &amp;&amp; cargo test --features vulkan</code></td></tr>
+  <tr><td>Windows 前端</td><td><code>cd frontends/windows &amp;&amp; cargo check --target x86_64-pc-windows-gnu --all-targets</code>（Linux 交叉检查）或 Windows 上 <code>cargo test</code></td></tr>
+  <tr><td>Fcitx addon</td><td><code>cmake --build build/fcitx &amp;&amp; cd build/fcitx &amp;&amp; ctest --output-on-failure</code></td></tr>
+  <tr><td>运行时诊断</td><td><code>voime doctor</code>；存在 FAIL 时退出码 1。</td></tr>
+  <tr><td>服务 / 前端状态</td><td><code>voime ctl status</code>；<code>systemctl --user status voime.service</code>；Windows 托盘菜单的“诊断”。</td></tr>
+</table>
+
+<pre><code># 典型验证顺序
+voime ctl status
+voime doctor
+
+# 手动触发一次输入（PTT / Toggle 模式）
+voime ctl start
+voime ctl stop
+
+# 查看历史是否清空
+voime ctl clear</code></pre>
+
+<ul class="note">
+  <li>doctor 只读：不启动 / 停止 daemon、不启动 worker、不打开音频流、不修改配置。</li>
+  <li>doctor 固定检查默认模型根目录；自定义前缀或 <code>--model-dir</code> 部署需要手工确认。</li>
+  <li>GPU worker 的 ready / running 状态来自 daemon 日志与进程状态；未选择的后端不要求运行。</li>
+</ul>
+
+<h2 id="b6">6. 升级、卸载与排查</h2>
+<p><a href="#top">↑</a></p>
+
+<h3 id="b6-1">6.1 升级</h3>
+
+<pre><code># Linux 核心：重新构建并安装，然后重启服务
+scripts/install-core.sh
+systemctl --user restart voime.service
+
+# Fcitx addon 更新后重启 Fcitx5
+fcitx5 -r
+
+# Windows 核心：重新运行安装脚本，退出并重新启动托盘
+powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1</code></pre>
+
+<ul class="note">
+  <li>升级 addon 后旧 Fcitx 进程仍加载旧 <code>voime.so</code>；必须重启 Fcitx5。</li>
+  <li>升级 daemon 后旧进程仍运行旧二进制；必须重启 <code>voime.service</code> 或托盘。</li>
+</ul>
+
+<h3 id="b6-2">6.2 卸载</h3>
+
+<pre><code>scripts/install-core.sh --uninstall                 # Linux 核心；模型保留
+scripts/install-gpu.sh --firered --uninstall        # Linux：只删 FireRed
+scripts/install-gpu.sh --qwen3 --uninstall          # Linux：只删 Qwen
+
+powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1 -Uninstall
+powershell -ExecutionPolicy Bypass -File scripts/install-gpu.ps1 -Firered -Uninstall
+powershell -ExecutionPolicy Bypass -File scripts/install-gpu.ps1 -Qwen3 -Uninstall</code></pre>
+
+<h3 id="b6-3">6.3 排查</h3>
+
+<table>
+  <tr><th>现象</th><th>检查 / 处理</th></tr>
+  <tr><td>daemon 启动失败</td><td>查看 stderr / <code>voime doctor</code>；确认两个核心模型目录与 manifest / SHA 校验通过，音频设备存在。</td></tr>
+  <tr><td>daemon 已运行</td><td>启动第二个 daemon 会幂等退出；用 <code>voime ctl status</code> 或端点连接确认。</td></tr>
+  <tr><td>GPU Final 未生效</td><td>确认 <code>final.backend</code> 不是 <code>cpu</code>，对应 worker 与模型已安装；<code>voime doctor</code> 查看 worker 状态；重启 daemon。</td></tr>
+  <tr><td>GPU 崩溃 / 显存不足</td><td>当前段回退 CPU SenseVoice；查看日志中的错误码；修复 worker / runtime 后重启 daemon。</td></tr>
+  <tr><td>Fcitx 热键无效</td><td>确认 Fcitx5 运行、系统 addon 描述与 <code>voime.so</code> 存在、ABI 匹配；重启 Fcitx5；<code>voime doctor</code> 的 fcitx 段。</td></tr>
+  <tr><td>Windows 热键无效</td><td>确认托盘已连接 daemon、热键注册未被系统占用；查看托盘状态与日志；必要时重新录制热键。</td></tr>
+  <tr><td>目标失焦不提交</td><td>行为符合契约；最终文本保留在 daemon 历史与 TUI，可重新聚焦后重试。</td></tr>
+  <tr><td>没有日志文件</td><td>设置 <code>VOIME_LOG=1</code> 或自定义目录后重启对应进程；检查目录权限与磁盘空间。</td></tr>
+  <tr><td>addon 安装失败</td><td>确认 Fcitx5 ≥ 5.1.23、开发包与 CMake 存在；拒绝 sudo 时使用 <code>--no-addon</code> 跳过。</td></tr>
+</table>
+
+<ul class="note">
+  <li>不要把日志中的识别文本当作可公开内容；正常日志只记录长度、耗时、错误码与后端名。</li>
+  <li>任何失败都不得把文本注入到非目标窗口；无法确认目标时保留历史，不重试其他窗口。</li>
+  <li>GPU 失败只影响 Final；VAD、Preview 与 CPU Final 仍可用。</li>
+</ul>
+
+</body>
+</html>
