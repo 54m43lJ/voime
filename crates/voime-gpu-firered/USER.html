@@ -195,11 +195,13 @@ scripts/install-gpu.ps1 --firered --firered-runtime directml</code></pre>
   <tr><td><code>--backend firered</code></td><td>安装后写入 <code>final.backend = firered</code>；必须与已安装后端一致；不加此选项时保持原值（默认 <code>cpu</code>）。</td></tr>
   <tr><td><code>--no-models</code></td><td>只安装 worker 与 runtime；模型目录由用户提供。</td></tr>
   <tr><td><code>--model-dir &lt;dir&gt;</code></td><td>覆盖模型根目录；仍按一模型一目录布局。</td></tr>
-  <tr><td><code>--source-dir &lt;dir&gt;</code></td><td>离线模型 / runtime 源；不联网。</td></tr>
+  <tr><td><code>--source-dir &lt;dir&gt;</code></td><td>离线模型 / runtime 源；按 <code>&lt;dir&gt;/&lt;model-id&gt;/</code> 读取，不联网。</td></tr>
+  <tr><td><code>--yes</code> / <code>-Yes</code></td><td>跳过模型下载确认与 token 提示；用于非交互安装。</td></tr>
   <tr><td><code>--firered --uninstall</code></td><td>只删除 FireRed worker、本后端 runtime 与 <code>fireredasr2-aed</code> / <code>fireredpunc</code>；不触碰核心与 Qwen。</td></tr>
 </table>
 <ul class="note">
   <li>GPU 安装脚本无参数时安装 FireRed + Qwen 两个后端；<code>--firered</code> 只安装本后端。两者都不自动切换 <code>final.backend</code>。</li>
+  <li>未指定 <code>--source-dir</code> 时默认从固定上游 revision 下载模型并缓存；<code>fireredpunc</code> 优先使用 ModelScope 同文件镜像，<code>fireredasr2-aed</code> 的固定 ONNX 导出目前只有 HF 同文件集，因此使用 Hugging Face。公开模型使用匿名直链，不需要账号；也可通过 <code>MODELSCOPE_API_TOKEN</code> / <code>HF_TOKEN</code>（及常见别名）提供 token，交互安装缺失时会提示输入，可回车跳过。开始前显示下载体积并要求确认，<code>--yes</code> / <code>-Yes</code> 跳过确认。安装脚本不从仓库根目录的 <code>models/</code> 取模型。</li>
   <li>GPU 安装脚本要求核心已安装；缺少核心时失败，不创建孤立的 GPU 安装。</li>
   <li>安装 GPU 不自动切换 <code>final.backend</code>；必须用 <code>--backend</code> 或 <code>voime ctl backend</code> 显式选择，重启 daemon 生效。</li>
   <li>模型下载失败时脚本非零退出并清理临时目录；不写 manifest、不做 rename，不留下半成品目录。</li>

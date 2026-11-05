@@ -131,6 +131,7 @@ pub fn validate_hello(
     if !device.is_empty()
         && !device.starts_with("cuda")
         && !device.starts_with("migraphx")
+        && !device.starts_with("rocm")
         && !device.starts_with("dml")
     {
         return Err(WorkerError::DeviceUnavailable(format!("不支持的设备：{device}")).into());

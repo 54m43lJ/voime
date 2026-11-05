@@ -256,7 +256,7 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 2. **解决方法**
 
 - 约定 `--source-dir/bin/voime-gpu-firered` 与 `--source-dir/bin/voime-gpu-qwen3` 为可选预编译 worker；存在时直接安装，否则在对应 crate 内按 feature 构建。
-- 模型仍按 `--source-dir/<model-id>/` 复制；runtime 目录由安装包自行放置，不由 worker 从全局库路径查找。
+- 离线源模型仍按 `--source-dir/<model-id>/` 复制；默认在线获取与下载确认由 M10 的安装器负责，两者共用同一 `<model-id>/` 布局与 schema 5 manifest。runtime 目录由安装包自行放置，不由 worker 从全局库路径查找。
 - Windows 使用同名 `.exe`。
 
 3. **修订建议**
@@ -278,6 +278,7 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 - `install-core.ps1` 在未指定 `-SourceDir` 时调用 `scripts/install-core-models.py`，由它下载 / 缓存并生成 schema 5 manifest。
 - 指定 `-SourceDir` 时同样通过 Python 安装器做校验与 manifest 生成，不直接复制未校验目录。
 - 没有 Python 且没有 `-SourceDir` 时明确失败，提示传 `-SourceDir` 或 `-NoModels`。
+- GPU 模型由独立的 `scripts/install-gpu-models.py` 处理，不复用核心模型安装器；见 M10。
 
 3. **修订建议**
 
@@ -326,6 +327,31 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 |---|---|---|---|
 | `crates/voime/USER.html` | §4.1 | 改 | 明确 `ctl backend` 即使全局解析到 `--endpoint` 也会拒绝并以退出码 2 结束。 |
 | `crates/voime/CORE.html` | §4.1 | 增 | 在 `run_ctl` 分流说明中补一句：Backend 分支先检查 endpoint，再写配置。 |
+
+### M10. GPU 模型默认下载、下载确认与仓库根目录回退没有定义
+
+1. **问题描述**
+
+GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型下载失败时脚本非零退出并清理临时目录”；但 `scripts/install-gpu.sh` 与 `scripts/install-gpu.ps1` 实际只从 `--source-dir` 或仓库根 `models/` 复制，没有下载器。干净 checkout 默认必然报 `FireRed models not found`，与文档描述不符。`BUILD.html` §3.4 又写成“从离线源复制”，与组件 USER 的下载要求冲突。M6 只定义了离线源布局，没有覆盖默认在线获取、下载前确认和仓库根目录回退。
+
+2. **解决方法**
+
+- 新增 `scripts/install-gpu-models.py`，由 `install-gpu.sh` / `install-gpu.ps1` 调用：默认按固定上游 revision 下载 `fireredasr2-aed`、`fireredpunc`、`qwen3-asr-1.7b`，缓存到平台缓存目录。
+- 有与产品固定文件完全一致、且可匿名访问的 ModelScope 镜像时优先使用 ModelScope，否则回退 Hugging Face。ModelScope 公开模型通过 `resolve` 直链下载，不需要登录；`fireredpunc` 与 `qwen3-asr-1.7b` 均有同 SHA-256 镜像，`fireredasr2-aed` 的固定 ONNX 导出目前只有 HF 同文件集，因此继续使用 HF。
+- Token 从环境变量读取：ModelScope 支持 `MODELSCOPE_API_TOKEN` / `MODELSCOPE_SDK_TOKEN` / `MODELSCOPE_API_KEY` 等别名，Hugging Face 支持 `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` 等别名。交互安装且 token 缺失时提示输入，可回车跳过公开模型；服务端返回 401/403 时按 provider 提示并重试一次。Token 只保存在进程内存，不写盘、不输出。
+- 下载前按模型列出本次需要的体积并要求确认；非交互安装使用 `--yes` / `-Yes`（同时跳过 token 提示）。`--source-dir` 只读离线源，不联网；`--no-models` 跳过；安装脚本不再从仓库根目录 `models/` 取模型。
+- 每个文件按固定 size / SHA-256 校验，支持 `.part` 断点续传；同盘临时目录写完后替换目标，失败不留下半成品。安装器生成 schema 5 manifest；Qwen 的 `LICENSE` 作为额外文件写入目录，不参与推理。
+- 安装脚本在需要模型时要求 `python3`；`--no-models` 时不需要 Python。
+- M6 的离线源布局保持不变；默认下载生成的目录与离线源共用 `<model-id>/` 布局和同一份 manifest 契约。
+
+3. **修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voime-gpu-firered/USER.html` | §4.4 | 改 | 写明默认下载、下载前确认、`--yes`、`--source-dir` 只读离线源、优先 ModelScope（`fireredpunc`）/ HF（`fireredasr2-aed`）、token 环境变量与交互提示，以及不再回退仓库根 `models/`。 |
+| `crates/voime-gpu-qwen3/USER.html` | §4.4 | 改 | 同上；明确 ModelScope 优先、HF 回退，保留断点续传 / 离线源与 token 提示描述。 |
+| `BUILD.html` | §3.3、§3.4 | 改 | 把“从离线源复制”改为“默认下载 + 确认 + 缓存；优先 ModelScope，缺失时 HF；`--source-dir` 才离线复制”，补 `--yes` / `-Yes`、Python 依赖与 token 环境变量 / 交互提示。 |
+| `README.html` | §2 | 不动 | 根 README 只保留安装入口；模型来源细节归 GPU 组件 USER / BUILD。 |
 
 ## 3. 其它技术上踩的坑
 

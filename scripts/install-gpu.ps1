@@ -11,6 +11,7 @@ param(
     [string]$ModelDir = (Join-Path $env:LOCALAPPDATA 'voime\models'),
     [string]$SourceDir = '',
     [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'Programs\Voime'),
+    [switch]$Yes,
     [switch]$Uninstall
 )
 
@@ -19,6 +20,17 @@ $Root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $BinDir = $Prefix
 $InstallFirered = $true
 $InstallQwen = $true
+
+function Find-Python {
+    $python = Get-Command python3 -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $python) {
+        $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $python) {
+        throw 'python3 is required to install GPU models; install Python or pass -NoModels'
+    }
+    return $python.Source
+}
 if ($Firered -or $Qwen3) {
     $InstallFirered = [bool]$Firered
     $InstallQwen = [bool]$Qwen3
@@ -59,6 +71,10 @@ if (-not (Test-Path (Join-Path $BinDir 'voimed.exe')) -and
     throw 'core install not found; install core before the GPU module'
 }
 
+$installModels = (-not $NoModels) -and ($InstallFirered -or $InstallQwen)
+$python = $null
+if ($installModels) { $python = Find-Python }
+
 if ($InstallFirered) {
     $prebuilt = if ([string]::IsNullOrEmpty($SourceDir)) { '' } else { Join-Path $SourceDir 'bin\voime-gpu-firered.exe' }
     if (-not [string]::IsNullOrEmpty($prebuilt) -and (Test-Path $prebuilt)) {
@@ -91,23 +107,20 @@ if ($InstallQwen) {
     }
 }
 
-if (-not $NoModels) {
-    if ([string]::IsNullOrEmpty($SourceDir)) {
-        $SourceDir = Join-Path $Root 'models'
+if ($installModels) {
+    $modelArgs = @(
+        (Join-Path $Root 'scripts\install-gpu-models.py'),
+        '--model-root', $ModelDir
+    )
+    if ($InstallFirered) { $modelArgs += '--firered' }
+    if ($InstallQwen) { $modelArgs += '--qwen3' }
+    if (-not [string]::IsNullOrEmpty($SourceDir)) {
+        $resolvedSourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
+        $modelArgs += @('--source-dir', $resolvedSourceDir, '--no-download')
     }
-    $models = @()
-    if ($InstallFirered) { $models += @('fireredasr2-aed', 'fireredpunc') }
-    if ($InstallQwen) { $models += 'qwen3-asr-1.7b' }
-    foreach ($model in $models) {
-        $source = Join-Path $SourceDir $model
-        if (-not (Test-Path (Join-Path $source 'manifest.json'))) {
-            throw "missing model manifest: $source\manifest.json (use -NoModels to skip)"
-        }
-        $target = Join-Path $ModelDir $model
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $target
-        New-Item -ItemType Directory -Force -Path $ModelDir | Out-Null
-        Copy-Item -Recurse -Force $source $target
-    }
+    if ($Yes) { $modelArgs += '--yes' }
+    & $python @modelArgs
+    if ($LASTEXITCODE -ne 0) { throw 'GPU model installation failed' }
 }
 
 function Set-FinalBackend {

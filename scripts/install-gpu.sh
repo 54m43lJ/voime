@@ -11,6 +11,7 @@ INSTALL_QWEN3=1
 INSTALL_MODELS=1
 UNINSTALL=0
 INSTALL_DEPS=0
+ASSUME_YES=0
 FIRERED_RUNTIME="${VOIME_FIRERED_RUNTIME:-}"
 QWEN_RUNTIME="${VOIME_QWEN_RUNTIME:-vulkan}"
 BACKEND=""
@@ -30,10 +31,19 @@ Options:
   --no-models                     Install workers/runtimes only.
   --model-dir <dir>               Model root.
   --source-dir <dir>              Offline worker/runtime/model source.
+  --yes, -y                       Skip model download and token prompts.
   --prefix <dir>                  Install prefix (default: $HOME/.local).
   --install-deps                  Install missing Arch Linux packages with pacman.
   --uninstall                     Remove selected GPU backends.
   -h, --help                      Show this help.
+
+Models are downloaded from upstream by default after a confirmation that shows
+the download size. Use --source-dir for an offline package, --no-models to skip
+models, or --yes to skip the confirmation.
+
+Authentication tokens are read from MODELSCOPE_API_TOKEN / HF_TOKEN (or their
+aliases). Interactive installs prompt for a missing token; press Enter to skip
+for public models.
 EOF
 }
 
@@ -47,6 +57,7 @@ while (($#)); do
     --no-models) INSTALL_MODELS=0 ;;
     --model-dir) shift; MODEL_ROOT="${1:?missing --model-dir value}" ;;
     --source-dir) shift; MODEL_SOURCE="${1:?missing --source-dir value}" ;;
+    --yes|-y) ASSUME_YES=1 ;;
     --prefix) shift; PREFIX="${1:?missing --prefix value}" ;;
     --install-deps) INSTALL_DEPS=1 ;;
     --uninstall) UNINSTALL=1 ;;
@@ -170,6 +181,10 @@ require_arch_packages() {
 check_dependencies() {
   local commands=(cargo cc make cmake clang pkg-config)
   local packages=(gcc make pkgconf cmake clang)
+  if ((INSTALL_MODELS)); then
+    commands+=(python3)
+    packages+=(python)
+  fi
   if ((INSTALL_FIRERED)); then
     case "$FIRERED_RUNTIME" in
       cuda) packages+=(cuda) ;;
@@ -250,42 +265,25 @@ build_qwen3() {
   install -m 0755 "$ROOT/crates/voime-gpu-qwen3/target/release/voime-gpu-qwen3" "$BIN_DIR/voime-gpu-qwen3"
 }
 
-install_models() {
-  local model="$1"
-  if [[ ! -f "$MODEL_SOURCE/$model/manifest.json" ]]; then
-    echo "missing model manifest: $MODEL_SOURCE/$model/manifest.json" >&2
-    exit 1
-  fi
-  mkdir -p "$MODEL_ROOT"
-  rm -rf "$MODEL_ROOT/$model.tmp"
-  cp -a "$MODEL_SOURCE/$model" "$MODEL_ROOT/$model.tmp"
-  rm -rf "$MODEL_ROOT/$model"
-  mv "$MODEL_ROOT/$model.tmp" "$MODEL_ROOT/$model"
-}
-
 if ((INSTALL_FIRERED)); then
   build_firered
   echo "FireRed runtime selected: $FIRERED_RUNTIME (worker loads only this EP)."
-  if ((INSTALL_MODELS)); then
-    if [[ -z "$MODEL_SOURCE" ]]; then
-      [[ -d "$ROOT/models/fireredasr2-aed" ]] && MODEL_SOURCE="$ROOT/models" || {
-        echo "FireRed models not found; pass --source-dir or --no-models" >&2; exit 1; }
-    fi
-    install_models fireredasr2-aed
-    install_models fireredpunc
-  fi
 fi
 
 if ((INSTALL_QWEN3)); then
   build_qwen3
   echo "Qwen runtime selected: $QWEN_RUNTIME (AMD Linux only supports vulkan)."
-  if ((INSTALL_MODELS)); then
-    if [[ -z "$MODEL_SOURCE" ]]; then
-      [[ -d "$ROOT/models/qwen3-asr-1.7b" ]] && MODEL_SOURCE="$ROOT/models" || {
-        echo "Qwen model not found; pass --source-dir or --no-models" >&2; exit 1; }
-    fi
-    install_models qwen3-asr-1.7b
+fi
+
+if ((INSTALL_MODELS)); then
+  model_args=(--model-root "$MODEL_ROOT")
+  if ((INSTALL_FIRERED)); then model_args+=(--firered); fi
+  if ((INSTALL_QWEN3)); then model_args+=(--qwen3); fi
+  if [[ -n "$MODEL_SOURCE" ]]; then
+    model_args+=(--source-dir "$MODEL_SOURCE" --no-download)
   fi
+  if ((ASSUME_YES)); then model_args+=(--yes); fi
+  python3 "$ROOT/scripts/install-gpu-models.py" "${model_args[@]}"
 fi
 
 write_backend() {

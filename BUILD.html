@@ -34,7 +34,7 @@
   <tr><td>Fcitx5 addon</td><td>额外需要 CMake、C++20 编译器、Fcitx5 开发包与 pkg-config；要求 Fcitx5 ≥ 5.1.23。</td></tr>
   <tr><td>Linux 服务</td><td>user systemd；安装脚本写入 <code>~/.config/systemd/user/voime.service</code>。</td></tr>
   <tr><td>Windows 核心</td><td>Rust MSVC 工具链与 Windows SDK；Windows 前端使用 <code>windows</code> crate 与 eframe/egui。</td></tr>
-  <tr><td>Python</td><td>仅安装期需要 Python 3.10+：<code>scripts/install-core-models.py</code> 负责核心模型下载、缓存与 schema 5 manifest 生成；运行期不需要 Python。</td></tr>
+  <tr><td>Python</td><td>仅安装期需要 Python 3.10+：<code>scripts/install-core-models.py</code> 与 <code>scripts/install-gpu-models.py</code> 负责模型下载、缓存与 schema 5 manifest 生成；运行期不需要 Python。</td></tr>
   <tr><td>GPU 依赖</td><td>FireRed 需要所选 ONNX Runtime GPU EP（CUDA / MIGraphX / DirectML）；Qwen3 需要所选 llama.cpp backend（Vulkan / CUDA）及系统图形驱动。</td></tr>
 </table>
 
@@ -211,15 +211,21 @@ powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1 -Uninstall</co
   <tr><td>FireRed runtime</td><td><code>--firered-runtime cuda|migraphx</code>；Linux 拒绝 <code>directml</code>。</td><td><code>-FireredRuntime cuda|directml</code>；未指定时按显卡厂商选择。</td></tr>
   <tr><td>Qwen runtime</td><td><code>--qwen-runtime vulkan|cuda</code>；AMD Linux 只接受 <code>vulkan</code>。</td><td><code>-QwenRuntime vulkan|cuda</code>。</td></tr>
   <tr><td>后端选择</td><td><code>--backend cpu|firered|qwen3</code>；只写配置，不热切换。</td><td><code>-Backend cpu|firered|qwen3</code>；只写配置。</td></tr>
-  <tr><td>模型</td><td><code>--model-dir</code> / <code>--source-dir</code> / <code>--no-models</code>。</td><td><code>-ModelDir</code> / <code>-SourceDir</code> / <code>-NoModels</code>。</td></tr>
+  <tr><td>模型</td><td>默认下载并缓存；开始前显示体积并要求确认。选项：<code>--yes</code> / <code>--model-dir</code> / <code>--source-dir</code> / <code>--no-models</code>。</td><td>默认下载并缓存；开始前显示体积并要求确认。选项：<code>-Yes</code> / <code>-ModelDir</code> / <code>-SourceDir</code> / <code>-NoModels</code>。</td></tr>
   <tr><td>卸载</td><td><code>--uninstall</code>；只删除选中的后端、runtime 与模型目录。</td><td><code>-Uninstall</code>；同样只删除选中后端。</td></tr>
 </table>
 
-<pre><code># Linux：只装 FireRed，NVIDIA CUDA
+<pre><code># Linux：只装 FireRed，NVIDIA CUDA；模型下载前会要求确认
 scripts/install-gpu.sh --firered --firered-runtime cuda
+
+# 非交互安装：跳过模型下载确认
+scripts/install-gpu.sh --firered --firered-runtime cuda --yes
 
 # Linux：安装 Qwen，AMD Vulkan
 scripts/install-gpu.sh --qwen3 --qwen-runtime vulkan
+
+# 离线模型包：不联网，从 --source-dir/<model-id>/ 读取
+scripts/install-gpu.sh --firered --source-dir /path/to/gpu-models
 
 # 安装后显式选择 Final，重启 daemon 生效
 scripts/install-gpu.sh --firered --backend firered
@@ -231,7 +237,8 @@ scripts/install-gpu.sh --firered --uninstall</code></pre>
 <ul class="note">
   <li>GPU 安装脚本要求核心已安装；缺少核心时失败，不创建孤立 GPU 模块。</li>
   <li>安装 GPU 模块不会自动切换 <code>final.backend</code>；必须显式使用 <code>--backend</code> 或 <code>voime ctl backend</code>。</li>
-  <li>模型包放在 <code>--source-dir</code> 下的固定目录；可选预编译 worker 放在 <code>--source-dir/bin/</code>。没有预编译包时脚本会在对应 crate 内按 runtime feature 构建。</li>
+  <li>未指定 <code>--source-dir</code> 时，模型由 <code>scripts/install-gpu-models.py</code> 从固定上游 revision 下载并缓存；存在同文件的 ModelScope 镜像时优先 ModelScope，否则回退 Hugging Face。公开模型使用匿名直链，不需要账号；也可通过 <code>MODELSCOPE_API_TOKEN</code> / <code>HF_TOKEN</code>（及常见别名）提供 token，交互安装缺失时会提示输入，可回车跳过。开始前显示体积并要求确认，<code>--yes</code> 跳过确认与 token 提示。指定 <code>--source-dir</code> 时只复制离线包，不联网。</li>
+  <li>离线模型包放在 <code>--source-dir/&lt;model-id&gt;/</code>，可选预编译 worker 放在 <code>--source-dir/bin/</code>。没有预编译包时脚本会在对应 crate 内按 runtime feature 构建；安装脚本不再回退到仓库根目录的 <code>models/</code>。</li>
 </ul>
 
 <h3 id="b3-4">3.4 模型准备</h3>
@@ -240,7 +247,7 @@ scripts/install-gpu.sh --firered --uninstall</code></pre>
   <tr><th>模型目录</th><th>所属</th><th>安装来源 / 说明</th></tr>
   <tr><td><code>firered-vad/</code></td><td>核心</td><td><code>install-core-models.py</code>；包含 <code>manifest.json</code>、ONNX 权重与可选 <code>cmvn.ark</code>。</td></tr>
   <tr><td><code>sensevoice-small/</code></td><td>核心</td><td><code>install-core-models.py</code>；包含 <code>manifest.json</code>、int8 ONNX 与 <code>tokens.txt</code>。</td></tr>
-  <tr><td><code>fireredasr2-aed/</code></td><td>FireRed</td><td><code>install-gpu.sh</code> / <code>install-gpu.ps1</code> 从离线源复制。</td></tr>
+  <tr><td><code>fireredasr2-aed/</code></td><td>FireRed</td><td>默认由 <code>install-gpu-models.py</code> 下载、缓存并生成 manifest；<code>--source-dir</code> 时从离线包复制。</td></tr>
   <tr><td><code>fireredpunc/</code></td><td>FireRed</td><td>同上；随 FireRed 模块安装。</td></tr>
   <tr><td><code>qwen3-asr-1.7b/</code></td><td>Qwen3</td><td>同上；BF16 主模型与 BF16 mmproj 必须同版本。</td></tr>
 </table>
@@ -258,7 +265,7 @@ python3 scripts/install-core-models.py --model-root /path/to/models --force</cod
 <ul class="note">
   <li>模型根目录下是一模型一目录；目录名是稳定标识，版本写在 <code>manifest.json</code>，不拼进目录名。</li>
   <li>运行期只读；启动时校验 schema 5、目录 id、kind、文件大小与 SHA-256。</li>
-  <li>仓库不提交权重文件；离线源目录中的每个模型目录必须自带 schema 5 <code>manifest.json</code>。</li>
+  <li>仓库不提交权重文件，安装脚本也不从仓库根目录的 <code>models/</code> 取模型；默认下载会生成 schema 5 <code>manifest.json</code>。离线源目录中的每个模型目录必须自带同版本 manifest。</li>
 </ul>
 
 <h2 id="b4">4. 运行目录、配置与端点</h2>

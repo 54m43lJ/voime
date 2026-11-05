@@ -39,7 +39,8 @@ impl Punc {
             dtype: "float32".to_string(),
             shape: vec![1, -1, 5],
         }];
-        let session = runtime.create_with_spec(manifest.file("model.onnx")?, &inputs, &outputs)?;
+        let session =
+            runtime.create_with_cpu_fallback(manifest.file("model.onnx")?, &inputs, &outputs)?;
         let tokenizer = PuncTokenizer::load(manifest.file("tokens.txt")?)?;
         let labels = PuncLabels::load(manifest.file("out_dict")?, manifest.file("punc.json")?)?;
         Ok(Self {

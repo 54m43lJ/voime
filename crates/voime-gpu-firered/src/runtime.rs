@@ -73,6 +73,22 @@ impl Runtime {
                     .error_on_failure(),
             );
         }
+        #[cfg(feature = "rocm")]
+        {
+            if ep != OrtEp::Rocm {
+                return Err(WorkerError::RuntimeMissing(format!(
+                    "构建只包含 ROCm EP，不能使用 {}",
+                    ep.as_str()
+                ))
+                .into());
+            }
+            providers.push(
+                ort::ep::ROCm::default()
+                    .with_device_id(device_id)
+                    .build()
+                    .error_on_failure(),
+            );
+        }
         #[cfg(feature = "directml")]
         {
             if ep != OrtEp::Directml {
@@ -123,10 +139,15 @@ impl Runtime {
     pub fn create(&self, model: &Path) -> anyhow::Result<Session> {
         let mut builder = Session::builder(&self.env)
             .context("创建 GPU ONNX 会话构建器失败")?
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|error| anyhow::anyhow!("设置图优化级别失败：{error}"))?
-            .with_disable_cpu_fallback()
-            .map_err(|error| anyhow::anyhow!("禁用 CPU EP 回退失败：{error}"))?;
+            .with_optimization_level(GraphOptimizationLevel::All)
+            .map_err(|error| anyhow::anyhow!("设置图优化级别失败：{error}"))?;
+        // ROCm EP does not claim shape/control nodes; ORT must leave those
+        // nodes on the CPU EP. CUDA, MIGraphX and DirectML remain GPU-only.
+        if self.ep != OrtEp::Rocm {
+            builder = builder
+                .with_disable_cpu_fallback()
+                .map_err(|error| anyhow::anyhow!("禁用 CPU EP 回退失败：{error}"))?;
+        }
         builder
             .commit_from_file(model)
             .with_context(|| format!("加载 GPU ONNX 模型失败 {}", model.display()))
@@ -139,6 +160,26 @@ impl Runtime {
         outputs: &[TensorSpec],
     ) -> anyhow::Result<Session> {
         let session = self.create(model)?;
+        validate_io(&session, inputs, outputs)?;
+        Ok(session)
+    }
+
+    /// Creates a GPU session that may still place unsupported graph nodes on
+    /// the CPU EP. FireRedPunc contains shape/control nodes that MIGraphX does
+    /// not implement; the ASR sessions stay GPU-only.
+    pub fn create_with_cpu_fallback(
+        &self,
+        model: &Path,
+        inputs: &[TensorSpec],
+        outputs: &[TensorSpec],
+    ) -> anyhow::Result<Session> {
+        let mut builder = Session::builder(&self.env)
+            .context("创建 GPU ONNX 会话构建器失败")?
+            .with_optimization_level(GraphOptimizationLevel::All)
+            .map_err(|error| anyhow::anyhow!("设置图优化级别失败：{error}"))?;
+        let session = builder
+            .commit_from_file(model)
+            .with_context(|| format!("加载 GPU ONNX 模型失败 {}", model.display()))?;
         validate_io(&session, inputs, outputs)?;
         Ok(session)
     }
