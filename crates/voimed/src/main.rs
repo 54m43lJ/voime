@@ -67,7 +67,10 @@ fn run(cli: cli::Cli) -> anyhow::Result<()> {
             }
             Err(error) => {
                 // GPU failure never blocks daemon startup; CPU Final stays available.
-                vlog!("gpu worker unavailable: {error:#}");
+                vlog!(
+                    "gpu worker {} unavailable: {error:#}",
+                    config.final_config.backend
+                );
             }
         }
     }

@@ -478,11 +478,11 @@ impl Daemon {
                 Ok(text)
             }
             Err(error) => {
-                vlog!("gpu {} failed: {error:#}", self.backend);
+                vlog!("gpu worker {} failed: {error:#}", self.backend);
                 self.worker_failures = self.worker_failures.saturating_add(1);
                 if self.worker_failures >= crate::worker::MAX_RESTARTS {
                     vlog!(
-                        "gpu {} reached {} consecutive failures; marking unavailable",
+                        "gpu worker {} unavailable: {} consecutive failures",
                         self.backend,
                         self.worker_failures
                     );
@@ -493,7 +493,7 @@ impl Daemon {
                     );
                     std::thread::sleep(backoff);
                     if let Err(restart) = worker.restart() {
-                        vlog!("gpu {} restart failed: {restart:#}", self.backend);
+                        vlog!("gpu worker {} restart failed: {restart:#}", self.backend);
                         self.worker_status = WorkerStatus::Unavailable;
                     } else {
                         self.worker_status = worker.status();
