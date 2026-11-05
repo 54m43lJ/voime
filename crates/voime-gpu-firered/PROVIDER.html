@@ -172,7 +172,7 @@ config.json          2a38d390e6bde9807466c765d012daca4d5d66d2019890dffafec95f623
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>输入</td><td>16 kHz、单声道、<code>f32</code> 样本；计算前乘 32768（16-bit 缩放）。</td></tr>
   <tr><td>fbank</td><td>Kaldi fbank，80 mel bins，25 ms 窗、10 ms 帧移，<code>snip_edges=true</code>，dither 0，low freq 20，high freq 0，use_power / use_log_fbank。</td></tr>
-  <tr><td>CMVN</td><td><code>cmvn.ark</code> 提供 80 维统计；按 Kaldi 约定计算 mean 与 inverse stddev，逐帧做 <code>(x - mean) * inv_stddev</code>。</td></tr>
+  <tr><td>CMVN</td><td><code>cmvn.ark</code> 提供 80 维统计；Kaldi 二进制 <code>DM</code> / <code>FM</code> 矩阵按 <code>2 x (80 + 1)</code> 布局，第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和；按 count 计算 mean 与 inverse stddev，逐帧做 <code>(x - mean) * inv_stddev</code>。</td></tr>
   <tr><td>顺序</td><td>fbank → CMVN → encoder；不做 LFR、不加语言 token、不做频谱增强。</td></tr>
   <tr><td>段长</td><td>产品上限 30 s；上游 <code>input_length_max</code> 为 60 s，超过 60 s 可能产生幻觉，本产品不触发该边界。</td></tr>
 </table>

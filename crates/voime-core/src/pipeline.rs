@@ -56,7 +56,8 @@ pub fn spawn(
     factory: SessionFactory,
     audio_rx: crossbeam_channel::Receiver<AudioChunk>,
 ) -> anyhow::Result<(Pipeline, Final)> {
-    let sensevoice = SenseVoice::new(&config.models.asr, &factory, FbankConfig::default())
+    let asr_fbank = FbankConfig::sensevoice();
+    let sensevoice = SenseVoice::new(&config.models.asr, &factory, asr_fbank)
         .context("创建 SenseVoice 会话失败")?;
     let sensevoice = Arc::new(Mutex::new(sensevoice));
     let finalizer = Final::new(Arc::clone(&sensevoice));
@@ -69,7 +70,7 @@ pub fn spawn(
     let worker = std::thread::Builder::new()
         .name("voime-pipeline".to_string())
         .spawn(
-            move || match Worker::new(&models, &factory, sensevoice, events_tx) {
+            move || match Worker::new(&models, &factory, sensevoice, asr_fbank, events_tx) {
                 Ok(worker) => {
                     let _ = ready_tx.send(Ok(()));
                     worker.run(audio_rx, commands_rx);
@@ -171,6 +172,7 @@ impl Worker {
         models: &ModelSet,
         factory: &SessionFactory,
         sensevoice: Arc<Mutex<SenseVoice>>,
+        asr_fbank: FbankConfig,
         events: crossbeam_channel::Sender<PipelineEvent>,
     ) -> anyhow::Result<Self> {
         let vad = FireRedVad::new(
@@ -187,7 +189,7 @@ impl Worker {
             vad,
             segmenter,
             sensevoice,
-            fbank: FbankConfig::default(),
+            fbank: asr_fbank,
             resampler: None,
             events,
             queue: VecDeque::new(),
@@ -381,7 +383,7 @@ impl Worker {
         if !self.should_process() {
             return Ok(());
         }
-        let Some(event) = self.segmenter.push(frame, audio, self.mode) else {
+        let Some(event) = self.segmenter.push(frame, audio) else {
             if self.preview_gate
                 && self.segmenter.is_active()
                 && !self.suppress_partials

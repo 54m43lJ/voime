@@ -14,12 +14,28 @@ pub const SAMPLE_SCALE: f32 = 32768.0;
 pub const LFR_WINDOW: usize = 7;
 pub const LFR_SHIFT: usize = 6;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowType {
+    Povey,
+    Hamming,
+}
+
+impl WindowType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Povey => "povey",
+            Self::Hamming => "hamming",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct FbankConfig {
     pub sample_rate: u32,
     pub num_bins: usize,
     pub frame_ms: u32,
     pub shift_ms: u32,
+    pub window: WindowType,
 }
 
 impl Default for FbankConfig {
@@ -29,6 +45,18 @@ impl Default for FbankConfig {
             num_bins: NUM_BINS,
             frame_ms: FRAME_MS,
             shift_ms: SHIFT_MS,
+            // Kaldi 默认窗；FireRed VAD 与上游一致使用 povey。
+            window: WindowType::Povey,
+        }
+    }
+}
+
+impl FbankConfig {
+    /// SenseVoice 的上游导出使用 hamming 窗，不能与 FireRed VAD 共用默认值。
+    pub fn sensevoice() -> Self {
+        Self {
+            window: WindowType::Hamming,
+            ..Self::default()
         }
     }
 }
@@ -182,8 +210,7 @@ fn fbank_options(config: FbankConfig) -> FbankOptions {
     options.frame_opts.frame_shift_ms = config.shift_ms as f32;
     options.frame_opts.dither = 0.0;
     options.frame_opts.snip_edges = true;
-    // Both bundled core models were exported with the Kaldi hamming window.
-    options.frame_opts.window_type = "hamming".to_string();
+    options.frame_opts.window_type = config.window.as_str().to_string();
     options.mel_opts.num_bins = config.num_bins;
     options.mel_opts.low_freq = 20.0;
     options.mel_opts.high_freq = 0.0;
@@ -240,9 +267,15 @@ mod tests {
     }
 
     #[test]
-    fn core_models_use_hamming_window() {
+    fn vad_and_sensevoice_use_different_windows() {
         assert_eq!(
             fbank_options(FbankConfig::default()).frame_opts.window_type,
+            "povey"
+        );
+        assert_eq!(
+            fbank_options(FbankConfig::sensevoice())
+                .frame_opts
+                .window_type,
             "hamming"
         );
     }

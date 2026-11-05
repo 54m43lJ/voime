@@ -1,12 +1,10 @@
-use voime_ipc::Mode;
-
 use crate::model::MAX_SEGMENT_MS;
 use crate::vad::firered::{VadFrame, FRAME_SHIFT_MS};
 
 pub const TARGET_SAMPLE_RATE: u64 = 16_000;
 pub const MIN_SPEECH_MS: u32 = 80;
-pub const MIN_SILENCE_MS: u32 = 200;
-pub const PTT_AUTO_END_MS: u32 = 1_200;
+/// 所有模式共用的自然停顿阈值；PTT / Toggle 的会话仍由 FinishSegment 结束。
+pub const AUTO_END_SILENCE_MS: u32 = 1_200;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Segment {
@@ -56,7 +54,7 @@ impl Segmenter {
 
     /// Feeds one VAD frame and its corresponding audio samples. Returns at most
     /// one event. `samples` is normally exactly one frame shift.
-    pub fn push(&mut self, frame: VadFrame, samples: &[f32], mode: Mode) -> Option<SegmenterEvent> {
+    pub fn push(&mut self, frame: VadFrame, samples: &[f32]) -> Option<SegmenterEvent> {
         let frame_ms = if samples.is_empty() {
             FRAME_SHIFT_MS
         } else {
@@ -101,14 +99,9 @@ impl Segmenter {
         }
 
         let duration_ms = self.processed_ms.saturating_sub(self.speech_started_ms);
-        let silence_limit = match mode {
-            Mode::Continuous => MIN_SILENCE_MS,
-            Mode::Ptt | Mode::Toggle => PTT_AUTO_END_MS,
-        };
-
         let reason = if duration_ms >= self.max_segment_ms as u64 {
             Some(SegmentEndReason::MaxDuration)
-        } else if self.silence_run_ms >= silence_limit {
+        } else if self.silence_run_ms >= AUTO_END_SILENCE_MS {
             Some(SegmentEndReason::Silence)
         } else {
             None
@@ -175,14 +168,10 @@ mod tests {
     fn emits_start_after_min_speech() {
         let mut segmenter = Segmenter::new(30_000);
         let samples = frame();
-        assert!(segmenter
-            .push(speech(), &samples, Mode::Continuous)
-            .is_none());
+        assert!(segmenter.push(speech(), &samples).is_none());
         let mut started = false;
         for _ in 0..MIN_SPEECH_MS / FRAME_SHIFT_MS {
-            if let Some(SegmenterEvent::SpeechStart) =
-                segmenter.push(speech(), &samples, Mode::Continuous)
-            {
+            if let Some(SegmenterEvent::SpeechStart) = segmenter.push(speech(), &samples) {
                 started = true;
                 break;
             }
@@ -192,57 +181,33 @@ mod tests {
     }
 
     #[test]
-    fn continuous_ends_after_min_silence() {
+    fn ends_after_auto_end_silence() {
         let mut segmenter = Segmenter::new(30_000);
         let samples = frame();
         while !segmenter.is_active() {
-            segmenter.push(speech(), &samples, Mode::Continuous);
+            segmenter.push(speech(), &samples);
         }
-        let mut segment = None;
-        for _ in 0..MIN_SILENCE_MS / FRAME_SHIFT_MS {
-            if let Some(SegmenterEvent::SpeechEnd {
-                segment: value,
-                reason,
-            }) = segmenter.push(silence(), &samples, Mode::Continuous)
-            {
-                assert_eq!(reason, SegmentEndReason::Silence);
-                segment = Some(value);
-                break;
-            }
+        let frames = AUTO_END_SILENCE_MS / FRAME_SHIFT_MS;
+        for index in 0..frames - 1 {
+            assert!(
+                segmenter.push(silence(), &samples).is_none(),
+                "ended early at frame {index}"
+            );
         }
-        let segment = segment.expect("silence should end the segment");
-        assert!(segment.end_ms > segment.start_ms);
-    }
-
-    #[test]
-    fn ptt_and_toggle_use_longer_silence_threshold() {
-        for mode in [Mode::Ptt, Mode::Toggle] {
-            let mut segmenter = Segmenter::new(30_000);
-            let samples = frame();
-            while !segmenter.is_active() {
-                segmenter.push(speech(), &samples, mode);
-            }
-            for _ in 0..MIN_SILENCE_MS / FRAME_SHIFT_MS {
-                assert!(segmenter.push(silence(), &samples, mode).is_none());
-            }
-            let mut ended = false;
-            for _ in 0..(PTT_AUTO_END_MS - MIN_SILENCE_MS) / FRAME_SHIFT_MS {
-                if matches!(
-                    segmenter.push(silence(), &samples, mode),
-                    Some(SegmenterEvent::SpeechEnd { .. })
-                ) {
-                    ended = true;
-                    break;
-                }
-            }
-            assert!(ended);
-        }
+        let event = segmenter.push(silence(), &samples);
+        assert!(matches!(
+            event,
+            Some(SegmenterEvent::SpeechEnd {
+                reason: SegmentEndReason::Silence,
+                ..
+            })
+        ));
     }
 
     #[test]
     fn force_end_drops_short_pending_speech() {
         let mut segmenter = Segmenter::new(30_000);
-        segmenter.push(speech(), &frame(), Mode::Ptt);
+        segmenter.push(speech(), &frame());
         assert!(segmenter.force_end().is_none());
     }
 
@@ -251,12 +216,12 @@ mod tests {
         let mut segmenter = Segmenter::new(300);
         let samples = frame();
         while !segmenter.is_active() {
-            segmenter.push(speech(), &samples, Mode::Continuous);
+            segmenter.push(speech(), &samples);
         }
         let mut ended = false;
         for _ in 0..100 {
             if let Some(SegmenterEvent::SpeechEnd { reason, .. }) =
-                segmenter.push(speech(), &samples, Mode::Continuous)
+                segmenter.push(speech(), &samples)
             {
                 assert_eq!(reason, SegmentEndReason::MaxDuration);
                 ended = true;

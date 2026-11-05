@@ -38,7 +38,7 @@
   <tr><td>ONNX 会话（session）</td><td>加载一个 ONNX 模型并可执行推理的运行时对象。</td></tr>
   <tr><td>metadata</td><td>ONNX 模型自带的键值元数据；提供 LFR / CMVN / ITN / 语言 id 与 <code>vocab_size</code> 等推理参数。</td></tr>
   <tr><td>Execution Provider</td><td>ONNX Runtime 的推理后端；核心只使用 CPU。</td></tr>
-  <tr><td>fbank</td><td>Kaldi 风格梅尔滤波器组特征；VAD 与 SenseVoice 共用 80-bin、25 / 10 ms 参数，窗函数与其它选项由核心 <code>FbankConfig</code> 默认值固定。</td></tr>
+  <tr><td>fbank</td><td>Kaldi 风格梅尔滤波器组特征；VAD 与 SenseVoice 共用 80-bin、25 / 10 ms 参数；VAD 使用 <code>povey</code> 窗，SenseVoice 使用 <code>hamming</code> 窗。</td></tr>
   <tr><td>LFR</td><td>低帧率特征拼接；SenseVoice 默认使用 7 帧窗、6 帧移，输出 560 维；实际值由 ONNX metadata 提供，缺失时回退该默认值。</td></tr>
   <tr><td>CMVN</td><td>倒谱均值方差归一化；SenseVoice 使用 ONNX metadata 的 <code>neg_mean</code> / <code>inv_stddev</code>，VAD 使用可选文件 <code>cmvn.ark</code>。</td></tr>
   <tr><td>模型目录</td><td><code>firered-vad/</code> 或 <code>sensevoice-small/</code>；一模型一目录，包含 manifest 与权重。</td></tr>
@@ -137,10 +137,10 @@
   <tr><td>SenseVoice 输入</td><td><code>x</code>: <code>80 * lfr_window</code> 维 LFR fbank（默认 560）；<code>x_length</code>: 帧数；<code>language</code> / <code>text_norm</code> 控制张量；固定 <code>use_itn=true</code>。</td></tr>
   <tr><td>SenseVoice 输出</td><td>token logits；由模型内置解码与 <code>tokens.txt</code> 还原为带标点文本。</td></tr>
   <tr><td>ONNX 张量</td><td>输入 / 输出张量名、dtype 与 shape 在会话创建后由 <code>input_specs</code> / <code>output_specs</code> 从 ONNX 图读取并校验；不来自 manifest。</td></tr>
-  <tr><td>fbank 参数</td><td>80-bin、25 / 10 ms 与窗函数由核心 <code>FbankConfig</code> 默认值固定；不来自 manifest。</td></tr>
+  <tr><td>fbank 参数</td><td>80-bin、25 / 10 ms 固定；VAD 使用 <code>povey</code> 窗，SenseVoice 使用 <code>hamming</code> 窗；不来自 manifest。</td></tr>
   <tr><td>LFR 参数</td><td>窗 / 步移取 ONNX metadata <code>lfr_window_size</code> / <code>lfr_window_shift</code>；缺失时回退 7 / 6；不来自 manifest。</td></tr>
   <tr><td>SenseVoice CMVN</td><td><code>neg_mean</code> / <code>inv_stddev</code> 取 ONNX metadata；长度必须为 <code>80 * lfr_window</code>；不来自 manifest。</td></tr>
-  <tr><td>VAD CMVN</td><td>模型未内置时读取 manifest 文件列表中的 <code>cmvn.ark</code>；manifest 只记录文件路径 / SHA-256 / 大小，不记录参数值。</td></tr>
+  <tr><td>VAD CMVN</td><td>模型未内置时读取 manifest 文件列表中的 <code>cmvn.ark</code>；文件为 Kaldi 二进制 <code>DM</code> / <code>FM</code> 矩阵，布局为 <code>2 x (80 + 1)</code>：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和；按 count 计算 mean 与 inverse stddev。manifest 只记录文件路径 / SHA-256 / 大小，不记录参数值。</td></tr>
   <tr><td>词表</td><td><code>tokens.txt</code> 由 manifest 文件列表定位并校验；内容不写入 manifest；每行为 token 与 id，<code>token_count</code> 必须等于 ONNX <code>vocab_size</code> 与输出类别数。</td></tr>
   <tr><td>manifest</td><td>通用 schema、字段与合法 <code>kind</code> 见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>；核心固定值：<code>firered-vad</code> 为 <code>vad</code>，<code>sensevoice-small</code> 为 <code>asr</code>，runtime 见本节目录示例。manifest 不包含张量 / 预处理参数或词表内容。</td></tr>
   <tr><td>安装</td><td>核心安装脚本下载固定 revision 的模型文件，写入 manifest；只接受当前 schema 5 模型包。</td></tr>

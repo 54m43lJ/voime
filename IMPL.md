@@ -167,20 +167,20 @@
 
 1. **问题描述**
 
-`crates/voime-core/CORE.html` §4.8 与 `PROVIDER.html` §4.2 只说 VAD 的 CMVN 来自可选的 `cmvn.ark`，没有说明它是 Kaldi 二进制 `FM` / `DM` 矩阵、`F` / `D` 向量还是文本，也没有说明统计量是“count + sums + sumsquares”还是“mean + inverse stddev”。FireRed 的 `cmvn.ark` 也存在同样问题，直接按文本或单一行数解析会读错统计量。
+`crates/voime-core/CORE.html` §4.8 与 `PROVIDER.html` §4.2 只说 VAD 的 CMVN 来自可选的 `cmvn.ark`，没有说明它是 Kaldi 二进制 `FM` / `DM` 矩阵、`FV` / `DV` 向量还是文本，也没有说明统计量的布局与读取约定。FireRed 的 `cmvn.ark` 实际是 `2 x (80 + 1)` 的 Kaldi 二进制 `DM` 矩阵：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和。原实现按裸 `u32` 读取矩阵头（漏掉 Kaldi 整数的 1 字节宽度标记），并假设 count 在首元素，启动时报 `解析 VAD CMVN 文件失败 ... Kaldi CMVN 文件被截断`。
 
 2. **解决方法**
 
-- 实现同时接受 Kaldi 二进制矩阵 / 向量（`FM`、`DM`、`F`、`D`）与文本数值。
-- 统计量按“count + sums + squares”计算 mean / inverse stddev；对已预计算的两行统计保留兼容路径。
-- 维度必须与 fbank bin 数一致；缺失或解析失败按模型加载失败处理。
-- 增加 parser 单测，覆盖二进制 f32、二进制 f64 与文本三种输入。
+- 按 Kaldi 二进制格式解析矩阵 / 向量：整数头先读 1 字节宽度标记（`4` / `8`，有符号为正），再读小端数据；矩阵 / 向量使用 `FM` / `DM` / `FV` / `DV`，保留 `F` / `D` 兼容。
+- 统计量按 FireRed / Kaldi 的 `2 x (dim + 1)` 布局读取：第一行前 `dim` 列为 sum、末列为 count，第二行前 `dim` 列为平方和；按 count 计算 mean / inverse stddev，variance floor 取 `1e-20`。
+- 保留“count + sums + squares”扁平布局与预计算 mean / inverse stddev 的兼容路径；维度必须与 fbank bin 数一致，缺失或解析失败按模型加载失败处理。
+- 核心 `crates/voime-core/src/vad/firered.rs` 与 FireRed worker `crates/voime-gpu-firered/src/asr/cmvn.rs` 使用同一解析约定；增加 parser 单测，覆盖二进制 f32 / f64 矩阵、二进制 f64 向量、文本输入与截断文件。
 
 3. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/PROVIDER.html` | §4.2 | 改 | 明确 `cmvn.ark` 的 Kaldi ark 格式、统计量布局、维度与失败行为。 |
+| `crates/voime-core/PROVIDER.html` | §4.2 | 改 | 明确 `cmvn.ark` 为 Kaldi 二进制 `DM` / `FM` 矩阵，布局为 `2 x (80 + 1)`：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和；按 count 计算 mean / inverse stddev。 |
 | `crates/voime-core/CORE.html` | §4.8 | 不动 | 只说明文件来源与校验；格式细节归 PROVIDER。 |
 | `crates/voime-gpu-firered/PROVIDER.html` | §4.1.3 | 改 | 增加同样的 `cmvn.ark` 格式说明；与核心共用同一 Kaldi 约定。 |
 | `crates/voime-gpu-firered/CORE.html` | §4.10 | 不动 | 已说明读取统计并计算 mean / inverse stddev；格式引用 PROVIDER。 |
@@ -483,3 +483,26 @@ GPU common 的示例与 FireRed 文档使用 `dml:0` 作为 DirectML 设备标�
 |---|---|---|---|
 | `crates/voime-gpu-firered/CORE.html` | §4.3、§4.6 | 增 | 区分 provider 名称 `directml` 与设备前缀 `dml`，并说明设备前缀必须匹配编译 EP。 |
 | `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 不动 | 已按 EP 平台矩阵定义能力；命名映射归 CORE。 |
+
+### P9. Continuous 自动分段在自然停顿处过早收句
+
+1. **问题描述**
+
+Continuous 模式由 `Segmenter` 的静音阈值直接决定收句：原实现使用 `MIN_SILENCE_MS = 200`，而 PTT / Toggle 使用 `PTT_AUTO_END_MS = 1_200`，且通常由松键 / 再按结束，因此只有 Continuous 会在自然停顿处把一句话切成多段。FireRed 官方 `hello_zh.wav` 句中有一处约 120 ms 的静音，200 ms 阈值离它过近，语速稍慢或停顿稍长就会越界。另一个问题是 rework 把核心 fbank 的窗函数统一固定为 `hamming`，但 FireRed VAD 的上游实现和 `voime-gpu-firered` 都使用 Kaldi 默认的 `povey`；`FbankConfig` 由 VAD 与 SenseVoice 共用，窗函数不匹配会让 VAD 概率边界不稳定，放大提前收句。
+
+2. **解决方法**
+
+- 将 `MIN_SILENCE_MS` / `PTT_AUTO_END_MS` 合并为 `AUTO_END_SILENCE_MS = 1_200`，所有模式共用；`Segmenter::push` 删除 `mode` 参数，避免再次按模式分叉。
+- `FbankConfig` 增加 `WindowType` 与 `window` 字段：默认 `povey` 服务 FireRed VAD，`FbankConfig::sensevoice()` 显式返回 `hamming` 服务 SenseVoice。
+- `pipeline::spawn` 用同一份 `FbankConfig::sensevoice()` 创建 SenseVoice 与 Preview fbank；VAD 继续使用默认 povey。
+- 增加 VAD / SenseVoice 窗函数与 1.2 s 分段边界单测；同步更新 CORE / PROVIDER 中的阈值、`push` 签名与 fbank 说明。
+
+3. **修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voime-core/CORE.html` | §2、§4.9、§4.11、§5.2 | 改 | 统一为 `AUTO_END_SILENCE_MS` 并删除 `Segmenter::push` 的 `mode` 参数；`FbankConfig` 增加 `WindowType`，明确 VAD 用 `povey`、SenseVoice 用 `hamming`。 |
+| `crates/voime-core/PROVIDER.html` | §2、§4.2 | 改 | 明确 VAD / SenseVoice 的 fbank 窗函数分别为 `povey` / `hamming`，不再写“共用默认值”。 |
+| `crates/voime-core/USER.html` | §2 | 不动 | 仍只说明 Continuous 由 VAD 自动分段；阈值与窗函数细节归 CORE / PROVIDER。 |
+| `README.html` | §2 | 不动 | 仍描述“每次停顿后自动结束当前输入”；具体阈值归核心 CORE。 |
+| `crates/voime-gpu-firered/PROVIDER.html` | §4.1.3 | 不动 | GPU FireRed 的 fbank 已使用 Kaldi 默认 `povey`，与核心 VAD 对齐。 |
