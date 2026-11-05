@@ -145,7 +145,7 @@ pub fn read_loop(tx: Sender<WorkerCommand>, cancel: CancelFlag) {
         let frame = match read_frame(&mut reader) {
             Ok(Some(frame)) => frame,
             Ok(None) => {
-                let _ = tx.send(WorkerCommand::Shutdown);
+                let _ = tx.send(WorkerCommand::Abort);
                 break;
             }
             Err(_) => {
