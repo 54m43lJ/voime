@@ -602,7 +602,14 @@ worker 进程退出，daemon 看到 `GPU worker 已关闭连接` 后重启 worke
 - daemon 日志增加 `gpu worker qwen3 result latency_ms=... rtf=...` 与 `cpu fallback result latency_ms=...`，用于区分 worker 推理耗时和回退耗时。
 - 日志不记录识别文本；worker 的 panic 信息仍由 stderr 转发到 `voime-log`。
 
-3. **修订建议**
+3. **验证**
+
+- 修复前：16.16 s 段在 `clean.rs:23` panic，worker 退出；daemon 重启 worker 约 2.8 s 后 CPU 回退 207 ms，段结束到 Final 共约 3.78 s。
+- 同一轮后续 GPU 段：25.64 s → 645 ms（RTF 0.025），10.30 s → 342 ms（RTF 0.033），说明不是 GPU 推理普遍变慢。
+- 修复后：16.71 s 段 GPU `latency_ms=573`、`rtf=0.034`，日志无 `panicked` / `cpu fallback` / `gpu worker qwen3 failed`。
+- 结论：偶发高延迟由 Qwen3 输出清洗 panic 导致的 worker 重启 + CPU 回退解释；修复后未再复现。
+
+4. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
