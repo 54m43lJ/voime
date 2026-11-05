@@ -17,7 +17,6 @@ path = "src/main.rs"
 default = []
 cuda = ["ort/cuda", "ort/api-29"]
 migraphx = ["ort/migraphx", "ort/api-29"]
-rocm = ["ort/rocm", "ort/api-22"]
 directml = ["ort/directml", "ort/api-29"]
 
 [dependencies]

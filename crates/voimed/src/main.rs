@@ -59,6 +59,7 @@ fn run(cli: cli::Cli) -> anyhow::Result<()> {
     let (pipeline, finalizer) = pipeline::spawn(&core_config, factory, audio_rx)?;
 
     let mut worker = None;
+    let mut worker_error = None;
     if config.final_config.backend != BackendId::Cpu {
         match start_worker(&config.model_dir, config.final_config.backend, cli.verbose) {
             Ok(started) => {
@@ -71,6 +72,7 @@ fn run(cli: cli::Cli) -> anyhow::Result<()> {
                     "gpu worker {} unavailable: {error:#}",
                     config.final_config.backend
                 );
+                worker_error = Some(format!("{error:#}"));
             }
         }
     }
@@ -82,7 +84,16 @@ fn run(cli: cli::Cli) -> anyhow::Result<()> {
     if cli.verbose {
         eprintln!("voimed: listening on {endpoint}");
     }
-    Daemon::new(config, pipeline, finalizer, audio, ipc, worker).run()
+    Daemon::new(
+        config,
+        pipeline,
+        finalizer,
+        audio,
+        ipc,
+        worker,
+        worker_error,
+    )
+    .run()
 }
 
 fn start_worker(

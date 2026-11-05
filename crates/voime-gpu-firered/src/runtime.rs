@@ -39,6 +39,7 @@ impl Runtime {
             .and_then(|value| value.parse::<i32>().ok())
             .filter(|value| *value >= 0)
             .unwrap_or(0);
+        configure_dylib();
         #[allow(unused_mut)]
         let mut providers: Vec<ort::ep::ExecutionProviderDispatch> = Vec::new();
         #[cfg(feature = "cuda")]
@@ -68,22 +69,6 @@ impl Runtime {
             }
             providers.push(
                 ort::ep::MIGraphX::default()
-                    .with_device_id(device_id)
-                    .build()
-                    .error_on_failure(),
-            );
-        }
-        #[cfg(feature = "rocm")]
-        {
-            if ep != OrtEp::Rocm {
-                return Err(WorkerError::RuntimeMissing(format!(
-                    "构建只包含 ROCm EP，不能使用 {}",
-                    ep.as_str()
-                ))
-                .into());
-            }
-            providers.push(
-                ort::ep::ROCm::default()
                     .with_device_id(device_id)
                     .build()
                     .error_on_failure(),
@@ -140,14 +125,9 @@ impl Runtime {
         let mut builder = Session::builder(&self.env)
             .context("创建 GPU ONNX 会话构建器失败")?
             .with_optimization_level(GraphOptimizationLevel::All)
-            .map_err(|error| anyhow::anyhow!("设置图优化级别失败：{error}"))?;
-        // ROCm EP does not claim shape/control nodes; ORT must leave those
-        // nodes on the CPU EP. CUDA, MIGraphX and DirectML remain GPU-only.
-        if self.ep != OrtEp::Rocm {
-            builder = builder
-                .with_disable_cpu_fallback()
-                .map_err(|error| anyhow::anyhow!("禁用 CPU EP 回退失败：{error}"))?;
-        }
+            .map_err(|error| anyhow::anyhow!("设置图优化级别失败：{error}"))?
+            .with_disable_cpu_fallback()
+            .map_err(|error| anyhow::anyhow!("禁用 CPU EP 回退失败：{error}"))?;
         builder
             .commit_from_file(model)
             .with_context(|| format!("加载 GPU ONNX 模型失败 {}", model.display()))
@@ -164,9 +144,9 @@ impl Runtime {
         Ok(session)
     }
 
-    /// Creates a GPU session that may still place unsupported graph nodes on
-    /// the CPU EP. FireRedPunc contains shape/control nodes that MIGraphX does
-    /// not implement; the ASR sessions stay GPU-only.
+    /// Creates a session that may still place unsupported graph nodes on the
+    /// CPU EP. FireRedPunc contains shape/control nodes that MIGraphX does not
+    /// implement; the ASR sessions stay GPU-only.
     pub fn create_with_cpu_fallback(
         &self,
         model: &Path,
@@ -182,6 +162,38 @@ impl Runtime {
             .with_context(|| format!("加载 GPU ONNX 模型失败 {}", model.display()))?;
         validate_io(&session, inputs, outputs)?;
         Ok(session)
+    }
+}
+
+/// Points ORT at the runtime copied next to the worker by the installer.
+/// Explicit `ORT_DYLIB_PATH` always wins so developers can select a runtime.
+fn configure_dylib() {
+    if std::env::var_os("ORT_DYLIB_PATH").is_some_and(|value| !value.is_empty()) {
+        return;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let Some(bin_dir) = executable.parent() else {
+        return;
+    };
+    let mut directories = vec![bin_dir.join("lib").join("voime").join("firered")];
+    if let Some(prefix) = bin_dir.parent() {
+        directories.push(prefix.join("lib").join("voime").join("firered"));
+    }
+    let name = if cfg!(windows) {
+        "onnxruntime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libonnxruntime.dylib"
+    } else {
+        "libonnxruntime.so"
+    };
+    for directory in directories {
+        let candidate = directory.join(name);
+        if candidate.is_file() {
+            std::env::set_var("ORT_DYLIB_PATH", candidate);
+            return;
+        }
     }
 }
 

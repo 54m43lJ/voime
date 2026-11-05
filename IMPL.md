@@ -531,4 +531,53 @@ Continuous 模式由 `Segmenter` 的静音阈值直接决定收句：原实现�
 | `crates/voime-core/PROVIDER.html` | §2、§4.2 | 改 | 明确 VAD / SenseVoice 的 fbank 窗函数分别为 `povey` / `hamming`，不再写“共用默认值”。 |
 | `crates/voime-core/USER.html` | §2 | 不动 | 仍只说明 Continuous 由 VAD 自动分段；阈值与窗函数细节归 CORE / PROVIDER。 |
 | `README.html` | §2 | 不动 | 仍描述“每次停顿后自动结束当前输入”；具体阈值归核心 CORE。 |
+
+### P10. doctor 通过日志判断 worker 状态不可靠
+
+1. **问题描述**
+
+M5 曾把 daemon 日志中的 ready / running 作为 `voime doctor` 的唯一 worker 状态来源。日志默认关闭，日志轮转 / 文案变化 / 多实例都会让结果失真；`VOIME_LOG` 未启用时 doctor 只能把已加载的 worker 报成未就绪。
+
+2. **解决方法**
+
+- 在 `voime-ipc` 增加只读 `ClientMessage::Diagnostics {}` 与 `ServerMessage::Diagnostics { backend, worker }`；`worker` 携带 `WorkerState`、runtime、device、vram_mb、punc 与最近错误。
+- daemon 在内存中维护 `ReadyInfo`、`WorkerStatus`、`worker_error`；`Diagnostics` 只读当前快照，并用 `Child::try_wait` 识别空闲期退出的 worker，不启动 / 重启 / 探测 worker。
+- doctor 先读 Snapshot，再请求 `Diagnostics`；daemon 离线或旧 daemon 不支持时只报告“无法读取 worker 状态”，不再读日志。
+- `Status` / `Snapshot` 形状保持不变；新增消息不提升 `PROTOCOL_VERSION`，客户端忽略未知 `ServerMessage`。
+
+3. **修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voime-ipc/USER.html` | §4.2、§4.3、§4.4、§4.5、§4.6、§4.8 | 改 | 增加 `Diagnostics`、`WorkerState`、`WorkerDiagnostics` 与 JSON 示例；增量消息不提升版本，客户端忽略未知服务端消息。 |
+| `crates/voime/USER.html` | §1、§2、§4.4 | 改 | worker 状态来源改为 daemon `Diagnostics`，删除日志读取描述。 |
+| `crates/voime/CORE.html` | §2、§4.8、§5.5 | 改 | 增加 `Client::diagnostics()`，删除 `worker_log_status` 与 `WorkerStatus`。 |
+| `crates/voimed/USER.html` | §4.2、§4.3 | 改 | 增加 Control 角色的 `Diagnostics` 请求 / 响应。 |
+| `crates/voimed/CORE.html` | §2、§4.6、§4.7、§5.1 | 改 | 增加 `ready` / `last_error` / `is_alive` 与 `Daemon::diagnostics`。 |
+| `BUILD.html` | §5 | 改 | 删除“worker 状态来自日志与进程状态”。 |
+
+### P11. FireRed 的 AMD GPU EP 与固定 ONNX 图不兼容
+
+1. **问题描述**
+
+在 AMD RX 9070（gfx1201）、ROCm 7.2 / MIGraphX 2.15、ONNX Runtime 1.29 上实测：
+- MIGraphX 会话可创建，首次 encoder 运行在 `simplify_reshapes` 编译阶段失败（`Dimensions do not match`）；`migraphx-driver compile` 直接编译也复现，关闭相关 pass 后编译超过 5 分钟。
+- 使用带 ROCm EP 的 ORT 1.22 动态库可以执行，但 encoder 输出与 CPU 参考差异巨大，识别结果退化为重复字符；ROCm EP 自 1.23 起已从 ORT 移除。
+- FireRed worker 的模型校验、fbank、CMVN、decoder cache、tokenizer 与标点逻辑在 CPU ORT 上可输出正确文本，说明问题在 AMD GPU EP，不在业务代码。
+
+2. **解决方法**
+
+- FireRed worker 在发送 `Ready` 前用固定短音频执行一次 ASR 与标点自检；会话创建成功但首次运行失败时返回 `load_failed`，不报告假 ready。
+- 新增 `ORT_DYLIB_PATH` 查找与安装脚本 runtime 复制：安装到 `<prefix>/lib/voime/firered/`，daemon 只对子进程设置库路径。
+- AMD Linux 默认导向 Qwen3（Vulkan）；安装脚本在 AMD + MIGraphX 时打印警告，文档把 MIGraphX 从“验收基线”改为“等待 EP / 模型修复”。
+- 保留 CUDA / DirectML 构建路径；这两条路径需要在对应硬件上复验。
+
+3. **修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voime-gpu-firered/USER.html` | §4.2、§4.4 | 改 | 标注 AMD MIGraphX 当前不可用；补充 runtime 目录与自检。 |
+| `crates/voime-gpu-firered/CORE.html` | §2、§4.6、§5.1 | 改 | 说明启动自检、Punc CPU 例外与 runtime 加载顺序。 |
+| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 改 | 记录 EP 验证结论与 CPU 节点例外。 |
+| `BUILD.html` | §3.3、§3.4 | 改 | 补充 runtime 目录与 AMD 警告。 |
 | `crates/voime-gpu-firered/PROVIDER.html` | §4.1.3 | 不动 | GPU FireRed 的 fbank 已使用 Kaldi 默认 `povey`，与核心 VAD 对齐。 |

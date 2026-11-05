@@ -230,7 +230,7 @@ impl Engine {
 }</code></pre>
 <ul class="note">
   <li><code>load</code> 创建 <code>LlamaBackend</code>、加载 BF16 主模型、检查 <code>LlamaModel::ftype()</code>、初始化 <code>MtmdContext</code>，再检查 <code>capabilities(&amp;model).audio</code> 与 <code>audio_sample_rate()</code>。</li>
-  <li><code>device</code> 来自 <code>Hello</code>；空串使用 backend 默认设备，不支持的值返回 <code>device_unavailable</code>。</li>
+  <li><code>device</code> 来自 <code>Hello</code>；空串使用 backend 默认设备，不支持的值返回 <code>device_unavailable</code>。设备序号传给 <code>LlamaModelParams::with_main_gpu</code>，并显式设置 <code>n_gpu_layers = 999</code>，避免默认参数把模型留在 CPU。</li>
   <li><code>warmup</code> 用一段短静音完成一次 mtmd / decode，提前暴露 backend 或模型加载问题；不计入用户 Final。</li>
   <li><code>transcribe</code> 每次创建 <code>LlamaContext</code>，调用 <a href="#c4-5">mtmd</a> 与 <a href="#c4-6">decode</a>，最后调用 <a href="#c4-7">clean</a>；不在方法内重新加载模型。</li>
   <li><code>context_params</code> 按 30 s 音频编码后的 token 与 <code>MAX_NEW_TOKENS</code> 设置上下文长度；不足时返回 <code>inference_failed</code>，不截断音频。</li>
@@ -293,7 +293,8 @@ fn trim_edges(raw: &amp;str) -&gt; &amp;str;                </code></pre>
         ├── manifest::Manifest::verify(model_dir)
         ├── engine::Engine::load(&amp;manifest, model_dir, &amp;hello.device)
         │   ├── llama_cpp_4::LlamaBackend::init()
-        │   ├── llama_cpp_4::LlamaModel::load_from_file(&amp;backend, main_model, &amp;LlamaModelParams::default())
+        │   ├── llama_cpp_4::LlamaModel::load_from_file(&amp;backend, main_model, &amp;params)
+        │   │   └── params = LlamaModelParams::default().with_n_gpu_layers(999).with_main_gpu(device_id)
         │   ├── 判断 model.ftype() 不是 BF16 → anyhow::bail!("load_failed")
         │   ├── llama_cpp_4::mtmd::MtmdContext::init_from_file(mmproj, &amp;model, MtmdContextParams::default())
         │   ├── mtmd.capabilities(&amp;model).audio

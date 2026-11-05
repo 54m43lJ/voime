@@ -35,7 +35,7 @@
   <tr><td>Linux 服务</td><td>user systemd；安装脚本写入 <code>~/.config/systemd/user/voime.service</code>。</td></tr>
   <tr><td>Windows 核心</td><td>Rust MSVC 工具链与 Windows SDK；Windows 前端使用 <code>windows</code> crate 与 eframe/egui。</td></tr>
   <tr><td>Python</td><td>仅安装期需要 Python 3.10+：<code>scripts/install-core-models.py</code> 与 <code>scripts/install-gpu-models.py</code> 负责模型下载、缓存与 schema 5 manifest 生成；运行期不需要 Python。</td></tr>
-  <tr><td>GPU 依赖</td><td>FireRed 需要所选 ONNX Runtime GPU EP（CUDA / MIGraphX / DirectML）；Qwen3 需要所选 llama.cpp backend（Vulkan / CUDA）及系统图形驱动。</td></tr>
+  <tr><td>GPU 依赖</td><td>FireRed 需要所选 ONNX Runtime GPU EP（CUDA / DirectML；Linux AMD 的 MIGraphX 当前无法编译固定图）；Qwen3 需要所选 llama.cpp backend（Vulkan / CUDA）及系统图形驱动。</td></tr>
 </table>
 
 <h3 id="b1-1">1.1 Workspace 与构建目录</h3>
@@ -62,7 +62,7 @@
 </table>
 
 <ul class="note">
-  <li>FireRed 的 EP 在编译 feature 中固定：Linux NVIDIA 用 <code>cuda</code>，Linux AMD 用 <code>migraphx</code>，Windows NVIDIA 用 <code>cuda</code>，Windows AMD / Intel 用 <code>directml</code>；一次构建只包含一个 EP。</li>
+  <li>FireRed 的 EP 在编译 feature 中固定：Linux / Windows NVIDIA 用 <code>cuda</code>，Windows AMD / Intel 用 <code>directml</code>；Linux AMD 的 <code>migraphx</code> 构建仍存在，但当前固定图在 MIGraphX 2.15 上编译失败，AMD Linux 应使用 Qwen3（Vulkan）。一次构建只包含一个 EP。</li>
   <li>Qwen3 的 llama.cpp backend 在编译 feature 中固定：<code>vulkan</code> 或 <code>cuda</code>；AMD Linux 只使用 <code>vulkan</code>。</li>
   <li>独立 workspace 不参与根 <code>cargo test --workspace</code>；需要分别进入目录构建与测试。</li>
 </ul>
@@ -208,7 +208,7 @@ powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1 -Uninstall</co
 <table>
   <tr><th>选项</th><th>Linux</th><th>Windows</th></tr>
   <tr><td>安装范围</td><td><code>--firered</code> / <code>--qwen3</code>；不指定时两者都安装。</td><td><code>-Firered</code> / <code>-Qwen3</code>；不指定时两者都安装。</td></tr>
-  <tr><td>FireRed runtime</td><td><code>--firered-runtime cuda|migraphx</code>；Linux 拒绝 <code>directml</code>。</td><td><code>-FireredRuntime cuda|directml</code>；未指定时按显卡厂商选择。</td></tr>
+  <tr><td>FireRed runtime</td><td><code>--firered-runtime cuda|migraphx</code>；Linux 拒绝 <code>directml</code>。AMD Linux 的 <code>migraphx</code> 当前会被启动自检拒绝，建议改用 Qwen3。</td><td><code>-FireredRuntime cuda|directml</code>；未指定时按显卡厂商选择。</td></tr>
   <tr><td>Qwen runtime</td><td><code>--qwen-runtime vulkan|cuda</code>；AMD Linux 只接受 <code>vulkan</code>。</td><td><code>-QwenRuntime vulkan|cuda</code>。</td></tr>
   <tr><td>后端选择</td><td><code>--backend cpu|firered|qwen3</code>；只写配置，不热切换。</td><td><code>-Backend cpu|firered|qwen3</code>；只写配置。</td></tr>
   <tr><td>模型</td><td>默认下载并缓存；开始前显示体积并要求确认。选项：<code>--yes</code> / <code>--model-dir</code> / <code>--source-dir</code> / <code>--no-models</code>。</td><td>默认下载并缓存；开始前显示体积并要求确认。选项：<code>-Yes</code> / <code>-ModelDir</code> / <code>-SourceDir</code> / <code>-NoModels</code>。</td></tr>
@@ -238,7 +238,8 @@ scripts/install-gpu.sh --firered --uninstall</code></pre>
   <li>GPU 安装脚本要求核心已安装；缺少核心时失败，不创建孤立 GPU 模块。</li>
   <li>安装 GPU 模块不会自动切换 <code>final.backend</code>；必须显式使用 <code>--backend</code> 或 <code>voime ctl backend</code>。</li>
   <li>未指定 <code>--source-dir</code> 时，模型由 <code>scripts/install-gpu-models.py</code> 从固定上游 revision 下载并缓存；存在同文件的 ModelScope 镜像时优先 ModelScope，否则回退 Hugging Face。公开模型使用匿名直链，不需要账号；也可通过 <code>MODELSCOPE_API_TOKEN</code> / <code>HF_TOKEN</code>（及常见别名）提供 token，交互安装缺失时会提示输入，可回车跳过。开始前显示体积并要求确认，<code>--yes</code> 跳过确认与 token 提示。指定 <code>--source-dir</code> 时只复制离线包，不联网。</li>
-  <li>离线模型包放在 <code>--source-dir/&lt;model-id&gt;/</code>，可选预编译 worker 放在 <code>--source-dir/bin/</code>。没有预编译包时脚本会在对应 crate 内按 runtime feature 构建；安装脚本不再回退到仓库根目录的 <code>models/</code>。</li>
+  <li>离线模型包放在 <code>--source-dir/&lt;model-id&gt;/</code>，可选预编译 worker 放在 <code>--source-dir/bin/</code>，可选 FireRed ORT runtime 放在 <code>--source-dir/runtime/firered/</code>。没有预编译包时脚本会在对应 crate 内按 runtime feature 构建；安装脚本不再回退到仓库根目录的 <code>models/</code>。</li>
+  <li>FireRed 的 ORT 动态库与所选 EP provider 复制到 <code>&lt;prefix&gt;/lib/voime/firered/</code>；daemon 只对 worker 子进程设置 <code>ORT_DYLIB_PATH</code> 与库搜索路径，不写全局环境。</li>
 </ul>
 
 <h3 id="b3-4">3.4 模型准备</h3>
@@ -349,7 +350,7 @@ voime ctl clear</code></pre>
 <ul class="note">
   <li>doctor 只读：不启动 / 停止 daemon、不启动 worker、不打开音频流、不修改配置。</li>
   <li>doctor 固定检查默认模型根目录；自定义前缀或 <code>--model-dir</code> 部署需要手工确认。</li>
-  <li>GPU worker 的 ready / running 状态来自 daemon 日志与进程状态；未选择的后端不要求运行。</li>
+  <li>GPU worker 的 ready / running 状态来自 daemon 的只读 <code>Diagnostics</code> 响应；doctor 不读日志，未选择的后端不要求运行。</li>
 </ul>
 
 <h2 id="b6">6. 升级、卸载与排查</h2>
@@ -389,6 +390,7 @@ powershell -ExecutionPolicy Bypass -File scripts/install-gpu.ps1 -Qwen3 -Uninsta
   <tr><td>daemon 启动失败</td><td>查看 stderr / <code>voime doctor</code>；确认两个核心模型目录与 manifest / SHA 校验通过，音频设备存在。</td></tr>
   <tr><td>daemon 已运行</td><td>启动第二个 daemon 会幂等退出；用 <code>voime ctl status</code> 或端点连接确认。</td></tr>
   <tr><td>GPU Final 未生效</td><td>确认 <code>final.backend</code> 不是 <code>cpu</code>，对应 worker 与模型已安装；<code>voime doctor</code> 查看 worker 状态；重启 daemon。</td></tr>
+  <tr><td>FireRed 在 AMD Linux 不可用</td><td>固定 ONNX 图当前无法被 MIGraphX 编译；doctor 会显示启动自检失败。改用 <code>--qwen3</code> / <code>final.backend = qwen3</code>，等待 MIGraphX 或模型更新。</td></tr>
   <tr><td>GPU 崩溃 / 显存不足</td><td>当前段回退 CPU SenseVoice；查看日志中的错误码；修复 worker / runtime 后重启 daemon。</td></tr>
   <tr><td>Fcitx 热键无效</td><td>确认 Fcitx5 运行、系统 addon 描述与 <code>voime.so</code> 存在、ABI 匹配；重启 Fcitx5；<code>voime doctor</code> 的 fcitx 段。</td></tr>
   <tr><td>Windows 热键无效</td><td>确认托盘已连接 daemon、热键注册未被系统占用；查看托盘状态与日志；必要时重新录制热键。</td></tr>

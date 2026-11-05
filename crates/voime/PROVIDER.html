@@ -39,7 +39,7 @@
   <tr><td>Final 配置</td><td><code>~/.config/voime/config.toml</code> 的 <code>[final].backend</code>；<code>ctl backend</code> 写，doctor 读。</td></tr>
   <tr><td>系统 addon 描述</td><td><code>/usr/share/fcitx5/addon/voime.conf</code>；doctor 只读检查。</td></tr>
   <tr><td>系统 addon 库</td><td><code>/usr/lib/fcitx5/voime.so</code>（或发行版 libdir）；doctor 只读检查。</td></tr>
-  <tr><td>worker 状态日志</td><td><code>voime-log</code> 中 daemon 记录的 worker ready / running / error 状态行；doctor 只读。</td></tr>
+  <tr><td>worker 诊断</td><td>daemon 通过只读 <code>Diagnostics</code> 消息返回的 worker ready / running / error 快照；doctor 不读日志。</td></tr>
   <tr><td>Windows 诊断源</td><td>命名管道、<code>voime-tray.exe</code> 进程、麦克风隐私设置与可选 TSF 注册。</td></tr>
 </table>
 
@@ -56,7 +56,7 @@
   <tr><td>doctor 只读</td><td>不启动 / 停止进程、不写配置文件、不打开音频流、不启动 worker、不加载模型权重。</td></tr>
   <tr><td>系统 addon 路径</td><td>doctor 固定检查 <code>/usr</code> / <code>/usr/local</code> 系统 addon 路径与 ABI；自定义前缀不属于自动检查。</td></tr>
   <tr><td>不检查 inputmethod 条目</td><td>doctor 只检查系统 addon 描述与 ABI；不检查 <code>inputmethod/voime.conf</code>，也不设置或检查 <code>FCITX_ADDON_DIRS</code>。</td></tr>
-  <tr><td>worker 状态</td><td>只读 daemon 日志与进程表；不新增 IPC 字段，不触发 worker 启动。</td></tr>
+  <tr><td>worker 状态</td><td>只读 daemon <code>Diagnostics</code>；<code>Status</code> / <code>Snapshot</code> 形状不变，不触发 worker 启动。</td></tr>
   <tr><td>平台诊断</td><td>Linux 检查 <code>/proc</code>、Fcitx addon 与 XDG 配置；Windows 检查命名管道、<code>voime-tray.exe</code>、麦克风隐私与 TSF 注册。</td></tr>
 </table>
 
@@ -91,7 +91,7 @@
 <table>
   <tr><th>检查</th><th>来源</th><th>用途</th></tr>
   <tr><td>Final 配置</td><td><code>XDG_CONFIG_HOME/voime/config.toml</code> 或 <code>~/.config/voime/config.toml</code></td><td>doctor 显示所选 <code>cpu</code> / <code>firered</code> / <code>qwen3</code>；缺失时按 <code>cpu</code>。</td></tr>
-  <tr><td>worker 状态</td><td><code>voime-log</code> 日志文件与 <code>/proc/&lt;pid&gt;/comm</code></td><td>doctor 显示 worker ready / running；未选择不计 FAIL。</td></tr>
+  <tr><td>worker 状态</td><td>daemon 的只读 <code>Diagnostics</code> 响应</td><td>doctor 显示 worker ready / running / unavailable；未选择不计 FAIL。</td></tr>
   <tr><td>fcitx5 进程</td><td><code>/proc/&lt;pid&gt;/comm</code></td><td>doctor 判断 Fcitx 是否运行。</td></tr>
   <tr><td>系统 addon 描述</td><td><code>/usr/share/fcitx5/addon/voime.conf</code> 或 <code>/usr/local/share/...</code></td><td>doctor 检查系统级 addon 安装。</td></tr>
   <tr><td>系统 addon 库</td><td><code>/usr/lib/fcitx5/voime.so</code> 或 <code>/usr/local/lib/...</code></td><td>doctor 检查系统路径与 ABI 依赖。</td></tr>

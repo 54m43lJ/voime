@@ -235,16 +235,17 @@ punc.json    e3cae8dd92ea6cfc52b713238977412e4b7a47aa9b9ae4eaa94156e0984fcb21</c
 <table>
   <tr><th>EP</th><th>平台</th><th>依赖</th><th>失败映射</th></tr>
   <tr><td>CUDA Execution Provider</td><td>Linux / Windows + NVIDIA</td><td>匹配的 NVIDIA 驱动与 CUDA 能力；runtime 由安装脚本准备。</td><td><code>runtime_missing</code> / <code>device_unavailable</code></td></tr>
-  <tr><td>MIGraphX Execution Provider</td><td>Linux + AMD</td><td>MIGraphX / ROCm 运行时与设备；AMD Linux 的验收基线。</td><td><code>runtime_missing</code> / <code>device_unavailable</code></td></tr>
+  <tr><td>MIGraphX Execution Provider</td><td>Linux + AMD</td><td>MIGraphX / ROCm 运行时与设备；当前固定动态 shape 图在 MIGraphX 2.15 上编译失败，暂不作为可用基线。</td><td><code>runtime_missing</code> / <code>device_unavailable</code> / <code>load_failed</code></td></tr>
   <tr><td>DirectML Execution Provider</td><td>Windows + AMD / Intel</td><td>DirectML 运行时；只随 Windows FireRed 包提供。</td><td><code>device_unavailable</code></td></tr>
-  <tr><td>CPU Execution Provider</td><td>—</td><td>不注册；worker 没有 CPU 推理路径。</td><td>—</td></tr>
+  <tr><td>CPU Execution Provider</td><td>—</td><td>不作为推理路径注册；仅允许 FireRedPunc 的 shape / control 节点由 ORT 留在 CPU，ASR 会话禁用 CPU fallback。</td><td>—</td></tr>
 </table>
 
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td><code>ort</code> features</td><td><code>default-features=false</code>、<code>api-29</code>、<code>load-dynamic</code>，再加一个平台 EP feature；不启用多个 EP。</td></tr>
   <tr><td>API 版本</td><td>固定 <code>api-29</code>；加载的 ORT 动态库必须与 1.29 的 C API 兼容。</td></tr>
-  <tr><td>动态加载</td><td>启动时从 worker 自己的 runtime 目录加载 ORT 动态库；不依赖构建期链接或全局库搜索路径。</td></tr>
+  <tr><td>动态加载</td><td>启动时优先从 worker 自己的 <code>lib/voime/firered/</code> 目录加载 ORT 动态库；显式 <code>ORT_DYLIB_PATH</code> 优先；不写全局 <code>LD_LIBRARY_PATH</code>。</td></tr>
+  <tr><td>启动自检</td><td>会话创建后用固定短音频执行一次 ASR 与标点；任一失败都不发送 <code>Ready</code>，避免“会话可建但首次运行失败”的假就绪。</td></tr>
   <tr><td>Environment</td><td>进程级单例；创建一次，所有会话共享。设备来自 <code>Hello.device</code>，不支持的设备返回 <code>device_unavailable</code>。目标 EP 注册失败即失败，不尝试第二个 EP。</td></tr>
   <tr><td>会话</td><td>encoder、decoder、FireRedPunc 三个会话；<code>ctc.onnx</code> 不创建会话。</td></tr>
   <tr><td>版本 / provider 校验</td><td>启动时检查 ORT 版本兼容性与目标 EP 是否在可用 provider 列表；缺失即 <code>runtime_missing</code> / <code>device_unavailable</code>。</td></tr>
@@ -268,7 +269,8 @@ punc.json    e3cae8dd92ea6cfc52b713238977412e4b7a47aa9b9ae4eaa94156e0984fcb21</c
 </table>
 <ul class="note">
   <li>错误码定义、线值与 daemon 动作见 <a href="../voime-gpu-common/USER.html#u4-5">voime-gpu-common USER §4.5</a>；本表只记录 FireRed 的触发条件。</li>
-  <li>worker 不做 CPU ORT 回退、不切换第二个 EP、不加载 int8 / FP16、不重新读取另一份模型；这些都不是本组件的失败策略。</li>
+  <li>ASR 会话禁用 CPU fallback；FireRedPunc 例外，只允许 ORT 将 MIGraphX 不实现的 shape / control 节点留在 CPU。worker 不做整模型 CPU 回退、不切换第二个 EP、不加载 int8 / FP16、不重新读取另一份模型。</li>
+  <li>固定 FireRed 图包含动态 shape。验证结果显示当前 MIGraphX 2.15 在 <code>simplify_reshapes</code> 编译失败，ROCm EP 在 gfx1201 上输出不正确；AMD Linux 请使用 Qwen3 后端，FireRed 的 AMD runtime 需要等待 EP / 模型修复。</li>
   <li>当前段是否回退 CPU SenseVoice 由 daemon 决定；worker 只负责报告错误并退出或等待下一次请求。</li>
   <li>日志与错误消息只包含路径、SHA 前缀、张量名、耗时与错误码，不包含识别文本或音频样本。</li>
 </ul>

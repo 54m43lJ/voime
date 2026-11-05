@@ -75,6 +75,39 @@ $installModels = (-not $NoModels) -and ($InstallFirered -or $InstallQwen)
 $python = $null
 if ($installModels) { $python = Find-Python }
 
+function Install-FireredRuntime {
+    $destination = Join-Path $Prefix 'lib\voime\firered'
+    New-Item -ItemType Directory -Force -Path $destination | Out-Null
+    if (-not [string]::IsNullOrEmpty($SourceDir)) {
+        $offline = Join-Path $SourceDir 'runtime\firered'
+        if (Test-Path $offline) {
+            Write-Host "Installing FireRed ORT runtime from $offline..."
+            Copy-Item -Recurse -Force (Join-Path $offline '*') $destination
+            return
+        }
+    }
+    $candidates = @()
+    if (-not [string]::IsNullOrEmpty($env:ORT_DYLIB_PATH)) {
+        $candidates += Split-Path -Parent $env:ORT_DYLIB_PATH
+    }
+    $candidates += @(
+        (Join-Path $Prefix 'bin'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Voime'),
+        $env:WINDIR
+    )
+    foreach ($directory in $candidates) {
+        $library = Join-Path $directory 'onnxruntime.dll'
+        if (Test-Path $library) {
+            Write-Host "Installing FireRed ORT runtime from $directory..."
+            Copy-Item -Force $library $destination
+            Get-ChildItem -Path $directory -Filter 'onnxruntime_providers_*.dll' -ErrorAction SilentlyContinue |
+                Copy-Item -Destination $destination -Force
+            return
+        }
+    }
+    throw 'onnxruntime.dll not found; pass -SourceDir with runtime/firered/ or install the ONNX Runtime runtime'
+}
+
 if ($InstallFirered) {
     $prebuilt = if ([string]::IsNullOrEmpty($SourceDir)) { '' } else { Join-Path $SourceDir 'bin\voime-gpu-firered.exe' }
     if (-not [string]::IsNullOrEmpty($prebuilt) -and (Test-Path $prebuilt)) {
@@ -89,6 +122,7 @@ if ($InstallFirered) {
         } finally { Pop-Location }
         Copy-Item -Force (Join-Path $Root 'crates\voime-gpu-firered\target\release\voime-gpu-firered.exe') $BinDir
     }
+    Install-FireredRuntime
 }
 
 if ($InstallQwen) {

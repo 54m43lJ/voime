@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use crossbeam_channel::Sender;
 use voime_gpu_common::{
     error_response, read_frame, write_frame, ErrorCode, Frame, GpuBackend, Request, Response,
@@ -92,24 +92,49 @@ pub enum RunExit {
     Abort,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum HelloError {
+    #[error("协议版本不匹配：daemon {daemon}，worker {worker}")]
+    Protocol { daemon: u32, worker: u32 },
+    #[error("backend 不是 qwen3：{0}")]
+    Backend(String),
+    #[error("model_dir 不存在或不是绝对路径：{0}")]
+    ModelDir(String),
+    #[error("不支持的设备：{0}")]
+    Device(String),
+}
+
+impl HelloError {
+    pub fn code(&self) -> ErrorCode {
+        match self {
+            Self::Protocol { .. } | Self::Backend(_) => ErrorCode::ProtocolMismatch,
+            Self::ModelDir(_) => ErrorCode::LoadFailed,
+            Self::Device(_) => ErrorCode::DeviceUnavailable,
+        }
+    }
+}
+
 pub fn validate_hello(
     protocol: u32,
     backend: GpuBackend,
     model_dir: &str,
     device: &str,
-) -> anyhow::Result<()> {
+) -> Result<(), HelloError> {
     if protocol != GPU_PROTOCOL_VERSION {
-        bail!("协议版本不匹配：daemon {protocol}，worker {GPU_PROTOCOL_VERSION}");
+        return Err(HelloError::Protocol {
+            daemon: protocol,
+            worker: GPU_PROTOCOL_VERSION,
+        });
     }
     if backend != GpuBackend::Qwen3 {
-        bail!("backend 不是 qwen3");
+        return Err(HelloError::Backend(backend.to_string()));
     }
     let path = std::path::Path::new(model_dir);
     if !path.is_absolute() || !path.is_dir() {
-        bail!("model_dir 不存在或不是绝对路径：{model_dir}");
+        return Err(HelloError::ModelDir(model_dir.to_string()));
     }
     if !device.is_empty() && !device.starts_with("vulkan") && !device.starts_with("cuda") {
-        bail!("不支持的设备：{device}");
+        return Err(HelloError::Device(device.to_string()));
     }
     Ok(())
 }
@@ -119,13 +144,10 @@ pub fn run(engine: &mut Engine, manifest: &Manifest) -> anyhow::Result<RunExit> 
     let (tx, rx) = crossbeam_channel::unbounded();
     let cancel = CancelFlag::new();
     let reader_cancel = cancel.clone();
-    {
-        let stdin = stdin;
-        std::thread::Builder::new()
-            .name("voime-qwen-read".to_string())
-            .spawn(move || read_loop(stdin, tx, reader_cancel))
-            .context("创建 Qwen 读帧线程失败")?;
-    }
+    std::thread::Builder::new()
+        .name("voime-qwen-read".to_string())
+        .spawn(move || read_loop(stdin, tx, reader_cancel))
+        .context("创建 Qwen 读帧线程失败")?;
     let stdout = std::io::stdout();
     let mut writer = stdout.lock();
     let exit = loop {

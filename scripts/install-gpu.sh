@@ -41,6 +41,10 @@ Models are downloaded from upstream by default after a confirmation that shows
 the download size. Use --source-dir for an offline package, --no-models to skip
 models, or --yes to skip the confirmation.
 
+FireRed's ORT runtime is copied to <prefix>/lib/voime/firered. An offline source
+may provide it under <source-dir>/runtime/firered/. AMD Linux currently fails
+MIGraphX compilation for the pinned FireRed graph; use --qwen3 instead.
+
 Authentication tokens are read from MODELSCOPE_API_TOKEN / HF_TOKEN (or their
 aliases). Interactive installs prompt for a missing token; press Enter to skip
 for public models.
@@ -68,6 +72,7 @@ while (($#)); do
 done
 
 BIN_DIR="$PREFIX/bin"
+RUNTIME_DIR="${VOIME_RUNTIME_DIR:-$PREFIX/lib/voime}"
 
 gpu_vendor() {
   local vendor_file vendor
@@ -124,9 +129,12 @@ if [[ "$GPU_VENDOR" == amd && "$QWEN_RUNTIME" != vulkan ]]; then
   echo "AMD Linux only supports --qwen-runtime vulkan (no ROCm / HIP)" >&2
   exit 2
 fi
+if [[ "$GPU_VENDOR" == amd && "$FIRERED_RUNTIME" == migraphx && "$INSTALL_FIRERED" == 1 ]]; then
+  echo "WARNING: FireRed's pinned ONNX graph currently fails MIGraphX compilation on AMD Linux." >&2
+  echo "         Qwen3 (Vulkan) is the validated AMD Linux GPU backend; use --qwen3 to skip FireRed." >&2
+fi
 
 if ((UNINSTALL)); then
-  RUNTIME_DIR="${VOIME_RUNTIME_DIR:-$PREFIX/lib/voime}"
   if ((INSTALL_FIRERED)); then
     rm -f "$BIN_DIR/voime-gpu-firered"
     rm -rf "$RUNTIME_DIR/firered" "$MODEL_ROOT/fireredasr2-aed" "$MODEL_ROOT/fireredpunc"
@@ -187,8 +195,14 @@ check_dependencies() {
   fi
   if ((INSTALL_FIRERED)); then
     case "$FIRERED_RUNTIME" in
-      cuda) packages+=(cuda) ;;
-      migraphx) packages+=(migraphx) ;;
+      cuda)
+        packages+=(cuda)
+        [[ -n "$MODEL_SOURCE" && -d "$MODEL_SOURCE/runtime/firered" ]] || packages+=(onnxruntime-cuda)
+        ;;
+      migraphx)
+        packages+=(migraphx)
+        [[ -n "$MODEL_SOURCE" && -d "$MODEL_SOURCE/runtime/firered" ]] || packages+=(onnxruntime-rocm)
+        ;;
     esac
   fi
   if ((INSTALL_QWEN3)); then
@@ -249,6 +263,46 @@ build_firered() {
   install -m 0755 "$ROOT/crates/voime-gpu-firered/target/release/voime-gpu-firered" "$BIN_DIR/voime-gpu-firered"
 }
 
+resolve_library() {
+  local name="$1" path
+  if command -v ldconfig >/dev/null 2>&1; then
+    path="$(ldconfig -p 2>/dev/null | awk -v name="$name" '$1 == name { print $NF; exit }')"
+    if [[ -n "$path" && -f "$path" ]]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+install_firered_runtime() {
+  local dest="$RUNTIME_DIR/firered"
+  mkdir -p "$dest"
+  if [[ -n "$MODEL_SOURCE" && -d "$MODEL_SOURCE/runtime/firered" ]]; then
+    echo "Installing FireRed ORT runtime from $MODEL_SOURCE/runtime/firered..."
+    cp -aL "$MODEL_SOURCE/runtime/firered/." "$dest/"
+    return
+  fi
+  local core provider_dir provider
+  if ! core="$(resolve_library libonnxruntime.so)"; then
+    echo "onnxruntime runtime not found; install onnxruntime-${FIRERED_RUNTIME} or pass --source-dir with runtime/firered/" >&2
+    exit 1
+  fi
+  provider_dir="$(dirname "$core")"
+  case "$FIRERED_RUNTIME" in
+    cuda) provider="libonnxruntime_providers_cuda.so" ;;
+    migraphx) provider="libonnxruntime_providers_migraphx.so" ;;
+  esac
+  if [[ ! -f "$provider_dir/$provider" ]]; then
+    echo "missing ORT provider $provider in $provider_dir; install onnxruntime-${FIRERED_RUNTIME}" >&2
+    exit 1
+  fi
+  echo "Installing FireRed ORT runtime from $provider_dir..."
+  cp -aL "$provider_dir"/libonnxruntime.so* "$dest/"
+  cp -aL "$provider_dir/libonnxruntime_providers_shared.so" "$dest/"
+  cp -aL "$provider_dir/$provider" "$dest/"
+}
+
 build_qwen3() {
   if [[ -n "$MODEL_SOURCE" && -x "$MODEL_SOURCE/bin/voime-gpu-qwen3" ]]; then
     echo "Installing precompiled Qwen worker from $MODEL_SOURCE..."
@@ -267,6 +321,7 @@ build_qwen3() {
 
 if ((INSTALL_FIRERED)); then
   build_firered
+  install_firered_runtime
   echo "FireRed runtime selected: $FIRERED_RUNTIME (worker loads only this EP)."
 fi
 

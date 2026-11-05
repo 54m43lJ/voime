@@ -53,8 +53,8 @@ pub struct Worker {
     next_id: u64,
     model_root: PathBuf,
     log_level: String,
-    runtime: Option<String>,
-    device: Option<String>,
+    ready: Option<ReadyInfo>,
+    last_error: Option<String>,
 }
 
 impl Worker {
@@ -74,8 +74,8 @@ impl Worker {
                 .canonicalize()
                 .unwrap_or_else(|_| model_root.to_path_buf()),
             log_level: log_level.to_string(),
-            runtime: None,
-            device: None,
+            ready: None,
+            last_error: None,
         })
     }
 
@@ -108,19 +108,28 @@ impl Worker {
                 punc,
             } => {
                 if protocol != voime_gpu_common::GPU_PROTOCOL_VERSION {
-                    self.status = WorkerStatus::Unavailable;
-                    bail!(
+                    let error = format!(
                         "GPU 协议版本不匹配：daemon {}，worker {protocol}",
                         voime_gpu_common::GPU_PROTOCOL_VERSION
                     );
+                    self.status = WorkerStatus::Unavailable;
+                    self.last_error = Some(error.clone());
+                    bail!("{error}");
                 }
                 if backend != gpu_backend(self.id) {
+                    let error = format!("GPU worker 后端不匹配：期望 {}，实际 {backend}", self.id);
                     self.status = WorkerStatus::Unavailable;
-                    bail!("GPU worker 后端不匹配：期望 {}，实际 {backend}", self.id);
+                    self.last_error = Some(error.clone());
+                    bail!("{error}");
                 }
                 self.status = WorkerStatus::Ready;
-                self.runtime = Some(runtime.clone());
-                self.device = Some(device.clone());
+                self.last_error = None;
+                self.ready = Some(ReadyInfo {
+                    runtime: runtime.clone(),
+                    device: device.clone(),
+                    vram_mb,
+                    punc,
+                });
                 Ok(ReadyInfo {
                     runtime,
                     device,
@@ -130,10 +139,12 @@ impl Worker {
             }
             Response::Error { code, message, .. } => {
                 self.status = WorkerStatus::Unavailable;
+                self.last_error = Some(format!("{code}: {message}"));
                 Err(map_error(code, &message))
             }
             _ => {
                 self.status = WorkerStatus::Unavailable;
+                self.last_error = Some("GPU worker 握手响应非法".to_string());
                 bail!("GPU worker 握手响应非法")
             }
         }
@@ -162,15 +173,26 @@ impl Worker {
             Ok(response) => response,
             Err(error) => {
                 self.status = WorkerStatus::Unavailable;
+                self.last_error = Some(format!("{error:#}"));
                 return Err(error);
             }
         };
-        let response = expect_result(response, id)?;
+        let response = match expect_result(response, id) {
+            Ok(response) => response,
+            Err(error) => {
+                self.status = WorkerStatus::Unavailable;
+                self.last_error = Some(format!("{error:#}"));
+                return Err(error);
+            }
+        };
         self.status = WorkerStatus::Ready;
         voime_log::vlog!("gpu worker {} ready", self.id);
         match response {
             Response::Result { text, .. } => Ok(text),
-            Response::Error { code, message, .. } => Err(map_error(code, &message)),
+            Response::Error { code, message, .. } => {
+                self.last_error = Some(format!("{code}: {message}"));
+                Err(map_error(code, &message))
+            }
             other => bail!("GPU worker 返回了非终态响应：{other:?}"),
         }
     }
@@ -183,8 +205,13 @@ impl Worker {
         self.stdin = stdin;
         self.responses = responses;
         self.status = WorkerStatus::Starting;
-        let device = self.device.clone();
-        self.handshake(device.as_deref())?;
+        let device = self
+            .ready
+            .as_ref()
+            .map(|info| info.device.clone())
+            .unwrap_or_default();
+        self.ready = None;
+        self.handshake((!device.is_empty()).then_some(device.as_str()))?;
         Ok(())
     }
 
@@ -220,6 +247,29 @@ impl Worker {
         self.status
     }
 
+    pub fn ready_info(&self) -> Option<&ReadyInfo> {
+        self.ready.as_ref()
+    }
+
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    /// Reports whether the worker process is still running. A worker may have
+    /// died between Transcribe requests without its status changing yet.
+    pub fn is_alive(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(None) => true,
+            Ok(Some(_)) | Err(_) => {
+                self.status = WorkerStatus::Unavailable;
+                if self.last_error.is_none() {
+                    self.last_error = Some("GPU worker 进程已退出".to_string());
+                }
+                false
+            }
+        }
+    }
+
     fn read_response(&mut self, timeout: Duration) -> anyhow::Result<Response> {
         let deadline = Instant::now() + timeout;
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -248,6 +298,7 @@ fn spawn_process(
             command.arg("--runtime").arg(runtime);
         }
         command.arg("--log-level").arg(log_level);
+        configure_firered_runtime(&mut command, &executable);
     }
     command
         .stdin(Stdio::piped())
@@ -289,6 +340,53 @@ fn spawn_process(
         .context("创建 GPU stdout 线程失败")?;
     let _ = model_root;
     Ok((child, stdin, rx))
+}
+
+/// Selects the ORT dynamic library and provider directory that the installer
+/// places next to the worker. Explicit user environment always wins.
+fn configure_firered_runtime(command: &mut Command, executable: &Path) {
+    let Some(directory) = firered_runtime_dir(executable) else {
+        return;
+    };
+    let library = directory.join(if cfg!(windows) {
+        "onnxruntime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libonnxruntime.dylib"
+    } else {
+        "libonnxruntime.so"
+    });
+    if library.is_file() && std::env::var_os("ORT_DYLIB_PATH").is_none() {
+        command.env("ORT_DYLIB_PATH", library);
+    }
+    #[cfg(unix)]
+    {
+        let mut paths = vec![directory];
+        if let Some(existing) = std::env::var_os("LD_LIBRARY_PATH") {
+            paths.extend(std::env::split_paths(&existing));
+        }
+        if let Ok(value) = std::env::join_paths(paths) {
+            command.env("LD_LIBRARY_PATH", value);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let mut paths = vec![directory];
+        if let Some(existing) = std::env::var_os("PATH") {
+            paths.extend(std::env::split_paths(&existing));
+        }
+        if let Ok(value) = std::env::join_paths(paths) {
+            command.env("PATH", value);
+        }
+    }
+}
+
+fn firered_runtime_dir(executable: &Path) -> Option<PathBuf> {
+    let bin_dir = executable.parent()?;
+    let mut candidates = vec![bin_dir.join("lib").join("voime").join("firered")];
+    if let Some(prefix) = bin_dir.parent() {
+        candidates.push(prefix.join("lib").join("voime").join("firered"));
+    }
+    candidates.into_iter().find(|directory| directory.is_dir())
 }
 
 fn worker_executable(id: BackendId) -> anyhow::Result<PathBuf> {

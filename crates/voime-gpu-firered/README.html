@@ -48,7 +48,7 @@ daemon 只负责选择、发送 PCM、接收文本与在失败时回退 CPU Sens
   <li>FireRedASR2-AED 以 FP32 ONNX 运行，使用 Kaldi fbank 80-bin、25 / 10 ms、<code>snip_edges</code>、16-bit 缩放与 CMVN；解码为 AED greedy，从 <code>&lt;sos&gt;</code> 开始、到 <code>&lt;eos&gt;</code> 停止；CTC head 不作为产品路径。</li>
   <li>FireRedPunc 以 FP32 ONNX 在 worker 内做二次推理，把标点插入 AED 文本后返回；不返回半成品。</li>
   <li>两个模型合计约 5.1 GB（AED 约 4.7 GB + Punc 约 0.4 GB），均为 FP32；不加载 int8 / FP16 变体。</li>
-  <li>ORT GPU EP 按平台固定：Linux NVIDIA 用 CUDA，Linux AMD 用 MIGraphX，Windows 用 CUDA 或 DirectML；运行期不切换 EP / runtime。</li>
+  <li>ORT GPU EP 按平台固定：Linux / Windows NVIDIA 用 CUDA，Windows 用 CUDA 或 DirectML；Linux AMD 的 MIGraphX 当前无法编译固定动态 shape 图，应改用 Qwen3。运行期不切换 EP / runtime。</li>
   <li>模型目录固定为 <code>fireredasr2-aed/</code> 与 <code>fireredpunc/</code>，各自带 schema 5 的 <code>manifest.json</code>、SHA-256 与 runtime 声明；运行期只读。</li>
   <li>本组件是独立 crate、独立二进制、独立进程与独立 runtime 目录；不与 Qwen 后端共享 runtime，也不链接 llama.cpp / GGML。</li>
   <li>加载失败、设备不可用、崩溃或推理失败时，worker 报告错误码；超时由 daemon 计时并终止 worker。当前段是否回退 CPU SenseVoice 由 daemon 决定，worker 自己不做 CPU 推理。</li>

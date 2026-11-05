@@ -185,6 +185,8 @@ pub struct Worker {
     stdout: BufReader&lt;ChildStdout&gt;,
     status: WorkerStatus,
     next_id: u64,
+    ready: Option&lt;ReadyInfo&gt;,
+    last_error: Option&lt;String&gt;,
 }
 
 impl Worker {
@@ -194,9 +196,12 @@ impl Worker {
         -&gt; anyhow::Result&lt;ReadyInfo&gt;;
     pub fn transcribe(&amp;mut self, samples: &amp;[f32])
         -&gt; anyhow::Result&lt;String&gt;;
-    pub fn restart(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    pub fn restart(&mut self) -&gt; anyhow::Result&lt;()&gt;;
     pub fn shutdown(mut self);
     pub fn status(&amp;self) -&gt; WorkerStatus;
+    pub fn ready_info(&amp;self) -&gt; Option&lt;&amp;ReadyInfo&gt;;
+    pub fn last_error(&amp;self) -&gt; Option&lt;&amp;str&gt;;
+    pub fn is_alive(&amp;mut self) -&gt; bool;
 }
 
 fn write_request(worker: &amp;mut Worker, request: &amp;Request)
@@ -208,6 +213,8 @@ fn map_error(code: ErrorCode, message: &amp;str) -&gt; anyhow::Error;</code></pr
   <li><code>spawn</code> 使用 <code>voime-gpu-common</code> 的帧格式；worker 的 stdout 只读协议，stderr 转发到 <code>voime-log</code>。</li>
   <li>加载超时、握手失败、进程退出都转为“后端不可用”；当前段由 daemon 回退 CPU。</li>
   <li>同一 worker 一次只处理一个 Transcribe；daemon 在上一段完成前不发送下一段。</li>
+  <li>FireRed 子进程优先使用安装目录 <code>lib/voime/firered/</code> 下的 ORT 动态库；<code>ORT_DYLIB_PATH</code> 与 <code>LD_LIBRARY_PATH</code> / <code>PATH</code> 只对子进程设置，不写全局环境。显式用户环境优先。</li>
+  <li><code>ready</code> / <code>last_error</code> 供 <code>Daemon::diagnostics</code> 读取；<code>is_alive</code> 用 <code>Child::try_wait</code> 发现空闲期退出的进程。</li>
 </ul>
 
 <h3 id="c4-7">4.7 daemon.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -221,6 +228,7 @@ fn map_error(code: ErrorCode, message: &amp;str) -&gt; anyhow::Error;</code></pr
     backend: BackendId,
     worker: Option&lt;Worker&gt;,
     worker_status: WorkerStatus,
+    worker_error: Option&lt;String&gt;,
     current_segment: Option&lt;u64&gt;,
     next_segment: u64,
     pending_mode: Option&lt;Mode&gt;,
@@ -233,7 +241,8 @@ fn map_error(code: ErrorCode, message: &amp;str) -&gt; anyhow::Error;</code></pr
 impl Daemon {
     pub fn new(config: Config, pipeline: Pipeline, finalizer: Final,
                audio: CaptureHandle, ipc: IpcServer,
-               worker: Option&lt;Worker&gt;) -&gt; Self;
+               worker: Option&lt;Worker&gt;,
+               worker_error: Option&lt;String&gt;) -&gt; Self;
     pub fn run(mut self) -&gt; anyhow::Result&lt;()&gt;;
     fn on_server_event(&amp;mut self, event: ServerEvent);
     fn on_client(&amp;mut self, client_id: u64, message: ClientMessage);
@@ -256,6 +265,7 @@ impl Daemon {
     fn audio_should_play(&amp;self) -&gt; bool;
     fn sync_audio(&amp;mut self);
     fn sync_audio_result(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
+    fn diagnostics(&amp;mut self) -&gt; ServerMessage;
     fn request_shutdown(&amp;mut self);
     fn send_error(&amp;self, client_id: u64, code: ErrorCode);
 }
@@ -350,13 +360,13 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
     │   ├── voime_core::audio::capture::start(config.input_device, audio_tx)
     │   │   └── 构建输入流并保持暂停，等待 Daemon::sync_audio_result()
     │   ├── ipc_server::IpcServer::bind(&amp;endpoint)
-    │   └── daemon::Daemon::new(config, pipeline, final, audio, ipc, worker).run()
+    │   └── daemon::Daemon::new(config, pipeline, final, audio, ipc, worker, worker_error).run()
     └── 判断 Err
         ├── eprintln!()
         └── ExitCode::from(1)</code></pre>
 <ul class="note">
   <li>默认 <code>backend = Cpu</code> 时 <code>worker = None</code>，不探测 GPU。</li>
-  <li>GPU worker 握手失败只标记不可用，不阻止 daemon 启动；核心模型失败才阻止启动。</li>
+  <li>GPU worker 握手失败只标记不可用，不阻止 daemon 启动；核心模型失败才阻止启动。失败原因保存在 <code>worker_error</code>，由 <code>Diagnostics</code> 返回给 doctor。</li>
 </ul>
 
 <h3 id="c5-2">5.2 连接、Hello、Configure 与角色</h3>

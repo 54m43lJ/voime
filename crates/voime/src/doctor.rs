@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use voime_core::audio::capture;
 use voime_core::config;
 use voime_core::model::{ModelManifest, MANIFEST_FILE};
-use voime_ipc::{FrontendState, Role, ServerMessage};
+use voime_ipc::{FrontendState, Role, ServerMessage, WorkerDiagnostics, WorkerState};
 use voime_transport::Endpoint;
 
 use crate::cli::BackendId;
@@ -14,9 +14,9 @@ pub fn run(endpoint: &Endpoint) -> bool {
     let mut ok = true;
     println!("endpoint: {endpoint}");
     check_endpoint(endpoint, &mut ok);
-    let snapshot = check_daemon(endpoint, &mut ok);
+    let (snapshot, diagnostics) = check_daemon(endpoint, &mut ok);
     check_final_backend(&mut ok);
-    check_workers(&mut ok);
+    check_workers(diagnostics.as_ref(), &mut ok);
     check_models(&mut ok);
     check_audio(&mut ok);
     check_log();
@@ -74,26 +74,37 @@ fn check_endpoint(endpoint: &Endpoint, ok: &mut bool) {
     }
 }
 
-fn check_daemon(endpoint: &Endpoint, ok: &mut bool) -> Option<ServerMessage> {
+fn check_daemon(
+    endpoint: &Endpoint,
+    ok: &mut bool,
+) -> (Option<ServerMessage>, Option<WorkerDiagnosticsAnswer>) {
     match Client::connect_as(endpoint, Role::Control) {
         Ok(mut client) => match client.snapshot() {
             Ok(message) => {
                 println!("  OK   daemon 在线");
-                Some(message)
+                match client.diagnostics() {
+                    Ok(diagnostics) => (Some(message), Some(diagnostics)),
+                    Err(error) => {
+                        println!("  WARN 无法读取 worker 诊断：{error:#}");
+                        (Some(message), None)
+                    }
+                }
             }
             Err(error) => {
                 println!("  FAIL daemon 握手失败：{error:#}");
                 *ok = false;
-                None
+                (None, None)
             }
         },
         Err(error) => {
             println!("  FAIL 无法连接 daemon：{error:#}");
             *ok = false;
-            None
+            (None, None)
         }
     }
 }
+
+type WorkerDiagnosticsAnswer = (String, Option<WorkerDiagnostics>);
 
 fn check_final_backend(ok: &mut bool) {
     println!("final:");
@@ -132,18 +143,23 @@ fn check_final_backend(ok: &mut bool) {
     }
 }
 
-fn check_workers(ok: &mut bool) {
+fn check_workers(diagnostics: Option<&WorkerDiagnosticsAnswer>, ok: &mut bool) {
     println!("worker:");
     let config = match FinalConfig::load() {
         Ok(config) => config,
         Err(_) => return,
     };
     for backend in [BackendId::Cpu, BackendId::Firered, BackendId::Qwen3] {
-        check_worker(backend, config.backend == backend, ok);
+        check_worker(backend, config.backend == backend, diagnostics, ok);
     }
 }
 
-fn check_worker(backend: BackendId, selected: bool, ok: &mut bool) {
+fn check_worker(
+    backend: BackendId,
+    selected: bool,
+    diagnostics: Option<&WorkerDiagnosticsAnswer>,
+    ok: &mut bool,
+) {
     if backend == BackendId::Cpu {
         println!("  OK   cpu 内置 SenseVoice");
         return;
@@ -151,32 +167,26 @@ fn check_worker(backend: BackendId, selected: bool, ok: &mut bool) {
     let root = config::default_model_root();
     let executable = worker_executable(backend);
     let models = model_dirs_present(&root, backend_model_dirs(backend));
-    let status = worker_log_status(backend);
     let label = backend.as_str();
     match (executable, models) {
         (Some(path), true) => {
             println!("  OK   {label} worker {}", path.display());
             println!("  OK   {label} 模型目录完整");
-            match status {
-                WorkerStatus::Ready => println!("  OK   {label} ready"),
-                WorkerStatus::Running => println!("  OK   {label} running"),
-                WorkerStatus::Unavailable => {
-                    if selected {
-                        println!("  FAIL {label} 已选择但最近一次加载 / 推理失败（见日志）");
-                        *ok = false;
-                    } else {
-                        println!("  WARN {label} 最近一次加载失败（见日志）");
-                    }
-                }
-                WorkerStatus::Missing => {
-                    if selected {
-                        println!("  FAIL {label} 已选择但 daemon 尚未报告 ready");
-                        *ok = false;
-                    } else {
-                        println!("  WARN {label} 未运行（未选择）");
-                    }
-                }
+            if !selected {
+                println!("  WARN {label} 未选择，daemon 不要求该 worker 运行");
+                return;
             }
+            let Some((reported, worker)) = diagnostics else {
+                println!("  WARN {label} 已选择，但无法从 daemon 读取 worker 状态");
+                return;
+            };
+            if reported != label || worker.is_none() {
+                println!("  FAIL {label} 已选择，但 daemon 报告的后端状态不匹配");
+                *ok = false;
+                return;
+            }
+            let worker = worker.as_ref().expect("checked above");
+            print_worker_state(label, worker, ok);
         }
         _ => {
             if selected {
@@ -185,6 +195,38 @@ fn check_worker(backend: BackendId, selected: bool, ok: &mut bool) {
             } else {
                 println!("  WARN {label} 未安装");
             }
+        }
+    }
+}
+
+fn print_worker_state(label: &str, worker: &WorkerDiagnostics, ok: &mut bool) {
+    match worker.state {
+        WorkerState::Starting => {
+            println!("  WARN {label} worker 正在启动或未完成握手");
+        }
+        WorkerState::Ready | WorkerState::Running => {
+            let state = match worker.state {
+                WorkerState::Running => "running",
+                _ => "ready",
+            };
+            println!(
+                "  OK   {label} {state} runtime={} device={} vram_mb={} punc={}",
+                worker.runtime.as_deref().unwrap_or("-"),
+                worker.device.as_deref().unwrap_or("-"),
+                worker.vram_mb,
+                worker.punc
+            );
+        }
+        WorkerState::Unavailable => {
+            println!(
+                "  FAIL {label} 已选择但 worker 不可用{}",
+                worker
+                    .error
+                    .as_deref()
+                    .map(|error| format!("：{error}"))
+                    .unwrap_or_default()
+            );
+            *ok = false;
         }
     }
 }
@@ -456,39 +498,6 @@ fn print_snapshot(snapshot: Option<&ServerMessage>, label: &str) {
     if *addon == FrontendState::Disconnected {
         println!("  WARN {label} 未连接 daemon");
     }
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WorkerStatus {
-    Missing,
-    Ready,
-    Running,
-    Unavailable,
-}
-
-fn worker_log_status(backend: BackendId) -> WorkerStatus {
-    let path = log_directory().join("voimed.log");
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(_) => return WorkerStatus::Missing,
-    };
-    let needle = format!("gpu {}", backend.as_str());
-    let malformed = format!("gpu worker {} ", backend.as_str());
-    for line in text.lines().rev() {
-        if line.contains(&needle) || line.contains(&malformed) {
-            if line.contains("running") {
-                return WorkerStatus::Running;
-            }
-            if line.contains("ready") {
-                return WorkerStatus::Ready;
-            }
-            if line.contains("failed") || line.contains("unavailable") {
-                return WorkerStatus::Unavailable;
-            }
-        }
-    }
-    WorkerStatus::Missing
 }
 
 fn backend_model_dirs(backend: BackendId) -> &'static [&'static str] {

@@ -178,7 +178,8 @@ pub struct Daemon { /* ... */ }
 impl Daemon {
     pub fn new(config: Config, pipeline: Pipeline, finalizer: Final,
                audio: CaptureHandle, ipc: IpcServer,
-               worker: Option&lt;Worker&gt;) -&gt; Self;
+               worker: Option&lt;Worker&gt;,
+               worker_error: Option&lt;String&gt;) -&gt; Self;
     pub fn run(self) -&gt; anyhow::Result&lt;()&gt;;
 }
 // 会话状态、Final 调度与 worker 生命周期见 voimed CORE §4 / §5</code></pre>
@@ -189,6 +190,8 @@ pub struct Client { /* ... */ }
 impl Client {
     pub fn connect(endpoint: &amp;Endpoint) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn connect_as(endpoint: &amp;Endpoint, role: Role) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn diagnostics(&amp;mut self)
+        -&gt; anyhow::Result&lt;(String, Option&lt;WorkerDiagnostics&gt;)&gt;;
 }
 pub enum CtlAction { Start, Stop, Toggle, Status, Clear, Quit, Backend(BackendId) } // 见 voime USER §4.1
 pub fn run(endpoint: &amp;Endpoint) -&gt; bool;          // doctor::run；见 voime USER §4.4

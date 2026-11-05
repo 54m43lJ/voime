@@ -227,7 +227,7 @@ impl Aed {
                 break;
             }
             cache_len = tokens.len() - 1;
-            for index in 0..CACHE_LAYERS {
+            for (index, cache) in caches.iter_mut().enumerate().take(CACHE_LAYERS) {
                 let name = format!("new_cache_{index}");
                 let value = outputs
                     .get(&name)
@@ -235,7 +235,7 @@ impl Aed {
                 let (_shape, data) = value
                     .try_extract_tensor::<f32>()
                     .with_context(|| format!("AED {name} 类型错误"))?;
-                caches[index] = data.to_vec();
+                *cache = data.to_vec();
             }
         }
         if tokens.first().copied() == Some(self.config.eos_id) {

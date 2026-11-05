@@ -24,7 +24,16 @@ impl Engine {
     ) -> anyhow::Result<Self> {
         let backend = LlamaBackend::init().context("初始化 llama.cpp backend 失败")?;
         let model_path = model_dir.join(&manifest.main_model()?.path);
-        let model = LlamaModel::load_from_file(&backend, &model_path, &LlamaModelParams::default())
+        let gpu = device
+            .rsplit(':')
+            .next()
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(0)
+            .max(0);
+        let params = LlamaModelParams::default()
+            .with_n_gpu_layers(999)
+            .with_main_gpu(gpu);
+        let model = LlamaModel::load_from_file(&backend, &model_path, &params)
             .with_context(|| format!("加载 Qwen 主模型失败 {}", model_path.display()))?;
         if !matches!(model.ftype(), Some(LlamaFtype::MostlyBF16)) {
             bail!("Qwen 主模型不是 BF16：{:?}", model.ftype());

@@ -55,8 +55,8 @@
   <tr><td>进程模型</td><td>一个 worker 进程只服务一个 daemon；读帧线程与推理线程分离，推理串行，不引入异步运行时。</td></tr>
   <tr><td>单请求</td><td>同一时刻只处理一个 <code>Transcribe</code>；请求循环在收到 <code>Result</code> / <code>Error</code> 前不读下一段音频。</td></tr>
   <tr><td>ORT runtime</td><td><code>ort</code> 固定 <code>default-features=false</code> + <code>api-29</code> + <code>load-dynamic</code>；EP feature 按平台只启用一个。</td></tr>
-  <tr><td>EP 固定</td><td>进程内只注册编译时选定的 EP；不注册 CPU EP，不在运行期注册第二个 EP，不回退到 CPU ORT。</td></tr>
-  <tr><td>runtime 目录</td><td>ORT 动态库从 worker 自己的 runtime 目录加载；不写全局 <code>LD_LIBRARY_PATH</code>，不与 Qwen 共享库目录。</td></tr>
+  <tr><td>EP 固定</td><td>进程内只注册编译时选定的 EP；不注册第二 GPU EP，不切换 EP。ASR 回退到 CPU 由 daemon 执行；仅 FireRedPunc 允许 ORT 将 shape / control 节点留在 CPU。</td></tr>
+  <tr><td>runtime 目录</td><td>ORT 动态库优先从 worker 自己的 <code>lib/voime/firered/</code> 加载；daemon 只对子进程设置 <code>ORT_DYLIB_PATH</code> / <code>LD_LIBRARY_PATH</code>，不写全局环境，不与 Qwen 共享库目录。</td></tr>
   <tr><td>精度</td><td>两个模型只加载 FP32 ONNX；不加载 int8 / FP16 变体，不做运行期量化。</td></tr>
   <tr><td>模型目录来源</td><td>模型根目录与设备只来自 <code>Hello</code> 的 <code>model_dir</code> / <code>device</code>；启动参数只带 runtime 与日志级别，不从全局配置或环境变量猜路径。</td></tr>
   <tr><td>模型校验</td><td>启动时校验 schema 5、id、kind、文件存在 / 大小 / SHA-256、相对路径；任一失败不创建会话。</td></tr>
@@ -266,6 +266,8 @@ impl Worker {
   <li><code>validate_hello</code> 校验 protocol / backend / model_dir；<code>device</code> 前缀必须与编译时 EP 匹配，否则返回 <code>device_unavailable</code>。</li>
   <li><code>read_loop</code> 只读帧并投递命令；<code>Cancel</code> 不进入命令通道，只置位 <code>CancelFlag</code>。EOF 按 <code>Shutdown</code> 处理。</li>
   <li><code>run</code> 从命令通道取 <code>Transcribe</code> / <code>Shutdown</code>；推理串行，取消标志在 decoder 步之间检查。</li>
+  <li><code>Worker::new</code> 在返回 <code>Ready</code> 前用固定短音频跑一次 ASR 与标点自检；会话创建成功但 EP 首次执行失败的 runtime 不会被报告为 ready。</li>
+  <li>FireRed 子进程优先从安装目录 <code>lib/voime/firered/</code> 加载 ORT 动态库；显式 <code>ORT_DYLIB_PATH</code> 优先。</li>
   <li>每个 <code>Transcribe</code> 以 <code>Result</code> / <code>Error</code> 结束；随后 <code>clear</code> 当前 id，准备下一段。</li>
 </ul>
 
@@ -488,17 +490,19 @@ pub fn argmax(values: &amp;[f32]) -&gt; usize;</code></pre>
             │   │   ├── Runtime::create_with_spec(decoder.onnx, inputs, outputs)
             │   │   ├── Cmvn::load(cmvn.ark)
             │   │   └── AedTokenizer::load(dict.txt, train_bpe1000.model)
-            │   └── Punc::new(&amp;models.punc, &amp;runtime)
-            │       ├── Runtime::create_with_spec(model.onnx, inputs, outputs)
-            │       ├── PuncTokenizer::load(tokens.txt)
-            │       └── PuncLabels::load(out_dict, punc.json)
+            │   ├── Punc::new(&amp;models.punc, &amp;runtime)
+            │   │   ├── Runtime::create_with_cpu_fallback(model.onnx, inputs, outputs)
+            │   │   ├── PuncTokenizer::load(tokens.txt)
+            │   │   └── PuncLabels::load(out_dict, punc.json)
+            │   ├── Aed::transcribe(固定静音自检)
+            │   └── Punc::punctuate(固定文本自检)
             ├── crossbeam_channel::unbounded()
             ├── worker::read_loop(tx, worker.cancel.clone())   // 独立读帧线程
             ├── voime_gpu_common::write_frame(Ready)
             └── worker::Worker::run(rx)</code></pre>
 <ul class="note">
   <li><code>Hello</code> 之前不加载模型；模型根目录与设备只取 <code>hello.model_dir</code> / <code>hello.device</code>。</li>
-  <li>Hello 校验失败返回 <code>protocol_mismatch</code>（id 0）；模型 / runtime / 会话失败返回 <code>load_failed</code> / <code>runtime_missing</code> / <code>device_unavailable</code>，均在 <code>Ready</code> 前。</li>
+  <li>Hello 校验失败返回 <code>protocol_mismatch</code>（id 0）；模型 / runtime / 会话 / 启动自检失败返回 <code>load_failed</code> / <code>runtime_missing</code> / <code>device_unavailable</code>，均在 <code>Ready</code> 前。</li>
   <li>任何一步失败都不阻塞 daemon：daemon 标记 <code>firered</code> 不可用并继续 CPU Final。</li>
   <li><code>ctc.onnx</code> 只参与 manifest 校验，不创建会话。</li>
   <li>模型与 runtime 常驻；每个 Final 不重新加载权重。</li>

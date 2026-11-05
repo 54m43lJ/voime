@@ -91,8 +91,8 @@ impl Punc {
             );
         }
         let mut labels = Vec::with_capacity(token_count);
-        for index in 0..token_count {
-            if is_special(&pieces[index]) {
+        for (index, piece) in pieces.iter().enumerate().take(token_count) {
+            if is_special(piece) {
                 labels.push(0);
                 continue;
             }

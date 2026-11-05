@@ -5,7 +5,6 @@ use clap::{Parser, ValueEnum};
 pub enum OrtEp {
     Cuda,
     Migraphx,
-    Rocm,
     Directml,
 }
 
@@ -14,7 +13,6 @@ impl OrtEp {
         match self {
             Self::Cuda => "cuda",
             Self::Migraphx => "migraphx",
-            Self::Rocm => "rocm",
             Self::Directml => "directml",
         }
     }
@@ -23,7 +21,6 @@ impl OrtEp {
         match self {
             Self::Cuda => "cuda",
             Self::Migraphx => "migraphx",
-            Self::Rocm => "rocm",
             Self::Directml => "dml",
         }
     }
@@ -34,8 +31,6 @@ impl OrtEp {
             Self::Cuda
         } else if cfg!(feature = "migraphx") {
             Self::Migraphx
-        } else if cfg!(feature = "rocm") {
-            Self::Rocm
         } else if cfg!(feature = "directml") {
             Self::Directml
         } else {

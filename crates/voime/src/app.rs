@@ -187,6 +187,7 @@ impl App {
             ServerMessage::Status { status } => {
                 self.apply_status(status);
             }
+            ServerMessage::Diagnostics { .. } => {}
             ServerMessage::Error { code, message, .. } => {
                 eprintln!("voime: daemon 错误（{code:?}）：{message}");
             }

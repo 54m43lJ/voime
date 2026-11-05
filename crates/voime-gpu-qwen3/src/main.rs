@@ -43,15 +43,8 @@ fn run() -> anyhow::Result<()> {
         anyhow::bail!("首条请求不是 Hello");
     };
     if let Err(error) = worker::validate_hello(protocol, backend, &model_dir, &device) {
-        let code = if format!("{error:#}").contains("model_dir") {
-            ErrorCode::LoadFailed
-        } else if format!("{error:#}").contains("设备") {
-            ErrorCode::DeviceUnavailable
-        } else {
-            ErrorCode::ProtocolMismatch
-        };
-        send_error(0, code, format!("{error:#}"))?;
-        return Err(error);
+        send_error(0, error.code(), error.to_string())?;
+        return Err(error.into());
     }
 
     let runtime = match (cfg!(feature = "vulkan"), cfg!(feature = "cuda")) {

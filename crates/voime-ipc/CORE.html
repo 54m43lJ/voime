@@ -70,6 +70,8 @@ pub enum TriggerSource { /* 见 USER §4.4 */ }
 pub enum Phase { /* 见 USER §4.4 */ }
 pub enum FrontendState { /* 见 USER §4.4 */ }
 pub enum ErrorCode { /* 见 USER §4.4 */ }
+pub enum WorkerState { /* 见 USER §4.4 */ }
+pub struct WorkerDiagnostics { /* 见 USER §4.4 */ }
 pub struct FrontendConfig { /* 见 USER §4.4 */ }
 pub struct Status { /* 见 USER §4.4 */ }
 pub enum ClientMessage { /* 见 USER §4.2 */ }
@@ -104,7 +106,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
     └── serde_json::from_slice::&lt;T&gt;(&amp;line)</code></pre>
 <ul class="note">
   <li>daemon 的 reader 线程不使用本函数，而是在 <code>ipc_server</code> 内复制同样的 framing 检查，以便生成 <code>BadMessage</code> 事件；协议规则仍由本文拥有。</li>
-  <li>未知 JSON 字段由 serde 默认忽略；未知消息标签属于协议错误，客户端应停止读取并按协议错误处理，不能跳过该行继续。</li>
+  <li>未知 JSON 字段由 serde 默认忽略；客户端遇到未知 <code>ServerMessage</code> 标签时忽略该行以支持增量消息，daemon 遇到未知 <code>ClientMessage</code> 标签时返回 <code>invalid_message</code>。</li>
 </ul>
 
 </body>

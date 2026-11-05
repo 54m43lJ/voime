@@ -77,6 +77,10 @@ impl PuncLabels {
         self.labels.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
+
     pub fn insert(&self, text: &str, pieces: &[Piece], ids: &[usize]) -> anyhow::Result<String> {
         let mut insertions: Vec<(usize, String)> = Vec::new();
         for (index, piece) in pieces.iter().enumerate() {

@@ -88,8 +88,10 @@ pub fn read_frame<R: Read>(reader: &mut R) -> anyhow::Result<Option<Frame>> {
             .context("GPU 帧音频截断")?;
     }
     let audio = audio_bytes
-        .chunks_exact(4)
-        .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| f32::from_le_bytes(*bytes))
         .collect();
     Ok(Some(Frame { header, audio }))
 }

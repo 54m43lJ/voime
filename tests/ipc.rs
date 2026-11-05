@@ -39,6 +39,7 @@ fn round_trips_client_messages() {
         },
         ClientMessage::ClearHistory {},
         ClientMessage::Status {},
+        ClientMessage::Diagnostics {},
         ClientMessage::Quit {},
     ];
     for message in messages {
@@ -77,6 +78,29 @@ fn dropped_segment_error_carries_segment_id() {
     .unwrap();
     assert!(text.contains("\"segment_dropped\""));
     assert!(text.contains("\"segment_id\":12"));
+}
+
+#[test]
+fn diagnostics_are_typed_and_do_not_change_status() {
+    let text = String::from_utf8(
+        encode_message(&ServerMessage::Diagnostics {
+            backend: "firered".to_string(),
+            worker: Some(voime_ipc::WorkerDiagnostics {
+                state: voime_ipc::WorkerState::Ready,
+                runtime: Some("cuda".to_string()),
+                device: Some("cuda:0".to_string()),
+                vram_mb: 4096,
+                punc: true,
+                error: None,
+            }),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(text.contains("\"Diagnostics\""));
+    assert!(text.contains("\"state\":\"ready\""));
+    assert!(text.contains("\"runtime\":\"cuda\""));
+    assert!(!text.contains("\"Status\""));
 }
 
 #[test]

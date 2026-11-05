@@ -34,7 +34,7 @@
   <tr><td><code>ctl</code></td><td>一次性控制客户端；执行一个动作并退出。</td></tr>
   <tr><td><code>doctor</code></td><td>只读诊断命令；检查端点、daemon、模型、音频、平台前端、Final 后端与 worker 状态。</td></tr>
   <tr><td>Final 后端配置</td><td><code>~/.config/voime/config.toml</code> 的 <code>[final].backend</code>；<code>ctl backend</code> 负责写入，daemon 启动时读取。</td></tr>
-  <tr><td>worker ready / running</td><td>daemon 日志中最近一次 GPU worker 握手成功 / 正在处理请求的状态；doctor 只读，不启动 worker。</td></tr>
+  <tr><td>worker ready / running</td><td>daemon 通过只读 <code>Diagnostics</code> 查询返回的当前 GPU worker 状态；doctor 只读，不启动、不重启 worker，也不依赖日志。</td></tr>
   <tr><td>detach</td><td>退出 TUI 但不停止 daemon；<code>q</code> / <code>Ctrl+C</code> 的行为。</td></tr>
   <tr><td>临时行</td><td>TUI 中显示当前 <code>Partial</code> 的行；不是最终历史。</td></tr>
   <tr><td>历史行</td><td>已收到的 <code>Final</code> 文本；保存在 daemon 内存，TUI 重连后恢复。</td></tr>
@@ -58,7 +58,7 @@
   <tr><td>backend 只写配置</td><td><code>voime ctl backend</code> 只写配置文件，不连接 daemon、不发送 IPC、不触发热切换；提示用户重启 daemon。</td></tr>
   <tr><td>默认 CPU</td><td>配置缺失时显示 / 保持 <code>cpu</code>；写入 GPU 后端必须先安装对应模块，但安装脚本不自动切换。</td></tr>
   <tr><td>doctor 只读</td><td>不启动 / 停止 daemon，不修改配置，不启动 worker，不打开音频流；只报告 OK / WARN / FAIL。</td></tr>
-  <tr><td>worker 状态来源</td><td>doctor 读取配置、worker 可执行文件 / 模型目录与 daemon 运行日志中的 worker 状态行；不新增 IPC 字段。</td></tr>
+  <tr><td>worker 状态来源</td><td>doctor 读取配置、worker 可执行文件 / 模型目录，并向 daemon 发送只读 <code>Diagnostics</code>；<code>Status</code> 与 <code>Snapshot</code> 形状保持不变，不读日志。</td></tr>
   <tr><td>无持久化</td><td>TUI 不写历史文件；退出后历史只存在于 daemon 内存。只有 <code>ctl backend</code> 写配置文件。</td></tr>
 </table>
 
@@ -153,8 +153,8 @@ restart voimed to apply</code></pre>
 final:
   OK   backend = cpu
   OK   CPU Final 可用（SenseVoice）
-  WARN firered 已安装但未选择（worker 未运行）
-  WARN qwen3 已安装但未选择（worker 未运行）
+  WARN firered 已安装但未选择
+  WARN qwen3 已安装但未选择
 model: /home/user/.local/share/voime/models
   OK   firered-vad manifest 与 SHA-256 校验通过
   OK   sensevoice-small manifest 与 SHA-256 校验通过
@@ -175,7 +175,7 @@ fcitx:
   <tr><td>端点</td><td>检查默认端点 / <code>--endpoint</code> 指定端点；Unix 上检查权限是否 0600。</td></tr>
   <tr><td>daemon</td><td>以 <code>control</code> 角色连接并读取 Snapshot。</td></tr>
   <tr><td>Final 后端</td><td>读取 <code>~/.config/voime/config.toml</code>（Windows 为 <code>%APPDATA%\voime\config.toml</code>），显示 <code>cpu</code> / <code>firered</code> / <code>qwen3</code> 的选择结果；不修改配置。</td></tr>
-  <tr><td>worker</td><td>分别检查 CPU / FireRed / Qwen 的可用性、worker 可执行文件与模型目录；从 daemon 日志读取 ready / running；未选择的后端不要求运行，不计为 FAIL。</td></tr>
+  <tr><td>worker</td><td>分别检查 CPU / FireRed / Qwen 的可用性、worker 可执行文件与模型目录；对已选择的后端通过 daemon <code>Diagnostics</code> 读取 ready / running / unavailable 与 runtime / device / 错误原因；未选择的后端不要求运行，不计为 FAIL。</td></tr>
   <tr><td>模型</td><td>固定检查默认模型根目录的核心模型 manifest 与 SHA-256；已安装的 GPU 模型只校验 manifest，不加载权重。</td></tr>
   <tr><td>音频</td><td>枚举输入设备并显示默认设备名；不打开流。</td></tr>
   <tr><td>日志</td><td>报告 <code>VOIME_LOG</code> 启用状态与日志文件位置；未启用时给出默认目录，不计为 FAIL。</td></tr>
@@ -186,7 +186,7 @@ fcitx:
 <ul class="note">
   <li>doctor 在 Linux 与 Windows 均可用；示例输出是 Linux，Windows 将 <code>fcitx</code> 段替换为命名管道、麦克风隐私与前端进程检查。</li>
   <li>自定义前缀或 <code>--model-dir</code> 部署需要手工确认；doctor 固定检查默认路径。</li>
-  <li>worker ready / running 只来自日志与进程状态；doctor 不触发 worker 启动或模型加载。</li>
+  <li>worker 状态只来自 daemon 的只读 <code>Diagnostics</code> 响应；daemon 离线或旧 daemon 不支持该消息时，doctor 只报告无法读取状态，不读取日志、不触发 worker 启动或模型加载。</li>
 </ul>
 
 <h2 id="u5">5. UI</h2>

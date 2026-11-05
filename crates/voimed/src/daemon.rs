@@ -7,6 +7,7 @@ use voime_core::r#final::Final;
 use voime_core::vad::segmenter::Segment;
 use voime_ipc::{
     ClientMessage, ErrorCode, FrontendState, Mode, Phase, ServerMessage, TriggerSource,
+    WorkerDiagnostics, WorkerState,
 };
 use voime_log::vlog;
 
@@ -26,6 +27,7 @@ pub struct Daemon {
     backend: BackendId,
     worker: Option<Worker>,
     worker_status: WorkerStatus,
+    worker_error: Option<String>,
     worker_failures: u32,
     current_segment: Option<u64>,
     next_segment: u64,
@@ -44,6 +46,7 @@ impl Daemon {
         audio: CaptureHandle,
         ipc: IpcServer,
         worker: Option<Worker>,
+        worker_error: Option<String>,
     ) -> Self {
         let backend = config.final_config.backend;
         let worker_status = worker
@@ -60,6 +63,7 @@ impl Daemon {
             backend,
             worker,
             worker_status,
+            worker_error,
             worker_failures: 0,
             current_segment: None,
             next_segment: 1,
@@ -211,6 +215,14 @@ impl Daemon {
                 );
                 self.ipc
                     .send_to(client_id, &ServerMessage::Status { status });
+            }
+            ClientMessage::Diagnostics {} => {
+                if role != Some(voime_ipc::Role::Control) {
+                    self.send_error(client_id, ErrorCode::InvalidMessage);
+                    return;
+                }
+                let diagnostics = self.diagnostics();
+                self.ipc.send_to(client_id, &diagnostics);
             }
             ClientMessage::Quit {} => {
                 if role != Some(voime_ipc::Role::Control) {
@@ -474,11 +486,13 @@ impl Daemon {
         match worker.transcribe(samples) {
             Ok(text) => {
                 self.worker_status = worker.status();
+                self.worker_error = None;
                 self.worker_failures = 0;
                 Ok(text)
             }
             Err(error) => {
                 vlog!("gpu worker {} failed: {error:#}", self.backend);
+                self.worker_error = Some(format!("{error:#}"));
                 self.worker_failures = self.worker_failures.saturating_add(1);
                 if self.worker_failures >= crate::worker::MAX_RESTARTS {
                     vlog!(
@@ -495,8 +509,10 @@ impl Daemon {
                     if let Err(restart) = worker.restart() {
                         vlog!("gpu worker {} restart failed: {restart:#}", self.backend);
                         self.worker_status = WorkerStatus::Unavailable;
+                        self.worker_error = Some(format!("{restart:#}"));
                     } else {
                         self.worker_status = worker.status();
+                        self.worker_error = None;
                     }
                 }
                 self.fallback_cpu(samples, &error)
@@ -614,6 +630,51 @@ impl Daemon {
         }
     }
 
+    /// Read-only worker snapshot used by `voime doctor`. It reflects daemon
+    /// state only; it never probes or restarts a worker.
+    fn diagnostics(&mut self) -> ServerMessage {
+        let backend = self.backend.as_str().to_string();
+        if self.backend == BackendId::Cpu {
+            return ServerMessage::Diagnostics {
+                backend,
+                worker: None,
+            };
+        }
+        let (state, ready, error) = match self.worker.as_mut() {
+            Some(worker) => {
+                let alive = worker.is_alive();
+                let state = if alive {
+                    worker_state(worker.status())
+                } else {
+                    WorkerState::Unavailable
+                };
+                if !alive {
+                    self.worker_status = WorkerStatus::Unavailable;
+                }
+                (
+                    state,
+                    worker.ready_info().cloned(),
+                    worker
+                        .last_error()
+                        .map(str::to_string)
+                        .or_else(|| self.worker_error.clone()),
+                )
+            }
+            None => (WorkerState::Unavailable, None, self.worker_error.clone()),
+        };
+        ServerMessage::Diagnostics {
+            backend,
+            worker: Some(WorkerDiagnostics {
+                state,
+                runtime: ready.as_ref().map(|info| info.runtime.clone()),
+                device: ready.as_ref().map(|info| info.device.clone()),
+                vram_mb: ready.as_ref().map(|info| info.vram_mb).unwrap_or(0),
+                punc: ready.as_ref().map(|info| info.punc).unwrap_or(false),
+                error,
+            }),
+        }
+    }
+
     fn request_shutdown(&mut self) {
         self.shutdown = true;
     }
@@ -633,6 +694,15 @@ impl Daemon {
         vlog!("fatal: {error:#}");
         self.fatal = Some(error);
         self.shutdown = true;
+    }
+}
+
+fn worker_state(status: WorkerStatus) -> WorkerState {
+    match status {
+        WorkerStatus::Starting => WorkerState::Starting,
+        WorkerStatus::Ready => WorkerState::Ready,
+        WorkerStatus::Running => WorkerState::Running,
+        WorkerStatus::Unavailable => WorkerState::Unavailable,
     }
 }
 
@@ -687,5 +757,16 @@ mod tests {
         assert!(listens(Mode::Ptt, true));
         assert!(!listens(Mode::Toggle, false));
         assert!(listens(Mode::Toggle, true));
+    }
+
+    #[test]
+    fn worker_states_map_to_ipc_diagnostics() {
+        assert_eq!(worker_state(WorkerStatus::Starting), WorkerState::Starting);
+        assert_eq!(worker_state(WorkerStatus::Ready), WorkerState::Ready);
+        assert_eq!(worker_state(WorkerStatus::Running), WorkerState::Running);
+        assert_eq!(
+            worker_state(WorkerStatus::Unavailable),
+            WorkerState::Unavailable
+        );
     }
 }

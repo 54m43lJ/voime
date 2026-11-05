@@ -129,7 +129,7 @@ runtime 构建选择、错误回退与安装入口。帧格式、请求 / 响应
 <table>
   <tr><th>平台 / 硬件</th><th>编译时选择的 runtime</th><th>EP</th><th>说明</th></tr>
   <tr><td>Linux + NVIDIA</td><td>ORT CUDA</td><td>CUDA Execution Provider</td><td>需要匹配的 NVIDIA 驱动与 CUDA 能力；由安装脚本准备 runtime。</td></tr>
-  <tr><td>Linux + AMD</td><td>ORT MIGraphX</td><td>MIGraphX Execution Provider</td><td>AMD Linux 的验收基线；依赖 MIGraphX / ROCm 能力。</td></tr>
+  <tr><td>Linux + AMD</td><td>ORT MIGraphX</td><td>MIGraphX Execution Provider</td><td>当前固定 ONNX 图在 MIGraphX 2.15 上编译失败；AMD Linux 请使用 Qwen3（Vulkan），FireRed 等待 EP / 模型修复。</td></tr>
   <tr><td>Windows + NVIDIA</td><td>ORT CUDA</td><td>CUDA Execution Provider</td><td>与 Linux 分开打包。</td></tr>
   <tr><td>Windows + AMD / Intel</td><td>ORT DirectML</td><td>DirectML Execution Provider</td><td>DirectML 只随 Windows FireRed 包提供。</td></tr>
   <tr><td>无 GPU / 驱动不匹配</td><td>—</td><td>—</td><td>不启动 worker；<code>firered</code> 后端不可用，Final 回退 CPU。</td></tr>
@@ -191,7 +191,7 @@ scripts/install-gpu.ps1 --firered --firered-runtime directml</code></pre>
 <table>
   <tr><th>选项</th><th>行为</th></tr>
   <tr><td><code>--firered</code></td><td>只安装 FireRed worker、FireRedASR2-AED、FireRedPunc 与 ORT GPU runtime；不安装 Qwen。</td></tr>
-  <tr><td><code>--firered-runtime cuda|migraphx|directml</code></td><td>选择预编译的 FireRed worker / runtime 变体；EP 在编译时固定，不在运行期切换。Linux AMD 使用 MIGraphX，Linux / Windows NVIDIA 使用 CUDA，Windows AMD / Intel 使用 DirectML；Linux 不提供 DirectML 包。</td></tr>
+  <tr><td><code>--firered-runtime cuda|migraphx|directml</code></td><td>选择预编译的 FireRed worker / runtime 变体；EP 在编译时固定，不在运行期切换。Linux / Windows NVIDIA 使用 CUDA，Windows AMD / Intel 使用 DirectML；Linux AMD 的 MIGraphX 变体因固定图编译失败暂不可用，请改用 Qwen3。Linux 不提供 DirectML 包。</td></tr>
   <tr><td><code>--backend firered</code></td><td>安装后写入 <code>final.backend = firered</code>；必须与已安装后端一致；不加此选项时保持原值（默认 <code>cpu</code>）。</td></tr>
   <tr><td><code>--no-models</code></td><td>只安装 worker 与 runtime；模型目录由用户提供。</td></tr>
   <tr><td><code>--model-dir &lt;dir&gt;</code></td><td>覆盖模型根目录；仍按一模型一目录布局。</td></tr>
@@ -202,6 +202,7 @@ scripts/install-gpu.ps1 --firered --firered-runtime directml</code></pre>
 <ul class="note">
   <li>GPU 安装脚本无参数时安装 FireRed + Qwen 两个后端；<code>--firered</code> 只安装本后端。两者都不自动切换 <code>final.backend</code>。</li>
   <li>未指定 <code>--source-dir</code> 时默认从固定上游 revision 下载模型并缓存；<code>fireredpunc</code> 优先使用 ModelScope 同文件镜像，<code>fireredasr2-aed</code> 的固定 ONNX 导出目前只有 HF 同文件集，因此使用 Hugging Face。公开模型使用匿名直链，不需要账号；也可通过 <code>MODELSCOPE_API_TOKEN</code> / <code>HF_TOKEN</code>（及常见别名）提供 token，交互安装缺失时会提示输入，可回车跳过。开始前显示下载体积并要求确认，<code>--yes</code> / <code>-Yes</code> 跳过确认。安装脚本不从仓库根目录的 <code>models/</code> 取模型。</li>
+  <li>安装脚本把 ORT 动态库与所选 EP provider 复制到 <code>&lt;prefix&gt;/lib/voime/firered/</code>；离线包的对应位置是 <code>--source-dir/runtime/firered/</code>。daemon 只对 worker 子进程设置 <code>ORT_DYLIB_PATH</code> / <code>LD_LIBRARY_PATH</code>，不写全局环境。</li>
   <li>GPU 安装脚本要求核心已安装；缺少核心时失败，不创建孤立的 GPU 安装。</li>
   <li>安装 GPU 不自动切换 <code>final.backend</code>；必须用 <code>--backend</code> 或 <code>voime ctl backend</code> 显式选择，重启 daemon 生效。</li>
   <li>模型下载失败时脚本非零退出并清理临时目录；不写 manifest、不做 rename，不留下半成品目录。</li>

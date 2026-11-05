@@ -102,7 +102,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
   <tr><td><code>MAX_MESSAGE_BYTES</code></td><td>单行最大 1 MiB；编码与解码都检查。</td></tr>
   <tr><td><code>encode_message</code></td><td>序列化为 JSON，检查长度，追加 <code>\n</code>。</td></tr>
   <tr><td><code>write_message</code></td><td>编码后写入并 flush。</td></tr>
-  <tr><td><code>read_message</code></td><td>读取一行；返回 <code>Ok(None)</code> 表示干净 EOF；缺少换行、超长、未知消息标签或字段类型不合法返回错误。</td></tr>
+  <tr><td><code>read_message</code></td><td>读取一行；返回 <code>Ok(None)</code> 表示干净 EOF；缺少换行、超长或字段类型不合法返回错误。daemon 对未知 <code>ClientMessage</code> 返回 <code>invalid_message</code>；客户端应忽略未知 <code>ServerMessage</code>。</td></tr>
 </table>
 
 <h3 id="u4-2">4.2 ClientMessage</h3>
@@ -130,6 +130,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
     },
     ClearHistory,
     Status,
+    Diagnostics,
     Quit,
 }</code></pre>
 
@@ -164,6 +165,10 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
     Status {
         status: Status,
     },
+    Diagnostics {
+        backend: String,
+        worker: Option&lt;WorkerDiagnostics&gt;,
+    },
     Error {
         code: ErrorCode,
         segment_id: Option&lt;u64&gt;,
@@ -192,6 +197,17 @@ pub enum ErrorCode {
     Internal,
 }
 
+pub enum WorkerState { Starting, Ready, Running, Unavailable }
+
+pub struct WorkerDiagnostics {
+    pub state: WorkerState,
+    pub runtime: Option&lt;String&gt;,
+    pub device: Option&lt;String&gt;,
+    pub vram_mb: u32,
+    pub punc: bool,
+    pub error: Option&lt;String&gt;,
+}
+
 pub struct FrontendConfig {
     pub mode: Mode,
     pub hotkey: String,
@@ -217,6 +233,7 @@ pub struct Status {
   <tr><td><code>Toggle</code></td><td>client → daemon</td><td>Mode=ptt / toggle 时按当前状态打开或硬切分会话；Finalizing 时也可关闭。</td><td>daemon 返回 <code>State</code> / <code>SegmentStarted</code> / <code>Final</code> 或 <code>Error</code>。</td></tr>
   <tr><td><code>ClearHistory</code></td><td>client → daemon</td><td>清空已完成历史；保留当前段与 partial。</td><td>daemon 广播 <code>HistoryCleared</code>。</td></tr>
   <tr><td><code>Status</code></td><td>client → daemon</td><td>请求一次性状态。</td><td>daemon 返回 <code>Status</code>。</td></tr>
+  <tr><td><code>Diagnostics</code></td><td>Control → daemon</td><td>只读查询所选 Final 后端与 worker 状态；不启动、不重启 worker，不改变配置。</td><td>daemon 返回 <code>Diagnostics</code>；非 Control 角色返回 <code>invalid_message</code>。</td></tr>
   <tr><td><code>Quit</code></td><td>Control → daemon</td><td>停止 daemon。</td><td>daemon 广播 <code>Bye</code> 后退出。</td></tr>
   <tr><td><code>Snapshot</code></td><td>daemon → client</td><td>连接时全量状态。</td><td>客户端初始化视图。</td></tr>
   <tr><td><code>SegmentStarted</code></td><td>daemon → clients</td><td>段开始（含 PTT / Toggle 软切分续段）；携带最终 <code>segment_id</code> 与来源。</td><td>前端绑定 / 沿用目标。</td></tr>
@@ -225,6 +242,7 @@ pub struct Status {
   <tr><td><code>Final</code></td><td>daemon → clients</td><td>最终文本；不丢弃。</td><td>清空临时文本并提交；加入历史。</td></tr>
   <tr><td><code>HistoryCleared</code></td><td>daemon → clients</td><td>历史已清空。</td><td>清空 TUI 历史。</td></tr>
   <tr><td><code>Status</code></td><td>daemon → client</td><td>一次性状态快照。</td><td>打印 / 更新状态。</td></tr>
+  <tr><td><code>Diagnostics</code></td><td>daemon → Control</td><td>所选 Final 后端与 worker 的只读快照；worker 状态只来自 daemon 内存，不读日志。</td><td><code>voime doctor</code> 打印；前端不得依赖该消息。</td></tr>
   <tr><td><code>Error</code></td><td>daemon → client</td><td>协议、角色、忙碌、整段丢弃或其它推理错误；<code>segment_dropped</code> 时 <code>segment_id</code> 指向被丢弃的段。</td><td>按 <code>code</code> 处理；<code>segment_dropped</code> 时由前端决定是否清理 / 提示，后端不规定 UI 行为。</td></tr>
   <tr><td><code>Bye</code></td><td>daemon → clients</td><td>daemon 即将退出。</td><td>客户端清理并退出 / 等待重连。</td></tr>
 </table>
@@ -242,7 +260,11 @@ pub struct Status {
 
 {"Error":{"code":"segment_dropped","segment_id":1,"message":"识别结果为空"}}
 
-{"Error":{"code":"role_conflict","segment_id":null,"message":"已有前端连接"}}</code></pre>
+{"Error":{"code":"role_conflict","segment_id":null,"message":"已有前端连接"}}
+
+// Control → daemon，以及 daemon → Control
+{"Diagnostics":{}}
+{"Diagnostics":{"backend":"firered","worker":{"state":"ready","runtime":"cuda","device":"cuda:0","vram_mb":4096,"punc":true,"error":null}}}</code></pre>
 
 <h3 id="u4-7">4.7 错误码</h3>
 <table>
@@ -262,8 +284,8 @@ pub struct Status {
 <h3 id="u4-8">4.8 版本与兼容</h3>
 <table>
   <tr><th>变化</th><th>版本策略</th></tr>
-  <tr><td>当前版本</td><td><code>PROTOCOL_VERSION = 2</code>；包含 <code>Error.segment_id</code> 与 <code>segment_dropped</code> 错误码。</td></tr>
-  <tr><td>新增消息类型</td><td>必须提升 <code>PROTOCOL_VERSION</code>；未知消息标签是协议错误，客户端必须断开而不是跳过。</td></tr>
+  <tr><td>当前版本</td><td><code>PROTOCOL_VERSION = 2</code>；包含 <code>Error.segment_id</code>、<code>segment_dropped</code> 错误码与只读 <code>Diagnostics</code>。</td></tr>
+  <tr><td>新增消息类型</td><td>纯增量消息不提升版本：客户端忽略未知的 <code>ServerMessage</code> 标签；旧 daemon 对未知 <code>ClientMessage</code> 返回 <code>invalid_message</code> 并断开。只有修改现有消息或错误码语义时才提升版本。</td></tr>
   <tr><td>修改现有消息字段 / 类型 / 错误码</td><td>必须提升 <code>PROTOCOL_VERSION</code>；daemon 拒绝版本不匹配的连接并返回 <code>version_mismatch</code>。</td></tr>
   <tr><td>新增角色或平台前端</td><td>不改变现有消息形状时保持版本；新增角色需 daemon 与客户端同时支持。</td></tr>
   <tr><td>角色别名</td><td>线协议同时接受 <code>frontend</code> 与 <code>fcitx</code>；Rust 类型名 <code>FrontendState</code> 与 <code>AddonState</code> 等价。</td></tr>

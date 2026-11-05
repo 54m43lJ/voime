@@ -131,7 +131,6 @@ pub fn validate_hello(
     if !device.is_empty()
         && !device.starts_with("cuda")
         && !device.starts_with("migraphx")
-        && !device.starts_with("rocm")
         && !device.starts_with("dml")
     {
         return Err(WorkerError::DeviceUnavailable(format!("不支持的设备：{device}")).into());
@@ -196,8 +195,17 @@ pub fn read_loop(tx: Sender<WorkerCommand>, cancel: CancelFlag) {
 
 impl Worker {
     pub fn new(models: ModelSet, runtime: Runtime) -> anyhow::Result<Self> {
-        let aed = Aed::new(&models.asr, &runtime)?;
-        let punc = Punc::new(&models.punc, &runtime)?;
+        let mut aed = Aed::new(&models.asr, &runtime)?;
+        let mut punc = Punc::new(&models.punc, &runtime)?;
+        // Ready must mean the EP can actually execute the pinned graphs. Some
+        // GPU EPs create a session successfully and only fail during the first
+        // run (MIGraphX is known to reject FireRed's dynamic-shape graph).
+        let cancel = AtomicBool::new(false);
+        let warmup = vec![0.0f32; 3_200];
+        aed.transcribe(&warmup, &cancel)
+            .context("FireRed 启动自检（ASR）失败")?;
+        punc.punctuate("启动自检", &cancel)
+            .context("FireRed 启动自检（标点）失败")?;
         let max_samples = (models.asr.runtime.max_segment_ms as usize * 16_000) / 1000;
         Ok(Self {
             runtime,

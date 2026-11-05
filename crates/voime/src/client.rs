@@ -61,6 +61,23 @@ impl Client {
         }
     }
 
+    #[allow(clippy::type_complexity)]
+    pub fn diagnostics(
+        &mut self,
+    ) -> anyhow::Result<(String, Option<voime_ipc::WorkerDiagnostics>)> {
+        self.send(&ClientMessage::Diagnostics {})?;
+        loop {
+            match self.next_event_timeout(std::time::Duration::from_secs(3))? {
+                ServerMessage::Diagnostics { backend, worker } => return Ok((backend, worker)),
+                ServerMessage::Error { code, message, .. } => {
+                    bail!("daemon 拒绝诊断请求（{code:?}）：{message}")
+                }
+                ServerMessage::Bye {} => bail!("daemon 已退出"),
+                _ => {}
+            }
+        }
+    }
+
     pub fn send(&mut self, message: &ClientMessage) -> anyhow::Result<()> {
         write_message(&mut self.writer, message)
     }

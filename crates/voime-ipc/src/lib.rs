@@ -112,6 +112,25 @@ pub struct FrontendConfig {
     pub hotkey: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerState {
+    Starting,
+    Ready,
+    Running,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WorkerDiagnostics {
+    pub state: WorkerState,
+    pub runtime: Option<String>,
+    pub device: Option<String>,
+    pub vram_mb: u32,
+    pub punc: bool,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Status {
     pub recording: bool,
@@ -149,6 +168,7 @@ pub enum ClientMessage {
     },
     ClearHistory {},
     Status {},
+    Diagnostics {},
     Quit {},
 }
 
@@ -182,6 +202,10 @@ pub enum ServerMessage {
     HistoryCleared {},
     Status {
         status: Status,
+    },
+    Diagnostics {
+        backend: String,
+        worker: Option<WorkerDiagnostics>,
     },
     Error {
         code: ErrorCode,
