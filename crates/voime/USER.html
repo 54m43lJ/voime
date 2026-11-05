@@ -80,7 +80,7 @@
 <h3 id="u4-1">4.1 命令行</h3>
 <pre><code>voime [--endpoint &lt;ENDPOINT&gt;]
 voime ctl &lt;start|stop|toggle|status|clear|quit&gt; [--endpoint &lt;ENDPOINT&gt;]
-voime ctl backend &lt;cpu|firered|qwen3&gt;
+voime ctl backend &lt;cpu|qwen3&gt;
 voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
 
 <table>
@@ -134,7 +134,7 @@ history cleared
 voimed stopped
 
 # backend
-final.backend = firered
+final.backend = qwen3
 restart voimed to apply</code></pre>
 
 <table>
@@ -153,7 +153,6 @@ restart voimed to apply</code></pre>
 final:
   OK   backend = cpu
   OK   CPU Final 可用（SenseVoice）
-  WARN firered 已安装但未选择
   WARN qwen3 已安装但未选择
 model: /home/user/.local/share/voime/models
   OK   firered-vad manifest 与 SHA-256 校验通过
@@ -174,8 +173,8 @@ fcitx:
   <tr><th>检查</th><th>契约</th></tr>
   <tr><td>端点</td><td>检查默认端点 / <code>--endpoint</code> 指定端点；Unix 上检查权限是否 0600。</td></tr>
   <tr><td>daemon</td><td>以 <code>control</code> 角色连接并读取 Snapshot。</td></tr>
-  <tr><td>Final 后端</td><td>读取 <code>~/.config/voime/config.toml</code>（Windows 为 <code>%APPDATA%\voime\config.toml</code>），显示 <code>cpu</code> / <code>firered</code> / <code>qwen3</code> 的选择结果；不修改配置。</td></tr>
-  <tr><td>worker</td><td>分别检查 CPU / FireRed / Qwen 的可用性、worker 可执行文件与模型目录；对已选择的后端通过 daemon <code>Diagnostics</code> 读取 ready / running / unavailable 与 runtime / device / 错误原因；未选择的后端不要求运行，不计为 FAIL。</td></tr>
+  <tr><td>Final 后端</td><td>读取 <code>~/.config/voime/config.toml</code>（Windows 为 <code>%APPDATA%\voime\config.toml</code>），显示 <code>cpu</code> / <code>qwen3</code> 的选择结果；不修改配置。</td></tr>
+  <tr><td>worker</td><td>分别检查 CPU / Qwen 的可用性、worker 可执行文件与模型目录；对已选择的后端通过 daemon <code>Diagnostics</code> 读取 ready / running / unavailable 与 runtime / device / 错误原因；未选择的后端不要求运行，不计为 FAIL。</td></tr>
   <tr><td>模型</td><td>固定检查默认模型根目录的核心模型 manifest 与 SHA-256；已安装的 GPU 模型只校验 manifest，不加载权重。</td></tr>
   <tr><td>音频</td><td>枚举输入设备并显示默认设备名；不打开流。</td></tr>
   <tr><td>日志</td><td>报告 <code>VOIME_LOG</code> 启用状态与日志文件位置；未启用时给出默认目录，不计为 FAIL。</td></tr>

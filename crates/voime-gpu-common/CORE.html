@@ -43,7 +43,7 @@
   <tr><td>无 runtime 依赖</td><td>只依赖 serde、serde_json 与 anyhow；不引用 ORT、llama.cpp、GGML、tokenizers 或任何模型库。</td></tr>
   <tr><td>无 OS 进程 / 传输</td><td>不调用 <code>std::process</code>，不打开 socket / pipe，不访问文件系统；调用方提供实现了 <code>Read</code> / <code>Write</code> 的流。</td></tr>
   <tr><td>同步 IO</td><td>使用阻塞的 <code>std::io</code> 与 <code>std::time::Duration</code>；不引入 tokio / async-std，也不自带线程。</td></tr>
-  <tr><td>单一来源</td><td>Request、Response、ErrorCode 与帧布局只在此 crate 定义；两个 worker 与 daemon 通过依赖使用，不复制消息结构。</td></tr>
+  <tr><td>单一来源</td><td>Request、Response、ErrorCode 与帧布局只在此 crate 定义；worker 与 daemon 通过依赖使用，不复制消息结构。</td></tr>
   <tr><td>序列化策略</td><td>serde 外部标签；结构体字段使用 snake_case；枚举线值使用 snake_case；不使用 <code>deny_unknown_fields</code>，便于忽略新增字段。</td></tr>
   <tr><td>长度检查</td><td>先读长度，检查上限与 4 字节对齐，再分配；不得按未校验的 <code>u32</code> 直接分配缓冲区。</td></tr>
   <tr><td>错误分层</td><td>IO、长度、UTF-8 与 JSON 错误用 <code>anyhow::Result</code> 返回；协议层失败用 <code>Response::Error</code> 与 <code>ErrorCode</code> 表达。</td></tr>
@@ -69,7 +69,7 @@
 </table>
 <ul class="note">
   <li>仅使用标准库的 <code>std::io</code> 与 <code>std::time::Duration</code>；没有异步运行时。</li>
-  <li>不依赖 ORT / llama.cpp / GGML；这些 runtime 只出现在 <code>voime-gpu-firered</code> 与 <code>voime-gpu-qwen3</code>。</li>
+  <li>不依赖 ORT / llama.cpp / GGML；这些 runtime 只出现在 <code>voime-gpu-qwen3</code>。</li>
   <li>当前没有 dev-dependency；单测可使用内存 <code>Cursor</code>，不需要临时文件。</li>
 </ul>
 
@@ -111,7 +111,7 @@ pub fn write_frame&lt;W: Write&gt;(writer: &amp;mut W, frame: &amp;Frame) -&gt; 
 </ul>
 
 <h3 id="c4-3">4.3 message.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub enum GpuBackend { Firered, Qwen3 }        // 见 USER §4.4
+<pre><code>pub enum GpuBackend { Qwen3 }                 // 见 USER §4.4
 pub enum Request { /* 见 USER §4.2 */ }
 pub enum Response { /* 见 USER §4.3 */ }
 pub enum ErrorCode { /* 见 USER §4.4 */ }
@@ -157,7 +157,7 @@ pub fn error_response(id: u64, code: ErrorCode, message: impl Into&lt;String&gt;
 <p><a href="#top">↑</a></p>
 
 <h3 id="c5-1">5.1 握手</h3>
-<pre><code>voimed::worker::Worker::spawn(model_dir, device)
+<pre><code>voimed::worker::Worker::spawn(id, model_root)
 ├── std::process::Command::spawn()
 └── voime_gpu_common::handshake(stdin, stdout, &amp;Request::Hello { ... })
     ├── voime_gpu_common::write_frame(writer, &amp;Frame::from_request(hello, &amp;[]))

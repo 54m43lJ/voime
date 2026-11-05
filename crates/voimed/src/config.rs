@@ -126,7 +126,7 @@ fn config_dir() -> PathBuf {
 }
 
 pub fn invalid_backend_message(value: &str) -> anyhow::Error {
-    anyhow::anyhow!("final.backend 值非法：{value}；合法值为 cpu、firered、qwen3")
+    anyhow::anyhow!("final.backend 值非法：{value}；合法值为 cpu、qwen3")
 }
 
 #[allow(dead_code)]
@@ -149,8 +149,8 @@ mod tests {
     fn parses_and_rejects_backend_values() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.toml");
-        std::fs::write(&path, "[final]\nbackend = \"firered\"\n").unwrap();
-        assert_eq!(read_toml(&path).unwrap().backend, BackendId::Firered);
+        std::fs::write(&path, "[final]\nbackend = \"qwen3\"\n").unwrap();
+        assert_eq!(read_toml(&path).unwrap().backend, BackendId::Qwen3);
         std::fs::write(&path, "[final]\nbackend = \"gpu\"\n").unwrap();
         assert!(read_toml(&path).is_err());
         std::fs::write(&path, "[final]\nbackend = \"npu\"\n").unwrap();

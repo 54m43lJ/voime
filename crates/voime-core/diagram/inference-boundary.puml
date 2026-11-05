@@ -22,6 +22,6 @@ end
 
 note over Core, Ort
   核心只使用 CPU Execution Provider；
-  不加载 FireRedPunc、GPU EP 或 llama.cpp。
+  不加载独立标点模型、GPU EP 或 llama.cpp。
 end note
 @enduml

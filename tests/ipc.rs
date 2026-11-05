@@ -84,7 +84,7 @@ fn dropped_segment_error_carries_segment_id() {
 fn diagnostics_are_typed_and_do_not_change_status() {
     let text = String::from_utf8(
         encode_message(&ServerMessage::Diagnostics {
-            backend: "firered".to_string(),
+            backend: "qwen3".to_string(),
             worker: Some(voime_ipc::WorkerDiagnostics {
                 state: voime_ipc::WorkerState::Ready,
                 runtime: Some("cuda".to_string()),

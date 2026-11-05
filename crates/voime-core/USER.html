@@ -47,7 +47,7 @@
   <tr><td>LFR</td><td>低帧率特征拼接；SenseVoice 默认使用 7 帧窗、6 帧移，输出 560 维；每条特征流只应用一次。</td></tr>
   <tr><td>CMVN</td><td>倒谱均值方差归一化；SenseVoice 对默认 560 维 LFR 特征做均值 / 方差归一化。</td></tr>
   <tr><td>SenseVoice</td><td>核心唯一 ASR 模型；同时服务 Preview 与 CPU Final，固定 <code>use_itn=true</code>，输出自带标点。</td></tr>
-  <tr><td>CPU Final（<code>Final</code>）</td><td>对完整语音段执行一次 SenseVoice 推理并返回文本；不执行 FireRedPunc 或其它二次标点。</td></tr>
+  <tr><td>CPU Final（<code>Final</code>）</td><td>对完整语音段执行一次 SenseVoice 推理并返回文本；不执行独立标点或其它二次标点。</td></tr>
   <tr><td>Finalizing</td><td>当前段结束到 Final 或丢弃结果到达之间的状态；期间不再产生新的 Partial。</td></tr>
 </table>
 

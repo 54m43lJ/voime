@@ -36,7 +36,7 @@
   </tr>
   <tr>
     <td>GPU 模块（GPU module）</td>
-    <td>可选的 Final-only 推理模块；由 FireRed / Qwen 两个独立 worker、runtime 与模型组成。不包含 VAD、Preview 或前端。</td>
+    <td>可选的 Final-only 推理模块；由 Qwen worker、runtime 与模型组成。不包含 VAD、Preview 或前端。</td>
   </tr>
   <tr>
     <td>平台前端（frontend）</td>
@@ -80,7 +80,7 @@
   </tr>
   <tr>
     <td>Final 后端（Final backend）</td>
-    <td>语音段结束后用于生成最终文本的推理路径：<code>cpu</code>（SenseVoice）、<code>firered</code>（FireRedASR2-AED + FireRedPunc）或 <code>qwen3</code>（Qwen3-ASR）。默认 <code>cpu</code>。</td>
+    <td>语音段结束后用于生成最终文本的推理路径：<code>cpu</code>（SenseVoice）或 <code>qwen3</code>（Qwen3-ASR）。默认 <code>cpu</code>。</td>
   </tr>
   <tr>
     <td>临时结果（Partial）</td>
@@ -135,7 +135,7 @@
   </tr>
   <tr>
     <td>Finalizing 计算</td>
-    <td>Final 触发后不再进行 Preview 推理；<code>cpu</code> Final 只执行一次 CPU 推理，<code>firered</code> / <code>qwen3</code> Final 不再调用 SenseVoice ASR。</td>
+    <td>Final 触发后不再进行 Preview 推理；<code>cpu</code> Final 只执行一次 CPU 推理，<code>qwen3</code> Final 不再调用 SenseVoice ASR。</td>
   </tr>
   <tr>
     <td>前端不加载模型</td>
@@ -143,7 +143,7 @@
   </tr>
   <tr>
     <td>推理归属</td>
-    <td>VAD、Preview 与 CPU Final 在核心；FireRed / Qwen Final 在各自的 GPU worker 进程。</td>
+    <td>VAD、Preview 与 CPU Final 在核心；Qwen Final 在 GPU worker 进程。</td>
   </tr>
   <tr>
     <td>一个语音段一个目标</td>
@@ -190,7 +190,7 @@
 <div class="diagram"><img src="diagram/general-architecture.svg" alt="核心安装与可选 GPU Final 模块的总体架构组件图"></div>
 <ul class="note">
   <li>核心安装包含平台前端、<code>voimed</code>、FireRedVAD、SenseVoice 与 CPU Final；只装核心即可完成完整识别。</li>
-  <li>GPU 模块是可选的 Final-only 模块；FireRed 与 Qwen 各自使用独立的 GPU worker 与 runtime。</li>
+  <li>GPU 模块是可选的 Final-only 模块；Qwen 使用独立的 GPU worker 与 runtime。</li>
   <li>VAD 与 Preview 只在核心；各 GPU worker 只负责自己的 Final 文本与标点。</li>
   <li>平台宿主持有键盘、输入焦点与最终提交路径；Voime 只接收热键事件并提交最终文本。</li>
 </ul>
@@ -252,8 +252,7 @@
 <table>
   <tr><th>接口</th><th>定义位置</th><th>消费者</th></tr>
   <tr><td>核心 API（Config / 音频 / VAD / SenseVoice / CPU Final / pipeline）</td><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td><code>voimed</code>、<code>voime doctor</code></td></tr>
-  <tr><td>GPU worker 帧协议、请求 / 响应、错误码</td><td><a href="crates/voime-gpu-common/USER.html">voime-gpu-common USER</a></td><td><code>voimed</code>、两个 GPU worker</td></tr>
-  <tr><td>FireRed worker 契约与模型 / runtime</td><td><a href="crates/voime-gpu-firered/USER.html">voime-gpu-firered USER</a></td><td><code>voimed</code>、GPU 安装脚本</td></tr>
+  <tr><td>GPU worker 帧协议、请求 / 响应、错误码</td><td><a href="crates/voime-gpu-common/USER.html">voime-gpu-common USER</a></td><td><code>voimed</code>、Qwen worker</td></tr>
   <tr><td>Qwen worker 契约与模型 / runtime</td><td><a href="crates/voime-gpu-qwen3/USER.html">voime-gpu-qwen3 USER</a></td><td><code>voimed</code>、GPU 安装脚本</td></tr>
   <tr><td>IPC 消息、JSON lines、协议版本、错误码</td><td><a href="crates/voime-ipc/USER.html">voime-ipc USER</a></td><td><code>voimed</code>、<code>voime</code>、Linux / Windows 前端</td></tr>
   <tr><td>本机传输契约（Endpoint / Listener / Stream）</td><td><a href="crates/voime-transport/USER.html">voime-transport USER</a></td><td><code>voimed</code>、<code>voime</code>、Windows 前端</td></tr>
@@ -267,7 +266,7 @@
 <table>
   <tr><th>阶段 / 场景</th><th>契约</th><th>实现所有者</th></tr>
   <tr><td>默认 Final</td><td><code>final.backend = cpu</code>；只装核心或安装 GPU 模块后都保持该默认值。</td><td><a href="crates/voimed/USER.html#u4-4">voimed USER §4.4</a> · <a href="crates/voime/USER.html#u4-1">voime USER §4.1</a></td></tr>
-  <tr><td>显式 GPU</td><td>通过安装脚本 <code>--backend</code> 或 <code>voime ctl backend</code> 写 <code>firered</code> / <code>qwen3</code>；重启 daemon 生效，不提供 IPC 热切换。</td><td><a href="crates/voime/USER.html#u4-1">voime USER §4.1</a></td></tr>
+  <tr><td>显式 GPU</td><td>通过安装脚本 <code>--backend</code> 或 <code>voime ctl backend</code> 写 <code>qwen3</code>；重启 daemon 生效，不提供 IPC 热切换。</td><td><a href="crates/voime/USER.html#u4-1">voime USER §4.1</a></td></tr>
   <tr><td>触发</td><td>PTT / Toggle 在按键事件中开启 / 关闭会话；会话内 VAD 软切分多个段；Continuous 由 VAD 自动开始 / 结束段。</td><td>平台前端 · <a href="crates/voimed/USER.html#u2">voimed USER §2</a></td></tr>
   <tr><td>临时文本</td><td>收到 Partial 显示；为空时保留上一行；不提交。Final 触发后 Preview 中断，保留最后一条 Partial。</td><td>平台前端 · <a href="frontends/fcitx/USER.html#u3-3">fcitx-addon USER §3.3</a> · <a href="frontends/windows/USER.html#u3-4">windows USER §3.4</a></td></tr>
   <tr><td>Finalizing 计算</td><td>停止产生 Partial 并取消未开始的 Preview 推理；<code>cpu</code> Final 只执行一次 CPU 推理，GPU Final 不再调用 SenseVoice ASR。</td><td><a href="crates/voimed/USER.html#u2">voimed USER §2</a> · <a href="crates/voime-core/USER.html#u4-4">voime-core USER §4.4</a></td></tr>
@@ -282,9 +281,9 @@
 <table>
   <tr><th>平台 / 形态</th><th>支持</th><th>边界</th><th>契约</th></tr>
   <tr><td>Linux + Fcitx5</td><td>是</td><td>原生 Wayland、XWayland / XIM；不覆盖无 text-input 的窗口。</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td></tr>
-  <tr><td>Linux GPU Final</td><td>是</td><td>runtime / EP 选择与限制见所选 GPU 组件 USER。</td><td><a href="crates/voime-gpu-firered/USER.html">voime-gpu-firered USER</a> · <a href="crates/voime-gpu-qwen3/USER.html">voime-gpu-qwen3 USER</a></td></tr>
+  <tr><td>Linux GPU Final</td><td>是</td><td>runtime / EP 选择与限制见 Qwen 组件 USER。</td><td><a href="crates/voime-gpu-qwen3/USER.html">voime-gpu-qwen3 USER</a></td></tr>
   <tr><td>Windows 后台听写</td><td>是</td><td>普通 Win32 / Chromium / Office 等；提权、游戏、部分终端/UWP 有覆盖边界。</td><td><a href="frontends/windows/USER.html">windows USER</a></td></tr>
-  <tr><td>Windows GPU Final</td><td>是</td><td>runtime / EP 选择与限制见所选 GPU 组件 USER。</td><td><a href="crates/voime-gpu-firered/USER.html">voime-gpu-firered USER</a> · <a href="crates/voime-gpu-qwen3/USER.html">voime-gpu-qwen3 USER</a></td></tr>
+  <tr><td>Windows GPU Final</td><td>是</td><td>runtime / EP 选择与限制见 Qwen 组件 USER。</td><td><a href="crates/voime-gpu-qwen3/USER.html">voime-gpu-qwen3 USER</a></td></tr>
   <tr><td>Windows TSF 输入法</td><td>可选扩展</td><td>需要成为当前输入法；非 TSF 应用不覆盖。</td><td><a href="frontends/windows/USER.html#u3-5">windows USER §3.5</a></td></tr>
   <tr><td>锁屏 / 安全桌面</td><td>否</td><td>不承诺热键、临时文本或提交。</td><td>—</td></tr>
 </table>

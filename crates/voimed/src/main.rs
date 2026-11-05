@@ -61,7 +61,7 @@ fn run(cli: cli::Cli) -> anyhow::Result<()> {
     let mut worker = None;
     let mut worker_error = None;
     if config.final_config.backend != BackendId::Cpu {
-        match start_worker(&config.model_dir, config.final_config.backend, cli.verbose) {
+        match start_worker(&config.model_dir, config.final_config.backend) {
             Ok(started) => {
                 worker = Some(started);
                 vlog!("gpu worker {} ready", config.final_config.backend);
@@ -96,18 +96,13 @@ fn run(cli: cli::Cli) -> anyhow::Result<()> {
     .run()
 }
 
-fn start_worker(
-    model_root: &std::path::Path,
-    backend: BackendId,
-    verbose: bool,
-) -> anyhow::Result<Worker> {
+fn start_worker(model_root: &std::path::Path, backend: BackendId) -> anyhow::Result<Worker> {
     for directory in backend.model_dirs() {
         if !model_root.join(directory).is_dir() {
             anyhow::bail!("缺少 GPU 模型目录 {}", model_root.join(directory).display());
         }
     }
-    let log_level = if verbose { "debug" } else { "info" };
-    let mut worker = Worker::spawn(backend, model_root, log_level)?;
+    let mut worker = Worker::spawn(backend, model_root)?;
     match worker.handshake(None) {
         Ok(info) => {
             vlog!(

@@ -79,9 +79,9 @@
 <div class="diagram"><img src="diagram/inference-boundary.svg" alt="voime-core 消费两个核心模型与 ONNX Runtime CPU 的时序图"></div>
 <ul class="note">
   <li>启动时读取并校验 <code>firered-vad</code> / <code>sensevoice-small</code>，然后创建 CPU 会话；每个语音段只重置解码状态，不重新加载权重。</li>
-  <li>VAD 与 SenseVoice 各自使用独立 ONNX 会话；核心不加载 FireRedPunc 或 GPU EP。</li>
+  <li>VAD 与 SenseVoice 各自使用独立 ONNX 会话；核心不加载独立标点模型或 GPU EP。</li>
   <li>ONNX 输入输出与预处理参数在运行时从会话 introspection / metadata 读取；manifest 只负责文件完整性与 runtime 声明。</li>
-  <li>具体张量契约见 §4.2；GPU 模型与 runtime 见 <a href="../voime-gpu-firered/PROVIDER.html">voime-gpu-firered PROVIDER</a> / <a href="../voime-gpu-qwen3/PROVIDER.html">voime-gpu-qwen3 PROVIDER</a>。</li>
+  <li>具体张量契约见 §4.2；GPU 模型与 runtime 见 <a href="../voime-gpu-qwen3/PROVIDER.html">voime-gpu-qwen3 PROVIDER</a>。</li>
 </ul>
 
 <h2 id="p4">4. INTERFACES</h2>
@@ -146,7 +146,7 @@
   <tr><td>安装</td><td>核心安装脚本下载固定 revision 的模型文件，写入 manifest；只接受当前 schema 5 模型包。</td></tr>
 </table>
 <ul class="note">
-  <li>SenseVoice 使用上游 <code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>；模型输出自带标点与 ITN，不加载 FireRedPunc。</li>
+  <li>SenseVoice 使用上游 <code>sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17</code>；模型输出自带标点与 ITN，不加载独立标点模型。</li>
   <li>VAD 使用 FireRedVAD Stream-VAD ONNX；所有模式共用同一模型与参数。</li>
   <li>manifest 只覆盖身份、文件完整性与 runtime；ONNX 张量、fbank / LFR / CMVN 参数与词表内容不写入 manifest，来源见上表。</li>
   <li>模型文件来源、revision 与 SHA-256 由准备阶段冻结并写入安装源；运行期不联网。</li>

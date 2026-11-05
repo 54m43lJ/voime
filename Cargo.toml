@@ -19,7 +19,6 @@ default-members = [
     "crates/voime",
 ]
 exclude = [
-    "crates/voime-gpu-firered",
     "crates/voime-gpu-qwen3",
     "frontends/windows",
 ]

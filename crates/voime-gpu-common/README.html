@@ -31,18 +31,17 @@
 
 <h3 id="r1-1">1.1 IDEAL：要解决的问题</h3>
 <p>
-FireRed 与 Qwen 两个 GPU worker 是独立进程，但由同一个 daemon 启动、握手、发送完整语音段、
-读取最终文本、处理错误并关闭。如果每个 worker 各自定义 framing、JSON 字段、错误码与关闭顺序，
-daemon 就会长出两套解析、两套超时和两条回退路径，协议也会随后端漂移。
-<code>voime-gpu-common</code> 把两个 worker 共用的 frame 协议——帧格式、请求 / 响应、错误码与协议生命周期辅助——收敛为一个
-不依赖推理 runtime 的库；模型加载与推理仍留在各自的 worker。
+Qwen GPU worker 是独立进程，由 daemon 启动、握手、发送完整语音段、读取最终文本、处理错误并关闭。
+如果 daemon 与 worker 各自定义 framing、JSON 字段、错误码与关闭顺序，协议就会随实现漂移。
+<code>voime-gpu-common</code> 把 daemon 与 worker 之间的 frame 协议——帧格式、请求 / 响应、错误码与协议生命周期辅助——收敛为一个
+不依赖推理 runtime 的库；模型加载与推理仍留在 worker。
 </p>
 
 <h3 id="r1-2">1.2 GOAL：什么算成功</h3>
 <ul>
-  <li>两个 GPU worker 与 daemon 使用同一套帧布局：长度前缀 + UTF-8 JSON header + 长度前缀 + <code>f32le</code> PCM。</li>
-  <li>请求与响应类型只在本 crate 定义；两个 worker 与 daemon 不复制消息结构。</li>
-  <li>握手、加载、单段识别、取消与关闭的消息顺序明确，daemon 可以用同一段代码服务两个后端。</li>
+  <li>GPU worker 与 daemon 使用同一套帧布局：长度前缀 + UTF-8 JSON header + 长度前缀 + <code>f32le</code> PCM。</li>
+  <li>请求与响应类型只在本 crate 定义；worker 与 daemon 不复制消息结构。</li>
+  <li>握手、加载、单段识别、取消与关闭的消息顺序明确，daemon 用同一段代码服务 GPU 后端。</li>
   <li>错误码稳定且可执行：daemon 不解析错误文案，就能决定标记后端不可用、回退 CPU 或重启 worker。</li>
   <li>识别文本只出现在 <code>Result.text</code> 中；日志只记录长度、耗时、错误码与后端名称，加载失败可附加模型路径与 SHA 前缀。</li>
   <li>worker 协议与前端 IPC 相互独立；本协议的变化不提升 <code>voime-ipc</code> 的协议版本。</li>
@@ -50,7 +49,7 @@ daemon 就会长出两套解析、两套超时和两条回退路径，协议也�
 
 <h3 id="r1-3">1.3 非目标</h3>
 <ul>
-  <li>不加载模型、不解析模型 manifest、不校验权重 SHA；这些属于两个 worker。</li>
+  <li>不加载模型、不解析模型 manifest、不校验权重 SHA；这些属于 worker。</li>
   <li>不含推理 runtime，不链接 ORT / llama.cpp / GGML；本 crate 只依赖 serde、serde_json 与 anyhow。</li>
   <li>不做 VAD、Preview、Partial、分段或流式识别；GPU worker 只接收完整语音段。</li>
   <li>不做前端 IPC、热键、目标绑定、临时窗口或文本提交；前端消息归 <a href="../voime-ipc/USER.html">voime-ipc USER</a>。</li>
@@ -68,7 +67,7 @@ daemon 就会长出两套解析、两套超时和两条回退路径，协议也�
 <p><a href="#top">↑</a></p>
 
 <p>
-本库没有终端用户入口。它的“用户”是 daemon 与两个 GPU worker；终端用户只通过 daemon 观察
+本库没有终端用户入口。它的“用户”是 daemon 与 GPU worker；终端用户只通过 daemon 观察
 GPU Final 成功或回退 CPU 的结果，不直接接触本协议。
 </p>
 
@@ -80,13 +79,8 @@ GPU Final 成功或回退 CPU 的结果，不直接接触本协议。
     <td><a href="USER.html#u4">USER §4</a> · <a href="../voimed/USER.html#u4-4">voimed USER §4.4</a></td>
   </tr>
   <tr>
-    <td><code>voime-gpu-firered</code></td>
-    <td>读取 Hello / Transcribe / Cancel / Shutdown；加载自己的 runtime 与模型；写 Ready / Result / Error / Bye。</td>
-    <td><a href="USER.html#u4">USER §4</a> · <a href="../../README.html#r3-2">根 README §3.2</a></td>
-  </tr>
-  <tr>
     <td><code>voime-gpu-qwen3</code></td>
-    <td>与 FireRed worker 相同的帧协议；模型目录、runtime 与输出清洗由本 worker 负责。</td>
+    <td>读取 Hello / Transcribe / Cancel / Shutdown；加载自己的 runtime 与模型；写 Ready / Result / Error / Bye。模型目录、runtime 与输出清洗由本 worker 负责。</td>
     <td><a href="USER.html#u4">USER §4</a> · <a href="../../README.html#r3-2">根 README §3.2</a></td>
   </tr>
   <tr>
@@ -110,7 +104,7 @@ GPU Final 成功或回退 CPU 的结果，不直接接触本协议。
   <tr><td><code>anyhow</code></td><td>帧读写、长度校验与握手错误上下文</td><td>Rust · MIT / Apache-2.0</td></tr>
 </table>
 <ul class="note">
-  <li>本组件不包含推理 runtime；ORT、llama.cpp 与模型只属于两个 worker crate。</li>
+  <li>本组件不包含推理 runtime；llama.cpp 与模型只属于 Qwen worker crate。</li>
   <li>版本与许可证以仓库清单为准。</li>
 </ul>
 

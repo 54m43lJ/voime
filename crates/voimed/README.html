@@ -43,7 +43,7 @@ pipeline、会话历史与 Final 后端选择，通过本机 IPC 向平台前端
   <li><code>voimed</code> 在 Linux 与 Windows 上功能相同，但不可跨平台复用。</li>
   <li>平台前端只发送 Start / Stop / Toggle 与配置，不接触模型、音频或 Final 后端。</li>
   <li>同一时刻只有一个语音段；<code>segment_id</code> 由 daemon 分配并广播。</li>
-  <li>默认 <code>final.backend = cpu</code>；安装 GPU 不自动切换；只有配置显式指定 <code>firered</code> / <code>qwen3</code> 才启动对应 worker。</li>
+  <li>默认 <code>final.backend = cpu</code>；安装 GPU 不自动切换；只有配置显式指定 <code>qwen3</code> 才启动对应 worker。</li>
   <li>daemon 启动时只加载选中的 GPU worker 并保持常驻；默认 <code>cpu</code> 时不启动 worker。</li>
   <li>Finalizing 期间停止 Preview 计算；<code>cpu</code> Final 只执行一次，GPU Final 不再调用 SenseVoice ASR。</li>
   <li>GPU 加载失败、超时、崩溃或显存不足时，当前段回退 CPU SenseVoice；Preview 不中断。</li>
@@ -52,7 +52,7 @@ pipeline、会话历史与 Final 后端选择，通过本机 IPC 向平台前端
 
 <h3 id="r1-3">1.3 非目标</h3>
 <ul>
-  <li>不负责具体模型推理；VAD / SenseVoice / CPU Final 在 <code>voime-core</code>，FireRed / Qwen 在各自 worker。</li>
+  <li>不负责具体模型推理；VAD / SenseVoice / CPU Final 在 <code>voime-core</code>，Qwen 在 worker。</li>
   <li>不处理热键、输入焦点、目标绑定、临时窗口或文本提交。</li>
   <li>不实现平台 UI、托盘、配置界面或安装器；GPU worker 由本 crate 拉起，但前端不感知。</li>
   <li>不解析命令行模式 / 热键；这些由前端通过 IPC 提供。</li>
@@ -99,7 +99,7 @@ pipeline、会话历史与 Final 后端选择，通过本机 IPC 向平台前端
   <tr><td>FireRedVAD / SenseVoice / ONNX Runtime CPU</td><td>由核心提供；daemon 不直接链接推理库</td><td>见 <a href="../voime-core/README.html#r3">voime-core Credits</a></td></tr>
 </table>
 <ul class="note">
-  <li>FireRed ORT GPU 与 Qwen llama.cpp runtime 归各自 backend crate；daemon 不链接任何 GPU runtime。</li>
+  <li>Qwen llama.cpp runtime 归 Qwen backend crate；daemon 不链接任何 GPU runtime。</li>
 </ul>
 
 </body>

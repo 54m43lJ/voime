@@ -443,7 +443,7 @@ impl Daemon {
         }
         let text = match self.backend {
             BackendId::Cpu => self.transcribe_cpu(&segment.samples),
-            BackendId::Firered | BackendId::Qwen3 => self.transcribe_gpu(&segment.samples),
+            BackendId::Qwen3 => self.transcribe_gpu(&segment.samples),
         };
         let text = match text {
             Ok(text) => text,

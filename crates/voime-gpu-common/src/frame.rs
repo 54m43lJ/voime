@@ -117,7 +117,7 @@ pub fn write_frame<W: Write>(writer: &mut W, frame: &Frame) -> anyhow::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{ErrorCode, GpuBackend};
+    use crate::message::ErrorCode;
     use std::io::Cursor;
 
     #[test]
@@ -169,6 +169,5 @@ mod tests {
             audio: vec![0.0],
         };
         assert!(frame.response().is_err());
-        let _ = GpuBackend::Firered;
     }
 }

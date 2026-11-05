@@ -4,7 +4,6 @@ use anyhow::bail;
 pub enum BackendId {
     #[default]
     Cpu,
-    Firered,
     Qwen3,
 }
 
@@ -12,16 +11,14 @@ impl BackendId {
     pub fn parse(value: &str) -> anyhow::Result<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "cpu" => Ok(Self::Cpu),
-            "firered" => Ok(Self::Firered),
             "qwen3" => Ok(Self::Qwen3),
-            other => bail!("Final 后端必须是 cpu、firered 或 qwen3，实际 {other}"),
+            other => bail!("Final 后端必须是 cpu 或 qwen3，实际 {other}"),
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Cpu => "cpu",
-            Self::Firered => "firered",
             Self::Qwen3 => "qwen3",
         }
     }
@@ -29,11 +26,6 @@ impl BackendId {
     pub fn worker_binary(self) -> Option<&'static str> {
         match self {
             Self::Cpu => None,
-            Self::Firered => Some(if cfg!(windows) {
-                "voime-gpu-firered.exe"
-            } else {
-                "voime-gpu-firered"
-            }),
             Self::Qwen3 => Some(if cfg!(windows) {
                 "voime-gpu-qwen3.exe"
             } else {
@@ -45,7 +37,6 @@ impl BackendId {
     pub fn model_dirs(self) -> &'static [&'static str] {
         match self {
             Self::Cpu => &[],
-            Self::Firered => &["fireredasr2-aed", "fireredpunc"],
             Self::Qwen3 => &["qwen3-asr-1.7b"],
         }
     }
@@ -83,10 +74,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_three_backends_and_rejects_others() {
+    fn parses_known_backends_and_rejects_others() {
         assert_eq!(BackendId::parse("cpu").unwrap(), BackendId::Cpu);
-        assert_eq!(BackendId::parse("FIRERED").unwrap(), BackendId::Firered);
-        assert_eq!(BackendId::parse("qwen3").unwrap(), BackendId::Qwen3);
+        assert_eq!(BackendId::parse("QWEN3").unwrap(), BackendId::Qwen3);
+        assert!(BackendId::parse("firered").is_err());
         assert!(BackendId::parse("gpu").is_err());
     }
 }

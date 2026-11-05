@@ -16,7 +16,6 @@
 <a href="PROVIDER.html">PROVIDER</a>
 <a href="crates/voime-core/README.html">voime-core</a>
 <a href="crates/voime-gpu-common/README.html">voime-gpu-common</a>
-<a href="crates/voime-gpu-firered/README.html">voime-gpu-firered</a>
 <a href="crates/voime-gpu-qwen3/README.html">voime-gpu-qwen3</a>
 <a href="crates/voime-ipc/README.html">voime-ipc</a>
 <a href="crates/voime-log/README.html">voime-log</a>
@@ -47,11 +46,11 @@
 <ul>
   <li>只装核心即可在 Linux 与 Windows 完成热键、VAD、预览、CPU Final 与提交；GPU 不是运行前提。</li>
   <li>VAD 固定 FireRedVAD，Preview 固定 SenseVoice；任何 Final 后端组合都不改变两者。</li>
-  <li>提供 FireRed 与 Qwen 两个可选 GPU Final 后端：FireRed 使用 FireRedASR2-AED + FireRedPunc，Qwen 使用 Qwen3-ASR。</li>
+  <li>提供 Qwen 可选 GPU Final 后端：Qwen 使用 Qwen3-ASR。</li>
   <li><code>final.backend</code> 默认 <code>cpu</code>；安装 GPU 模块不自动切换，用户通过 <code>--backend</code> 或 <code>voime ctl backend</code> 显式选择。</li>
-  <li>GPU 后端使用预编译 runtime；具体平台矩阵与依赖见各 GPU 组件文档。</li>
+  <li>GPU 后端使用预编译 runtime；具体平台矩阵与依赖见 Qwen 组件文档。</li>
   <li>核心安装的组件树在 Linux 与 Windows 共用；平台安装入口与权限步骤由各组件文档定义。</li>
-  <li><code>voimed</code> 持有音频、会话、Final 触发与后端选择；<code>voime-core</code> 持有 VAD / SenseVoice / CPU Final；GPU worker 持有各自的 Final 模型与 runtime。</li>
+  <li><code>voimed</code> 持有音频、会话、Final 触发与后端选择；<code>voime-core</code> 持有 VAD / SenseVoice / CPU Final；GPU worker 持有自己的 Final 模型与 runtime。</li>
   <li>核心安装的模型与 GPU 模块的模型分开管理；一个模型一个目录，运行期只读。</li>
   <li>GPU 崩溃、驱动缺失、显存不足或模型缺失时，Preview 与 CPU Final 仍然可用。</li>
 </ul>
@@ -59,7 +58,7 @@
 <h3 id="r1-3">1.3 非目标</h3>
 <ul>
   <li>不做 GPU VAD、GPU Preview、GPU Partial 或流式 GPU 识别；GPU 模块只接收完整语音段。</li>
-  <li>不做 CPU FireRedASR2-AED / CPU Qwen3-ASR；GPU 失败不加载任何 CPU 大模型。</li>
+  <li>不做 CPU Qwen3-ASR；GPU 失败不加载任何 CPU 大模型。</li>
   <li>不要求用户自行构建 GPU runtime；runtime 由安装脚本按组件预编译包部署。</li>
   <li>不做运行中 Final 后端热切换；切换配置后需重启 daemon。</li>
   <li>只支持当前 schema 5 模型包；CTC 与独立 CPU 标点模型不在产品路径内。</li>
@@ -81,12 +80,12 @@
   </tr>
   <tr>
     <td>安装 GPU 模块</td>
-    <td>运行 <code>scripts/install-gpu.sh</code> 或 <code>scripts/install-gpu.ps1</code>；安装后仍默认使用 CPU Final。后端与 runtime 选项见各 GPU 组件文档。</td>
-    <td><a href="crates/voime-gpu-firered/README.html#r2">firered README §2</a> · <a href="crates/voime-gpu-qwen3/README.html#r2">qwen3 README §2</a></td>
+    <td>运行 <code>scripts/install-gpu.sh</code> 或 <code>scripts/install-gpu.ps1</code>；安装后仍默认使用 CPU Final。后端与 runtime 选项见 Qwen 组件文档。</td>
+    <td><a href="crates/voime-gpu-qwen3/README.html#r2">qwen3 README §2</a></td>
   </tr>
   <tr>
     <td>选择 Final 后端</td>
-    <td>默认 <code>cpu</code>；用 <code>voime ctl backend cpu|firered|qwen3</code> 或安装时 <code>--backend</code> 选择，重启 daemon 后生效。</td>
+    <td>默认 <code>cpu</code>；用 <code>voime ctl backend cpu|qwen3</code> 或安装时 <code>--backend</code> 选择，重启 daemon 后生效。</td>
     <td><a href="crates/voime/USER.html#u4-1">voime USER §4.1</a> · <a href="crates/voimed/USER.html#u4-4">voimed USER §4.4</a></td>
   </tr>
   <tr>
@@ -160,7 +159,6 @@
 ├── crates/
 │   ├── voime-core/            README · USER · CORE · PROVIDER
 │   ├── voime-gpu-common/      README · USER · CORE
-│   ├── voime-gpu-firered/     README · USER · CORE · PROVIDER
 │   ├── voime-gpu-qwen3/       README · USER · CORE · PROVIDER
 │   ├── voime-ipc/             README · USER · CORE
 │   ├── voime-log/             README · USER · CORE
@@ -182,7 +180,7 @@
 <ul class="note">
   <li>根 <code>README / USER / CORE / PROVIDER</code> 是父文档；每个组件目录下的同名文档是子树。</li>
   <li>父文档只定义产品级边界与组件关系；组件内部类型、签名和调用栈只出现在组件 <code>CORE</code>。</li>
-  <li>三个 GPU crate 各自独立构建、独立进程、独立 runtime；<code>voime-gpu-common</code> 只提供共享协议。</li>
+  <li><code>voime-gpu-common</code> 只提供共享协议；<code>voime-gpu-qwen3</code> 独立构建、独立进程、独立 runtime。</li>
   <li>Windows 与 Linux 使用同一套核心 / GPU 组件树；平台差异只体现在安装脚本与前端。</li>
   <li>模型不放在仓库内；安装到平台数据目录。默认根目录与平台回退见 <a href="crates/voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</li>
   <li>源码结构见 <a href="CORE.html#c1">根 CORE §1</a>。</li>
@@ -197,7 +195,6 @@
   <tr><td>音频、VAD、Preview、CPU Final、pipeline 的公开 API</td><td><a href="crates/voime-core/USER.html">voime-core USER</a></td><td>只链接，不复制类型与语义</td></tr>
   <tr><td>模型清单通用 schema、字段与合法 <code>kind</code></td><td><a href="CORE.html#c4-8">根 CORE §4.8</a></td><td>组件只列固定值，不复制字段语义</td></tr>
   <tr><td>GPU worker 帧协议、请求 / 响应、错误码与生命周期辅助</td><td><a href="crates/voime-gpu-common/USER.html">voime-gpu-common USER</a></td><td>只链接，不复制帧格式</td></tr>
-  <tr><td>FireRedASR2-AED / FireRedPunc 的模型与 ORT GPU 契约</td><td><a href="crates/voime-gpu-firered/PROVIDER.html">voime-gpu-firered PROVIDER</a></td><td>只链接，不复制张量契约</td></tr>
   <tr><td>Qwen3-ASR BF16 GGUF / mmproj 与 llama.cpp 契约</td><td><a href="crates/voime-gpu-qwen3/PROVIDER.html">voime-gpu-qwen3 PROVIDER</a></td><td>只链接，不复制模型契约</td></tr>
   <tr><td>OS 本机传输契约（Unix socket / named pipe）</td><td><a href="crates/voime-transport/USER.html">voime-transport USER</a></td><td>只链接，不复制端点与安全细节</td></tr>
   <tr><td>Linux 热键、目标、临时窗口、配置、提交</td><td><a href="frontends/fcitx/USER.html">fcitx-addon USER</a></td><td>Windows 前端只引用行为契约</td></tr>
@@ -233,14 +230,6 @@
     <td><a href="crates/voime-gpu-common/CORE.html">CORE</a></td>
     <td>—</td>
     <td>根 Cargo workspace · Linux / Windows</td>
-  </tr>
-  <tr>
-    <td><code>voime-gpu-firered</code></td>
-    <td><a href="crates/voime-gpu-firered/README.html">README</a></td>
-    <td><a href="crates/voime-gpu-firered/USER.html">USER</a></td>
-    <td><a href="crates/voime-gpu-firered/CORE.html">CORE</a></td>
-    <td><a href="crates/voime-gpu-firered/PROVIDER.html">PROVIDER</a></td>
-    <td>独立 Cargo workspace · Linux / Windows</td>
   </tr>
   <tr>
     <td><code>voime-gpu-qwen3</code></td>
@@ -310,7 +299,7 @@
 <ul class="note">
   <li>文档树自根向下：根 README → 根 USER / CORE / PROVIDER → 组件 README → 组件同名文档；跨组件引用只指向内容所有者。</li>
   <li><code>PROVIDER</code> 仅在下边界真实存在时创建；<code>voime-ipc</code>、<code>voime-log</code>、<code>voime-gpu-common</code> 与 <code>voimed</code> 没有直接外部 provider，故省略。</li>
-  <li>模型清单的通用 schema 与合法 <code>kind</code> 归 <a href="CORE.html#c4-8">根 CORE §4.8</a>；具体模型文件、张量与运行时契约按组件拆分：核心两个模型归 <code>voime-core PROVIDER</code>，FireRed 两个模型归 <code>voime-gpu-firered PROVIDER</code>，Qwen 模型归 <code>voime-gpu-qwen3 PROVIDER</code>。</li>
+  <li>模型清单的通用 schema 与合法 <code>kind</code> 归 <a href="CORE.html#c4-8">根 CORE §4.8</a>；具体模型文件、张量与运行时契约按组件拆分：核心两个模型归 <code>voime-core PROVIDER</code>，Qwen 模型归 <code>voime-gpu-qwen3 PROVIDER</code>。</li>
 </ul>
 
 <h2 id="r4">4. Credits</h2>
@@ -321,12 +310,9 @@
   <tr><td><a href="https://github.com/fcitx/fcitx5">Fcitx5</a></td><td>Linux 输入法框架、addon 宿主、键盘与文本提交</td><td>C++ · LGPL-2.1+</td></tr>
   <tr><td><a href="https://github.com/FireRedTeam/FireRedVAD">FireRedVAD</a></td><td>固定流式语音活动检测</td><td>ONNX · Apache-2.0</td></tr>
   <tr><td><a href="https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html">SenseVoice</a></td><td>Preview 与 CPU Final</td><td>ONNX · Apache-2.0</td></tr>
-  <tr><td><a href="https://github.com/FireRedTeam/FireRedASR2S">FireRedASR2-AED</a></td><td>FireRed GPU Final 识别</td><td>ONNX · Apache-2.0</td></tr>
-  <tr><td><a href="https://huggingface.co/FireRedTeam/FireRedPunc">FireRedPunc</a></td><td>FireRed GPU Final 中英文标点</td><td>ONNX · Apache-2.0</td></tr>
   <tr><td><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR</a></td><td>Qwen GPU Final 识别与内置标点</td><td>GGUF · Apache-2.0</td></tr>
-  <tr><td><a href="https://onnxruntime.ai/">ONNX Runtime</a></td><td>核心 CPU 推理与 FireRed GPU EP</td><td>C++ · MIT</td></tr>
+  <tr><td><a href="https://onnxruntime.ai/">ONNX Runtime</a></td><td>核心 CPU 推理</td><td>C++ · MIT</td></tr>
   <tr><td><a href="https://github.com/eugenehp/llama-cpp-rs">llama-cpp-rs</a> / <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a></td><td>Qwen3-ASR 的 GGUF / mtmd 推理</td><td>Rust / C++ · MIT</td></tr>
-  <tr><td><a href="https://github.com/huggingface/tokenizers">tokenizers</a></td><td>FireRedPunc 的 BERT 分词</td><td>Rust · Apache-2.0</td></tr>
   <tr><td><a href="https://github.com/ratatui/ratatui">ratatui</a> / <a href="https://github.com/crossterm-rs/crossterm">crossterm</a></td><td>可选 TUI</td><td>Rust · MIT</td></tr>
   <tr><td><a href="https://github.com/RustAudio/cpal">cpal</a></td><td>麦克风采集</td><td>Rust · Apache-2.0</td></tr>
   <tr><td><a href="https://github.com/HEnquist/rubato">rubato</a></td><td>采样率转换</td><td>Rust · MIT</td></tr>

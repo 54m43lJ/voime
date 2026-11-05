@@ -66,7 +66,7 @@
   <tr><td>临时窗口</td><td><code>InputPanel::setPreedit</code> + <code>updateUserInterface(InputPanel)</code>；Finalizing 期间保留最后一条 Partial，不再刷新；Toggle 空白窗口写单个空格。</td></tr>
   <tr><td>目标输入框</td><td>语音段开始时聚焦的 <code>InputContext</code>；提交前重新检查存在与 <code>hasFocus()</code>。</td></tr>
   <tr><td>提交</td><td>只在 Final 到达后调用 <code>commitString</code>；无返回值，不保证客户端接受。Fcitx commit filter 与长文本分块由 Fcitx 负责。</td></tr>
-  <tr><td>不感知 Final 后端</td><td>addon 不读取 <code>final.backend</code>，不区分 CPU / FireRed / Qwen，不加载模型，也不包含 ROCm、CUDA、Vulkan、ONNX Runtime 或 llama.cpp 依赖。</td></tr>
+  <tr><td>不感知 Final 后端</td><td>addon 不读取 <code>final.backend</code>，不区分 CPU / Qwen，不加载模型，也不包含 ROCm、CUDA、Vulkan、ONNX Runtime 或 llama.cpp 依赖。</td></tr>
   <tr><td>配置</td><td><code>Mode</code> / <code>Hotkey</code> 只来自 addon 配置；socket 使用默认路径。</td></tr>
   <tr><td>本地性</td><td>运行期所有边界调用在本机完成；模型目录、音频与 IPC 不经过网络。</td></tr>
 </table>

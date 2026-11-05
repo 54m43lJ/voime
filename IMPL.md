@@ -615,3 +615,39 @@ worker 进程退出，daemon 看到 `GPU worker 已关闭连接` 后重启 worke
 |---|---|---|---|
 | `crates/voime-gpu-qwen3/CORE.html` | §4.7 | 改 | 说明 `clean_text` 必须按 UTF-8 字符边界处理多字节输出，禁止按固定字节切片。 |
 | `crates/voimed/CORE.html` | §2 | 改 | 说明 worker 推理耗时与 CPU 回退耗时会写入日志，便于诊断偶发回退。 |
+
+### P13. 取消 FireRed GPU Final 后端
+
+1. **问题描述**
+
+产品 Final 后端收敛为 `cpu` / `qwen3` 两个值。FireRed GPU Final 曾由独立 `voime-gpu-firered` worker、FireRedASR2-AED + FireRedPunc 模型与 ORT GPU runtime 组成；继续保留 worker crate、配置枚举、doctor 分支、安装参数与模型下载项，会让文档、安装器和 daemon 暴露已经不在产品路径内的后端。
+
+2. **解决方法**
+
+- 删除 `crates/voime-gpu-firered` 整个独立 workspace，包括源码、文档、图表与 `Cargo.lock`；从根 `Cargo.toml` 的 `exclude` 中移除。
+- `voimed::backend::BackendId` 与 `voime_gpu_common::GpuBackend` 删除 `Firered`；`final.backend` 只接受 `cpu` / `qwen3`。
+- `voimed::worker` 删除 FireRed 专用的 `VOIME_FIRERED_RUNTIME`、`ORT_DYLIB_PATH` / 动态库查找与 `--runtime` / `--log-level` 参数；`Worker::spawn` 简化为 `(backend, model_root)`，`restart` 不再保存日志级别。
+- `voime doctor` 只检查 CPU / Qwen 的 worker 与模型；删除 FireRed 模型目录、manifest 校验条目与可执行文件分支。
+- `scripts/install-gpu.sh` / `install-gpu.ps1` 只安装、卸载 Qwen；`install-gpu-models.py` 删除 FireRed 模型、revision 常量与 `--firered` 选项。
+- 根 README / USER / PROVIDER / CORE / BUILD、`voimed`、`voime`、`voime-gpu-common`、`voime-gpu-qwen3`、`voime-core` 与平台前端文档删除 FireRed 后端内容；根架构、provider 与推理图重新导出 SVG。
+- FireRedVAD 是核心 VAD，不属于本次移除范围；`firered-vad` 模型、核心 VAD 代码与安装脚本保持不动。
+- 更新 `tests/final_backend.rs` 与 `tests/ipc.rs` 中的后端枚举和 Diagnostics 样例。
+
+3. **修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voime-gpu-firered/` | 全部 | 删 | 删除 FireRed worker 的 README / USER / CORE / PROVIDER、源码与图表。 |
+| `README.html` | §1、§2、§3、§4 | 改 | 删除 FireRed 组件链接、GPU 后端说明、crate 索引与 Credits；GPU Final 只保留 Qwen。 |
+| `USER.html` | §1、§2、§3、§4 | 改 | Final 后端只列 `cpu` / `qwen3`；GPU 模块只描述 Qwen worker。 |
+| `PROVIDER.html` | §1、§3、§4 | 改 | 删除 FireRed ORT GPU、FireRed 模型目录与相关 provider 链接。 |
+| `CORE.html` | §1、§2、§4、§5 | 改 | 删除 FireRed crate、BackendId 成员、模型表条目与 Final 调度分支。 |
+| `BUILD.html` | §1、§2、§3、§4、§5、§6 | 改 | 删除 FireRed 构建、runtime、模型、测试、卸载与排查内容；安装参数只保留 Qwen。 |
+| `crates/voimed/{README,USER,CORE}.html` | 相关章节 | 改 | 后端枚举、worker 生命周期、启动默认值与调用栈只保留 CPU / Qwen。 |
+| `crates/voime/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 改 | `ctl backend` 只接受 `cpu|qwen3`；doctor 只检查 CPU / Qwen。 |
+| `crates/voime-gpu-common/{README,USER,CORE}.html` | 相关章节 | 改 | `GpuBackend` 只保留 `qwen3`；协议示例与术语改为 Qwen worker。 |
+| `crates/voime-gpu-qwen3/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 改 | 删除与 FireRed worker / FireRedPunc / ORT 路径的对比描述，保留 Qwen 自身边界。 |
+| `crates/voime-core/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 改 | 删除 FireRedPunc 与 GPU Final 引用；FireRedVAD 与 `firered-vad` 保持不变。 |
+| `frontends/fcitx/{README,USER,PROVIDER}.html`、`frontends/windows/{CORE,PROVIDER}.html` | 相关章节 | 改 | 后端枚举与 GPU runtime 说明只保留 Qwen 的 Vulkan / CUDA。 |
+| `crates/voime-ipc/USER.html` | §4.6 | 改 | Diagnostics 示例改为 `qwen3` + Vulkan。 |
+| `diagram/*.puml`、`crates/voime-core/diagram/inference-boundary.puml` | 全部 | 改 | 删除 FireRed 组件、模型与推理分支；重新导出对应 SVG。 |

@@ -20,7 +20,7 @@
 </p>
 
 <p>
-本文是两个 GPU worker 帧协议的单一事实来源。<code>voimed</code>、<code>voime-gpu-firered</code> 与
+本文是 GPU worker 帧协议的单一事实来源。<code>voimed</code> 与
 <code>voime-gpu-qwen3</code> 都实现本文；其他文档只链接具体小节，不复制帧格式、消息字段或错误码。
 前端 IPC 不在本文范围内，见 <a href="../voime-ipc/USER.html">voime-ipc USER</a>。
 </p>
@@ -36,8 +36,8 @@
   <tr><td>请求（Request）</td><td>daemon → worker 的 header 类型。</td></tr>
   <tr><td>响应（Response）</td><td>worker → daemon 的 header 类型。</td></tr>
   <tr><td>daemon</td><td><code>voimed</code>；启动 worker、发送请求、执行超时与 CPU 回退。</td></tr>
-  <tr><td>worker</td><td><code>voime-gpu-firered</code> 或 <code>voime-gpu-qwen3</code> 的独立进程；加载自己的 runtime 与模型，只执行 Final。</td></tr>
-  <tr><td>GPU 后端（GpuBackend）</td><td><code>firered</code> 或 <code>qwen3</code>；与 worker 二进制一一对应。</td></tr>
+  <tr><td>worker</td><td><code>voime-gpu-qwen3</code> 的独立进程；加载自己的 runtime 与模型，只执行 Final。</td></tr>
+  <tr><td>GPU 后端（GpuBackend）</td><td><code>qwen3</code>；与 worker 二进制一一对应。</td></tr>
   <tr><td>Final</td><td>一次完整语音段的最终识别；本协议不传增量音频，也不产生 Partial。</td></tr>
   <tr><td>Transcribe</td><td>携带完整 PCM 的请求；一个 <code>id</code> 对应一次 Final。</td></tr>
   <tr><td><code>id</code></td><td>daemon 分配的 <code>u64</code> 请求标识；从 1 递增；0 保留给不属于某次 Transcribe 的错误。</td></tr>
@@ -48,8 +48,8 @@
   <tr><td>RTF</td><td>real-time factor；<code>latency_ms / 1000 / 音频秒数</code>；音频为空时为 0。</td></tr>
   <tr><td><code>punc</code></td><td>worker 是否加载了独立标点模型；Qwen3 由模型自带标点，故为 <code>false</code>。</td></tr>
   <tr><td><code>model_dir</code></td><td>daemon 传入的模型目录绝对路径；目录布局由对应 worker 定义，本协议只透传。</td></tr>
-  <tr><td><code>device</code></td><td>GPU 设备标识，例如 <code>cuda:0</code>、<code>vulkan:0</code>、<code>migraphx:0</code>、<code>dml:0</code>；worker 可以拒绝。</td></tr>
-  <tr><td><code>runtime</code></td><td>worker 自报的实现标识，例如 <code>cuda</code>、<code>vulkan</code>、<code>migraphx</code>、<code>directml</code>；daemon 只记录与展示。</td></tr>
+  <tr><td><code>device</code></td><td>GPU 设备标识，例如 <code>cuda:0</code>、<code>vulkan:0</code>；worker 可以拒绝。</td></tr>
+  <tr><td><code>runtime</code></td><td>worker 自报的实现标识，例如 <code>cuda</code>、<code>vulkan</code>；daemon 只记录与展示。</td></tr>
   <tr><td>加载预算</td><td>从 daemon 发出 Hello 到收到 Ready / Error 的默认 120 s。</td></tr>
   <tr><td>识别预算</td><td>从 daemon 写完 Transcribe 到收到 Result / Error 的默认 60 s。</td></tr>
   <tr><td>关闭预算</td><td>从 daemon 写完 Shutdown 到收到 Bye 或 worker 退出的默认 5 s。</td></tr>
@@ -224,7 +224,7 @@ pub fn write_frame&lt;W: Write&gt;(writer: &amp;mut W, frame: &amp;Frame) -&gt; 
   <tr><th>消息</th><th>字段</th><th>类型</th><th>语义</th></tr>
   <tr><td rowspan="6"><code>Ready</code></td><td><code>protocol</code></td><td><code>u32</code></td><td>worker 的 <code>GPU_PROTOCOL_VERSION</code>；daemon 必须与自己的版本相等。</td></tr>
   <tr><td><code>backend</code></td><td><code>GpuBackend</code></td><td>worker 身份；必须与 Hello 的 <code>backend</code> 一致。</td></tr>
-  <tr><td><code>runtime</code></td><td><code>String</code></td><td>实际使用的 runtime 标识；例如 <code>cuda</code>、<code>vulkan</code>、<code>migraphx</code>、<code>directml</code>。</td></tr>
+  <tr><td><code>runtime</code></td><td><code>String</code></td><td>实际使用的 runtime 标识；例如 <code>cuda</code>、<code>vulkan</code>。</td></tr>
   <tr><td><code>device</code></td><td><code>String</code></td><td>实际选中的设备；可以与 Hello 的请求不同，但必须是该 runtime 可用的设备。</td></tr>
   <tr><td><code>vram_mb</code></td><td><code>u32</code></td><td>Ready 时 worker 估算的显存占用，单位 MB；未知时为 0。</td></tr>
   <tr><td><code>punc</code></td><td><code>bool</code></td><td>是否加载了独立标点模型；Qwen3 由模型自带标点，故为 <code>false</code>。</td></tr>
@@ -253,7 +253,6 @@ pub fn write_frame&lt;W: Write&gt;(writer: &amp;mut W, frame: &amp;Frame) -&gt; 
 
 <h3 id="u4-4">4.4 辅助类型</h3>
 <pre><code>pub enum GpuBackend {
-    Firered,
     Qwen3,
 }
 
@@ -268,7 +267,6 @@ pub enum ErrorCode {
 
 <table>
   <tr><th>类型</th><th>线值</th><th>含义</th></tr>
-  <tr><td><code>GpuBackend::Firered</code></td><td><code>firered</code></td><td>FireRed worker 后端。</td></tr>
   <tr><td><code>GpuBackend::Qwen3</code></td><td><code>qwen3</code></td><td>Qwen3 worker 后端。</td></tr>
   <tr><td><code>ErrorCode::RuntimeMissing</code></td><td><code>runtime_missing</code></td><td>runtime / backend 未安装或版本不匹配。</td></tr>
   <tr><td><code>ErrorCode::DeviceUnavailable</code></td><td><code>device_unavailable</code></td><td>无 GPU、驱动不匹配或显存不足。</td></tr>
@@ -296,10 +294,10 @@ pub enum ErrorCode {
 
 <h3 id="u4-6">4.6 JSON 示例</h3>
 <pre><code>// daemon → worker：Hello（audio_len = 0）
-{"Hello":{"protocol":1,"backend":"firered","model_dir":"/home/me/.local/share/voime/models","device":"cuda:0"}}
+{"Hello":{"protocol":1,"backend":"qwen3","model_dir":"/home/me/.local/share/voime/models/qwen3-asr-1.7b","device":"vulkan:0"}}
 
 // worker → daemon：Ready
-{"Ready":{"protocol":1,"backend":"firered","runtime":"cuda","device":"cuda:0","vram_mb":5120,"punc":true}}
+{"Ready":{"protocol":1,"backend":"qwen3","runtime":"vulkan","device":"vulkan:0","vram_mb":5120,"punc":false}}
 
 // daemon → worker：Transcribe（3 s、16 kHz、mono、f32；audio_len = 192000）
 {"Transcribe":{"id":42,"sample_rate":16000,"language":"zh"}}

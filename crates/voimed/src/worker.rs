@@ -52,17 +52,16 @@ pub struct Worker {
     status: WorkerStatus,
     next_id: u64,
     model_root: PathBuf,
-    log_level: String,
     ready: Option<ReadyInfo>,
     last_error: Option<String>,
 }
 
 impl Worker {
-    pub fn spawn(id: BackendId, model_root: &Path, log_level: &str) -> anyhow::Result<Self> {
+    pub fn spawn(id: BackendId, model_root: &Path) -> anyhow::Result<Self> {
         if id == BackendId::Cpu {
             bail!("CPU 后端不启动 GPU worker");
         }
-        let (child, stdin, responses) = spawn_process(id, model_root, log_level)?;
+        let (child, stdin, responses) = spawn_process(id)?;
         Ok(Self {
             id,
             child,
@@ -73,7 +72,6 @@ impl Worker {
             model_root: model_root
                 .canonicalize()
                 .unwrap_or_else(|_| model_root.to_path_buf()),
-            log_level: log_level.to_string(),
             ready: None,
             last_error: None,
         })
@@ -86,7 +84,6 @@ impl Worker {
             .unwrap_or_default();
         let model_dir = match self.id {
             BackendId::Qwen3 => self.model_root.join("qwen3-asr-1.7b"),
-            BackendId::Firered => self.model_root.clone(),
             BackendId::Cpu => unreachable!("CPU backend has no worker"),
         };
         let hello = Request::Hello {
@@ -212,7 +209,7 @@ impl Worker {
     pub fn restart(&mut self) -> anyhow::Result<()> {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let (child, stdin, responses) = spawn_process(self.id, &self.model_root, &self.log_level)?;
+        let (child, stdin, responses) = spawn_process(self.id)?;
         self.child = child;
         self.stdin = stdin;
         self.responses = responses;
@@ -298,20 +295,9 @@ impl Worker {
     }
 }
 
-fn spawn_process(
-    id: BackendId,
-    model_root: &Path,
-    log_level: &str,
-) -> anyhow::Result<(Child, ChildStdin, ResponseReceiver)> {
+fn spawn_process(id: BackendId) -> anyhow::Result<(Child, ChildStdin, ResponseReceiver)> {
     let executable = worker_executable(id)?;
     let mut command = Command::new(&executable);
-    if id == BackendId::Firered {
-        if let Ok(runtime) = std::env::var("VOIME_FIRERED_RUNTIME") {
-            command.arg("--runtime").arg(runtime);
-        }
-        command.arg("--log-level").arg(log_level);
-        configure_firered_runtime(&mut command, &executable);
-    }
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -350,55 +336,7 @@ fn spawn_process(
             }
         })
         .context("创建 GPU stdout 线程失败")?;
-    let _ = model_root;
     Ok((child, stdin, rx))
-}
-
-/// Selects the ORT dynamic library and provider directory that the installer
-/// places next to the worker. Explicit user environment always wins.
-fn configure_firered_runtime(command: &mut Command, executable: &Path) {
-    let Some(directory) = firered_runtime_dir(executable) else {
-        return;
-    };
-    let library = directory.join(if cfg!(windows) {
-        "onnxruntime.dll"
-    } else if cfg!(target_os = "macos") {
-        "libonnxruntime.dylib"
-    } else {
-        "libonnxruntime.so"
-    });
-    if library.is_file() && std::env::var_os("ORT_DYLIB_PATH").is_none() {
-        command.env("ORT_DYLIB_PATH", library);
-    }
-    #[cfg(unix)]
-    {
-        let mut paths = vec![directory];
-        if let Some(existing) = std::env::var_os("LD_LIBRARY_PATH") {
-            paths.extend(std::env::split_paths(&existing));
-        }
-        if let Ok(value) = std::env::join_paths(paths) {
-            command.env("LD_LIBRARY_PATH", value);
-        }
-    }
-    #[cfg(windows)]
-    {
-        let mut paths = vec![directory];
-        if let Some(existing) = std::env::var_os("PATH") {
-            paths.extend(std::env::split_paths(&existing));
-        }
-        if let Ok(value) = std::env::join_paths(paths) {
-            command.env("PATH", value);
-        }
-    }
-}
-
-fn firered_runtime_dir(executable: &Path) -> Option<PathBuf> {
-    let bin_dir = executable.parent()?;
-    let mut candidates = vec![bin_dir.join("lib").join("voime").join("firered")];
-    if let Some(prefix) = bin_dir.parent() {
-        candidates.push(prefix.join("lib").join("voime").join("firered"));
-    }
-    candidates.into_iter().find(|directory| directory.is_dir())
 }
 
 fn worker_executable(id: BackendId) -> anyhow::Result<PathBuf> {
@@ -424,9 +362,8 @@ fn worker_executable(id: BackendId) -> anyhow::Result<PathBuf> {
 
 fn gpu_backend(id: BackendId) -> GpuBackend {
     match id {
-        BackendId::Firered => GpuBackend::Firered,
         BackendId::Qwen3 => GpuBackend::Qwen3,
-        BackendId::Cpu => GpuBackend::Firered,
+        BackendId::Cpu => unreachable!("CPU backend has no worker"),
     }
 }
 
@@ -451,7 +388,6 @@ mod tests {
     #[test]
     fn backend_mapping_has_no_cpu_worker() {
         assert!(BackendId::Cpu.worker_binary().is_none());
-        assert_eq!(gpu_backend(BackendId::Firered), GpuBackend::Firered);
         assert_eq!(gpu_backend(BackendId::Qwen3), GpuBackend::Qwen3);
     }
 }

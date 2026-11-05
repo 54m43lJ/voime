@@ -113,11 +113,11 @@ pub enum CtlAction {
     Quit,
     Backend(BackendId),
 }
-pub enum BackendId { Cpu, Firered, Qwen3 }
+pub enum BackendId { Cpu, Qwen3 }
 
 pub fn parse() -&gt; Cli;</code></pre>
 <ul class="note">
-  <li><code>BackendId</code> 的字符串值与 daemon 配置一致：<code>cpu</code> / <code>firered</code> / <code>qwen3</code>。</li>
+  <li><code>BackendId</code> 的字符串值与 daemon 配置一致：<code>cpu</code> / <code>qwen3</code>。</li>
 </ul>
 
 <h3 id="c4-3">4.3 client.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -254,8 +254,8 @@ pub enum CheckResult {
 }</code></pre>
 <ul class="note">
   <li><code>CheckResult</code> 是单项检查结果；<code>Warn</code> / <code>Fail</code> 携带一行原因，<code>Pass</code> 不带内容。</li>
-  <li><code>check_final_backend</code> 只读 <code>FinalConfig::load</code>，并列出 CPU / FireRed / Qwen 的安装与选择状态。</li>
-  <li><code>check_workers</code> 依次检查 CPU / FireRed / Qwen：worker 可执行文件、模型目录；对已选择后端使用 <code>Client::diagnostics()</code> 返回的内存快照，不读取日志、不启动 worker。</li>
+  <li><code>check_final_backend</code> 只读 <code>FinalConfig::load</code>，并列出 CPU / Qwen 的安装与选择状态。</li>
+  <li><code>check_workers</code> 依次检查 CPU / Qwen：worker 可执行文件、模型目录；对已选择后端使用 <code>Client::diagnostics()</code> 返回的内存快照，不读取日志、不启动 worker。</li>
   <li><code>check_fcitx</code> 只检查系统 addon 描述 / 库与 ABI；不检查inputmethod 条目或 <code>FCITX_ADDON_DIRS</code>。</li>
   <li><code>check_windows</code> 检查命名管道、麦克风隐私、<code>voime-tray.exe</code> 进程与 TSF 注册（若启用）；不加载模型。</li>
 </ul>
@@ -343,8 +343,8 @@ Tui::draw(&amp;mut app)
     │   ├── Client::snapshot() → daemon 在线
     │   └── Client::diagnostics() → Diagnostics { backend, worker }
     ├── voime::config::FinalConfig::load()
-    │   └── doctor::check_final_backend() → cpu / firered / qwen3
-    ├── doctor::check_workers(diagnostics) → CPU / FireRed / Qwen
+    │   └── doctor::check_final_backend() → cpu / qwen3
+    ├── doctor::check_workers(diagnostics) → CPU / Qwen
     │   └── doctor::check_worker(backend, selected, diagnostics)
     │       └── 检查 worker 可执行文件、模型目录与 daemon 内存状态
     ├── voime_core::config::default_model_root()

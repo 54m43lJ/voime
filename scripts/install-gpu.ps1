@@ -1,11 +1,8 @@
 param(
-    [switch]$Firered,
     [switch]$Qwen3,
-    [ValidateSet('cuda', 'directml')]
-    [string]$FireredRuntime = 'cuda',
     [ValidateSet('vulkan', 'cuda')]
     [string]$QwenRuntime = 'vulkan',
-    [ValidateSet('cpu', 'firered', 'qwen3')]
+    [ValidateSet('cpu', 'qwen3')]
     [string]$Backend = '',
     [switch]$NoModels,
     [string]$ModelDir = (Join-Path $env:LOCALAPPDATA 'voime\models'),
@@ -18,8 +15,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $BinDir = $Prefix
-$InstallFirered = $true
-$InstallQwen = $true
 
 function Find-Python {
     $python = Get-Command python3 -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -31,38 +26,13 @@ function Find-Python {
     }
     return $python.Source
 }
-if ($Firered -or $Qwen3) {
-    $InstallFirered = [bool]$Firered
-    $InstallQwen = [bool]$Qwen3
-}
-if (-not $PSBoundParameters.ContainsKey('FireredRuntime')) {
-    $video = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
-        Select-Object -First 1 -ExpandProperty Name
-    if ($video -match 'NVIDIA') { $FireredRuntime = 'cuda' } else { $FireredRuntime = 'directml' }
-}
-if (-not [string]::IsNullOrEmpty($Backend) -and ($Firered -or $Qwen3)) {
-    if ($Backend -eq 'firered' -and -not $InstallFirered) {
-        throw '--backend firered requires installing the FireRed backend'
-    }
-    if ($Backend -eq 'qwen3' -and -not $InstallQwen) {
-        throw '--backend qwen3 requires installing the Qwen backend'
-    }
-}
 
 if ($Uninstall) {
     $RuntimeDir = Join-Path $Prefix 'lib\voime'
-    if ($InstallFirered) {
-        Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $BinDir 'voime-gpu-firered.exe')
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $RuntimeDir 'firered')
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $ModelDir 'fireredasr2-aed')
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $ModelDir 'fireredpunc')
-    }
-    if ($InstallQwen) {
-        Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $BinDir 'voime-gpu-qwen3.exe')
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $RuntimeDir 'qwen3')
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $ModelDir 'qwen3-asr-1.7b')
-    }
-    Write-Host 'Selected GPU backends removed; final.backend is unchanged.'
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $BinDir 'voime-gpu-qwen3.exe')
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $RuntimeDir 'qwen3')
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $ModelDir 'qwen3-asr-1.7b')
+    Write-Host 'GPU backend removed; final.backend is unchanged.'
     exit 0
 }
 
@@ -71,83 +41,30 @@ if (-not (Test-Path (Join-Path $BinDir 'voimed.exe')) -and
     throw 'core install not found; install core before the GPU module'
 }
 
-$installModels = (-not $NoModels) -and ($InstallFirered -or $InstallQwen)
+$installModels = -not $NoModels
 $python = $null
 if ($installModels) { $python = Find-Python }
 
-function Install-FireredRuntime {
-    $destination = Join-Path $Prefix 'lib\voime\firered'
-    New-Item -ItemType Directory -Force -Path $destination | Out-Null
-    if (-not [string]::IsNullOrEmpty($SourceDir)) {
-        $offline = Join-Path $SourceDir 'runtime\firered'
-        if (Test-Path $offline) {
-            Write-Host "Installing FireRed ORT runtime from $offline..."
-            Copy-Item -Recurse -Force (Join-Path $offline '*') $destination
-            return
-        }
-    }
-    $candidates = @()
-    if (-not [string]::IsNullOrEmpty($env:ORT_DYLIB_PATH)) {
-        $candidates += Split-Path -Parent $env:ORT_DYLIB_PATH
-    }
-    $candidates += @(
-        (Join-Path $Prefix 'bin'),
-        (Join-Path $env:LOCALAPPDATA 'Programs\Voime'),
-        $env:WINDIR
-    )
-    foreach ($directory in $candidates) {
-        $library = Join-Path $directory 'onnxruntime.dll'
-        if (Test-Path $library) {
-            Write-Host "Installing FireRed ORT runtime from $directory..."
-            Copy-Item -Force $library $destination
-            Get-ChildItem -Path $directory -Filter 'onnxruntime_providers_*.dll' -ErrorAction SilentlyContinue |
-                Copy-Item -Destination $destination -Force
-            return
-        }
-    }
-    throw 'onnxruntime.dll not found; pass -SourceDir with runtime/firered/ or install the ONNX Runtime runtime'
-}
-
-if ($InstallFirered) {
-    $prebuilt = if ([string]::IsNullOrEmpty($SourceDir)) { '' } else { Join-Path $SourceDir 'bin\voime-gpu-firered.exe' }
-    if (-not [string]::IsNullOrEmpty($prebuilt) -and (Test-Path $prebuilt)) {
-        Write-Host 'Installing precompiled FireRed worker...'
-        Copy-Item -Force $prebuilt $BinDir
-    } else {
-        Write-Host "Building FireRed worker ($FireredRuntime)..."
-        Push-Location (Join-Path $Root 'crates\voime-gpu-firered')
-        try {
-            cargo build --release --features $FireredRuntime
-            if ($LASTEXITCODE -ne 0) { throw 'FireRed worker build failed' }
-        } finally { Pop-Location }
-        Copy-Item -Force (Join-Path $Root 'crates\voime-gpu-firered\target\release\voime-gpu-firered.exe') $BinDir
-    }
-    Install-FireredRuntime
-}
-
-if ($InstallQwen) {
-    $prebuilt = if ([string]::IsNullOrEmpty($SourceDir)) { '' } else { Join-Path $SourceDir 'bin\voime-gpu-qwen3.exe' }
-    if (-not [string]::IsNullOrEmpty($prebuilt) -and (Test-Path $prebuilt)) {
-        Write-Host 'Installing precompiled Qwen worker...'
-        Copy-Item -Force $prebuilt $BinDir
-    } else {
-        Write-Host "Building Qwen worker ($QwenRuntime)..."
-        Push-Location (Join-Path $Root 'crates\voime-gpu-qwen3')
-        try {
-            cargo build --release --features $QwenRuntime
-            if ($LASTEXITCODE -ne 0) { throw 'Qwen worker build failed' }
-        } finally { Pop-Location }
-        Copy-Item -Force (Join-Path $Root 'crates\voime-gpu-qwen3\target\release\voime-gpu-qwen3.exe') $BinDir
-    }
+$prebuilt = if ([string]::IsNullOrEmpty($SourceDir)) { '' } else { Join-Path $SourceDir 'bin\voime-gpu-qwen3.exe' }
+if (-not [string]::IsNullOrEmpty($prebuilt) -and (Test-Path $prebuilt)) {
+    Write-Host 'Installing precompiled Qwen worker...'
+    Copy-Item -Force $prebuilt $BinDir
+} else {
+    Write-Host "Building Qwen worker ($QwenRuntime)..."
+    Push-Location (Join-Path $Root 'crates\voime-gpu-qwen3')
+    try {
+        cargo build --release --features $QwenRuntime
+        if ($LASTEXITCODE -ne 0) { throw 'Qwen worker build failed' }
+    } finally { Pop-Location }
+    Copy-Item -Force (Join-Path $Root 'crates\voime-gpu-qwen3\target\release\voime-gpu-qwen3.exe') $BinDir
 }
 
 if ($installModels) {
     $modelArgs = @(
         (Join-Path $Root 'scripts\install-gpu-models.py'),
-        '--model-root', $ModelDir
+        '--model-root', $ModelDir,
+        '--qwen3'
     )
-    if ($InstallFirered) { $modelArgs += '--firered' }
-    if ($InstallQwen) { $modelArgs += '--qwen3' }
     if (-not [string]::IsNullOrEmpty($SourceDir)) {
         $resolvedSourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
         $modelArgs += @('--source-dir', $resolvedSourceDir, '--no-download')

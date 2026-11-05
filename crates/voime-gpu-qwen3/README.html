@@ -48,22 +48,22 @@ llama.cpp 的 Vulkan 路径使用系统 Vulkan loader 与 GPU 驱动；不依赖
   <li>属于 GPU 模块，不是默认 Final：只有 <code>scripts/install-gpu.sh --backend qwen3</code> / <code>scripts/install-gpu.ps1 --backend qwen3</code> 或 <code>voime ctl backend qwen3</code> 才启用；安装 GPU 模块本身不改变默认 <code>cpu</code>。</li>
   <li>worker 不可用、加载失败、超时或崩溃时，daemon 的当前段回退 CPU SenseVoice；核心 Preview 与 VAD 不受影响。</li>
   <li>运行期模型常驻；同一时刻只处理一个 Final，不在上一段未完成时接收下一段。</li>
-  <li>独立 crate、二进制、进程与 runtime 目录；不与 FireRed 后端共享链接单元或 runtime。</li>
+  <li>独立 crate、二进制、进程与 runtime 目录；不与其它组件共享链接单元或 runtime。</li>
 </ul>
 
 <h3 id="r1-3">1.3 非目标</h3>
 <ul>
   <li>不加载 VAD、不产生 Partial、不做 Preview、不包含平台前端或 UI。</li>
   <li>不接收活动段增量音频、流式请求或前端 IPC；只处理完整语音段。</li>
-  <li>不加载 ONNX / ONNX Runtime，也不提供 ORT GPU 路径；FireRed 后端与本 worker 相互独立。</li>
+  <li>不加载 ONNX / ONNX Runtime，也不提供 ORT GPU 路径。</li>
   <li>不提供 HIP / ROCm runtime；AMD Linux 的 Qwen 后端只走 Vulkan。</li>
   <li>不做 CPU Qwen3-ASR 大模型推理；GPU 不可用时由 daemon 回退核心 CPU SenseVoice，而不是在 worker 内跑 CPU 大模型。</li>
   <li>不做流式识别、增量解码或边录边出字。</li>
   <li>不做运行期模型 / runtime 下载、转换、量化或格式迁移；这些只发生在安装 / 发布阶段。</li>
   <li>不静默降级到 Q8_0 / FP16，也不混用 Q8 mmproj；精度或 runtime 不满足时该后端直接不可用。</li>
-  <li>不加载 FireRedPunc 或任何第二个标点 / 文本模型；标点与大小写由 Qwen3-ASR 自身产生。</li>
+  <li>不加载任何第二个标点 / 文本模型；标点与大小写由 Qwen3-ASR 自身产生。</li>
   <li>不做文本润色、纠错、翻译、摘要或规则后处理；只做输出包装清洗。</li>
-  <li>不支持运行中切换 Final 后端或同时运行两个 GPU worker；切换通过配置 + daemon 重启生效。</li>
+  <li>不支持运行中切换 Final 后端；切换通过配置 + daemon 重启生效。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -98,7 +98,7 @@ llama.cpp 的 Vulkan 路径使用系统 Vulkan loader 与 GPU 驱动；不依赖
   </tr>
   <tr>
     <td>卸载</td>
-    <td><code>scripts/install-gpu.sh --qwen3 --uninstall</code> 或对应 <code>.ps1</code>；只删除 Qwen worker、runtime 与 <code>qwen3-asr-1.7b</code> 模型，不触碰核心与 FireRed 后端。</td>
+    <td><code>scripts/install-gpu.sh --qwen3 --uninstall</code> 或对应 <code>.ps1</code>；只删除 Qwen worker、runtime 与 <code>qwen3-asr-1.7b</code> 模型，不触碰核心。</td>
     <td><a href="USER.html#u4-4">USER §4.4</a></td>
   </tr>
   <tr>

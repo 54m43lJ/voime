@@ -56,7 +56,7 @@ Linux 桌面的键盘、输入焦点与文本提交由 Fcitx5 持有。Voime 需
 <ul>
   <li>不实现音频、VAD、Preview、CPU Final 或 GPU Final；识别属于 <code>voime-core</code> / GPU worker，Final 调度属于 <code>voimed</code>。</li>
   <li>不做识别；Partial / Final 文本均由 daemon 产生，addon 只负责显示与提交。</li>
-  <li>不加载模型，不链接 ONNX Runtime / llama.cpp，不感知 Final 后端（<code>cpu</code> / <code>firered</code> / <code>qwen3</code>）或 GPU backend。</li>
+  <li>不加载模型，不链接 ONNX Runtime / llama.cpp，不感知 Final 后端（<code>cpu</code> / <code>qwen3</code>）或 GPU backend。</li>
   <li>不实现 TUI、托盘或自绘候选窗口；临时窗口由 Fcitx UI 渲染。</li>
   <li>不使用客户端 preedit；只写 Fcitx <code>InputPanel</code>。</li>
   <li>不抓普通按键、不转发按键、不注入其他窗口。</li>

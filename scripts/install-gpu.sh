@@ -1,49 +1,39 @@
 #!/usr/bin/env bash
-# Voime GPU module install (Linux): FireRed and/or Qwen workers, runtimes, models.
+# Voime GPU module install (Linux): Qwen worker, runtime and model.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREFIX="${VOIME_PREFIX:-$HOME/.local}"
 MODEL_ROOT="${VOIME_MODEL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/voime/models}"
 MODEL_SOURCE=""
-INSTALL_FIRERED=1
-INSTALL_QWEN3=1
 INSTALL_MODELS=1
 UNINSTALL=0
 INSTALL_DEPS=0
 ASSUME_YES=0
-FIRERED_RUNTIME="${VOIME_FIRERED_RUNTIME:-}"
 QWEN_RUNTIME="${VOIME_QWEN_RUNTIME:-vulkan}"
 BACKEND=""
 EXPLICIT_BACKEND=0
-EXPLICIT_TARGET=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/install-gpu.sh [--firered|--qwen3] [options]
+Usage: scripts/install-gpu.sh [--qwen3] [options]
 
 Options:
-  --firered                       Install only the FireRed worker.
-  --qwen3                         Install only the Qwen worker.
-  --firered-runtime cuda|migraphx|directml
+  --qwen3                         Install the Qwen worker (the only GPU backend).
   --qwen-runtime vulkan|cuda
-  --backend cpu|firered|qwen3      Write final.backend after installation.
-  --no-models                     Install workers/runtimes only.
+  --backend cpu|qwen3             Write final.backend after installation.
+  --no-models                     Install the worker/runtime only.
   --model-dir <dir>               Model root.
   --source-dir <dir>              Offline worker/runtime/model source.
   --yes, -y                       Skip model download and token prompts.
   --prefix <dir>                  Install prefix (default: $HOME/.local).
   --install-deps                  Install missing Arch Linux packages with pacman.
-  --uninstall                     Remove selected GPU backends.
+  --uninstall                     Remove the GPU backend.
   -h, --help                      Show this help.
 
 Models are downloaded from upstream by default after a confirmation that shows
 the download size. Use --source-dir for an offline package, --no-models to skip
 models, or --yes to skip the confirmation.
-
-FireRed's ORT runtime is copied to <prefix>/lib/voime/firered. An offline source
-may provide it under <source-dir>/runtime/firered/. AMD Linux currently fails
-MIGraphX compilation for the pinned FireRed graph; use --qwen3 instead.
 
 Authentication tokens are read from MODELSCOPE_API_TOKEN / HF_TOKEN (or their
 aliases). Interactive installs prompt for a missing token; press Enter to skip
@@ -53,10 +43,8 @@ EOF
 
 while (($#)); do
   case "$1" in
-    --firered) INSTALL_FIRERED=1; INSTALL_QWEN3=0; EXPLICIT_TARGET=1 ;;
-    --qwen3) INSTALL_FIRERED=0; INSTALL_QWEN3=1; EXPLICIT_TARGET=1 ;;
-    --firered-runtime) shift; FIRERED_RUNTIME="${1:?missing runtime}"; EXPLICIT_TARGET=1 ;;
-    --qwen-runtime) shift; QWEN_RUNTIME="${1:?missing runtime}"; EXPLICIT_TARGET=1 ;;
+    --qwen3) ;;
+    --qwen-runtime) shift; QWEN_RUNTIME="${1:?missing runtime}" ;;
     --backend) shift; BACKEND="${1:?missing backend}"; EXPLICIT_BACKEND=1 ;;
     --no-models) INSTALL_MODELS=0 ;;
     --model-dir) shift; MODEL_ROOT="${1:?missing --model-dir value}" ;;
@@ -99,51 +87,19 @@ gpu_vendor() {
 }
 
 GPU_VENDOR="$(gpu_vendor)"
-if [[ -z "$FIRERED_RUNTIME" ]]; then
-  if [[ "$GPU_VENDOR" == amd ]]; then
-    FIRERED_RUNTIME=migraphx
-  else
-    FIRERED_RUNTIME=cuda
-  fi
-fi
-if [[ "$FIRERED_RUNTIME" == directml ]]; then
-  echo "--firered-runtime directml is Windows-only; on Linux use cuda or migraphx" >&2
-  exit 2
-fi
-case "$FIRERED_RUNTIME" in cuda|migraphx) ;; *) echo "invalid --firered-runtime: $FIRERED_RUNTIME" >&2; exit 2 ;; esac
 case "$QWEN_RUNTIME" in vulkan|cuda) ;; *) echo "invalid --qwen-runtime: $QWEN_RUNTIME" >&2; exit 2 ;; esac
 if [[ -n "$BACKEND" ]]; then
-  case "$BACKEND" in cpu|firered|qwen3) ;; *) echo "invalid --backend: $BACKEND" >&2; exit 2 ;; esac
-  if ((EXPLICIT_TARGET)); then
-    if [[ "$BACKEND" == firered && "$INSTALL_FIRERED" != 1 && "$INSTALL_QWEN3" == 1 ]]; then
-      echo "--backend firered requires installing the FireRed backend" >&2
-      exit 2
-    fi
-    if [[ "$BACKEND" == qwen3 && "$INSTALL_QWEN3" != 1 && "$INSTALL_FIRERED" == 1 ]]; then
-      echo "--backend qwen3 requires installing the Qwen backend" >&2
-      exit 2
-    fi
-  fi
+  case "$BACKEND" in cpu|qwen3) ;; *) echo "invalid --backend: $BACKEND" >&2; exit 2 ;; esac
 fi
 if [[ "$GPU_VENDOR" == amd && "$QWEN_RUNTIME" != vulkan ]]; then
   echo "AMD Linux only supports --qwen-runtime vulkan (no ROCm / HIP)" >&2
   exit 2
 fi
-if [[ "$GPU_VENDOR" == amd && "$FIRERED_RUNTIME" == migraphx && "$INSTALL_FIRERED" == 1 ]]; then
-  echo "WARNING: FireRed's pinned ONNX graph currently fails MIGraphX compilation on AMD Linux." >&2
-  echo "         Qwen3 (Vulkan) is the validated AMD Linux GPU backend; use --qwen3 to skip FireRed." >&2
-fi
 
 if ((UNINSTALL)); then
-  if ((INSTALL_FIRERED)); then
-    rm -f "$BIN_DIR/voime-gpu-firered"
-    rm -rf "$RUNTIME_DIR/firered" "$MODEL_ROOT/fireredasr2-aed" "$MODEL_ROOT/fireredpunc"
-  fi
-  if ((INSTALL_QWEN3)); then
-    rm -f "$BIN_DIR/voime-gpu-qwen3"
-    rm -rf "$RUNTIME_DIR/qwen3" "$MODEL_ROOT/qwen3-asr-1.7b"
-  fi
-  echo "Selected GPU backends removed; final.backend is unchanged."
+  rm -f "$BIN_DIR/voime-gpu-qwen3"
+  rm -rf "$RUNTIME_DIR/qwen3" "$MODEL_ROOT/qwen3-asr-1.7b"
+  echo "GPU backend removed; final.backend is unchanged."
   exit 0
 fi
 
@@ -193,29 +149,15 @@ check_dependencies() {
     commands+=(python3)
     packages+=(python)
   fi
-  if ((INSTALL_FIRERED)); then
-    case "$FIRERED_RUNTIME" in
-      cuda)
-        packages+=(cuda)
-        [[ -n "$MODEL_SOURCE" && -d "$MODEL_SOURCE/runtime/firered" ]] || packages+=(onnxruntime-cuda)
-        ;;
-      migraphx)
-        packages+=(migraphx)
-        [[ -n "$MODEL_SOURCE" && -d "$MODEL_SOURCE/runtime/firered" ]] || packages+=(onnxruntime-rocm)
-        ;;
-    esac
-  fi
-  if ((INSTALL_QWEN3)); then
-    case "$QWEN_RUNTIME" in
-      vulkan)
-        packages+=(vulkan-headers vulkan-icd-loader shaderc glslang)
-        if [[ "$GPU_VENDOR" == amd ]]; then
-          packages+=(vulkan-radeon)
-        fi
-        ;;
-      cuda) packages+=(cuda) ;;
-    esac
-  fi
+  case "$QWEN_RUNTIME" in
+    vulkan)
+      packages+=(vulkan-headers vulkan-icd-loader shaderc glslang)
+      if [[ "$GPU_VENDOR" == amd ]]; then
+        packages+=(vulkan-radeon)
+      fi
+      ;;
+    cuda) packages+=(cuda) ;;
+  esac
   if ((INSTALL_DEPS)); then
     command -v sudo >/dev/null 2>&1 || packages+=(sudo)
   fi
@@ -246,63 +188,6 @@ check_dependencies() {
 
 check_dependencies
 
-build_firered() {
-  if [[ -n "$MODEL_SOURCE" && -x "$MODEL_SOURCE/bin/voime-gpu-firered" ]]; then
-    echo "Installing precompiled FireRed worker from $MODEL_SOURCE..."
-    install -m 0755 "$MODEL_SOURCE/bin/voime-gpu-firered" "$BIN_DIR/voime-gpu-firered"
-    return
-  fi
-  local features=()
-  case "$FIRERED_RUNTIME" in
-    cuda) features=(--features cuda) ;;
-    migraphx) features=(--features migraphx) ;;
-    directml) features=(--features directml) ;;
-  esac
-  echo "Building FireRed worker ($FIRERED_RUNTIME)..."
-  (cd "$ROOT/crates/voime-gpu-firered" && cargo build --release "${features[@]}")
-  install -m 0755 "$ROOT/crates/voime-gpu-firered/target/release/voime-gpu-firered" "$BIN_DIR/voime-gpu-firered"
-}
-
-resolve_library() {
-  local name="$1" path
-  if command -v ldconfig >/dev/null 2>&1; then
-    path="$(ldconfig -p 2>/dev/null | awk -v name="$name" '$1 == name { print $NF; exit }')"
-    if [[ -n "$path" && -f "$path" ]]; then
-      printf '%s\n' "$path"
-      return 0
-    fi
-  fi
-  return 1
-}
-
-install_firered_runtime() {
-  local dest="$RUNTIME_DIR/firered"
-  mkdir -p "$dest"
-  if [[ -n "$MODEL_SOURCE" && -d "$MODEL_SOURCE/runtime/firered" ]]; then
-    echo "Installing FireRed ORT runtime from $MODEL_SOURCE/runtime/firered..."
-    cp -aL "$MODEL_SOURCE/runtime/firered/." "$dest/"
-    return
-  fi
-  local core provider_dir provider
-  if ! core="$(resolve_library libonnxruntime.so)"; then
-    echo "onnxruntime runtime not found; install onnxruntime-${FIRERED_RUNTIME} or pass --source-dir with runtime/firered/" >&2
-    exit 1
-  fi
-  provider_dir="$(dirname "$core")"
-  case "$FIRERED_RUNTIME" in
-    cuda) provider="libonnxruntime_providers_cuda.so" ;;
-    migraphx) provider="libonnxruntime_providers_migraphx.so" ;;
-  esac
-  if [[ ! -f "$provider_dir/$provider" ]]; then
-    echo "missing ORT provider $provider in $provider_dir; install onnxruntime-${FIRERED_RUNTIME}" >&2
-    exit 1
-  fi
-  echo "Installing FireRed ORT runtime from $provider_dir..."
-  cp -aL "$provider_dir"/libonnxruntime.so* "$dest/"
-  cp -aL "$provider_dir/libonnxruntime_providers_shared.so" "$dest/"
-  cp -aL "$provider_dir/$provider" "$dest/"
-}
-
 build_qwen3() {
   if [[ -n "$MODEL_SOURCE" && -x "$MODEL_SOURCE/bin/voime-gpu-qwen3" ]]; then
     echo "Installing precompiled Qwen worker from $MODEL_SOURCE..."
@@ -319,21 +204,11 @@ build_qwen3() {
   install -m 0755 "$ROOT/crates/voime-gpu-qwen3/target/release/voime-gpu-qwen3" "$BIN_DIR/voime-gpu-qwen3"
 }
 
-if ((INSTALL_FIRERED)); then
-  build_firered
-  install_firered_runtime
-  echo "FireRed runtime selected: $FIRERED_RUNTIME (worker loads only this EP)."
-fi
-
-if ((INSTALL_QWEN3)); then
-  build_qwen3
-  echo "Qwen runtime selected: $QWEN_RUNTIME (AMD Linux only supports vulkan)."
-fi
+build_qwen3
+echo "Qwen runtime selected: $QWEN_RUNTIME (AMD Linux only supports vulkan)."
 
 if ((INSTALL_MODELS)); then
-  model_args=(--model-root "$MODEL_ROOT")
-  if ((INSTALL_FIRERED)); then model_args+=(--firered); fi
-  if ((INSTALL_QWEN3)); then model_args+=(--qwen3); fi
+  model_args=(--model-root "$MODEL_ROOT" --qwen3)
   if [[ -n "$MODEL_SOURCE" ]]; then
     model_args+=(--source-dir "$MODEL_SOURCE" --no-download)
   fi

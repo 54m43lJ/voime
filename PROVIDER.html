@@ -43,10 +43,6 @@
     <td>核心安装内的 ONNX Runtime CPU Execution Provider；只执行 FireRedVAD 与 SenseVoice。</td>
   </tr>
   <tr>
-    <td>FireRed ORT GPU</td>
-    <td>FireRed worker 使用的 ONNX Runtime GPU provider；可用平台、EP 与 runtime 部署见 <a href="crates/voime-gpu-firered/PROVIDER.html#p4-3">voime-gpu-firered PROVIDER §4.3</a>。</td>
-  </tr>
-  <tr>
     <td>Qwen llama.cpp</td>
     <td>Qwen worker 使用的 llama.cpp / GGML provider；可用 backend 与 runtime 部署见 <a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-3">voime-gpu-qwen3 PROVIDER §4.3</a>。</td>
   </tr>
@@ -70,8 +66,8 @@
 <table>
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>本地性</td><td>运行期所有 provider 调用在本机完成；模型、音频与 IPC 不经过网络。</td></tr>
-  <tr><td>核心只 CPU ORT</td><td>核心安装只加载 CPU Execution Provider；核心二进制不链接、不探测 CUDA / MIGraphX / DirectML / Vulkan。</td></tr>
-  <tr><td>GPU runtime 隔离</td><td>FireRed 的 ORT GPU 与 Qwen 的 llama.cpp 各自放在独立 worker 的 runtime 目录；不共享打包库，不写全局 <code>LD_LIBRARY_PATH</code>。</td></tr>
+  <tr><td>核心只 CPU ORT</td><td>核心安装只加载 CPU Execution Provider；核心二进制不链接、不探测任何 GPU runtime。</td></tr>
+  <tr><td>GPU runtime 隔离</td><td>Qwen 的 llama.cpp 放在独立 worker 的 runtime 目录；不写全局 <code>LD_LIBRARY_PATH</code>。</td></tr>
   <tr><td>GPU backend 归属</td><td>每个 GPU worker 只使用其组件 PROVIDER 声明的 runtime 与 backend；不使用、不探测其它 runtime。</td></tr>
   <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest、SHA-256 与文件大小，失败不进入运行态。</td></tr>
   <tr><td>模型布局</td><td>一模型一目录；目录名是稳定标识，版本写在 <code>manifest.json</code>，不把版本号拼进目录名。</td></tr>
@@ -91,7 +87,7 @@
 <div class="diagram"><img src="diagram/provider-map.svg" alt="Voime 与外部 provider 的组件图"></div>
 <ul class="note">
   <li>Voime 作为单一参与者；内部组件不展开。</li>
-  <li>平台宿主、音频栈、CPU ORT、FireRed ORT GPU、Qwen llama.cpp 与模型目录是外部 provider；本地端点是 daemon 与客户端之间的传输 provider。</li>
+  <li>平台宿主、音频栈、CPU ORT、Qwen llama.cpp 与模型目录是外部 provider；本地端点是 daemon 与客户端之间的传输 provider。</li>
   <li>每条边的消费 API 由对应组件 PROVIDER 定义；GPU runtime 只由对应 worker 消费。</li>
 </ul>
 
@@ -101,7 +97,7 @@
   <li>同一 <code>final.backend</code> 在两个阶段判定两次：启动时决定加载哪个 Final 后端，每个 Final 时决定走哪条推理路径。</li>
   <li>核心启动时读取并校验 <code>firered-vad</code> / <code>sensevoice-small</code>，创建 CPU 会话；每个语音段只重置解码状态，不重新加载权重。</li>
   <li>GPU worker 启动时校验自己的模型与 runtime；模型、精度与能力自检由对应组件 PROVIDER 定义。</li>
-  <li>具体张量名、形状、CMVN 与 fbank 参数见 <a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a>、<a href="crates/voime-gpu-firered/PROVIDER.html#p4-1">voime-gpu-firered PROVIDER §4.1</a> 与 <a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-1">voime-gpu-qwen3 PROVIDER §4.1</a>。</li>
+  <li>具体张量名、形状、CMVN 与 fbank 参数见 <a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a> 与 <a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-1">voime-gpu-qwen3 PROVIDER §4.1</a>。</li>
 </ul>
 
 <h2 id="p4">4. INTERFACES</h2>
@@ -113,8 +109,6 @@
   <tr><td>cpal / 系统音频</td><td><code>voime-core</code></td><td><a href="crates/voime-core/PROVIDER.html#p4-1">voime-core PROVIDER §4.1</a></td><td>设备枚举、默认输入配置、PCM 回调、流错误。</td></tr>
   <tr><td>ONNX Runtime CPU</td><td><code>voime-core</code></td><td><a href="crates/voime-core/PROVIDER.html#p4-3">voime-core PROVIDER §4.3</a></td><td>CPU 会话、张量输入输出、metadata。</td></tr>
   <tr><td>核心模型目录</td><td><code>voime-core</code></td><td><a href="crates/voime-core/PROVIDER.html#p4-2">voime-core PROVIDER §4.2</a></td><td><code>firered-vad</code> / <code>sensevoice-small</code> 的 manifest、SHA-256 与张量。</td></tr>
-  <tr><td>ONNX Runtime GPU EP</td><td><code>voime-gpu-firered</code></td><td><a href="crates/voime-gpu-firered/PROVIDER.html#p4-3">voime-gpu-firered PROVIDER §4.3</a></td><td>GPU EP 会话、runtime 动态加载与错误映射。</td></tr>
-  <tr><td>FireRed 模型目录</td><td><code>voime-gpu-firered</code></td><td><a href="crates/voime-gpu-firered/PROVIDER.html#p4-1">voime-gpu-firered PROVIDER §4.1</a></td><td><code>fireredasr2-aed</code> / <code>fireredpunc</code> 的 ONNX、词表、标签与 manifest。</td></tr>
   <tr><td>llama.cpp / GGML</td><td><code>voime-gpu-qwen3</code></td><td><a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-3">voime-gpu-qwen3 PROVIDER §4.3</a></td><td>GGUF / mmproj 推理、backend 选择与错误映射。</td></tr>
   <tr><td>Qwen 模型目录</td><td><code>voime-gpu-qwen3</code></td><td><a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-1">voime-gpu-qwen3 PROVIDER §4.1</a></td><td>BF16 GGUF 主模型、BF16 mmproj、manifest。</td></tr>
   <tr><td>Unix socket / named pipe</td><td><code>voimed</code>、<code>voime</code>、前端</td><td><a href="crates/voime-transport/PROVIDER.html">voime-transport PROVIDER</a></td><td>端点、权限、accept / connect、关闭唤醒。</td></tr>
@@ -128,7 +122,6 @@
   <tr><th>数据</th><th>来源</th><th>项目内对象</th><th>所有者</th></tr>
   <tr><td>设备 PCM</td><td>cpal 回调</td><td><code>AudioChunk</code></td><td><a href="crates/voime-core/USER.html#u4-2">voime-core USER §4.2</a></td></tr>
   <tr><td>核心模型文件</td><td><code>firered-vad</code> / <code>sensevoice-small</code></td><td><code>ModelManifest</code> / <code>FileSpec</code></td><td><a href="crates/voime-core/USER.html#u4-3">voime-core USER §4.3</a></td></tr>
-  <tr><td>FireRed 模型文件</td><td><code>fireredasr2-aed</code> / <code>fireredpunc</code></td><td>ONNX 张量 / 词表 / 标签</td><td><a href="crates/voime-gpu-firered/PROVIDER.html#p4-1">voime-gpu-firered PROVIDER §4.1</a></td></tr>
   <tr><td>Qwen 模型文件</td><td><code>qwen3-asr-1.7b</code></td><td>GGUF 主模型 / mmproj</td><td><a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-1">voime-gpu-qwen3 PROVIDER §4.1</a></td></tr>
   <tr><td>Final 音频段</td><td>daemon</td><td><code>Frame { Transcribe, f32le PCM }</code></td><td><a href="crates/voime-gpu-common/USER.html#u4-1">voime-gpu-common USER §4.1</a></td></tr>
   <tr><td>Final 文本</td><td>CPU Final / GPU worker</td><td><code>Final { segment_id, text }</code></td><td><a href="crates/voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a></td></tr>

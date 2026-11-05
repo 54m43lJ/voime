@@ -7,13 +7,8 @@ use voimed::backend::BackendId;
 #[test]
 fn backend_selection_lists_only_its_models() {
     assert!(BackendId::Cpu.model_dirs().is_empty());
-    assert_eq!(
-        BackendId::Firered.model_dirs(),
-        &["fireredasr2-aed", "fireredpunc"]
-    );
     assert_eq!(BackendId::Qwen3.model_dirs(), &["qwen3-asr-1.7b"]);
     assert!(BackendId::Cpu.worker_binary().is_none());
-    assert!(BackendId::Firered.worker_binary().is_some());
     assert!(BackendId::Qwen3.worker_binary().is_some());
 }
 
@@ -54,6 +49,5 @@ fn wire_frame_round_trips_transcribe() {
 #[test]
 fn gpu_protocol_is_version_one() {
     assert_eq!(GPU_PROTOCOL_VERSION, 1);
-    assert_eq!(GpuBackend::Firered.as_str(), "firered");
     assert_eq!(GpuBackend::Qwen3.as_str(), "qwen3");
 }

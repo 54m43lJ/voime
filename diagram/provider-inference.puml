@@ -10,9 +10,7 @@ skinparam activity {
 start
 :读取 final.backend;
 :加载并校验核心模型;
-if (backend = firered?) then (是)
-  :加载 FireRed worker、ORT runtime 与模型;
-elseif (backend = qwen3?) then (是)
+if (backend = qwen3?) then (是)
   :加载 Qwen worker、llama.cpp runtime 与 GGUF / mmproj;
 else (cpu)
   :仅使用核心模型;
@@ -24,10 +22,6 @@ repeat
   if (backend = cpu?) then (是)
     |CPU ORT|
     :SenseVoice Final;
-    |Voime|
-  elseif (backend = firered?) then (是)
-    |FireRed ORT GPU|
-    :Transcribe;
     |Voime|
   else (qwen3)
     |Qwen llama.cpp|

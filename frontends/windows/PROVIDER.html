@@ -22,7 +22,7 @@
 
 <p>
 本文只记录前端消费的 Win32 / UIA / TSF 子集；完整定义以 Microsoft 官方文档为准。
-DirectML / Vulkan / CUDA 是 GPU 模块所在平台的 runtime 约束，不属于前端消费。
+Vulkan / CUDA 是 GPU 模块所在平台的 runtime 约束，不属于前端消费。
 命名管道契约见 <a href="../../crates/voime-transport/PROVIDER.html">voime-transport PROVIDER</a>。
 </p>
 
@@ -45,7 +45,7 @@ DirectML / Vulkan / CUDA 是 GPU 模块所在平台的 runtime 约束，不属�
   <tr><td>edit session</td><td><code>ITfContext::RequestEditSession</code> 调度的读写会话。</td></tr>
   <tr><td>keyboard TIP / speech TIP</td><td>TSF 文本服务类别；keyboard TIP 需成为当前输入法，speech TIP 的并行能力待验证。</td></tr>
   <tr><td>CLSID / InprocServer32</td><td>COM 类标识与进程内 DLL 注册表项。</td></tr>
-  <tr><td>DirectML / Vulkan / CUDA</td><td>Windows 上 GPU 模块的 runtime 约束：FireRed 使用 ONNX Runtime 的 DirectML / CUDA EP，Qwen 使用 llama.cpp 的 Vulkan / CUDA backend；前端不加载、不探测、不选择。</td></tr>
+  <tr><td>Vulkan / CUDA</td><td>Windows 上 GPU 模块的 runtime 约束：Qwen 使用 llama.cpp 的 Vulkan / CUDA backend；前端不加载、不探测、不选择。</td></tr>
   <tr><td>Session 0 服务</td><td>Windows 服务宿主会话；Voime 不把前端或 daemon 装成 Session 0 服务，所有进程在当前用户桌面会话运行。</td></tr>
 </table>
 
@@ -56,7 +56,7 @@ DirectML / Vulkan / CUDA 是 GPU 模块所在平台的 runtime 约束，不属�
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>进程模型</td><td>每用户桌面进程；不使用 Session 0 Windows 服务采集音频或注入文本；GPU worker 由 <code>voimed</code> 拉起的独立进程，前端不管理。</td></tr>
   <tr><td>安装与权限</td><td>核心安装脚本 <code>scripts/install-core.ps1</code> 负责托盘、daemon 与核心模型，并写入登录启动；GPU 安装脚本 <code>scripts/install-gpu.ps1</code> 负责 worker、runtime 与 GPU 模型。每用户安装；不装 Session 0 服务；不绕过 UIPI。</td></tr>
-  <tr><td>GPU runtime 边界</td><td>DirectML / Vulkan / CUDA 只属于 GPU 模块；前端只链接 Win32 / UIA / TSF 与命名管道，不链接、不探测、不选择 GPU runtime。</td></tr>
+  <tr><td>GPU runtime 边界</td><td>Vulkan / CUDA 只属于 GPU 模块；前端只链接 Win32 / UIA / TSF 与命名管道，不链接、不探测、不选择 GPU runtime。</td></tr>
   <tr><td>热键</td><td>全局热键用 <code>RegisterHotKey</code>；PTT 会话硬切分的 key-up 用 <code>GetAsyncKeyState</code> 轮询；录制使用设置窗口的 winit 键盘事件，不安装低级钩子，不记录其他按键。</td></tr>
   <tr><td>目标</td><td>前台窗口 + UIA 焦点元素；提交前复核 HWND 与 RuntimeId。</td></tr>
   <tr><td>编码</td><td>UTF-8 内部字符串转 UTF-16；emoji 代理对不拆分；长文本分批。</td></tr>
@@ -83,7 +83,7 @@ DirectML / Vulkan / CUDA 是 GPU 模块所在平台的 runtime 约束，不属�
 <ul class="note">
   <li>目标绑定使用前台 HWND + UIA RuntimeId；提交前复核。</li>
   <li><code>SendInput</code> 只注入目标；失败不重试其他窗口。</li>
-  <li>本图只包含 Win32 / UIA / SendInput；DirectML / Vulkan / CUDA 属于 GPU worker，不出现在前端边界。</li>
+  <li>本图只包含 Win32 / UIA / SendInput；Vulkan / CUDA 属于 GPU worker，不出现在前端边界。</li>
 </ul>
 
 <h3 id="p3-3">3.3 TSF 编辑会话</h3>
@@ -112,7 +112,7 @@ DirectML / Vulkan / CUDA 是 GPU 模块所在平台的 runtime 约束，不属�
   <tr><td>Shell 通知区域 API</td><td>托盘图标与菜单。</td></tr>
 </table>
 <ul class="note">
-  <li>上表是前端消费的全部 OS 边界：Win32 / UIA / TSF 与命名管道。DirectML / Vulkan / CUDA 不在其中，只由 GPU worker 消费。</li>
+  <li>上表是前端消费的全部 OS 边界：Win32 / UIA / TSF 与命名管道。Vulkan / CUDA 不在其中，只由 GPU worker 消费。</li>
 </ul>
 
 <h3 id="p4-2">4.2 TSF 接口（可选）</h3>
@@ -154,7 +154,7 @@ DirectML / Vulkan / CUDA 是 GPU 模块所在平台的 runtime 约束，不属�
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>核心安装</td><td><code>scripts/install-core.ps1</code> 安装 <code>voime-tray.exe</code> 与 <code>voimed.exe</code> 到默认前缀 <code>%LOCALAPPDATA%\Programs\Voime</code>，核心模型写入 <code>%LOCALAPPDATA%\voime\models</code>，并写入当前用户登录启动项。</td></tr>
-  <tr><td>GPU 模块安装</td><td><code>scripts/install-gpu.ps1</code> 安装 GPU worker、对应 GPU runtime（DirectML / Vulkan / CUDA）与 GPU 模型；GPU 模块独立于前端，前端不参与安装。</td></tr>
+  <tr><td>GPU 模块安装</td><td><code>scripts/install-gpu.ps1</code> 安装 GPU worker、对应 GPU runtime（Vulkan / CUDA）与 GPU 模型；GPU 模块独立于前端，前端不参与安装。</td></tr>
   <tr><td>安装范围</td><td>核心与 GPU 模块每用户安装；不安装系统级常驻服务、不装 Session 0 服务；卸载由对应安装脚本按同一范围删除。</td></tr>
   <tr><td>登录启动</td><td>核心安装脚本只写当前用户 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code> 启动 <code>voime-tray.exe</code>。</td></tr>
   <tr><td>TSF 注册</td><td>可选子工程；启用时按 COM <code>InprocServer32</code> 注册，通常需要管理员权限；不启用不影响托盘前端。</td></tr>

@@ -90,7 +90,7 @@
 <h3 id="p4-2">4.2 OS 诊断</h3>
 <table>
   <tr><th>检查</th><th>来源</th><th>用途</th></tr>
-  <tr><td>Final 配置</td><td><code>XDG_CONFIG_HOME/voime/config.toml</code> 或 <code>~/.config/voime/config.toml</code></td><td>doctor 显示所选 <code>cpu</code> / <code>firered</code> / <code>qwen3</code>；缺失时按 <code>cpu</code>。</td></tr>
+  <tr><td>Final 配置</td><td><code>XDG_CONFIG_HOME/voime/config.toml</code> 或 <code>~/.config/voime/config.toml</code></td><td>doctor 显示所选 <code>cpu</code> / <code>qwen3</code>；缺失时按 <code>cpu</code>。</td></tr>
   <tr><td>worker 状态</td><td>daemon 的只读 <code>Diagnostics</code> 响应</td><td>doctor 显示 worker ready / running / unavailable；未选择不计 FAIL。</td></tr>
   <tr><td>fcitx5 进程</td><td><code>/proc/&lt;pid&gt;/comm</code></td><td>doctor 判断 Fcitx 是否运行。</td></tr>
   <tr><td>系统 addon 描述</td><td><code>/usr/share/fcitx5/addon/voime.conf</code> 或 <code>/usr/local/share/...</code></td><td>doctor 检查系统级 addon 安装。</td></tr>

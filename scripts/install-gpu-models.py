@@ -30,12 +30,8 @@ MAX_SEGMENT_MS = 30_000
 CHUNK_BYTES = 1024 * 1024
 PROGRESS_BYTES = 512 * 1024 * 1024
 
-FIRERED_ASR_REVISION = "294ac0154da9c445741810327f1ae6d33a09ecfd"
 QWEN_REVISION = "36a678687ba7d07a74ca70ccb0e36902e005fb80"
 QWEN_MODELSCOPE_REVISION = "fd6f16ded582f5b0789ef4aea7401707ce49746b"
-PUNC_REVISION_MODEL = "db9a00bfcb6a42744052561a776aea73d802efdc"
-PUNC_REVISION_OUT_DICT = "a9d6cc5fb506bb3fa9a5939e546b1b2ea7b921b7"
-PUNC_REVISION_PUNC_JSON = "7d932cd0cd662f6bba5b47f9b9c4cee080523811"
 
 PROVIDER_INFO = {
     "modelscope": (
@@ -101,117 +97,6 @@ def modelscope_urls(repo: str, revision: str, name: str) -> tuple[str, str]:
         f"https://www.modelscope.cn/models/{path}",
     )
 
-
-# FireRedASR2-AED uses the pinned Ciwiruk ONNX export. ModelScope has other
-# FireRedASR2 ONNX exports, but not this exact file set, so keep the HF source.
-FIRERED_MODELS = (
-    ModelSpec(
-        id="fireredasr2-aed",
-        kind="asr",
-        version=FIRERED_ASR_REVISION,
-        license="Apache-2.0",
-        backend="firered",
-        format="onnx",
-        precision="fp32",
-        files=(
-            FileSpec(
-                "encoder.onnx",
-                564_553,
-                "4275797da7515ab7d112b684cc1a1589ccf4efdca5c8b97165e3f7b195e46e6e",
-                (hf_url("Ciwiruk/FireRedASR2-AED-onnx", FIRERED_ASR_REVISION, "encoder.onnx"),),
-            ),
-            FileSpec(
-                "encoder.data",
-                2_893_370_496,
-                "d9658f82e025b4fd44b9ad94ef10406a5919bdd006d0b7102e5193ce37ad8e6c",
-                (hf_url("Ciwiruk/FireRedASR2-AED-onnx", FIRERED_ASR_REVISION, "encoder.data"),),
-            ),
-            FileSpec(
-                "ctc.onnx",
-                44_410_182,
-                "ec3f28bd4376cfbded7319e34203b6e9f503a6c12731a15a8f485038fbfb4a75",
-                (hf_url("Ciwiruk/FireRedASR2-AED-onnx", FIRERED_ASR_REVISION, "ctc.onnx"),),
-            ),
-            FileSpec(
-                "decoder.onnx",
-                392_235,
-                "3e426f8fa9e60242d2fa570896eae1539e8859a82d544c50fc5f3b186323bfa0",
-                (hf_url("Ciwiruk/FireRedASR2-AED-onnx", FIRERED_ASR_REVISION, "decoder.onnx"),),
-            ),
-            FileSpec(
-                "decoder.data",
-                1_793_474_560,
-                "c9a46fba63fd90dacf226169a6573b2df34c910178aff4f2a8a4d62d5fc5e6ff",
-                (hf_url("Ciwiruk/FireRedASR2-AED-onnx", FIRERED_ASR_REVISION, "decoder.data"),),
-            ),
-            FileSpec(
-                "dict.txt",
-                79_172,
-                "1bc613de2112d257e61a349c3e72d1b1a9cf19c33d3ca954197ad2171e5ea07b",
-                (hf_url("Ciwiruk/FireRedASR2-AED-onnx", FIRERED_ASR_REVISION, "dict.txt"),),
-            ),
-            FileSpec(
-                "train_bpe1000.model",
-                251_707,
-                "473bbc157cb4eade2059b30a3c877a1c29bd50cadbfbed869ae36eeade7fee07",
-                (
-                    hf_url(
-                        "Ciwiruk/FireRedASR2-AED-onnx",
-                        FIRERED_ASR_REVISION,
-                        "train_bpe1000.model",
-                    ),
-                ),
-            ),
-            FileSpec(
-                "cmvn.ark",
-                1_311,
-                "6efba6105429d1630c05d818d956bfe4edfad37a04b3b27bb5a029b9adb37945",
-                (hf_url("Ciwiruk/FireRedASR2-AED-onnx", FIRERED_ASR_REVISION, "cmvn.ark"),),
-            ),
-            FileSpec(
-                "config.json",
-                1_203,
-                "2a38d390e6bde9807466c765d012daca4d5d66d2019890dffafec95f62310e4f",
-                (hf_url("Ciwiruk/FireRedASR2-AED-onnx", FIRERED_ASR_REVISION, "config.json"),),
-            ),
-        ),
-    ),
-    ModelSpec(
-        id="fireredpunc",
-        kind="punc",
-        version="2026-03-10",
-        license="Apache-2.0",
-        backend="firered",
-        format="onnx",
-        precision="fp32",
-        files=(
-            FileSpec(
-                "model.onnx",
-                407_027_716,
-                "fbcb4dd1e54f07bf770672a9691fb54af41774a130e878e25d105f2f5ba31fde",
-                modelscope_urls("manyeyes/FireRedPunc-zh-en-onnx", PUNC_REVISION_MODEL, "model.onnx"),
-            ),
-            FileSpec(
-                "tokens.txt",
-                109_540,
-                "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c",
-                modelscope_urls("manyeyes/FireRedPunc-zh-en-onnx", PUNC_REVISION_MODEL, "tokens.txt"),
-            ),
-            FileSpec(
-                "out_dict",
-                33,
-                "6f0f7e0004881d617bc6e1d7b5b39972da80dcb49576bca489b1603ee55e20bb",
-                modelscope_urls("manyeyes/FireRedPunc-zh-en-onnx", PUNC_REVISION_OUT_DICT, "out_dict"),
-            ),
-            FileSpec(
-                "punc.json",
-                380,
-                "e3cae8dd92ea6cfc52b713238977412e4b7a47aa9b9ae4eaa94156e0984fcb21",
-                modelscope_urls("manyeyes/FireRedPunc-zh-en-onnx", PUNC_REVISION_PUNC_JSON, "punc.json"),
-            ),
-        ),
-    ),
-)
 
 QWEN_MODELS = (
     ModelSpec(
@@ -731,7 +616,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-root", type=Path, default=default_model_root())
     parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
     parser.add_argument("--source-dir", type=Path)
-    parser.add_argument("--firered", action="store_true", help="install FireRed models")
     parser.add_argument("--qwen3", action="store_true", help="install the Qwen3 model")
     parser.add_argument("--no-download", action="store_true")
     parser.add_argument(
@@ -744,14 +628,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     ALLOW_TOKEN_PROMPT = not args.yes
 
-    selected: tuple[ModelSpec, ...]
-    if args.firered or args.qwen3:
-        selected = tuple(
-            (FIRERED_MODELS if args.firered else ())
-            + (QWEN_MODELS if args.qwen3 else ())
-        )
-    else:
-        selected = FIRERED_MODELS + QWEN_MODELS
+    selected: tuple[ModelSpec, ...] = QWEN_MODELS
 
     model_root = args.model_root.expanduser().resolve()
     cache_dir = args.cache_dir.expanduser().resolve()

@@ -100,7 +100,7 @@
   </tr>
   <tr>
     <td>内置标点 / 大小写</td>
-    <td>标点与大小写来自 Qwen3-ASR 模型输出；不加载 FireRedPunc，不做二次标点或英文大小写修正。</td>
+    <td>标点与大小写来自 Qwen3-ASR 模型输出；不加载独立标点模型，不做二次标点或英文大小写修正。</td>
   </tr>
   <tr>
     <td>必须清洗包装</td>
@@ -299,7 +299,7 @@ Qwen runtime 在编译时选定，不是运行期开关。安装脚本按 <code>
 
 <ul class="note">
   <li>Qwen worker 内部不做“GPU 失败 → CPU 大模型”的回退；CPU 回退由 daemon 用核心 SenseVoice 完成，见 <a href="../../USER.html#u4-4">根 USER §4.4</a>。</li>
-  <li>Qwen 后端失败不影响 VAD、Preview、热键、目标或另一个 GPU 后端；daemon 仍以 CPU Final 启动，同一时刻仍只有一个 worker 运行。</li>
+  <li>Qwen 后端失败不影响 VAD、Preview、热键或目标；daemon 仍以 CPU Final 启动，同一时刻最多只有一个 worker 运行。</li>
   <li>错误码以 <a href="../voime-gpu-common/USER.html#u4-5">voime-gpu-common USER §4.5</a> 为准，超时 / 取消以 <a href="../voime-gpu-common/USER.html#u4-7">§4.7</a> 为准；本文不复制字段定义。</li>
 </ul>
 
@@ -315,7 +315,7 @@ scripts/install-gpu.ps1 --qwen3 --qwen-runtime cuda</code></pre>
   <tr><td><code>--qwen3</code></td><td>只安装预编译的 Qwen worker / runtime 包与 <code>qwen3-asr-1.7b</code> 模型；不改变 <code>final.backend</code>。</td></tr>
   <tr><td><code>--qwen-runtime vulkan|cuda</code></td><td>选择预编译的 Qwen worker / runtime 变体；AMD Linux 只接受 <code>vulkan</code>；不提供 HIP / ROCm。</td></tr>
   <tr><td><code>--backend qwen3</code></td><td>安装后写入 <code>final.backend = qwen3</code>；该后端必须已安装；不自动重启 daemon。</td></tr>
-  <tr><td><code>--uninstall</code></td><td>删除 Qwen worker、runtime 包与 <code>qwen3-asr-1.7b</code> 模型；不触碰核心、FireRed 后端或另一个 runtime。</td></tr>
+  <tr><td><code>--uninstall</code></td><td>删除 Qwen worker、runtime 包与 <code>qwen3-asr-1.7b</code> 模型；不触碰核心或另一个 runtime。</td></tr>
   <tr><td><code>--no-models</code></td><td>只装 worker 与 runtime 包；模型目录由用户提供，仍按 <a href="#u4-1">§4.1</a> 校验。</td></tr>
   <tr><td><code>--source-dir &lt;dir&gt;</code></td><td>离线模型 / runtime 源；按 <code>&lt;dir&gt;/&lt;model-id&gt;/</code> 读取，不联网。</td></tr>
   <tr><td><code>--yes</code> / <code>-Yes</code></td><td>跳过模型下载确认与 token 提示；用于非交互安装。</td></tr>

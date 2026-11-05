@@ -55,15 +55,15 @@ GPU runtime 或 daemon 状态。
   <li>不处理热键、输入焦点、目标绑定、临时窗口或文本提交。</li>
   <li>不提供 TUI、配置 UI 或会话历史；这些属于 <code>voime</code> 与 <code>voimed</code>。</li>
   <li>不做模型下载、导出或安装；安装脚本在根 <code>scripts/</code> / <code>tools/</code>。</li>
-  <li>不加载 GPU runtime、不管理 GPU worker、不执行 FireRed / Qwen Final。</li>
-  <li>不加载 FireRedPunc；FireRed 的标点只在 FireRed worker 内完成。</li>
+  <li>不加载 GPU runtime、不管理 GPU worker、不执行 GPU Final。</li>
+  <li>不加载独立标点模型；Qwen 的标点由 Qwen3-ASR 自身产生。</li>
   <li>不保存音频、按键或识别文本到磁盘。</li>
   <li>不负责设备选择策略、平台隐私 / 通信设备策略、平台路径、日志、systemd / 登录启动。</li>
 </ul>
 <ul class="note">
   <li>产品级术语见 <a href="../../USER.html#u1">根 USER §1</a>；核心内部约定见 <a href="CORE.html#c2">本组件 CORE §2</a>。</li>
   <li>模型目录、SenseVoice 与推理运行时的外部契约见 <a href="PROVIDER.html">PROVIDER</a>，不要在 README 或 USER 中复制张量形状。</li>
-  <li>GPU Final 由 <code>voimed</code> 调度到 <a href="../voime-gpu-firered/README.html">voime-gpu-firered</a> / <a href="../voime-gpu-qwen3/README.html">voime-gpu-qwen3</a>；核心只提供 CPU 路径。</li>
+  <li>GPU Final 由 <code>voimed</code> 调度到 <a href="../voime-gpu-qwen3/README.html">voime-gpu-qwen3</a>；核心只提供 CPU 路径。</li>
 </ul>
 
 <h2 id="r2">2. 用户交互</h2>
@@ -99,7 +99,7 @@ GPU runtime 或 daemon 状态。
   <tr><td><code>crossbeam-channel</code></td><td>音频与命令通道</td><td>Rust · MIT / Apache-2.0</td></tr>
 </table>
 <ul class="note">
-  <li>FireRedPunc、FireRedASR2-AED 与 Qwen3-ASR 不属于本组件；它们的依赖与许可见各自 GPU 组件的 Credits / PROVIDER。</li>
+  <li>Qwen3-ASR 不属于本组件；它的依赖与许可见 <a href="../voime-gpu-qwen3/README.html#r3">qwen3 README Credits</a> / <a href="../voime-gpu-qwen3/PROVIDER.html">PROVIDER</a>。</li>
 </ul>
 
 </body>

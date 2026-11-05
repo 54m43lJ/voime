@@ -43,7 +43,7 @@ daemon 在后台运行，用户与运维仍需要一个轻量的观察与控制�
   <li>TUI 可连接 daemon，显示模式、热键、临时结果与历史；关闭 TUI 不影响热键、临时窗口与上屏。</li>
   <li><code>voime ctl</code> 可在脚本中执行 start / stop / toggle / status / clear / quit，并可用 <code>backend</code> 写配置。</li>
   <li><code>voime doctor</code> 用只读检查定位端点、daemon、核心模型、音频、平台前端、所选 Final 后端与 GPU worker 状态。</li>
-  <li>doctor 显示 CPU / FireRed / Qwen 的选择结果、worker ready / running 与 Fcitx 系统 addon 路径 / ABI；worker 状态来自只读 <code>Diagnostics</code>，不新增 <code>Status</code> 字段。</li>
+  <li>doctor 显示 CPU / Qwen 的选择结果、worker ready / running 与 Fcitx 系统 addon 路径 / ABI；worker 状态来自只读 <code>Diagnostics</code>，不新增 <code>Status</code> 字段。</li>
   <li>没有 TTY 时 TUI 明确失败；daemon 与 <code>ctl</code> / <code>doctor</code> 不使用 TUI。</li>
   <li>客户端不加载模型、不解析音频、不处理热键，也不启动 worker。</li>
 </ul>
@@ -72,7 +72,7 @@ daemon 在后台运行，用户与运维仍需要一个轻量的观察与控制�
   <tr><td><code>voime</code></td><td>进入 TUI，显示历史、当前临时行与底部提示；<code>q</code> / <code>Ctrl+C</code> 只 detach。</td><td><a href="USER.html#u4-2">USER §4.2</a> · <a href="USER.html#u5">USER §5</a></td></tr>
   <tr><td><code>voime ctl start|stop|toggle</code></td><td>发送一次控制命令并打印结果状态。</td><td><a href="USER.html#u4-3">USER §4.3</a></td></tr>
   <tr><td><code>voime ctl status</code></td><td>打印 recording / finalizing / segment / mode / hotkey / addon / transcript 计数；不新增 backend 字段。</td><td><a href="USER.html#u4-3">USER §4.3</a></td></tr>
-  <tr><td><code>voime ctl backend cpu|firered|qwen3</code></td><td>写 <code>~/.config/voime/config.toml</code> 的 <code>[final].backend</code>；不连接 daemon，不热切换；提示重启 daemon。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
+  <tr><td><code>voime ctl backend cpu|qwen3</code></td><td>写 <code>~/.config/voime/config.toml</code> 的 <code>[final].backend</code>；不连接 daemon，不热切换；提示重启 daemon。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
   <tr><td><code>voime ctl clear</code></td><td>清空 daemon 历史，保留当前段。</td><td><a href="../voimed/USER.html#u4-2">voimed USER §4.2</a></td></tr>
   <tr><td><code>voime ctl quit</code></td><td>停止 daemon；TUI / 前端不受影响（随后断线）。</td><td><a href="../voimed/USER.html#u4-5">voimed USER §4.5</a></td></tr>
   <tr><td><code>voime doctor</code></td><td>只读检查端点、daemon、核心模型、音频、平台前端、所选 Final 后端与 worker 状态；不修改状态。</td><td><a href="USER.html#u4-4">USER §4.4</a></td></tr>

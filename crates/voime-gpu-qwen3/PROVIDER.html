@@ -94,7 +94,7 @@ llama.cpp / llama-cpp-4 文档为准；产品级下边界见 <a href="../../PROV
   <tr><td>一个 backend / 二进制</td><td><code>vulkan</code> 与 <code>cuda</code> 不共存于同一 worker 构建；安装包按 runtime 分开。</td></tr>
   <tr><td>版本锁定</td><td><code>llama-cpp-4</code> 固定 0.11.0；对应 llama.cpp commit 随 <code>llama-cpp-sys-4</code> 固定并记录在发布清单，不跟随 master。</td></tr>
   <tr><td>音频 experimental</td><td>llama.cpp 的音频输入仍是 experimental；升级 crate / commit 必须重跑 30 s 段金样与长段边界测试。</td></tr>
-  <tr><td>无 ORT</td><td>不链接 ONNX Runtime / ONNX；Qwen 路径与 FireRed 的 ORT 路径完全隔离。</td></tr>
+  <tr><td>无 ORT</td><td>不链接 ONNX Runtime / ONNX；Qwen 路径与 ORT 路径完全隔离。</td></tr>
 </table>
 
 <h2 id="p3">3. DIAGRAMS</h2>
@@ -265,7 +265,7 @@ greedy 循环拆成内部阶段图。
 </table>
 <ul class="note">
   <li>错误码定义见 <a href="../voime-gpu-common/USER.html#u4-5">voime-gpu-common USER §4.5</a>，超时 / 取消语义见 <a href="../voime-gpu-common/USER.html#u4-7">§4.7</a>；本文只记录 Qwen provider 触发条件。</li>
-  <li>Vulkan 不支持只使 Qwen 后端不可用，不影响核心 VAD / Preview / CPU Final，也不影响另一个 GPU 后端。</li>
+  <li>Vulkan 不支持只使 Qwen 后端不可用，不影响核心 VAD / Preview / CPU Final。</li>
   <li>不静默降级 Q8 / FP16，不在 worker 内跑 CPU 大模型；CPU 回退由 daemon 用核心 SenseVoice 完成。</li>
 </ul>
 

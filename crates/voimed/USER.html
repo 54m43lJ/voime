@@ -37,8 +37,8 @@
   <tr><td>语音段（segment）</td><td>产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>；daemon 为每段分配 <code>segment_id</code>。</td></tr>
   <tr><td>当前段</td><td><code>current_segment</code>；同一时刻最多一个，Final / SegmentDropped 后清空。</td></tr>
   <tr><td>阶段（Phase）</td><td><code>idle</code> / <code>recording</code> / <code>finalizing</code>；由 daemon 维护并广播。</td></tr>
-  <tr><td>Final 后端</td><td><code>cpu</code> / <code>firered</code> / <code>qwen3</code>，由 <code>final.backend</code> 配置决定；默认 <code>cpu</code>。</td></tr>
-  <tr><td>GPU worker</td><td>FireRed 或 Qwen 的独立 Final 推理进程；daemon 只启动配置选中的那个。</td></tr>
+  <tr><td>Final 后端</td><td><code>cpu</code> / <code>qwen3</code>，由 <code>final.backend</code> 配置决定；默认 <code>cpu</code>。</td></tr>
+  <tr><td>GPU worker</td><td>Qwen 的独立 Final 推理进程；daemon 只在配置选中 <code>qwen3</code> 时启动。</td></tr>
   <tr><td>Finalizing</td><td>语音段结束到 Final 或丢弃结果到达之间的状态；期间不再产生新的 Partial。</td></tr>
   <tr><td>广播</td><td>向所有已连接客户端发送 <code>ServerMessage</code>。</td></tr>
   <tr><td>Snapshot</td><td>连接时返回的全量状态；字段见 <a href="../voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a>。</td></tr>
@@ -106,7 +106,7 @@
 
 <pre><code># ~/.config/voime/config.toml
 [final]
-backend = "cpu"       # cpu | firered | qwen3</code></pre>
+backend = "cpu"       # cpu | qwen3</code></pre>
 
 <table>
   <tr><th>选项 / 配置</th><th>契约</th></tr>
@@ -116,7 +116,7 @@ backend = "cpu"       # cpu | firered | qwen3</code></pre>
   <tr><td><code>--endpoint</code></td><td>本机传输端点；Unix 为 socket 路径，Windows 为命名管道名；同时接受 <code>--socket</code> 别名。</td></tr>
   <tr><td><code>--verbose</code></td><td>输出启动与运行期诊断到 stderr。</td></tr>
   <tr><td><code>VOIME_LOG</code></td><td>环境变量；设为 <code>1</code> 或目录路径时写运行日志。取值与默认目录见 <a href="../voime-log/USER.html#u4-1">voime-log USER §4.1</a>；识别文本只记长度。</td></tr>
-  <tr><td><code>final.backend</code></td><td><code>cpu</code>（默认）/ <code>firered</code> / <code>qwen3</code>；只由 <code>voime ctl backend</code> 或安装脚本写入；daemon 启动时读取一次，不提供命令行覆盖。</td></tr>
+  <tr><td><code>final.backend</code></td><td><code>cpu</code>（默认）/ <code>qwen3</code>；只由 <code>voime ctl backend</code> 或安装脚本写入；daemon 启动时读取一次，不提供命令行覆盖。</td></tr>
 </table>
 
 <table>
@@ -167,7 +167,7 @@ backend = "cpu"       # cpu | firered | qwen3</code></pre>
 <table>
   <tr><th>项目</th><th>契约</th><th>所有者</th></tr>
   <tr><td>Final 后端</td><td>读取 <code>~/.config/voime/config.toml</code> 的 <code>[final].backend</code>；缺省 <code>cpu</code>。切换后必须重启 daemon。</td><td>本组件 §2 · <a href="../../USER.html#u4-4">根 USER §4.4</a></td></tr>
-  <tr><td>GPU worker</td><td>仅当后端为 <code>firered</code> / <code>qwen3</code> 时启动对应 worker；默认 <code>cpu</code> 不启动、不探测 GPU。</td><td>本组件 §2</td></tr>
+  <tr><td>GPU worker</td><td>仅当后端为 <code>qwen3</code> 时启动 worker；默认 <code>cpu</code> 不启动、不探测 GPU。</td><td>本组件 §2</td></tr>
   <tr><td>核心模型目录</td><td>默认目录（Linux XDG / HOME 回退，Windows <code>%LOCALAPPDATA%\voime\models</code>）见 <a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a>；GPU 模型在同一根目录下。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>
   <tr><td>端点</td><td>默认 <code>$XDG_RUNTIME_DIR/voime/voimed.sock</code>（未设置时 <code>/tmp/voime-&lt;uid&gt;/voimed.sock</code>）；Windows 默认 <code>\\.\pipe\voime-&lt;session&gt;-&lt;user&gt;</code>。</td><td><a href="../voime-transport/USER.html#u4">voime-transport USER §4</a></td></tr>
   <tr><td>线程数</td><td>默认 2；必须大于 0。</td><td><a href="../voime-core/USER.html#u4-1">voime-core USER §4.1</a></td></tr>

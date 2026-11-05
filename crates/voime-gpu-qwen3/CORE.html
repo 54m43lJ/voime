@@ -41,7 +41,7 @@
     └── <a href="#c4-7">clean.rs</a></code></pre>
 
 <ul class="note">
-  <li>本 crate 是独立 Cargo workspace / 独立二进制；不进入根 workspace，也不与 FireRed worker 共享链接单元或 runtime 目录。</li>
+  <li>本 crate 是独立 Cargo workspace / 独立二进制；不进入根 workspace，也不与其它组件共享链接单元或 runtime 目录。</li>
   <li><code>worker.rs</code> 负责帧循环、Hello / Ready 与取消标志；<code>engine.rs</code> 只封装 llama-cpp-4 的加载与推理；<code>mtmd.rs</code> 只处理音频 bitmap、prompt 与 chunks。</li>
   <li><code>decode.rs</code> 负责 greedy 采样、EOS / 上限 / 超时判断；<code>clean.rs</code> 是输出包装清洗的唯一入口。</li>
   <li>文档与图表不属于源码结构；模型目录由安装脚本写入，运行期由 daemon 通过 <code>Hello</code> 传入。</li>
@@ -116,7 +116,7 @@
   <tr><td><code>crossbeam-channel</code></td><td>读帧线程与解码线程之间的命令 / 取消通知。</td></tr>
 </table>
 <ul class="note">
-  <li>不依赖 ORT、ONNX Runtime、ONNX 模型或 FireRed 代码；与 FireRed worker 的隔离见 <a href="../../CORE.html#c2">根 CORE §2</a>。</li>
+  <li>不依赖 ORT、ONNX Runtime 或 ONNX 模型；与其它组件的隔离见 <a href="../../CORE.html#c2">根 CORE §2</a>。</li>
   <li>版本与许可证以 <code>Cargo.toml</code> / <code>Cargo.lock</code> 为准；升级 <code>llama-cpp-4</code> 必须同时重跑目标语料金样。</li>
 </ul>
 

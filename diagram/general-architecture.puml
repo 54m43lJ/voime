@@ -18,9 +18,8 @@ package "核心安装（必需，CPU）" {
 }
 
 package "GPU 推理模块（可选，Final-only）" {
-  component "voime-gpu-firered\nORT GPU + FP32 ONNX" as Firered
   component "voime-gpu-qwen3\nllama.cpp + BF16 GGUF" as Qwen
-  database "GPU 模型\nfireredasr2-aed / fireredpunc\nqwen3-asr-1.7b + mmproj" as GpuModels
+  database "GPU 模型\nqwen3-asr-1.7b + mmproj" as GpuModels
 }
 
 User --> Host : 键盘 / 热键
@@ -31,8 +30,6 @@ Frontend <--> Daemon : 本机 IPC
 Daemon --> Core : PCM / VAD / Preview / CPU Final
 Core --> CoreModels : 只读
 Daemon --> Mic : PCM
-Daemon --> Firered : Final 语音段
 Daemon --> Qwen : Final 语音段
-Firered --> GpuModels : 只读
 Qwen --> GpuModels : 只读
 @enduml

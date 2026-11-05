@@ -31,7 +31,6 @@
 ├── crates/
 │   ├── voime-core/                    → <a href="crates/voime-core/CORE.html#c1">voime-core CORE §1</a>
 │   ├── voime-gpu-common/              → <a href="crates/voime-gpu-common/CORE.html#c1">voime-gpu-common CORE §1</a>
-│   ├── voime-gpu-firered/             → <a href="crates/voime-gpu-firered/CORE.html#c1">voime-gpu-firered CORE §1</a>（独立 workspace）
 │   ├── voime-gpu-qwen3/               → <a href="crates/voime-gpu-qwen3/CORE.html#c1">voime-gpu-qwen3 CORE §1</a>（独立 workspace）
 │   ├── voime-ipc/                     → <a href="crates/voime-ipc/CORE.html#c1">voime-ipc CORE §1</a>
 │   ├── voime-log/                     → <a href="crates/voime-log/CORE.html#c1">voime-log CORE §1</a>
@@ -56,11 +55,11 @@
     ├── state.rs                       daemon 状态测试
     ├── daemon.rs                      端点 / 断线测试
     ├── manifest.rs                    一模型一目录 / schema 5 校验测试
-    └── final_backend.rs               CPU / FireRed / Qwen Final 与回退测试</code></pre>
+    └── final_backend.rs               CPU / Qwen Final 与回退测试</code></pre>
 <ul class="note">
   <li>根文件树只列到组件目录；组件内部文件树见对应 CORE，文档与图表不属于源码结构。</li>
   <li>根 <code>Cargo.toml</code> 同时是 <code>voime-tests</code> 包，通过显式 <code>[[test]]</code> 发现 <code>tests/</code>。</li>
-  <li><code>frontends/windows</code>、<code>voime-gpu-firered</code> 与 <code>voime-gpu-qwen3</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>，不进入根 workspace；GPU worker 不共享 runtime 链接单元。</li>
+  <li><code>frontends/windows</code> 与 <code>voime-gpu-qwen3</code> 使用独立 Cargo workspace 与独立 <code>Cargo.lock</code>，不进入根 workspace；GPU worker 不共享 runtime 链接单元。</li>
   <li>模型不属于源码树：安装脚本把一模型一目录写入平台数据目录；默认根目录与平台回退见 <a href="crates/voime-core/USER.html#u4-1">voime-core USER §4.1</a>。</li>
 </ul>
 
@@ -71,7 +70,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr>
     <td>依赖方向</td>
-    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport + log + gpu-common；<code>voime</code> → core + ipc + transport + log；前端 → ipc + transport + log。<code>voimed</code> 不依赖任一 backend crate；<code>voime-gpu-firered</code> 只依赖 common + ORT；<code>voime-gpu-qwen3</code> 只依赖 common + llama.cpp。</td>
+    <td><code>voime-core</code> → <code>voime-ipc</code>（当前仅为 <code>Mode</code>）；<code>voimed</code> → core + ipc + transport + log + gpu-common；<code>voime</code> → core + ipc + transport + log；前端 → ipc + transport + log。<code>voimed</code> 不依赖任一 backend crate；<code>voime-gpu-qwen3</code> 只依赖 common + llama.cpp。</td>
   </tr>
   <tr>
     <td>OS API 位置</td>
@@ -83,7 +82,7 @@
   </tr>
   <tr>
     <td>进程边界</td>
-    <td><code>fcitx5</code> 进程加载 addon；<code>voimed</code> 是独立进程；<code>voime</code> TUI 是独立客户端；Windows 前端是独立桌面进程，TSF DLL 加载到目标应用进程；FireRed / Qwen worker 是 <code>voimed</code> 拉起的独立进程。</td>
+    <td><code>fcitx5</code> 进程加载 addon；<code>voimed</code> 是独立进程；<code>voime</code> TUI 是独立客户端；Windows 前端是独立桌面进程，TSF DLL 加载到目标应用进程；Qwen worker 是 <code>voimed</code> 拉起的独立进程。</td>
   </tr>
   <tr>
     <td>线程边界</td>
@@ -95,7 +94,7 @@
   </tr>
   <tr>
     <td>模型单一来源</td>
-    <td>模型清单的通用 schema、字段与 <code>kind</code> 合法值只在 <a href="#c4-8">§4.8</a> 定义；核心模型与 CPU 契约在 <a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a>，FireRed 模型与 ORT GPU 契约在 <a href="crates/voime-gpu-firered/PROVIDER.html">voime-gpu-firered PROVIDER</a>，Qwen 模型与 llama.cpp 契约在 <a href="crates/voime-gpu-qwen3/PROVIDER.html">voime-gpu-qwen3 PROVIDER</a>。安装脚本与运行期校验共用同一份 manifest。</td>
+    <td>模型清单的通用 schema、字段与 <code>kind</code> 合法值只在 <a href="#c4-8">§4.8</a> 定义；核心模型与 CPU 契约在 <a href="crates/voime-core/PROVIDER.html">voime-core PROVIDER</a>，Qwen 模型与 llama.cpp 契约在 <a href="crates/voime-gpu-qwen3/PROVIDER.html">voime-gpu-qwen3 PROVIDER</a>。安装脚本与运行期校验共用同一份 manifest。</td>
   </tr>
   <tr>
     <td>Final 调度</td>
@@ -164,12 +163,12 @@ pub fn write_frame&lt;W: Write&gt;(writer: &amp;mut W, frame: &amp;Frame) -&gt; 
 // 帧编解码与生命周期辅助见 voime-gpu-common CORE §4 / §5</code></pre>
 
 <h3 id="c4-3">4.3 crates/voimed <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub enum BackendId { Cpu, Firered, Qwen3 }       // 见 voimed USER §4.4
+<pre><code>pub enum BackendId { Cpu, Qwen3 }                // 见 voimed USER §4.4
 pub struct FinalConfig { pub backend: BackendId } // 见 voimed USER §4.4
 pub struct Worker { /* ... */ }                  // 见 voimed CORE §4
 impl Worker {
-    pub fn spawn(id: BackendId, model_root: &amp;Path,
-                 log_level: &amp;str) -&gt; anyhow::Result&lt;Self&gt;; // 见 voimed CORE §4
+    pub fn spawn(id: BackendId, model_root: &amp;Path)
+        -&gt; anyhow::Result&lt;Self&gt;; // 见 voimed CORE §4
     pub fn transcribe(&amp;mut self, samples: &amp;[f32]) -&gt; anyhow::Result&lt;String&gt;; // 见 voimed CORE §4
     pub fn shutdown(self);
 }
@@ -224,7 +223,7 @@ pub fn default_directory() -&gt; PathBuf;
 <pre><code>{
   "schema": 5,
   "id": "&lt;模型目录名&gt;",
-  "kind": "vad | asr | punc",
+  "kind": "vad | asr",
   "version": "&lt;版本&gt;",
   "license": "&lt;SPDX&gt;",
   "files": [
@@ -241,7 +240,7 @@ pub fn default_directory() -&gt; PathBuf;
   <tr><th>字段</th><th>契约</th></tr>
   <tr><td><code>schema</code></td><td>固定为当前布局版本 5；<code>schema</code> 不等于 5 的 manifest 直接拒绝。</td></tr>
   <tr><td><code>id</code></td><td>必须等于模型目录名；不允许别名或符号链接逃逸。</td></tr>
-  <tr><td><code>kind</code></td><td>合法值为 <code>vad</code> / <code>asr</code> / <code>punc</code>；各组件只接受自己需要的子集。</td></tr>
+  <tr><td><code>kind</code></td><td>合法值为 <code>vad</code> / <code>asr</code>；各组件只接受自己需要的子集。</td></tr>
   <tr><td><code>version</code> / <code>license</code></td><td>模型版本与许可证；只用于诊断与安装记录，不参与运行期选择。</td></tr>
   <tr><td><code>files</code></td><td>每个文件的相对路径、SHA-256 与字节大小；拒绝绝对路径 / <code>..</code>；逐文件校验存在、非空、大小与摘要。</td></tr>
   <tr><td><code>runtime</code></td><td><code>backend</code> / <code>format</code> / <code>precision</code> 由模型声明；<code>max_segment_ms</code> 必须大于 0 且不超过 30_000；核心只读，不写回。</td></tr>
@@ -250,8 +249,6 @@ pub fn default_directory() -&gt; PathBuf;
   <tr><th>模型目录</th><th><code>kind</code></th><th>runtime</th><th>所有者</th></tr>
   <tr><td><code>firered-vad</code></td><td><code>vad</code></td><td><code>cpu</code> / <code>onnx</code> / 上游精度</td><td><a href="crates/voime-core/USER.html#u4-3">voime-core</a></td></tr>
   <tr><td><code>sensevoice-small</code></td><td><code>asr</code></td><td><code>cpu</code> / <code>onnx</code> / <code>int8</code></td><td><a href="crates/voime-core/USER.html#u4-3">voime-core</a></td></tr>
-  <tr><td><code>fireredasr2-aed</code></td><td><code>asr</code></td><td><code>firered</code> / <code>onnx</code> / <code>fp32</code></td><td><a href="crates/voime-gpu-firered/PROVIDER.html#p4-1">voime-gpu-firered</a></td></tr>
-  <tr><td><code>fireredpunc</code></td><td><code>punc</code></td><td><code>firered</code> / <code>onnx</code> / <code>fp32</code></td><td><a href="crates/voime-gpu-firered/PROVIDER.html#p4-2">voime-gpu-firered</a></td></tr>
   <tr><td><code>qwen3-asr-1.7b</code></td><td><code>asr</code></td><td><code>qwen3</code> / <code>gguf</code> / <code>bf16</code></td><td><a href="crates/voime-gpu-qwen3/PROVIDER.html#p4-1">voime-gpu-qwen3</a></td></tr>
 </table>
 <ul class="note">
@@ -295,7 +292,7 @@ voime_core::pipeline::PipelineEvent::Recording / Partial
 voime_core::pipeline::PipelineEvent::SegmentReady
 └── voimed::daemon::Daemon::finalize(segment)
     ├── 判断 backend == Cpu → voime_core::Final::transcribe()
-    ├── 判断 backend == Firered / Qwen3 → voimed::worker::Worker::transcribe()
+    ├── 判断 backend == Qwen3 → voimed::worker::Worker::transcribe()
     └── voime_ipc::write_message(Final)
 
 voime_core::pipeline::PipelineEvent::SegmentDropped
@@ -329,8 +326,8 @@ voimed::ipc_server
 ├── 判断 ctl → voime::run_ctl(...)
 └── 判断 doctor → voime::doctor::run(&amp;endpoint)
 
-voime ctl backend firered
-└── voime::config::write_backend(Firered)
+voime ctl backend qwen3
+└── voime::config::write_backend(Qwen3)
 
 voime ctl quit
 └── voimed::daemon::Daemon::on_client(Quit)

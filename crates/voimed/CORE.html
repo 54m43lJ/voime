@@ -36,7 +36,7 @@
     └── <a href="#c4-9">ipc_server.rs</a></code></pre>
 <ul class="note">
   <li><code>lib.rs</code> 导出 <code>backend</code> / <code>config</code> / <code>daemon</code> / <code>ipc_server</code> / <code>state</code> / <code>worker</code>，供根集成测试使用；<code>main.rs</code> 只做启动编排。</li>
-  <li><code>worker.rs</code> 只管理进程与协议；FireRed / Qwen 的模型与 runtime 细节在各自 crate。</li>
+  <li><code>worker.rs</code> 只管理进程与协议；Qwen 的模型与 runtime 细节在 Qwen crate。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -85,7 +85,7 @@
   <tr><td><code>tempfile</code>（dev）</td><td>临时 socket 测试。</td></tr>
 </table>
 <ul class="note">
-  <li>不依赖 <code>voime-gpu-firered</code> / <code>voime-gpu-qwen3</code>，也不链接 ORT GPU / llama.cpp。</li>
+  <li>不依赖 <code>voime-gpu-qwen3</code>，也不链接 ORT GPU / llama.cpp。</li>
 </ul>
 
 <h2 id="c4">4. Internal types &amp; method signatures</h2>
@@ -151,7 +151,7 @@ fn read_toml(path: &amp;Path) -&gt; anyhow::Result&lt;FinalConfig&gt;;</code></p
 </ul>
 
 <h3 id="c4-5">4.5 backend.rs <a class="backlink" href="#c1">文件树</a></h3>
-<pre><code>pub enum BackendId { Cpu, Firered, Qwen3 }       // 见 USER §4.4
+<pre><code>pub enum BackendId { Cpu, Qwen3 }                // 见 USER §4.4
 impl BackendId {
     pub fn parse(value: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
     pub fn as_str(self) -&gt; &amp;'static str;
@@ -159,7 +159,7 @@ impl BackendId {
     pub fn model_dirs(self) -&gt; &amp;'static [&amp;'static str];
 }</code></pre>
 <ul class="note">
-  <li><code>worker_binary</code> 返回 <code>voime-gpu-firered</code> / <code>voime-gpu-qwen3</code> 的可执行文件名；<code>cpu</code> 返回 <code>None</code>。</li>
+  <li><code>worker_binary</code> 返回 <code>voime-gpu-qwen3</code> 的可执行文件名；<code>cpu</code> 返回 <code>None</code>。</li>
   <li><code>model_dirs</code> 只用于启动前存在性检查；模型 manifest 由 worker 自己校验。</li>
 </ul>
 
@@ -190,8 +190,8 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn spawn(id: BackendId, model_root: &amp;Path,
-                 log_level: &amp;str) -&gt; anyhow::Result&lt;Self&gt;;
+    pub fn spawn(id: BackendId, model_root: &amp;Path)
+        -&gt; anyhow::Result&lt;Self&gt;;
     pub fn handshake(&amp;mut self, device: Option&lt;&amp;str&gt;)
         -&gt; anyhow::Result&lt;ReadyInfo&gt;;
     pub fn transcribe(&amp;mut self, samples: &amp;[f32])
@@ -213,7 +213,7 @@ fn map_error(code: ErrorCode, message: &amp;str) -&gt; anyhow::Error;</code></pr
   <li><code>spawn</code> 使用 <code>voime-gpu-common</code> 的帧格式；worker 的 stdout 只读协议，stderr 转发到 <code>voime-log</code>。</li>
   <li>加载超时、握手失败、进程退出都转为“后端不可用”；当前段由 daemon 回退 CPU。</li>
   <li>同一 worker 一次只处理一个 Transcribe；daemon 在上一段完成前不发送下一段。</li>
-  <li>FireRed 子进程优先使用安装目录 <code>lib/voime/firered/</code> 下的 ORT 动态库；<code>ORT_DYLIB_PATH</code> 与 <code>LD_LIBRARY_PATH</code> / <code>PATH</code> 只对子进程设置，不写全局环境。显式用户环境优先。</li>
+  <li>Qwen 子进程只通过 <code>Hello</code> 接收模型目录；daemon 不设置 runtime 专用环境变量。</li>
   <li><code>ready</code> / <code>last_error</code> 供 <code>Daemon::diagnostics</code> 读取；<code>is_alive</code> 用 <code>Child::try_wait</code> 发现空闲期退出的进程。</li>
 </ul>
 
@@ -473,7 +473,7 @@ pipeline::PipelineEvent::SegmentReady(segment)
 ├── 判断 backend == Cpu
 │   └── Daemon::transcribe_cpu(segment.samples)
 │       └── voime_core::Final::transcribe(segment.samples)
-├── 判断 backend == Firered / Qwen3
+├── 判断 backend == Qwen3
 │   └── Daemon::transcribe_gpu(segment.samples)
 │       └── voimed::worker::Worker::transcribe(segment.samples)
 │           ├── 判断成功 → Result { text }

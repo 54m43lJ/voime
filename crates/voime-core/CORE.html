@@ -46,7 +46,7 @@
 <ul class="note">
   <li>模块入口文件只做 <code>pub mod</code> 导出；具体实现与签名在对应子文件。</li>
   <li>文档与图表不属于源码结构；模型目录在运行时由 <code>config::resolve</code> 注入。</li>
-  <li>本 crate 不包含 GPU worker、FireRedPunc、Qwen 或 worker 管理模块。</li>
+  <li>本 crate 不包含 GPU worker、Qwen 或 worker 管理模块。</li>
 </ul>
 
 <h2 id="c2">2. CONVENTIONS</h2>
@@ -92,7 +92,7 @@
   <tr><td><code>voime-ipc</code></td><td><code>Mode</code> 类型；核心只用它表达 PTT / Toggle / Continuous。</td></tr>
 </table>
 <ul class="note">
-  <li>只使用 CPU Execution Provider；不包含 ORT GPU、llama.cpp、FireRedPunc 或 tokenizers。</li>
+  <li>只使用 CPU Execution Provider；不包含 ORT GPU、llama.cpp 或 tokenizers。</li>
 </ul>
 
 <h2 id="c4">4. Internal types &amp; method signatures</h2>
@@ -336,7 +336,7 @@ fn validate_features(features: &amp;[Vec&lt;f32&gt;]) -&gt; anyhow::Result&lt;()
   <li><code>transcribe</code> 对完整样本计算 fbank 后调用 <code>transcribe_features</code>，不得在自身内再调用 <code>apply_lfr</code> 或 <code>apply_cmvn</code>；<code>transcribe_features</code> 最多应用一次 LFR 7 / 6，再做 CMVN、推理、greedy / 模型内置解码与词表还原。</li>
   <li><code>transcribe_features</code> 是 LFR + CMVN 的唯一入口，按首帧维度区分输入：80-bin fbank 执行一次 LFR 展开为 <code>80 * lfr_window</code> 维（默认 560）；该维度输入视为已 LFR，跳过 LFR 直接做 CMVN。调用方不得自己再展开，避免累计两次。</li>
   <li>LFR / CMVN / ITN token id / 语言 id 与 <code>vocab_size</code> 来自 SenseVoice ONNX metadata；<code>tokens.txt</code> 由 manifest 文件列表定位；manifest 本身不携带这些参数（见 <a href="PROVIDER.html#p4-2">PROVIDER §4.2</a>）。</li>
-  <li>固定 <code>use_itn=true</code>；标点由 SenseVoice 输出自带，不加载 FireRedPunc。</li>
+  <li>固定 <code>use_itn=true</code>；标点由 SenseVoice 输出自带，不加载独立标点模型。</li>
   <li>空音频或空文本返回空结果；由调用方按空段处理。</li>
 </ul>
 

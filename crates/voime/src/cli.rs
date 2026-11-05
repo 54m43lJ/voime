@@ -47,7 +47,6 @@ pub enum CtlAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
 pub enum BackendId {
     Cpu,
-    Firered,
     Qwen3,
 }
 
@@ -55,7 +54,6 @@ impl BackendId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Cpu => "cpu",
-            Self::Firered => "firered",
             Self::Qwen3 => "qwen3",
         }
     }
@@ -78,10 +76,9 @@ impl<'de> serde::Deserialize<'de> for BackendId {
         let value = String::deserialize(deserializer)?;
         match value.trim().to_ascii_lowercase().as_str() {
             "cpu" => Ok(Self::Cpu),
-            "firered" => Ok(Self::Firered),
             "qwen3" => Ok(Self::Qwen3),
             other => Err(serde::de::Error::custom(format!(
-                "Final 后端必须是 cpu、firered 或 qwen3，实际 {other}"
+                "Final 后端必须是 cpu 或 qwen3，实际 {other}"
             ))),
         }
     }

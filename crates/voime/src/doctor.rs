@@ -126,7 +126,7 @@ fn check_final_backend(ok: &mut bool) {
         );
     }
     let root = config::default_model_root();
-    for backend in [BackendId::Firered, BackendId::Qwen3] {
+    for backend in [BackendId::Qwen3] {
         let installed = model_dirs_present(&root, backend_model_dirs(backend));
         if backend == config.backend {
             if installed {
@@ -149,7 +149,7 @@ fn check_workers(diagnostics: Option<&WorkerDiagnosticsAnswer>, ok: &mut bool) {
         Ok(config) => config,
         Err(_) => return,
     };
-    for backend in [BackendId::Cpu, BackendId::Firered, BackendId::Qwen3] {
+    for backend in [BackendId::Cpu, BackendId::Qwen3] {
         check_worker(backend, config.backend == backend, diagnostics, ok);
     }
 }
@@ -254,11 +254,9 @@ fn check_models(ok: &mut bool) {
             }
         }
     }
-    for (directory, kind, backend, format, precision) in [
-        ("fireredasr2-aed", "asr", BackendId::Firered, "onnx", "fp32"),
-        ("fireredpunc", "punc", BackendId::Firered, "onnx", "fp32"),
-        ("qwen3-asr-1.7b", "asr", BackendId::Qwen3, "gguf", "bf16"),
-    ] {
+    for (directory, kind, backend, format, precision) in
+        [("qwen3-asr-1.7b", "asr", BackendId::Qwen3, "gguf", "bf16")]
+    {
         let dir = root.join(directory);
         let path = dir.join(MANIFEST_FILE);
         if !path.is_file() {
@@ -503,7 +501,6 @@ fn print_snapshot(snapshot: Option<&ServerMessage>, label: &str) {
 fn backend_model_dirs(backend: BackendId) -> &'static [&'static str] {
     match backend {
         BackendId::Cpu => &[],
-        BackendId::Firered => &["fireredasr2-aed", "fireredpunc"],
         BackendId::Qwen3 => &["qwen3-asr-1.7b"],
     }
 }
@@ -515,13 +512,6 @@ fn model_dirs_present(root: &Path, dirs: &[&str]) -> bool {
 fn worker_executable(backend: BackendId) -> Option<PathBuf> {
     let name = match backend {
         BackendId::Cpu => return None,
-        BackendId::Firered => {
-            if cfg!(windows) {
-                "voime-gpu-firered.exe"
-            } else {
-                "voime-gpu-firered"
-            }
-        }
         BackendId::Qwen3 => {
             if cfg!(windows) {
                 "voime-gpu-qwen3.exe"
