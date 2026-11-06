@@ -154,6 +154,7 @@ Vulkan / CUDA 是 GPU 模块所在平台的 runtime 约束，不属于前端消�
 <table>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>核心安装</td><td><code>scripts/install-core.ps1</code> 安装 <code>voime-tray.exe</code> 与 <code>voimed.exe</code> 到默认前缀 <code>%LOCALAPPDATA%\Programs\Voime</code>，核心模型写入 <code>%LOCALAPPDATA%\voime\models</code>，并写入当前用户登录启动项。</td></tr>
+  <tr><td>核心模型安装</td><td><code>install-core.ps1</code> 调用 <code>scripts/install-core-models.py</code>：未指定 <code>-SourceDir</code> 时下载 / 缓存模型；指定时校验离线源并生成 manifest。缺少 Python 且未指定 <code>-SourceDir</code> 时安装失败并提示 <code>-SourceDir</code> 或 <code>-NoModels</code>；运行期不需要 Python。</td></tr>
   <tr><td>GPU 模块安装</td><td><code>scripts/install-gpu.ps1</code> 安装 GPU worker、对应 GPU runtime（Vulkan / CUDA）与 GPU 模型；GPU 模块独立于前端，前端不参与安装。</td></tr>
   <tr><td>安装范围</td><td>核心与 GPU 模块每用户安装；不安装系统级常驻服务、不装 Session 0 服务；卸载由对应安装脚本按同一范围删除。</td></tr>
   <tr><td>登录启动</td><td>核心安装脚本只写当前用户 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code> 启动 <code>voime-tray.exe</code>。</td></tr>

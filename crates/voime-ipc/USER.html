@@ -53,7 +53,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>编码</td><td>UTF-8 JSON；每个消息一行；不得 pretty-print；不得包含未转义的换行。</td></tr>
   <tr><td>framing</td><td>消息以 <code>\n</code> 终止；缺少换行、超过 <code>MAX_MESSAGE_BYTES</code> 或不是合法 JSON 都是协议错误。</td></tr>
-  <tr><td>外部标签</td><td>消息类型是对象的唯一键；字段平铺在标签对象内。</td></tr>
+  <tr><td>外部标签</td><td>消息类型是对象的唯一键；无字段消息写作 <code>{"Name":{}}</code>，字段消息平铺在标签对象内。</td></tr>
   <tr><td>枚举值</td><td><code>Mode</code> / <code>Role</code> / <code>TriggerSource</code> / <code>Phase</code> / <code>FrontendState</code> 使用小写；<code>ErrorCode</code> 使用 snake_case。</td></tr>
   <tr><td>握手顺序</td><td>连接后第一条消息必须是 <code>Hello</code>；版本或角色不合法时 daemon 发送 <code>Error</code> 并断开。</td></tr>
   <tr><td>角色</td><td>只允许一个 <code>frontend</code> 连接；<code>configure</code> 只接受 <code>frontend</code>；<code>quit</code> 只接受 <code>control</code>。<code>tui</code> 在 <code>frontend</code> 连接期间只观察，<code>Start</code> / <code>Stop</code> / <code>Toggle</code> 返回 <code>busy</code>；无 <code>frontend</code> 连接时可发送调试会话命令。</td></tr>
@@ -128,10 +128,10 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
         segment_id: u64,
         source: TriggerSource,
     },
-    ClearHistory,
-    Status,
-    Diagnostics,
-    Quit,
+    ClearHistory {},
+    Status {},
+    Diagnostics {},
+    Quit {},
 }</code></pre>
 
 <h3 id="u4-3">4.3 ServerMessage</h3>
@@ -161,7 +161,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
         segment_id: u64,
         text: String,
     },
-    HistoryCleared,
+    HistoryCleared {},
     Status {
         status: Status,
     },
@@ -174,7 +174,7 @@ pub fn read_message&lt;R: BufRead, T: DeserializeOwned&gt;(reader: &amp;mut R)
         segment_id: Option&lt;u64&gt;,
         message: String,
     },
-    Bye,
+    Bye {},
 }</code></pre>
 
 <h3 id="u4-4">4.4 辅助类型</h3>
@@ -267,7 +267,14 @@ pub struct Status {
 
 // Control → daemon，以及 daemon → Control
 {"Diagnostics":{}}
-{"Diagnostics":{"backend":"qwen3","worker":{"state":"ready","runtime":"vulkan","device":"vulkan:0","vram_mb":4096,"punc":false,"error":null}}}</code></pre>
+{"Diagnostics":{"backend":"qwen3","worker":{"state":"ready","runtime":"vulkan","device":"vulkan:0","vram_mb":4096,"punc":false,"error":null}}}
+
+// 无字段消息统一为对象形式
+{"ClearHistory":{}}
+{"HistoryCleared":{}}
+{"Status":{}}
+{"Quit":{}}
+{"Bye":{}}</code></pre>
 
 <h3 id="u4-7">4.7 错误码</h3>
 <table>

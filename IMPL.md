@@ -46,7 +46,7 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voimed/CORE.html` | §4.2 | 改 | 将初始化顺序改为与 §5.1 一致：配置 → core → pipeline → worker → audio → IPC → daemon。 |
+| `crates/voimed/CORE.html` | §4.2 | 不动（已更新） | 将初始化顺序改为与 §5.1 一致：配置 → core → pipeline → worker → audio → IPC → daemon。 |
 | `crates/voimed/CORE.html` | §5.1 | 不动 | 已是实际顺序，作为启动顺序的权威调用栈。 |
 | `CORE.html` | §5.1 | 不动 | 根 CORE 的冷启动调用栈与 §5.1 一致。 |
 
@@ -66,7 +66,7 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voimed/README.html` | §1.2 | 改 | 将退出顺序改为链接 `crates/voimed/CORE.html` §5.7，不再用一句“先停 worker，再停 pipeline / 音频 / IPC”概括。 |
+| `crates/voimed/README.html` | §1.2 | 不动（已更新） | 将退出顺序改为链接 `crates/voimed/CORE.html` §5.7，不再用一句“先停 worker，再停 pipeline / 音频 / IPC”概括。 |
 | `crates/voimed/CORE.html` | §5.7 | 不动 | 已定义完整退出顺序；README 引用本处。 |
 
 ### E5. `reset_after_segment` 在软切分与 `FinishSegment` 两处含义冲突
@@ -85,7 +85,7 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §5.3 | 改 | `FinishSegment` 的 note 与调用栈改为 `reset_after_finish`（硬重置）：清空 listening / collecting、关闭 Preview、清空完成段队列；`prepare_command` 先排空音频并 `drain_queue`，再交付段、发送 `Recording(false)`。 |
+| `crates/voime-core/CORE.html` | §5.3 | 不动（已更新） | `FinishSegment` 的 note 与调用栈改为 `reset_after_finish`（硬重置）：清空 listening / collecting、关闭 Preview、清空完成段队列；`prepare_command` 先排空音频并 `drain_queue`，再交付段、发送 `Recording(false)`。 |
 | `crates/voime-core/CORE.html` | §2、§5.2 | 不动（本主题） | 软切分继续使用 `reset_after_segment` 并发送下一段 `Recording(true)`；`Segmenter::push` 签名、阈值与 fbank 的修改按 P9 合并，音频错误回调和哨兵按 P7 合并，均不改变本主题的软 / 硬切分语义。 |
 
 ### E6. 模型清单不应把文件大小作为完整性契约
@@ -105,17 +105,17 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `CORE.html` | §4.8 | 改 | schema 示例与字段表去掉 `size`；`files` 只要求路径与 SHA-256，运行期校验存在、非空与摘要，不校验字节大小。 |
-| `crates/voime-core/USER.html` | §4.3 | 改 | `FileSpec` 去掉 `size`；错误表改为只按 SHA-256 判定文件被修改。 |
-| `crates/voime-core/CORE.html` | §2、§4.3 | 改 | `ensure_file` 去掉 `expected_size` 参数；模型校验说明只保留 SHA-256。 |
-| `crates/voime-core/PROVIDER.html` | §1、§2、§4.2、§4.5 | 改 | 去掉 `FileSpec`、manifest、VAD CMVN 与错误表中的字节大小校验。 |
-| `crates/voime-gpu-qwen3/USER.html` | §4.1 | 改 | manifest 示例去掉 `size`；启动校验只写 SHA-256。 |
-| `crates/voime-gpu-qwen3/CORE.html` | §4.3 | 改 | `FileSpec` 去掉 `size`；`verify` 说明只写 SHA-256。 |
-| `crates/voime-gpu-qwen3/PROVIDER.html` | §2、§3.1 | 改 | 模型不可变与加载边界只校验 SHA-256。 |
-| `crates/voime-gpu-qwen3/diagram/runtime-load.puml` / `.svg` | — | 改 | 加载边界改为只校验 SHA-256，并重新导出 SVG。 |
-| `PROVIDER.html` | §2 | 改 | 模型不可变只校验 manifest 与 SHA-256。 |
-| `BUILD.html` | §3.4 | 改 | 启动校验只列 schema、id、kind 与 SHA-256。 |
-| `crates/voime-core/src/model.rs`、`crates/voime-gpu-qwen3/src/manifest.rs`、`crates/voime/src/doctor.rs`、`scripts/install-core-models.py`、`scripts/install-gpu-models.py`、`tests/manifest.rs` | — | 改 | 删除 manifest `size` 字段与比较；安装器只把内部固定大小用于下载进度 / 断点续传，不写入或校验 manifest `size`。 |
+| `CORE.html` | §4.8 | 不动（已更新） | schema 示例与字段表去掉 `size`；`files` 只要求路径与 SHA-256，运行期校验存在、非空与摘要，不校验字节大小。 |
+| `crates/voime-core/USER.html` | §4.3 | 不动（已更新） | `FileSpec` 去掉 `size`；错误表改为只按 SHA-256 判定文件被修改。 |
+| `crates/voime-core/CORE.html` | §2、§4.3 | 不动（已更新） | `ensure_file` 去掉 `expected_size` 参数；模型校验说明只保留 SHA-256。 |
+| `crates/voime-core/PROVIDER.html` | §1、§2、§4.2、§4.5 | 不动（已更新） | 去掉 `FileSpec`、manifest、VAD CMVN 与错误表中的字节大小校验。 |
+| `crates/voime-gpu-qwen3/USER.html` | §4.1 | 不动（已更新） | manifest 示例去掉 `size`；启动校验只写 SHA-256。 |
+| `crates/voime-gpu-qwen3/CORE.html` | §4.3 | 不动（已更新） | `FileSpec` 去掉 `size`；`verify` 说明只写 SHA-256。 |
+| `crates/voime-gpu-qwen3/PROVIDER.html` | §2、§3.1 | 不动（已更新） | 模型不可变与加载边界只校验 SHA-256。 |
+| `crates/voime-gpu-qwen3/diagram/runtime-load.puml` / `.svg` | — | 不动（已完成） | 加载边界改为只校验 SHA-256，并重新导出 SVG。 |
+| `PROVIDER.html` | §2 | 不动（已更新） | 模型不可变只校验 manifest 与 SHA-256。 |
+| `BUILD.html` | §3.4 | 不动（已更新） | 启动校验只列 schema、id、kind 与 SHA-256。 |
+| `crates/voime-core/src/model.rs`、`crates/voime-gpu-qwen3/src/manifest.rs`、`crates/voime/src/doctor.rs`、`scripts/install-core-models.py`、`scripts/install-gpu-models.py`、`tests/manifest.rs` | — | 不动（已完成） | 删除 manifest `size` 字段与比较；安装器只把内部固定大小用于下载进度 / 断点续传，不写入或校验 manifest `size`。 |
 
 ### E7. `voime-core` 的 `lib.rs` 中 `pub mod final;` 不是合法 Rust
 
@@ -133,7 +133,7 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §4.1、§4.14 | 改 | 将 §4.1 的 `pub mod final;` 改为 `pub mod r#final;`，并注明 `pub use r#final::Final;`；§4.14 的文件标题保持 `final.rs`，注明模块路径为 `r#final`。 |
+| `crates/voime-core/CORE.html` | §4.1、§4.14 | 不动（已更新） | 将 §4.1 的 `pub mod final;` 改为 `pub mod r#final;`，并注明 `pub use r#final::Final;`；§4.14 的文件标题保持 `final.rs`，注明模块路径为 `r#final`。 |
 | `CORE.html` | §4.1、§5.2 | 不动 | 继续使用 `voime_core::Final`；核心 CORE 负责解释模块转义。 |
 
 ## 2. 开发中发现文档没写明的细节
@@ -154,8 +154,8 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-ipc/USER.html` | §2、§4.2、§4.3 | 改 | 明确无字段消息写作 `{"Name":{}}`，并在枚举定义中使用空结构体变体。 |
-| `crates/voime-ipc/USER.html` | §4.6 | 增 | 增加 `ClearHistory` / `Bye` 的对象形式 JSON 示例。 |
+| `crates/voime-ipc/USER.html` | §2、§4.2、§4.3 | 不动（已更新） | 明确无字段消息写作 `{"Name":{}}`，并在枚举定义中使用空结构体变体。 |
+| `crates/voime-ipc/USER.html` | §4.6 | 不动（已更新） | 增加 `ClearHistory` / `Bye` 的对象形式 JSON 示例。 |
 | `crates/voime-ipc/CORE.html` | §2 | 不动 | 序列化策略由 USER 定义；CORE 只说明使用外部标签。 |
 | `frontends/fcitx/PROVIDER.html` | §4.5 | 不动 | 解析兼容窗口由 IPC USER 统一描述，不在前端重复线格式。 |
 
@@ -194,8 +194,8 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voimed/CORE.html` | §4.6 | 增 | 写明 `Worker::spawn` 对 Qwen3 传 `model_root/qwen3-asr-1.7b` 子目录。 |
-| `crates/voime-gpu-qwen3/USER.html` | §4.1 | 增 | 明确 Hello `model_dir` 指向包含 manifest 的 `qwen3-asr-1.7b/` 目录。 |
+| `crates/voimed/CORE.html` | §4.6 | 不动（已更新） | 写明 `Worker::spawn` 对 Qwen3 传 `model_root/qwen3-asr-1.7b` 子目录。 |
+| `crates/voime-gpu-qwen3/USER.html` | §4.1 | 不动（已更新） | 明确 Hello `model_dir` 指向包含 manifest 的 `qwen3-asr-1.7b/` 目录。 |
 | `crates/voime-gpu-common/USER.html` | §4.2 | 不动 | `model_dir` 的布局归 worker 定义；本处只保留绝对路径与透传契约。 |
 
 ### M4. worker 的 runtime / device / 日志参数由谁传递没有写全
@@ -215,8 +215,8 @@ Qwen 文档已写 `device` 来自 Hello，但没有说明 daemon 是否为 Qwen 
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voimed/CORE.html` | §4.6 | 增 | 列出 `Worker::spawn` 的 device 来源与优先级；与 M3 的 `model_dir` 说明合并到同一小节。 |
-| `crates/voime-gpu-qwen3/CORE.html` | §4.2 | 增 | 写明 Qwen 只使用编译 feature，`device` 来自 Hello，daemon 不向 Qwen 传 runtime / log-level 参数，启动日志只写 stderr。 |
+| `crates/voimed/CORE.html` | §4.6 | 不动（已更新） | 列出 `Worker::spawn` 的 device 来源与优先级；与 M3 的 `model_dir` 说明合并到同一小节。 |
+| `crates/voime-gpu-qwen3/CORE.html` | §4.2 | 不动（已更新） | 写明 Qwen 只使用编译 feature，`device` 来自 Hello，daemon 不向 Qwen 传 runtime / log-level 参数，启动日志只写 stderr。 |
 | `crates/voime-gpu-common/USER.html` | §4.2 | 不动 | Hello 字段语义已定义；进程参数不属于帧协议。 |
 
 ### M5. doctor 读取的 worker 日志行格式没有定义
@@ -255,7 +255,7 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-qwen3/USER.html` | §4.4 | 增 | 写明 `--source-dir/bin/` 预编译 worker 布局、缺失时的构建回退，并区分 Vulkan / CUDA 预编译包。 |
+| `crates/voime-gpu-qwen3/USER.html` | §4.4 | 不动（已更新） | 写明 `--source-dir/bin/` 预编译 worker 布局、缺失时的构建回退，并区分 Vulkan / CUDA 预编译包。 |
 | `README.html` | §2 | 不动 | 根 README 只保留安装入口；布局细节归 GPU 组件 USER。 |
 
 ### M7. Windows 核心安装如何获得模型没有写明
@@ -275,8 +275,8 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `frontends/windows/README.html` | §2 | 增 | 写明核心模型的两种来源：Python 安装器下载 / 缓存，或 `-SourceDir` 离线源；运行期不需要 Python。 |
-| `frontends/windows/PROVIDER.html` | §4.5 | 增 | 在安装权限与路径表中补充 Python 模型安装器的调用关系。 |
+| `frontends/windows/README.html` | §2 | 不动（已更新） | 写明核心模型的两种来源：Python 安装器下载 / 缓存，或 `-SourceDir` 离线源；运行期不需要 Python。 |
+| `frontends/windows/PROVIDER.html` | §4.5 | 不动（已更新） | 在安装权限与路径表中补充 Python 模型安装器的调用关系。 |
 | `README.html` | §2 | 不动 | 根 README 只列安装入口；模型来源细节归 Windows 文档。 |
 
 ### M8. Fcitx 系统 addon 的 ABI 诊断具体检查什么没有写明
@@ -296,8 +296,8 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `frontends/fcitx/CORE.html` | §4.6 | 改 | 写明 ABI 检查由 `pkg-config` 最低版本 + `ldd` 依赖解析组成，并区分 `voime doctor` 与 addon 自身 `checkAddonAbi` 的当前职责。 |
-| `frontends/fcitx/PROVIDER.html` | §4.3 | 改 | 在系统路径表中补充 libdir 解析与 ABI 判定规则；注明 addon 侧只做路径存在性检查。 |
+| `frontends/fcitx/CORE.html` | §4.6 | 不动（已更新） | 写明 ABI 检查由 `pkg-config` 最低版本 + `ldd` 依赖解析组成，并区分 `voime doctor` 与 addon 自身 `checkAddonAbi` 的当前职责。 |
+| `frontends/fcitx/PROVIDER.html` | §4.3 | 不动（已更新） | 在系统路径表中补充 libdir 解析与 ABI 判定规则；注明 addon 侧只做路径存在性检查。 |
 | `crates/voime/CORE.html` | §4.8 | 不动（本主题） | doctor 的检查项已定义；worker 日志行格式的修改见 M5。 |
 
 ### M9. `voime ctl backend` 与全局 `--endpoint` 的 CLI 行为没有写清
@@ -316,8 +316,8 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime/USER.html` | §4.1 | 改 | 明确 `ctl backend` 即使全局解析到 `--endpoint` 也会拒绝并以退出码 2 结束。 |
-| `crates/voime/CORE.html` | §4.1、§5.4 | 改 | 把 Backend 分流写到 `main.rs`：在构造 `Endpoint` / 进入 `run_ctl` 前检查 `--endpoint` 并返回 2；`run_ctl` 只处理需要端点的动作。 |
+| `crates/voime/USER.html` | §4.1 | 不动（已更新） | 明确 `ctl backend` 即使全局解析到 `--endpoint` 也会拒绝并以退出码 2 结束。 |
+| `crates/voime/CORE.html` | §4.1、§5.4 | 不动（已更新） | 把 Backend 分流写到 `main.rs`：在构造 `Endpoint` / 进入 `run_ctl` 前检查 `--endpoint` 并返回 2；`run_ctl` 只处理需要端点的动作。 |
 
 ### M10. GPU 模型默认下载、下载确认与仓库根目录回退没有定义
 
@@ -362,7 +362,7 @@ Qwen CORE 的草案签名只列 `LlamaContextParams` / `LlamaBatch` 类型名，
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-qwen3/CORE.html` | §4.4、§4.6 | 改 | 用 `llama_cpp_4::prelude::*`、`MostlyBF16`、`n_ctx = 4096` 与 `n_batch = 2048` 更新草案签名。 |
+| `crates/voime-gpu-qwen3/CORE.html` | §4.4、§4.6 | 不动（已更新） | 用 `llama_cpp_4::prelude::*`、`MostlyBF16`、`n_ctx = 4096` 与 `n_batch = 2048` 更新草案签名。 |
 | `crates/voime-gpu-qwen3/PROVIDER.html` | §4.3 | 不动 | 已锁定 `llama-cpp-4` 0.11.0；类型细节归 CORE。 |
 
 ### P4. `rubato` 的流式重采样器会缓存不足一个块的数据
@@ -381,7 +381,7 @@ Qwen CORE 的草案签名只列 `LlamaContextParams` / `LlamaBatch` 类型名，
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §4.6、§5.3 | 增 | 说明 `FinishSegment` 必须 flush 重采样器；`SetMode` / Start 需要重建重采样器；与 E5 的 §5.3 修改合并。 |
+| `crates/voime-core/CORE.html` | §4.6、§5.3 | 不动（已更新） | 说明 `FinishSegment` 必须 flush 重采样器；`SetMode` / Start 需要重建重采样器；与 E5 的 §5.3 修改合并。 |
 | `crates/voime-core/USER.html` | §4.4 | 不动 | 已定义硬切分排空音频；具体重采样器实现归 CORE。 |
 
 ### P5. Windows 登录启动项在安装器与托盘中使用不同名称
@@ -400,7 +400,7 @@ Qwen CORE 的草案签名只列 `LlamaContextParams` / `LlamaBatch` 类型名，
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `frontends/windows/CORE.html` | §4.2 | 增 | 写明登录启动项固定使用 `HKCU\...\Run\Voime`，安装器与托盘共用同一个值名。 |
+| `frontends/windows/CORE.html` | §4.2 | 不动（已更新） | 写明登录启动项固定使用 `HKCU\...\Run\Voime`，安装器与托盘共用同一个值名。 |
 | `frontends/windows/USER.html` | §4.6 | 不动 | 已定义登录启动行为；值名细节归 CORE。 |
 
 ### P6. 独立 Cargo workspace 的产物路径与根 workspace 不同
@@ -439,7 +439,7 @@ Qwen CORE 的草案签名只列 `LlamaContextParams` / `LlamaBatch` 类型名，
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §2、§5.6 | 改 | 明确数据回调用 `try_send`、错误回调用阻塞 `send` 写哨兵，哨兵不可丢；与 P9 的 §2 修改合并。 |
+| `crates/voime-core/CORE.html` | §2、§5.6 | 不动（已更新） | 明确数据回调用 `try_send`、错误回调用阻塞 `send` 写哨兵，哨兵不可丢；与 P9 的 §2 修改合并。 |
 | `crates/voime-core/PROVIDER.html` | §4.1 | 不动 | 已定义 cpal 错误回调；具体队列策略归 CORE。 |
 
 ### P9. Continuous 自动分段在自然停顿处过早收句
@@ -481,12 +481,12 @@ M5 曾把 daemon 日志中的 ready / running 作为 `voime doctor` 的唯一 wo
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-ipc/USER.html` | §4.2、§4.3、§4.4、§4.5、§4.6、§4.8 | 改 | 增加 `Diagnostics`、`WorkerState`、`WorkerDiagnostics` 与 JSON 示例；增量消息不提升版本，客户端忽略未知服务端消息。 |
-| `crates/voime/USER.html` | §1、§2、§4.4 | 改 | worker 状态来源改为 daemon `Diagnostics`，删除日志读取描述。 |
-| `crates/voime/CORE.html` | §2、§4.8、§5.5 | 改 | 增加 `Client::diagnostics()`，删除 `worker_log_status` 与 `WorkerStatus`。 |
-| `crates/voimed/USER.html` | §4.2、§4.3 | 改 | 增加 Control 角色的 `Diagnostics` 请求 / 响应。 |
-| `crates/voimed/CORE.html` | §2、§4.6、§4.7、§5.1 | 改 | 增加 `ready` / `last_error` / `is_alive` 与 `Daemon::diagnostics`。 |
-| `BUILD.html` | §5 | 改 | 删除“worker 状态来自日志与进程状态”。 |
+| `crates/voime-ipc/USER.html` | §4.2、§4.3、§4.4、§4.5、§4.6、§4.8 | 不动（已更新） | 增加 `Diagnostics`、`WorkerState`、`WorkerDiagnostics` 与 JSON 示例；增量消息不提升版本，客户端忽略未知服务端消息。 |
+| `crates/voime/USER.html` | §1、§2、§4.4 | 不动（已更新） | worker 状态来源改为 daemon `Diagnostics`，删除日志读取描述。 |
+| `crates/voime/CORE.html` | §2、§4.8、§5.5 | 不动（已更新） | 增加 `Client::diagnostics()`，删除 `worker_log_status` 与 `WorkerStatus`。 |
+| `crates/voimed/USER.html` | §4.2、§4.3 | 不动（已更新） | 增加 Control 角色的 `Diagnostics` 请求 / 响应。 |
+| `crates/voimed/CORE.html` | §2、§4.6、§4.7、§5.1 | 不动（已更新） | 增加 `ready` / `last_error` / `is_alive` 与 `Daemon::diagnostics`。 |
+| `BUILD.html` | §5 | 不动（已更新） | 删除“worker 状态来自日志与进程状态”。 |
 
 ### P12. Qwen3 中文输出清洗按字节切分导致 worker panic
 
@@ -519,8 +519,8 @@ worker 进程退出，daemon 看到 `GPU worker 已关闭连接` 后重启 worke
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-qwen3/CORE.html` | §4.7 | 改 | 说明 `clean_text` 必须按 UTF-8 字符边界处理多字节输出，禁止按固定字节切片。 |
-| `crates/voimed/CORE.html` | §2 | 改 | 说明 worker 推理耗时与 CPU 回退耗时会写入日志，便于诊断偶发回退。 |
+| `crates/voime-gpu-qwen3/CORE.html` | §4.7 | 不动（已更新） | 说明 `clean_text` 必须按 UTF-8 字符边界处理多字节输出，禁止按固定字节切片。 |
+| `crates/voimed/CORE.html` | §2 | 不动（已更新） | 说明 worker 推理耗时与 CPU 回退耗时会写入日志，便于诊断偶发回退。 |
 
 ### P13. 移除 FireRed GPU Final 后端
 

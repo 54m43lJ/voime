@@ -47,7 +47,7 @@ pipeline、会话历史与 Final 后端选择，通过本机 IPC 向平台前端
   <li>daemon 启动时只加载选中的 GPU worker 并保持常驻；默认 <code>cpu</code> 时不启动 worker。</li>
   <li>Finalizing 期间停止 Preview 计算；Final 在后台队列中串行执行，不阻塞新录音；<code>cpu</code> Final 只执行一次，GPU Final 不再调用 SenseVoice ASR。</li>
   <li>GPU 加载失败、超时、崩溃或显存不足时，当前段回退 CPU SenseVoice；Preview 不中断。</li>
-  <li>daemon 退出时先停 worker，再按顺序停止 pipeline、音频与 IPC，并清理端点。</li>
+  <li>daemon 退出顺序见 <a href="CORE.html#c5-7">CORE §5.7</a>。</li>
 </ul>
 
 <h3 id="r1-3">1.3 非目标</h3>

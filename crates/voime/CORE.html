@@ -93,7 +93,7 @@ fn run_ctl_inner(endpoint: &amp;Endpoint, action: CtlAction) -&gt; anyhow::Resul
 // ctl 动作等待响应的超时由 main.rs 拥有；推荐值 3 s
 fn print_state(message: ServerMessage);</code></pre>
 <ul class="note">
-  <li><code>run_ctl</code> 先分流 <code>Backend</code>：该动作不需要 <code>Endpoint</code>，只调用 <code>config::write_backend</code>。</li>
+  <li><code>main</code> 在构造 <code>Endpoint</code> / 进入 <code>run_ctl</code> 前分流 <code>Backend</code>：该动作不需要端点；若同时出现 <code>--endpoint</code>，打印错误并以退出码 2 结束。其他 ctl 动作才构造端点并进入 <code>run_ctl</code>。</li>
 </ul>
 
 <h3 id="c4-2">4.2 cli.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -323,20 +323,24 @@ Tui::draw(&amp;mut app)
 └── footer_text(app) → Paragraph（DIM）</code></pre>
 
 <h3 id="c5-4">5.4 ctl 命令与 backend 写入</h3>
-<pre><code>voime::run_ctl(endpoint, action)
-├── 判断 action == Backend(id)
+<pre><code>voime::main()
+├── 判断 command == Ctl(Backend) &amp;&amp; endpoint.is_some()
+│   └── eprintln!() → ExitCode::from(2)
+├── 判断 command == Ctl(Backend)
 │   └── voime::config::write_backend(id)
 │       ├── FinalConfig::path()
 │       ├── 读取现有 TOML
 │       ├── 替换 [final].backend
 │       └── 写临时文件 + rename
-└── 其他动作为 voime::run_ctl_inner(endpoint, action)
-    ├── Client::connect_as(endpoint, Role::Control)
-    ├── Client::snapshot()
-    ├── 判断 Start / Stop / Toggle → Client::send(...) + Client::wait_for_state(3 s)
-    ├── 判断 Status → Client::send(Status) + Client::next_event_timeout(3 s)
-    ├── 判断 Clear → Client::send(ClearHistory) + 等待 HistoryCleared
-    └── 判断 Quit → Client::send(Quit) + 等待 Bye</code></pre>
+└── 其他命令 → 构造 Endpoint
+    └── voime::run_ctl(endpoint, action)
+        └── voime::run_ctl_inner(endpoint, action)
+            ├── Client::connect_as(endpoint, Role::Control)
+            ├── Client::snapshot()
+            ├── 判断 Start / Stop / Toggle → Client::send(...) + Client::wait_for_state(3 s)
+            ├── 判断 Status → Client::send(Status) + Client::next_event_timeout(3 s)
+            ├── 判断 Clear → Client::send(ClearHistory) + 等待 HistoryCleared
+            └── 判断 Quit → Client::send(Quit) + 等待 Bye</code></pre>
 
 <h3 id="c5-5">5.5 doctor</h3>
 <pre><code>voime::main()

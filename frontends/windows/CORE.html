@@ -137,6 +137,7 @@ pub fn save(&amp;self) -&gt; anyhow::Result&lt;()&gt;;
 pub fn to_ipc_config(&amp;self) -&gt; IpcConfig;</code></pre>
 <ul class="note">
   <li>保存先写 <code>config.json.tmp</code> 再 <code>rename</code> 覆盖目标；Windows 上 <code>std::fs::rename</code> 使用 <code>MOVEFILE_REPLACE_EXISTING</code>，替换一步完成。</li>
+  <li>登录启动项固定使用 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Voime</code>；安装器与托盘 <code>Config::set_start_at_login</code> 共用该值名，卸载删除同名值。</li>
   <li><code>Config</code> 只包含前端拥有的字段，不含 Final 后端；后端由 <code>voimed</code> 读取，前端不感知。</li>
 </ul>
 

@@ -59,7 +59,7 @@
   <tr><td>不设置 <code>FCITX_ADDON_DIRS</code></td><td>不设置该环境变量；addon 只从 Fcitx5 系统 addon 目录加载，不读取用户 addon 目录。</td></tr>
   <tr><td>失败处理</td><td>拒绝提权或系统安装失败时核心安装失败并提示 <code>--no-addon</code>；不静默降级到用户目录。</td></tr>
   <tr><td><code>Library=voime</code></td><td>对应系统 addon 目录中的 <code>voime.so</code>，不是用户前缀；CMake 不生成 <code>libvoime.so</code>。</td></tr>
-  <tr><td>ABI</td><td><code>voime.so</code> 与 Fcitx5 头文件绑定；Fcitx 大版本升级后重新编译。系统路径与 ABI 由 <code>voime doctor</code> 检查，不检查inputmethod 条目。</td></tr>
+  <tr><td>ABI</td><td><code>voime.so</code> 与 Fcitx5 头文件绑定；Fcitx 大版本升级后重新编译。ABI 判定规则与系统路径见 §4.3；addon 侧只做路径存在性检查。</td></tr>
   <tr><td>键盘所有权</td><td>Fcitx 持有键盘与 frontend；Voime 不抓键盘、不转发按键、不注入按键。</td></tr>
   <tr><td>热键范围</td><td>只有 Fcitx 能收到按键的输入上下文才触发热键；没有文本焦点、未使用 Fcitx 的窗口不保证。</td></tr>
   <tr><td>热键消费</td><td>命中后调用 <code>filterAndAccept</code>；普通按键继续由 Fcitx 路由。</td></tr>
@@ -156,6 +156,7 @@ Hotkey=Super+F2</code></pre>
   <tr><th>项目</th><th>契约</th></tr>
   <tr><td>addon 库</td><td>系统 addon 目录，例如 <code>/usr/lib/fcitx5/voime.so</code>；多架构发行版按 <code>pkg-config --variable=libdir Fcitx5Core</code> + <code>/fcitx5</code> 解析。</td></tr>
   <tr><td>addon 描述</td><td><code>/usr/share/fcitx5/addon/voime.conf</code>；不安装 inputmethod 条目。</td></tr>
+  <tr><td>ABI 判定</td><td><code>voime doctor</code> 要求 <code>pkg-config --atleast-version=5.1.23 Fcitx5Core</code> 成功，且 <code>ldd voime.so</code> 没有 <code>not found</code> 依赖；不检查 inputmethod 条目与 <code>FCITX_ADDON_DIRS</code>。addon 侧 <code>checkAddonAbi</code> 只检查库与描述文件存在，不做版本 / <code>ldd</code> 检查。</td></tr>
   <tr><td>安装权限</td><td>只有 addon 安装 / 卸载需要 sudo；脚本不整体以 root 运行，其他文件仍由用户拥有。</td></tr>
   <tr><td>失败处理</td><td>用户拒绝提权或 addon 安装失败时，核心安装失败并提示 <code>--no-addon</code>；不静默降级为用户目录加载。</td></tr>
   <tr><td>验证</td><td>重启 Fcitx 后检查 Addons 页面与日志；<code>voime doctor</code> 检查系统 addon 路径、<code>voime.so</code>、描述文件与 ABI；不检查 <code>FCITX_ADDON_DIRS</code>，不检查inputmethod 条目。</td></tr>

@@ -61,7 +61,7 @@
   <tr><td>系统 addon 路径</td><td>addon 库写入 Fcitx5 系统 addon 目录，例如 <code>/usr/lib/fcitx5/voime.so</code>；多架构发行版按 <code>pkg-config --variable=libdir Fcitx5Core</code> + <code>/fcitx5</code> 解析。描述文件写入 <code>/usr/share/fcitx5/addon/voime.conf</code>。</td></tr>
   <tr><td>sudo 范围</td><td>只有 addon 安装 / 卸载申请 sudo；脚本不整体以 root 运行，<code>voimed</code>、<code>voime</code>、模型与配置仍由用户拥有。安装入口与选项见 <a href="../../README.html#r2">根 README §2</a>。</td></tr>
   <tr><td>不设置 <code>FCITX_ADDON_DIRS</code></td><td>只依赖 Fcitx5 默认系统 addon 目录；不读取用户 addon 目录，不把用户可写目录加入库搜索路径。拒绝提权或安装失败时不静默降级到用户目录。</td></tr>
-  <tr><td>ABI 诊断</td><td><code>voime doctor</code> 检查系统 addon 路径、<code>voime.so</code>、描述文件与 ABI；不检查inputmethod 条目。</td></tr>
+  <tr><td>ABI 诊断</td><td><code>voime doctor</code> 检查系统 addon 路径、<code>voime.so</code>、描述文件与 ABI；ABI 判定规则见 <a href="PROVIDER.html#p4-3">PROVIDER §4.3</a>。addon 自身 <code>checkAddonAbi</code> 只检查库与描述文件存在。</td></tr>
   <tr><td>线程</td><td>所有 Fcitx API 调用、socket 事件与定时器都在 Fcitx 事件循环线程内；IpcClient 不做后台线程。</td></tr>
   <tr><td>事件监听</td><td>按键使用 <code>watchEvent&lt;InputContextKeyEvent&gt;(PreInputMethod)</code>；焦点失焦使用 <code>watchEvent&lt;InputContextFocusOut&gt;(PreInputMethod)</code>。</td></tr>
   <tr><td>热键消费</td><td>命中热键后调用 <code>filterAndAccept()</code>；未命中立即返回，不影响 Fcitx 普通路由。</td></tr>
@@ -289,7 +289,7 @@ AddonPaths systemAddonPaths();
 bool checkAddonAbi(std::string *error);</code></pre>
 <ul class="note">
   <li>安装辅助只写入 Fcitx5 系统目录：库为 <code>/usr/lib/fcitx5/voime.so</code>，描述为 <code>/usr/share/fcitx5/addon/voime.conf</code>；不写用户目录，不设置 <code>FCITX_ADDON_DIRS</code>。</li>
-  <li><code>src/diagnostics.*</code> 供 addon 启动与安装后自检使用；<code>voime doctor</code> 按同一系统路径与 ABI 规则检查，不检查inputmethod 条目。</li>
+  <li><code>src/diagnostics.*</code> 供 addon 启动与安装后自检使用；<code>checkAddonAbi</code> 只检查库与描述文件存在。版本与依赖判定由 <code>voime doctor</code> 负责，规则见 <a href="PROVIDER.html#p4-3">PROVIDER §4.3</a>。</li>
   <li>上述安装函数与诊断接口属于本组件的设计契约；实现可调整名称与参数。</li>
 </ul>
 

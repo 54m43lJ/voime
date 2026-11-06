@@ -163,6 +163,9 @@ fn read_loop(tx: Sender&lt;WorkerCommand&gt;, cancel: CancelFlag);
   <li><code>run</code> 先读 <code>Hello</code>，校验 protocol / backend / model_dir，再加载 manifest 与 engine，最后写 <code>Ready</code> 并进入帧循环。</li>
   <li>读帧线程把 <code>Transcribe</code> / <code>Shutdown</code> 送入命令通道；每个请求开始前 <code>arm(id)</code>，结束后 <code>clear()</code>。收到 <code>Cancel</code> 时只在该 <code>id</code> 匹配当前请求时置位 <code>CancelFlag</code>，让当前解码在下一个 token 退出；无匹配 <code>id</code> 忽略。</li>
   <li><code>TRANSCRIBE_BUDGET_MS</code> 是 worker 侧的保护预算；daemon 仍是超时与杀进程的权威。</li>
+  <li>Qwen 只使用编译 feature 选择 llama.cpp backend；<code>vulkan</code> / <code>cuda</code> 不共存，未启用任何 feature 时返回 <code>runtime_missing</code>。</li>
+  <li><code>device</code> 来自 <code>Hello</code>；空串表示 backend 默认设备，非空值必须与编译 feature 前缀匹配，否则返回 <code>device_unavailable</code>。</li>
+  <li>daemon 不向 Qwen 传 <code>--runtime</code> / <code>--log-level</code> 或 runtime 专用环境变量；启动日志只写 stderr，由 daemon 转发到 <code>voime-log</code>。</li>
 </ul>
 
 <h3 id="c4-3">4.3 manifest.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -228,7 +231,8 @@ impl Engine {
 
 }</code></pre>
 <ul class="note">
-  <li><code>load</code> 创建 <code>LlamaBackend</code>、加载 BF16 主模型、检查 <code>LlamaModel::ftype()</code>、初始化 <code>MtmdContext</code>，再检查 <code>capabilities(&amp;model).audio</code> 与 <code>audio_sample_rate()</code>。</li>
+  <li><code>load</code> 创建 <code>LlamaBackend</code>、加载 BF16 主模型、用 <code>matches!(model.ftype(), Some(LlamaFtype::MostlyBF16))</code> 检查精度、初始化 <code>MtmdContext</code>，再检查 <code>capabilities(&amp;model).audio</code> 与 <code>audio_sample_rate()</code>。</li>
+  <li>llama.cpp 类型统一通过 <code>llama_cpp_4::prelude::*</code> 引入；版本固定 <code>=0.11.0</code>。</li>
   <li><code>device</code> 来自 <code>Hello</code>；空串使用 backend 默认设备，不支持的值返回 <code>device_unavailable</code>。设备序号传给 <code>LlamaModelParams::with_main_gpu</code>，并显式设置 <code>n_gpu_layers = 999</code>，避免默认参数把模型留在 CPU。</li>
   <li><code>warmup</code> 用一段短静音完成一次 mtmd / decode，提前暴露 backend 或模型加载问题；不计入用户 Final。</li>
   <li><code>transcribe</code> 每次创建 <code>LlamaContext</code>，调用 <a href="#c4-5">mtmd</a> 与 <a href="#c4-6">decode</a>，最后调用 <a href="#c4-7">clean</a>；不在方法内重新加载模型。</li>
@@ -262,8 +266,9 @@ pub fn greedy(model: &amp;LlamaModel, lctx: &amp;mut LlamaContext&lt;'_&gt;,
               deadline: Instant) -&gt; anyhow::Result&lt;Vec&lt;LlamaToken&gt;&gt;;
                                                  </code></pre>
 <ul class="note">
-  <li>使用 <code>LlamaSampler::greedy()</code> 与 <code>LlamaBatch</code>；每轮采样、判断 EOS / 上限 / 取消 / 截止时间，再 decode 新 token。</li>
+  <li>使用 <code>LlamaSampler::greedy()</code> 与 <code>LlamaBatch</code>；每轮采样、判断 EOS / 上限 / 取消 / 截止时间，再 <code>batch.clear()</code> 并只 add 一个新 token。</li>
   <li><code>MAX_NEW_TOKENS</code> 按 30 s 段的上限设置，防止异常模型无限生成；具体值由金样与性能测试冻结。</li>
+  <li><code>context_params</code> 固定 <code>n_ctx = 4096</code>、<code>n_batch = 2048</code>；30 s 音频加 prompt 与 <code>MAX_NEW_TOKENS</code> 输出必须落在上下文内，不足时返回 <code>inference_failed</code>，不截断音频。</li>
 </ul>
 
 <h3 id="c4-7">4.7 clean.rs <a class="backlink" href="#c1">文件树</a></h3>
@@ -277,7 +282,7 @@ fn trim_edges(raw: &amp;str) -&gt; &amp;str;                </code></pre>
   <li>Qwen3-ASR 的典型包装是 <code>language English&lt;asr_text&gt;And so, ...</code>；<code>clean_text</code> 取 <code>&lt;asr_text&gt;</code> 之后的内容，去掉 <code>language ...</code> 前缀与可选的 <code>&lt;/asr_text&gt;</code> 尾部。</li>
   <li>只做包装清洗、NUL 与首尾空白；模型输出中的标点、大小写、数字与中英文混排保持不变。</li>
   <li>清洗后为空返回空字符串；不构造占位文本，不返回半截句子。</li>
-  <li>所有前缀 / 尾部判断必须按 UTF-8 字符边界处理；禁止对 <code>&amp;str</code> 使用固定字节下标切片。中文输出曾因 <code>trimmed[..9]</code> 落在多字节字符内部而 panic，进而导致 worker 重启与 CPU 回退。</li>
+  <li>所有前缀 / 尾部判断必须按 UTF-8 字符边界处理；禁止对 <code>&amp;str</code> 使用固定字节下标切片，否则多字节中文输出可能落在字符内部并 panic，导致 worker 重启与 CPU 回退。</li>
 </ul>
 
 <h2 id="c5">5. Call stack tree</h2>
@@ -295,7 +300,7 @@ fn trim_edges(raw: &amp;str) -&gt; &amp;str;                </code></pre>
         │   ├── llama_cpp_4::LlamaBackend::init()
         │   ├── llama_cpp_4::LlamaModel::load_from_file(&amp;backend, main_model, &amp;params)
         │   │   └── params = LlamaModelParams::default().with_n_gpu_layers(999).with_main_gpu(device_id)
-        │   ├── 判断 model.ftype() 不是 BF16 → anyhow::bail!("load_failed")
+        │   ├── 判断 !matches!(model.ftype(), Some(LlamaFtype::MostlyBF16)) → anyhow::bail!("load_failed")
         │   ├── llama_cpp_4::mtmd::MtmdContext::init_from_file(mmproj, &amp;model, MtmdContextParams::default())
         │   ├── mtmd.capabilities(&amp;model).audio
         │   ├── 判断 mtmd.audio_sample_rate() != 16000 → anyhow::bail!("load_failed")

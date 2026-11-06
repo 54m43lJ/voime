@@ -57,6 +57,7 @@
   <tr><td>软切分 / 硬切分</td><td>软切分只结束当前段，后续 <code>Recording(true)</code> 继续分配下一段；硬切分调用 <code>finish_segment</code> 并停止续段。PTT / Toggle 共用该状态机。</td></tr>
   <tr><td>Final 后端</td><td><code>Config::load</code> 在启动时读取一次 <code>[final].backend</code>；运行期不重新读取，不提供 IPC 热切换。</td></tr>
   <tr><td>worker 生命周期</td><td>只启动选中的 worker；默认 <code>cpu</code> 时 <code>worker = None</code>。spawn → Hello / Ready → 常驻 → Transcribe → Shutdown。</td></tr>
+  <tr><td>worker 诊断</td><td><code>WorkerShared</code> 保存 <code>status</code> / <code>ready</code> / <code>last_error</code>；Finalizer 空闲轮询用 <code>Worker::is_alive</code> 检测进程退出；<code>Daemon::diagnostics</code> 只读该快照，不启动、不重启 worker。</td></tr>
   <tr><td>Finalizing 门禁</td><td>当前段结束（VAD 软切分或会话硬切分）后进入 Finalizing：停止该段 Partial、取消未开始的 Preview，只允许一次 Final；软切分不关闭会话，下一段由 <code>Recording(true)</code> 续段。Final 在独立 Finalizer 线程串行执行，不阻塞新录音；等待队列最多 5 条。</td></tr>
   <tr><td>Final 调度</td><td><code>SegmentReady</code> 后由 <code>Daemon::finalize</code> 选择 CPU / GPU；GPU 失败当前段回退 CPU；一次只执行一个 Final。</td></tr>
   <tr><td>前端断开</td><td>前端状态置 disconnected；结束会话与当前段；Continuous 退 PTT；广播 Snapshot。</td></tr>
@@ -106,7 +107,7 @@ pub mod worker;</code></pre>
 fn run(args: Args) -&gt; anyhow::Result&lt;()&gt;;
 fn stop_audio(audio: CaptureHandle);</code></pre>
 <ul class="note">
-  <li><code>main</code> 先检查端点是否已有 daemon，再调用 <code>run</code>；<code>run</code> 按配置 → 核心 → worker → pipeline → 音频 → IPC → daemon 顺序初始化。</li>
+  <li><code>main</code> 先检查端点是否已有 daemon，再调用 <code>run</code>；<code>run</code> 按配置 → 核心 → pipeline → worker → 音频 → IPC → daemon 顺序初始化。</li>
   <li>初始化失败按逆序释放已创建资源；音频打开失败时先关闭 pipeline 与 worker。</li>
 </ul>
 
@@ -214,7 +215,9 @@ fn map_error(code: ErrorCode, message: &amp;str) -&gt; anyhow::Error;</code></pr
   <li><code>spawn</code> 使用 <code>voime-gpu-common</code> 的帧格式；worker 的 stdout 只读协议，stderr 转发到 <code>voime-log</code>。</li>
   <li>加载超时、握手失败、进程退出都转为“后端不可用”；当前段由 daemon 回退 CPU。</li>
   <li>同一 worker 一次只处理一个 Transcribe；daemon 在上一段完成前不发送下一段。</li>
-  <li>Qwen 子进程只通过 <code>Hello</code> 接收模型目录；daemon 不设置 runtime 专用环境变量。</li>
+  <li><code>Worker::spawn</code> 保存规范化后的模型根；Qwen3 的 <code>Hello.model_dir</code> 固定为 <code>model_root/qwen3-asr-1.7b</code>，即包含 <code>manifest.json</code> 的目录。</li>
+  <li><code>Worker::handshake</code> 的设备优先级：调用方显式 <code>device</code> &gt; <code>VOIME_GPU_DEVICE</code> &gt; 空串（backend 默认设备）；Qwen 只接受与编译 feature 匹配的设备前缀。</li>
+  <li>daemon 不向 Qwen 传 <code>--runtime</code> / <code>--log-level</code> 或 runtime 专用环境变量；runtime 由 worker 编译 feature 决定，启动日志只走 stderr。</li>
   <li><code>ready</code> / <code>last_error</code> 由 Finalizer 线程写入 <code>WorkerShared</code>；<code>Daemon::diagnostics</code> 只读快照。<code>Worker::is_alive</code> 用 <code>Child::try_wait</code> 发现空闲期退出的进程，Finalizer 在 500 ms 空闲轮询时更新状态。</li>
 </ul>
 
@@ -387,7 +390,7 @@ fn spawn_client(stream: Box&lt;dyn Stream&gt;, client_id: u64,
         └── ExitCode::from(1)</code></pre>
 <ul class="note">
   <li>默认 <code>backend = Cpu</code> 时 <code>worker = None</code>，不探测 GPU。</li>
-  <li>GPU worker 握手失败只标记不可用，不阻止 daemon 启动；核心模型失败才阻止启动。失败原因保存在 <code>WorkerShared.error</code>，由 <code>Diagnostics</code> 返回给 doctor。</li>
+  <li>GPU worker 握手失败只标记不可用，不阻止 daemon 启动；核心模型失败才阻止启动。Finalizer 在空闲轮询时用 <code>Worker::is_alive</code> 检测进程退出，并把 <code>ready</code> / <code>last_error</code> 写入 <code>WorkerShared</code>；<code>Daemon::diagnostics</code> 只读该快照，由 <code>Diagnostics</code> 返回给 doctor。</li>
 </ul>
 
 <h3 id="c5-2">5.2 连接、Hello、Configure 与角色</h3>

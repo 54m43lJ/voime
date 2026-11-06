@@ -77,7 +77,7 @@ GPU 推理模块独立安装，只增加 Final 识别路径，不是前端的一
 
 <table>
   <tr><th>场景</th><th>行为</th><th>契约</th></tr>
-  <tr><td>安装核心 / 启动</td><td>运行 <code>scripts/install-core.ps1</code>：每用户安装托盘与 daemon 到 <code>%LOCALAPPDATA%\Programs\Voime</code>，核心模型写入 <code>%LOCALAPPDATA%\voime\models</code>；登录启动写入 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>；托盘以子进程托管 daemon，退出托盘即停止。</td><td><a href="USER.html#u4-6">USER §4.6</a></td></tr>
+  <tr><td>安装核心 / 启动</td><td>运行 <code>scripts/install-core.ps1</code>：每用户安装托盘与 daemon 到 <code>%LOCALAPPDATA%\Programs\Voime</code>，核心模型写入 <code>%LOCALAPPDATA%\voime\models</code>；未指定 <code>-SourceDir</code> 时由 <code>install-core-models.py</code> 下载 / 缓存，指定时从离线源校验复制；运行期不需要 Python。登录启动写入 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>；托盘以子进程托管 daemon，退出托盘即停止。</td><td><a href="USER.html#u4-6">USER §4.6</a></td></tr>
   <tr><td>安装 GPU 模块</td><td>运行独立脚本 <code>scripts/install-gpu.ps1</code>：安装 GPU worker、对应 runtime 与 GPU 模型；GPU 模块不是前端的一部分，前端不参与安装。后端选择见 <a href="../../USER.html#u2">根 USER §2</a> / <a href="../../USER.html#u4-4">§4.4</a>。</td><td><a href="../../USER.html#u4-4">根 USER §4.4</a></td></tr>
   <tr><td>配置</td><td>托盘右键菜单或设置窗口设置 Mode / 浮层 / 登录启动；热键在设置窗口直接按键录制，默认组合避开系统保留键。Final 后端不是前端配置项。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>
   <tr><td>daemon 生命周期</td><td>登录启动托盘，托盘以子进程托管 daemon（唯一所有者）；托盘菜单与设置窗口提供启动、停止、诊断，退出托盘即停止 daemon。GPU worker 由 <code>voimed</code> 按配置加载，托盘不启动 worker。</td><td><a href="USER.html#u4-6">USER §4.6</a></td></tr>

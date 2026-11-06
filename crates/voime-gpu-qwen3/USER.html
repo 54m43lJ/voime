@@ -205,6 +205,7 @@
 
 <ul class="note">
   <li>worker 只接受 daemon 传入的模型目录，不从全局配置或环境变量猜路径；目录外文件、绝对路径与 <code>..</code> 一律拒绝。</li>
+  <li>daemon 在 <code>Hello.model_dir</code> 中传入本目录的绝对路径（<code>model_root/qwen3-asr-1.7b</code>）；worker 直接在该目录读取 <code>manifest.json</code>，不向上查找模型根。</li>
   <li>启动时逐文件校验 SHA-256；任一文件缺失、被修改或精度声明不是 <code>bf16</code>，按 <a href="#u4-3">§4.3</a> 的 <code>load_failed</code> 处理。</li>
   <li>目录内不允许可执行文件、脚本或系统库；安装脚本用同盘临时目录 + rename 原子替换，失败不留下半成品。</li>
   <li>具体来源、revision 与 SHA-256 见 <a href="PROVIDER.html#p4-1">PROVIDER §4.1</a> / <a href="PROVIDER.html#p4-2">§4.2</a>。</li>
@@ -213,7 +214,7 @@
 <h3 id="u4-2">4.2 runtime 构建选择</h3>
 <p>
 Qwen runtime 在编译时选定，不是运行期开关。安装脚本按 <code>--qwen-runtime</code>
-选择预编译的 worker 与 runtime 包；worker 二进制只包含一个 llama.cpp backend feature。
+选择预编译的 worker 与 runtime 包；没有预编译包时在 Qwen crate 内按同一 feature 构建。worker 二进制只包含一个 llama.cpp backend feature。
 </p>
 
 <table>
@@ -312,18 +313,19 @@ scripts/install-gpu.ps1 --qwen3 --qwen-runtime cuda</code></pre>
 
 <table>
   <tr><th>选项</th><th>行为</th></tr>
-  <tr><td><code>--qwen3</code></td><td>只安装预编译的 Qwen worker / runtime 包与 <code>qwen3-asr-1.7b</code> 模型；不改变 <code>final.backend</code>。</td></tr>
+  <tr><td><code>--qwen3</code></td><td>安装 Qwen worker / runtime 与 <code>qwen3-asr-1.7b</code> 模型；worker 优先使用 <code>--source-dir/bin/</code> 预编译包，缺失时本地构建；不改变 <code>final.backend</code>。</td></tr>
   <tr><td><code>--qwen-runtime vulkan|cuda</code></td><td>选择预编译的 Qwen worker / runtime 变体；AMD Linux 只接受 <code>vulkan</code>；不提供 HIP / ROCm。</td></tr>
   <tr><td><code>--backend qwen3</code></td><td>安装后写入 <code>final.backend = qwen3</code>；该后端必须已安装；不自动重启 daemon。</td></tr>
   <tr><td><code>--uninstall</code></td><td>删除 Qwen worker、runtime 包与 <code>qwen3-asr-1.7b</code> 模型；不触碰核心或另一个 runtime。</td></tr>
   <tr><td><code>--no-models</code></td><td>只装 worker 与 runtime 包；模型目录由用户提供，仍按 <a href="#u4-1">§4.1</a> 校验。</td></tr>
-  <tr><td><code>--source-dir &lt;dir&gt;</code></td><td>离线模型 / runtime 源；按 <code>&lt;dir&gt;/&lt;model-id&gt;/</code> 读取，不联网。</td></tr>
+  <tr><td><code>--source-dir &lt;dir&gt;</code></td><td>离线模型 / runtime / 预编译 worker 源；按 <code>&lt;dir&gt;/&lt;model-id&gt;/</code> 读取模型，按 <code>&lt;dir&gt;/bin/</code> 读取预编译 worker，不联网。</td></tr>
   <tr><td><code>--yes</code> / <code>-Yes</code></td><td>跳过模型下载确认与 token 提示；用于非交互安装。</td></tr>
 </table>
 
 <ul class="note">
   <li>GPU 安装脚本先验证核心已安装；缺少核心时失败，不创建“只有 GPU 模块”的孤立安装。</li>
   <li>安装体积约 4.7 GB；未指定 <code>--source-dir</code> 时默认从固定上游 revision 下载并缓存，优先使用同 revision / 同 SHA-256 的 ModelScope 镜像，不可用时回退 Hugging Face；公开模型使用匿名直链，不需要账号；也可通过 <code>MODELSCOPE_API_TOKEN</code> / <code>HF_TOKEN</code>（及常见别名）提供 token，交互安装缺失时会提示输入，可回车跳过。开始前显示体积并要求确认，<code>--yes</code> / <code>-Yes</code> 跳过确认；支持断点续传 / 离线源。下载失败非零退出并清理临时目录，不写 manifest、不做 rename。安装脚本不从仓库根目录的 <code>models/</code> 取模型。</li>
+  <li><code>--source-dir/bin/voime-gpu-qwen3</code>（Windows 为 <code>bin\voime-gpu-qwen3.exe</code>）存在时优先安装预编译 worker；缺失时在 <code>crates/voime-gpu-qwen3</code> 内按 <code>--qwen-runtime</code> 构建。Vulkan 与 CUDA 预编译包分开，不能用同一二进制切换 runtime。</li>
   <li>卸载只删除本后端；Qwen 的配置值不静默改写。若 <code>final.backend</code> 仍为 <code>qwen3</code>，daemon 按 <a href="#u4-3">§4.3</a> 标记不可用并回退 CPU。</li>
   <li>Windows 与 Linux 使用同一语义：<code>install-gpu.ps1</code> 的 <code>--qwen3</code> / <code>--qwen-runtime</code> / <code>--uninstall</code> 与 Linux 对应。</li>
   <li>安装脚本只在安装阶段准备 runtime；运行期不安装、不编译、不切换 runtime。</li>

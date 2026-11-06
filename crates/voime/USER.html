@@ -92,9 +92,9 @@ voime doctor [--endpoint &lt;ENDPOINT&gt;]</code></pre>
   <tr><td><code>voime ctl status</code></td><td>发送 <code>Status</code>；打印一行状态；不显示 Final 后端。</td></tr>
   <tr><td><code>voime ctl clear</code></td><td>发送 <code>ClearHistory</code>；等待 <code>HistoryCleared</code>。</td></tr>
   <tr><td><code>voime ctl quit</code></td><td>发送 <code>Quit</code>；等待 <code>Bye</code>。</td></tr>
-  <tr><td><code>voime ctl backend &lt;id&gt;</code></td><td>原子写入 <code>[final].backend</code>；不连接 daemon；输出重启提示；非法值退出码 2。</td></tr>
+  <tr><td><code>voime ctl backend &lt;id&gt;</code></td><td>原子写入 <code>[final].backend</code>；不连接 daemon；即使全局解析到 <code>--endpoint</code> 也会拒绝并以退出码 2 结束；输出重启提示；非法值退出码 2。</td></tr>
   <tr><td><code>voime doctor</code></td><td>只读检查；退出码 0 表示全部通过，1 表示存在 FAIL。</td></tr>
-  <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名；同时接受 <code>--socket</code> 别名。<code>ctl backend</code> 不接受该选项。</td></tr>
+  <tr><td><code>--endpoint</code></td><td>全局选项；Unix 为 socket 路径，Windows 为命名管道名；同时接受 <code>--socket</code> 别名。<code>ctl backend</code> 不使用该选项；出现时按上述规则拒绝。</td></tr>
 </table>
 
 <table>
