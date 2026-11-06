@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -57,10 +56,13 @@ pub fn spawn(
     audio_rx: crossbeam_channel::Receiver<AudioChunk>,
 ) -> anyhow::Result<(Pipeline, Final)> {
     let asr_fbank = FbankConfig::sensevoice();
-    let sensevoice = SenseVoice::new(&config.models.asr, &factory, asr_fbank)
-        .context("创建 SenseVoice 会话失败")?;
-    let sensevoice = Arc::new(Mutex::new(sensevoice));
-    let finalizer = Final::new(Arc::clone(&sensevoice));
+    // Preview and CPU Final own independent sessions. They can run
+    // concurrently and never contend on one ORT session lock.
+    let preview = SenseVoice::new(&config.models.asr, &factory, asr_fbank)
+        .context("创建 Preview SenseVoice 会话失败")?;
+    let final_asr = SenseVoice::new(&config.models.asr, &factory, asr_fbank)
+        .context("创建 CPU Final SenseVoice 会话失败")?;
+    let finalizer = Final::new(final_asr);
 
     let (commands_tx, commands_rx) = crossbeam_channel::bounded(8);
     let (events_tx, events_rx) = crossbeam_channel::unbounded();
@@ -70,7 +72,7 @@ pub fn spawn(
     let worker = std::thread::Builder::new()
         .name("voime-pipeline".to_string())
         .spawn(
-            move || match Worker::new(&models, &factory, sensevoice, asr_fbank, events_tx) {
+            move || match Worker::new(&models, &factory, preview, asr_fbank, events_tx) {
                 Ok(worker) => {
                     let _ = ready_tx.send(Ok(()));
                     worker.run(audio_rx, commands_rx);
@@ -151,7 +153,7 @@ struct Worker {
     mode: Mode,
     vad: FireRedVad,
     segmenter: Segmenter,
-    sensevoice: Arc<Mutex<SenseVoice>>,
+    sensevoice: SenseVoice,
     fbank: FbankConfig,
     resampler: Option<StreamResampler>,
     events: crossbeam_channel::Sender<PipelineEvent>,
@@ -171,7 +173,7 @@ impl Worker {
     fn new(
         models: &ModelSet,
         factory: &SessionFactory,
-        sensevoice: Arc<Mutex<SenseVoice>>,
+        sensevoice: SenseVoice,
         asr_fbank: FbankConfig,
         events: crossbeam_channel::Sender<PipelineEvent>,
     ) -> anyhow::Result<Self> {
@@ -521,15 +523,10 @@ impl Worker {
                 return Ok(());
             }
         };
-        let text = {
-            let mut sensevoice = self
-                .sensevoice
-                .lock()
-                .map_err(|_| anyhow::anyhow!("SenseVoice 会话锁已损坏"))?;
-            sensevoice
-                .transcribe_features(&features)
-                .map(|output| output.text)
-        };
+        let text = self
+            .sensevoice
+            .transcribe_features(&features)
+            .map(|output| output.text);
         if self.preview_gate {
             if let Ok(text) = text {
                 if !text.trim().is_empty() {

@@ -1,15 +1,12 @@
-use std::sync::{Arc, Mutex};
-
 use crate::asr::SenseVoice;
 
 /// CPU Final: one SenseVoice pass over the complete segment.
-#[derive(Clone)]
 pub struct Final {
-    asr: Arc<Mutex<SenseVoice>>,
+    asr: SenseVoice,
 }
 
 impl Final {
-    pub fn new(asr: Arc<Mutex<SenseVoice>>) -> Self {
+    pub fn new(asr: SenseVoice) -> Self {
         Self { asr }
     }
 
@@ -17,10 +14,6 @@ impl Final {
         if samples.is_empty() {
             return Ok(String::new());
         }
-        let mut asr = self
-            .asr
-            .lock()
-            .map_err(|_| anyhow::anyhow!("SenseVoice 会话锁已损坏"))?;
-        Ok(asr.transcribe(samples)?.text)
+        Ok(self.asr.transcribe(samples)?.text)
     }
 }

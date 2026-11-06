@@ -63,7 +63,7 @@
   <tr><td>Preview 中断</td><td><code>FinishSegment</code> 与 <code>CancelPreview</code> 后不再产生新的 Partial；软切分只冻结当前段，下一段继续。</td></tr>
   <tr><td>CPU Final</td><td>只对 <code>SegmentReady</code> 的完整段执行一次 SenseVoice；空音频或空文本不产生 Final 文本。</td></tr>
   <tr><td>模式</td><td><code>Mode</code> 由 <a href="../voime-ipc/USER.html#u4-1">voime-ipc USER §4.1</a> 定义；核心只消费，不解析命令行。PTT / Toggle 使用会话采集，Continuous 由 VAD 自动分段。</td></tr>
-  <tr><td>模型生命周期</td><td>启动时按一模型一目录加载并校验 <code>firered-vad</code> / <code>sensevoice-small</code>；会话常驻内存；每段只重置解码状态，不重新加载权重。</td></tr>
+  <tr><td>模型生命周期</td><td>启动时按一模型一目录加载并校验 <code>firered-vad</code> / <code>sensevoice-small</code>；SenseVoice 模型文件只读，Preview 与 CPU Final 各创建一个常驻会话；每段只重置解码状态，不重新加载权重。</td></tr>
   <tr><td>模型目录</td><td>核心只读取模型根目录下的两个固定目录；不扫描其它目录、不做动态发现、不接受别名或符号链接逃逸。</td></tr>
   <tr><td>识别延迟</td><td>识别慢于语音时完成段可能丢弃；采集与输入不被阻塞。</td></tr>
   <tr><td>错误策略</td><td>初始化失败返回错误；运行期单段失败产生 <code>SegmentDropped</code>；连续音频错误达到上限产生 <code>Fatal</code>。</td></tr>
@@ -262,7 +262,7 @@ impl Final {
 <ul class="note">
   <li>Preview 与 CPU Final 的特征链路都只应用一次 LFR / CMVN；调用方不预先应用 LFR。</li>
   <li>Mode 切换不截断活动段：daemon 先 <code>FinishSegment</code>，旧段 Final / 丢弃后才调用 <code>SetMode</code>；切换清理旧会话的采样与 Partial 调度，不把旧状态带入新会话。</li>
-  <li><code>Final</code> 与 Preview 共用同一 SenseVoice 模型与会话；核心内部串行化推理，Finalizing 期间不会有 Preview 推理并发。</li>
+  <li><code>Final</code> 与 Preview 使用同一模型文件的两个独立 SenseVoice 会话；CPU Final 不会等待 Preview，反之亦然；Finalizing 只停止新的 Preview 调度，已在途的 Preview 结果会被忽略。</li>
   <li><code>SegmentReady</code> 之后由 daemon 决定走 CPU 还是 GPU；核心不读取 <code>final.backend</code>。</li>
   <li><code>SegmentReady</code> 是完整段的唯一交付点；daemon 不应从 <code>Partial</code> 拼接最终文本。</li>
   <li><code>SegmentDropped</code> 是核心内部事件；daemon 将它映射为 IPC <code>Error{code:"segment_dropped", segment_id}</code>，前端自行决定清理或提示。</li>

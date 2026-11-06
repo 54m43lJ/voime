@@ -163,7 +163,7 @@
   <tr><td>输出</td><td><code>try_extract_tensor::&lt;T&gt;()</code></td><td>读取 VAD 概率 / SenseVoice logits。</td></tr>
 </table>
 <ul class="note">
-  <li>SenseVoice 单会话；Preview 与 CPU Final 共用同一个模型与会话，不跨段保留解码状态。</li>
+  <li>SenseVoice 使用两个独立会话：Preview 与 CPU Final 各持有一个，Model 文件只读；两者不共享解码状态或推理锁，可并发执行。</li>
   <li>只启用 CPU Execution Provider；不注册 GPU / NPU 后端，核心进程不加载 GPU 库。</li>
 </ul>
 

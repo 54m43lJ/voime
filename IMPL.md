@@ -576,3 +576,26 @@ PTT / Toggle 硬切分后，daemon 立即把 `session_active` 置为 false；旧
 | `frontends/fcitx/CORE.html`、`frontends/fcitx/USER.html` | §2、§5.2、§5.3、§5.4、§5.6 | 不动（已更新） | Finalizing 允许 Start；旧目标存入 `pendingFinals_`，按旧 `segment_id` 提交。 |
 | `frontends/windows/CORE.html`、`frontends/windows/USER.html` | §2、§5.2、§5.3 | 不动（已更新） | Finalizing 允许 Start；旧目标存入 `pending_finals`，按旧 `segment_id` 提交。 |
 | `USER.html`、`CORE.html` | §3.2、§5.2 | 不动（已更新） | 说明 Finalize 后台队列与录音解耦，旧 Final 可晚于新段到达。 |
+
+### P15. Preview 与 CPU Final 共用 SenseVoice 会互相阻塞
+
+1. **问题描述**
+
+此前 `pipeline::spawn` 只创建一个 `SenseVoice`，用 `Arc<Mutex<...>>` 同时提供给 Preview 与 CPU Final。任何一侧推理都会占用锁，另一侧只能等待：CPU Final 会推迟 Partial，慢 Partial 也会推迟 Final。检查 `Final::transcribe` / `SenseVoice::transcribe` 后确认，Final 不会复用 Partial 的 fbank、LFR、解码状态或 logits；每次 Final 都从完整 PCM 重新计算特征并执行一次完整推理，因此不存在“利用 Partial 加速 Final”的路径。
+
+2. **解决方法**
+
+- `Final` 改为直接持有 `SenseVoice`，不再使用 `Arc<Mutex<SenseVoice>>`。
+- `pipeline::spawn` 创建两个独立的 SenseVoice 会话：一个给 pipeline 的 Preview，一个给 Finalizer 的 CPU Final。
+- Preview 仍由 pipeline 线程驱动，但不再与 Final 共享推理锁；CPU Final 与 Preview 可并发执行。
+- 模型文件仍只读加载一次到磁盘缓存，但两个 ORT 会话各占一份运行时内存；启动阶段会多一次模型加载。
+- 更新核心 USER / CORE / PROVIDER 中“单会话 / 共用锁 / 串行化”的描述。
+
+3. **修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voime-core/CORE.html` | §2、§4.14、§5.1、§5.5 | 不动（已更新） | 说明 Preview / CPU Final 各持独立 SenseVoice 会话；更新 `Final::new(SenseVoice)` 与启动调用栈；写明两份会话内存开销。 |
+| `crates/voime-core/USER.html` | §2、§4.4 | 不动（已更新） | 模型生命周期改为两个常驻会话；Final 与 Preview 互不等待，Finalizing 只停止新的 Preview 调度。 |
+| `crates/voime-core/PROVIDER.html` | §4.2 | 不动（已更新） | SenseVoice 两个独立会话，不共享解码状态或推理锁。 |
+| `crates/voime-core/src/final.rs`、`src/pipeline.rs` | — | 不动（已完成） | `Final` 直接持有 `SenseVoice`；pipeline 创建 Preview / Final 两个会话。 |
