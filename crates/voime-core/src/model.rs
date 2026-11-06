@@ -35,7 +35,6 @@ impl ModelKind {
 pub struct FileSpec {
     pub path: PathBuf,
     pub sha256: String,
-    pub size: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -116,7 +115,7 @@ impl ModelManifest {
             .with_context(|| format!("无法解析模型目录 {}", dir.display()))?;
         for file in &self.files {
             let path = resolve_inside(dir, &file.path)?;
-            ensure_file(&path, file.size)?;
+            ensure_file(&path)?;
             let canonical = path
                 .canonicalize()
                 .with_context(|| format!("无法解析模型文件 {}", path.display()))?;
@@ -227,7 +226,7 @@ fn reject_directory_symlink(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn ensure_file(path: &Path, expected_size: u64) -> anyhow::Result<()> {
+fn ensure_file(path: &Path) -> anyhow::Result<()> {
     let metadata = std::fs::symlink_metadata(path)
         .with_context(|| format!("模型文件缺失：{}", path.display()))?;
     if metadata.file_type().is_symlink() {
@@ -238,14 +237,6 @@ fn ensure_file(path: &Path, expected_size: u64) -> anyhow::Result<()> {
     }
     if metadata.len() == 0 {
         bail!("模型文件为空：{}", path.display());
-    }
-    if metadata.len() != expected_size {
-        bail!(
-            "模型文件大小不符：{}（期望 {}，实际 {}）",
-            path.display(),
-            expected_size,
-            metadata.len()
-        );
     }
     reject_non_model_file(path)?;
     #[cfg(unix)]
@@ -349,7 +340,7 @@ mod tests {
             "kind": kind,
             "version": "2026-01-01",
             "license": "Apache-2.0",
-            "files": [{"path": "model.onnx", "sha256": "0".repeat(64), "size": 1}],
+            "files": [{"path": "model.onnx", "sha256": "0".repeat(64)}],
             "runtime": {
                 "backend": "cpu",
                 "format": "onnx",

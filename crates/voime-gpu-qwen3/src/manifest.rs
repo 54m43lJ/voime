@@ -17,7 +17,6 @@ pub const MMPROJ_FILE: &str = "mmproj-Qwen3-ASR-1.7B-bf16.gguf";
 pub struct FileSpec {
     pub path: PathBuf,
     pub sha256: String,
-    pub size: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -96,14 +95,6 @@ impl Manifest {
                 .with_context(|| format!("模型文件缺失：{}", path.display()))?;
             if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() == 0 {
                 bail!("模型文件非法：{}", path.display());
-            }
-            if metadata.len() != file.size {
-                bail!(
-                    "模型文件大小不符：{}（期望 {}，实际 {}）",
-                    path.display(),
-                    file.size,
-                    metadata.len()
-                );
             }
             if !path
                 .canonicalize()

@@ -43,7 +43,7 @@
   <tr><td>CMVN</td><td>倒谱均值方差归一化；SenseVoice 使用 ONNX metadata 的 <code>neg_mean</code> / <code>inv_stddev</code>，VAD 使用可选文件 <code>cmvn.ark</code>。</td></tr>
   <tr><td>模型目录</td><td><code>firered-vad/</code> 或 <code>sensevoice-small/</code>；一模型一目录，包含 manifest 与权重。</td></tr>
   <tr><td>manifest</td><td>模型目录的权威描述；通用 schema、字段与合法 <code>kind</code> 见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>，核心固定值见 USER §4.3。</td></tr>
-  <tr><td><code>FileSpec</code></td><td>manifest 中一个文件条目；含相对路径、SHA-256 与字节大小。</td></tr>
+  <tr><td><code>FileSpec</code></td><td>manifest 中一个文件条目；含相对路径与 SHA-256。</td></tr>
   <tr><td>SHA-256</td><td>模型文件内容摘要；启动时逐文件校验。</td></tr>
 </table>
 
@@ -55,7 +55,7 @@
   <tr><td>设备选择</td><td><code>--input-device</code> 按设备名精确匹配；未指定时使用 cpal 默认输入设备。</td></tr>
   <tr><td>音频格式</td><td>设备原生格式由核心转换为 16 kHz、单声道、<code>f32</code>；只接受 I16 / U16 / F32。</td></tr>
   <tr><td>本地性</td><td>音频、模型与推理都在本机完成；运行期不联网。</td></tr>
-  <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest、大小与 SHA-256，失败不进入运行态。</td></tr>
+  <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest 与 SHA-256，失败不进入运行态。</td></tr>
   <tr><td>清单一模型一目录</td><td>核心只读取 <code>firered-vad/manifest.json</code> 与 <code>sensevoice-small/manifest.json</code>；不存在共享模型清单或 <code>active</code> 指针。</td></tr>
   <tr><td>清单边界</td><td>manifest 只声明模型身份、文件完整性与 runtime（backend / format / precision / max_segment_ms）；不携带 ONNX 张量名 / 形状、fbank / LFR / CMVN 参数或词表内容。推理参数的来源见 §4.2。</td></tr>
   <tr><td>CPU 推理</td><td>只启用 CPU Execution Provider；线程数由命令行决定。</td></tr>
@@ -117,8 +117,8 @@
   "version": "2024-07-17",
   "license": "Apache-2.0",
   "files": [
-    { "path": "model.int8.onnx", "sha256": "...", "size": 0 },
-    { "path": "tokens.txt", "sha256": "...", "size": 0 }
+    { "path": "model.int8.onnx", "sha256": "..." },
+    { "path": "tokens.txt", "sha256": "..." }
   ],
   "runtime": {
     "backend": "cpu",
@@ -140,7 +140,7 @@
   <tr><td>fbank 参数</td><td>80-bin、25 / 10 ms 固定；VAD 使用 <code>povey</code> 窗，SenseVoice 使用 <code>hamming</code> 窗；不来自 manifest。</td></tr>
   <tr><td>LFR 参数</td><td>窗 / 步移取 ONNX metadata <code>lfr_window_size</code> / <code>lfr_window_shift</code>；缺失时回退 7 / 6；不来自 manifest。</td></tr>
   <tr><td>SenseVoice CMVN</td><td><code>neg_mean</code> / <code>inv_stddev</code> 取 ONNX metadata；长度必须为 <code>80 * lfr_window</code>；不来自 manifest。</td></tr>
-  <tr><td>VAD CMVN</td><td>模型未内置时读取 manifest 文件列表中的 <code>cmvn.ark</code>；文件为 Kaldi 二进制 <code>DM</code> / <code>FM</code> 矩阵，布局为 <code>2 x (80 + 1)</code>：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和；按 count 计算 mean 与 inverse stddev。manifest 只记录文件路径 / SHA-256 / 大小，不记录参数值。</td></tr>
+  <tr><td>VAD CMVN</td><td>模型未内置时读取 manifest 文件列表中的 <code>cmvn.ark</code>；文件为 Kaldi 二进制 <code>DM</code> / <code>FM</code> 矩阵，布局为 <code>2 x (80 + 1)</code>：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和；按 count 计算 mean 与 inverse stddev。manifest 只记录文件路径与 SHA-256，不记录参数值。</td></tr>
   <tr><td>词表</td><td><code>tokens.txt</code> 由 manifest 文件列表定位并校验；内容不写入 manifest；每行为 token 与 id，<code>token_count</code> 必须等于 ONNX <code>vocab_size</code> 与输出类别数。</td></tr>
   <tr><td>manifest</td><td>通用 schema、字段与合法 <code>kind</code> 见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>；核心固定值：<code>firered-vad</code> 为 <code>vad</code>，<code>sensevoice-small</code> 为 <code>asr</code>，runtime 见本节目录示例。manifest 不包含张量 / 预处理参数或词表内容。</td></tr>
   <tr><td>安装</td><td>核心安装脚本下载固定 revision 的模型文件，写入 manifest；只接受当前 schema 5 模型包。</td></tr>
@@ -191,7 +191,7 @@
   <tr><td><code>StreamLost</code> / 流错误哨兵</td><td>运行期音频流错误。</td><td>丢弃当前段；连续失败后 daemon 退出。</td></tr>
   <tr><td>模型目录 / manifest 缺失</td><td><code>firered-vad</code> 或 <code>sensevoice-small</code> 不存在、缺 <code>manifest.json</code>。</td><td>核心启动失败；不进入运行态。</td></tr>
   <tr><td>schema / id / kind 不匹配</td><td>schema 5 之外的 manifest、目录名不符或 kind 错误。</td><td>核心启动失败；不接受 schema 5 之外的布局。</td></tr>
-  <tr><td>文件缺失 / 大小或 SHA-256 不匹配</td><td>模型文件缺失或被修改。</td><td>核心启动失败。</td></tr>
+  <tr><td>文件缺失 / SHA-256 不匹配</td><td>模型文件缺失或被修改。</td><td>核心启动失败。</td></tr>
   <tr><td>张量 / 会话错误</td><td>ONNX 输入输出与核心预期不符或会话创建失败。</td><td>核心启动失败。</td></tr>
   <tr><td>SenseVoice 推理失败</td><td>运行期解码 / 会话错误。</td><td>当前段 <code>SegmentDropped</code>；CPU Final 返回错误，由 daemon 丢弃该段。</td></tr>
   <tr><td>空音频 / 空文本</td><td>段过短或模型输出为空。</td><td>不产生 Final 文本；daemon 按空段处理。</td></tr>

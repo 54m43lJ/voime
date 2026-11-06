@@ -85,7 +85,7 @@ llama.cpp / llama-cpp-4 文档为准；产品级下边界见 <a href="../../PROV
   <tr><td>BF16 only</td><td>主模型与 mmproj 固定 BF16；不加载 Q8_0 / FP16，不在运行期量化或转换。</td></tr>
   <tr><td>同版本</td><td>主模型与 mmproj 必须来自同一模型版本、同一 revision；更换任一文件都要重新跑目标语料金样。</td></tr>
   <tr><td>不混 Q8 mmproj</td><td>上游同时提供 Q8_0 mmproj，但 Q8 mmproj 不是产品路径；不得与 BF16 主模型混用。</td></tr>
-  <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest、SHA-256 与大小，失败不进入运行态。</td></tr>
+  <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest 与 SHA-256，失败不进入运行态。</td></tr>
   <tr><td>PCM 直通</td><td>只消费 16 kHz、单声道、<code>f32</code> PCM；不读 WAV / MP3，不重采样，不生成临时文件。</td></tr>
   <tr><td>mel 在 mmproj 内</td><td>Whisper 风格 128-bin log-mel 由 mmproj 内部处理；worker 不实现 fbank / mel 前端，也不传特征张量。</td></tr>
   <tr><td>30 s 段</td><td>每次只处理一个完整语音段，上限 30 s；超过约 2 分钟的长音频在 llama.cpp 上可能无输出，本方案不触发。</td></tr>
@@ -109,7 +109,7 @@ Qwen 后端的边界分为两张图：<a href="USER.html#u3-1">USER §3.1</a> �
 <h3 id="p3-1">3.1 模型加载边界</h3>
 <div class="diagram"><img src="diagram/runtime-load.svg" alt="voime-gpu-qwen3 从模型目录读取 manifest、加载 BF16 GGUF 与 mmproj 并自检的时序图"></div>
 <ul class="note">
-  <li>worker 先读 <code>manifest.json</code> 并校验文件 SHA-256 / 大小，再初始化 llama.cpp backend、加载 BF16 主模型与 BF16 mmproj。</li>
+  <li>worker 先读 <code>manifest.json</code> 并校验文件 SHA-256，再初始化 llama.cpp backend、加载 BF16 主模型与 BF16 mmproj。</li>
   <li>加载后用 <code>MtmdCapabilities.audio</code> 与 <code>audio_sample_rate()</code> 自检；自检失败只使 Qwen 后端不可用。</li>
   <li>加载完成后模型常驻；每个 Final 只创建 / 重置 <code>LlamaContext</code>，不重新加载 GGUF。</li>
   <li>内部 mtmd / prompt / decode 阶段不在图中展开；daemon 与 worker 的请求边界见 <a href="USER.html#u3-1">USER §3.1</a>。</li>

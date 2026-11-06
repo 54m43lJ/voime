@@ -88,24 +88,34 @@
 | `crates/voime-core/CORE.html` | §5.3 | 改 | `FinishSegment` 的 note 与调用栈改为 `reset_after_finish`（硬重置）：清空 listening / collecting、关闭 Preview、清空完成段队列；`prepare_command` 先排空音频并 `drain_queue`，再交付段、发送 `Recording(false)`。 |
 | `crates/voime-core/CORE.html` | §2、§5.2 | 不动（本主题） | 软切分继续使用 `reset_after_segment` 并发送下一段 `Recording(true)`；`Segmenter::push` 签名、阈值与 fbank 的修改按 P9 合并，音频错误回调和哨兵按 P7 合并，均不改变本主题的软 / 硬切分语义。 |
 
-### E6. 模型清单示例把 `size` 写成 0，但契约要求校验字节大小
+### E6. 模型清单不应把文件大小作为完整性契约
 
 1. **问题描述**
 
-根 `CORE.html` §4.8 的 schema 5 示例使用 `"size": 0`，同节字段表却要求逐文件校验“大小与摘要”；按示例生成的 manifest 会让实现要么把 0 当通配符，要么拒绝所有示例文件。安装脚本与运行期校验无法对“0 是占位还是真实大小”达成一致。
+根 `CORE.html` §4.8 的 schema 5 示例使用 `"size": 0`，同节字段表却要求逐文件校验“大小与摘要”。文件大小对完整性校验没有额外价值：SHA-256 已经覆盖全部内容，再维护一份字节数只会让安装脚本、示例与运行期校验对“0 是占位还是真实大小”产生分歧，并让截断或改写后的文件在哈希校验外多一条重复判断。
 
 2. **解决方法**
 
-- manifest 的 `files[].size` 必须是真实字节数；`verify` 严格比较实际大小，0 不视为通配符。
-- 安装脚本计算每个文件的实际大小与 SHA-256 后再写 manifest；示例改成非零真实值。
-- 测试同时覆盖大小不符与 SHA 不符，避免只校验摘要。
+- manifest 的 `files[]` 只声明 `path` 与 `sha256`；`size` 不再属于 schema 5 契约。
+- 运行期 `verify` 只校验路径安全、文件存在、非空、普通文件 / 非符号链接、扩展名限制与 SHA-256；不比较字节大小。
+- 安装脚本生成的 manifest 不再写 `size`，也不按 manifest 的 `size` 判定已安装；下载器内部的固定字节数只用于进度、断点续传与下载长度控制，不属于 manifest 契约。
+- 旧 manifest 中多余的 `size` 字段由 serde 忽略；测试覆盖旧 `size` 字段不参与校验与 SHA-256 不匹配。
 
 3. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `CORE.html` | §4.8 | 改 | 把示例改成具体文件与真实字节数（例如 `model.onnx` 及其实际大小），并在字段表明确“0 不是通配符”。 |
-| `crates/voime-core/USER.html` | §4.3 | 不动 | 已要求文件存在、非空、大小与 SHA-256 校验；根 CORE 示例对齐即可。 |
+| `CORE.html` | §4.8 | 改 | schema 示例与字段表去掉 `size`；`files` 只要求路径与 SHA-256，运行期校验存在、非空与摘要，不校验字节大小。 |
+| `crates/voime-core/USER.html` | §4.3 | 改 | `FileSpec` 去掉 `size`；错误表改为只按 SHA-256 判定文件被修改。 |
+| `crates/voime-core/CORE.html` | §2、§4.3 | 改 | `ensure_file` 去掉 `expected_size` 参数；模型校验说明只保留 SHA-256。 |
+| `crates/voime-core/PROVIDER.html` | §1、§2、§4.2、§4.5 | 改 | 去掉 `FileSpec`、manifest、VAD CMVN 与错误表中的字节大小校验。 |
+| `crates/voime-gpu-qwen3/USER.html` | §4.1 | 改 | manifest 示例去掉 `size`；启动校验只写 SHA-256。 |
+| `crates/voime-gpu-qwen3/CORE.html` | §4.3 | 改 | `FileSpec` 去掉 `size`；`verify` 说明只写 SHA-256。 |
+| `crates/voime-gpu-qwen3/PROVIDER.html` | §2、§3.1 | 改 | 模型不可变与加载边界只校验 SHA-256。 |
+| `crates/voime-gpu-qwen3/diagram/runtime-load.puml` / `.svg` | — | 改 | 加载边界改为只校验 SHA-256，并重新导出 SVG。 |
+| `PROVIDER.html` | §2 | 改 | 模型不可变只校验 manifest 与 SHA-256。 |
+| `BUILD.html` | §3.4 | 改 | 启动校验只列 schema、id、kind 与 SHA-256。 |
+| `crates/voime-core/src/model.rs`、`crates/voime-gpu-qwen3/src/manifest.rs`、`crates/voime/src/doctor.rs`、`scripts/install-core-models.py`、`scripts/install-gpu-models.py`、`tests/manifest.rs` | — | 改 | 删除 manifest `size` 字段与比较；安装器只把内部固定大小用于下载进度 / 断点续传，不写入或校验 manifest `size`。 |
 
 ### E7. `voime-core` 的 `lib.rs` 中 `pub mod final;` 不是合法 Rust
 
@@ -321,7 +331,7 @@ GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型�
 - Qwen3-ASR 主模型与 mmproj 都有与产品固定文件同 SHA-256、可匿名访问的 ModelScope 镜像，因此优先使用 ModelScope；镜像不可用时回退 Hugging Face。ModelScope 公开模型通过 `resolve` 直链下载，不需要登录。
 - Token 从环境变量读取：ModelScope 支持 `MODELSCOPE_API_TOKEN` / `MODELSCOPE_SDK_TOKEN` / `MODELSCOPE_API_KEY` 等别名，Hugging Face 支持 `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` 等别名。交互安装且 token 缺失时提示输入，可回车跳过公开模型；服务端返回 401/403 时按 provider 提示并重试一次。Token 只保存在进程内存，不写盘、不输出。
 - 下载前按模型列出本次需要的体积并要求确认；非交互安装使用 `--yes` / `-Yes`（同时跳过 token 提示）。`--source-dir` 只读离线源，不联网；`--no-models` 跳过；安装脚本不再从仓库根目录 `models/` 取模型。
-- 每个文件按固定 size / SHA-256 校验，支持 `.part` 断点续传（网络中断保留 `.part`，校验失败删除）；同盘临时目录写完后替换目标，失败不替换目标目录。安装器生成 schema 5 manifest；Qwen 的 `LICENSE` 作为额外文件写入目录，不参与推理。
+- 下载器按固定 size 控制进度与 `.part` 断点续传，完整性只按 SHA-256 校验（网络中断保留 `.part`，校验失败删除）；同盘临时目录写完后替换目标，失败不替换目标目录。安装器生成 schema 5 manifest；Qwen 的 `LICENSE` 作为额外文件写入目录，不参与推理。
 - 安装脚本在需要模型时要求 Python 3；`--no-models` 时不需要 Python。
 - M6 的离线源布局保持不变；默认下载生成的目录与离线源共用 `<model-id>/` 布局和同一份 manifest 契约。
 

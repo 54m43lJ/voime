@@ -396,11 +396,6 @@ fn verify_gpu_manifest(
         if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() == 0 {
             anyhow::bail!("文件缺失或不是普通文件：{}", path.display());
         }
-        if let Some(size) = file.get("size").and_then(|value| value.as_u64()) {
-            if size != metadata.len() {
-                anyhow::bail!("文件大小不符：{}", path.display());
-            }
-        }
         let sha = file
             .get("sha256")
             .and_then(|value| value.as_str())

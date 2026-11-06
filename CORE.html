@@ -227,7 +227,7 @@ pub fn default_directory() -&gt; PathBuf;
   "version": "&lt;版本&gt;",
   "license": "&lt;SPDX&gt;",
   "files": [
-    { "path": "&lt;相对路径&gt;", "sha256": "&lt;hex&gt;", "size": 0 }
+    { "path": "&lt;相对路径&gt;", "sha256": "&lt;hex&gt;" }
   ],
   "runtime": {
     "backend": "&lt;backend&gt;",
@@ -242,7 +242,7 @@ pub fn default_directory() -&gt; PathBuf;
   <tr><td><code>id</code></td><td>必须等于模型目录名；不允许别名或符号链接逃逸。</td></tr>
   <tr><td><code>kind</code></td><td>合法值为 <code>vad</code> / <code>asr</code>；各组件只接受自己需要的子集。</td></tr>
   <tr><td><code>version</code> / <code>license</code></td><td>模型版本与许可证；只用于诊断与安装记录，不参与运行期选择。</td></tr>
-  <tr><td><code>files</code></td><td>每个文件的相对路径、SHA-256 与字节大小；拒绝绝对路径 / <code>..</code>；逐文件校验存在、非空、大小与摘要。</td></tr>
+  <tr><td><code>files</code></td><td>每个文件的相对路径与 SHA-256；拒绝绝对路径 / <code>..</code>；逐文件校验存在、非空与摘要；不校验字节大小。</td></tr>
   <tr><td><code>runtime</code></td><td><code>backend</code> / <code>format</code> / <code>precision</code> 由模型声明；<code>max_segment_ms</code> 必须大于 0 且不超过 30_000；核心只读，不写回。</td></tr>
 </table>
 <table>

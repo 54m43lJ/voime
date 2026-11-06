@@ -67,7 +67,7 @@
   <tr><td>Partial 门槛</td><td>最小间隔、最小新增音频与尾部长度由 pipeline 模块常量拥有；一次慢推理会推迟下一次 Partial，避免立即重跑。</td></tr>
   <tr><td>分段</td><td><code>MIN_SPEECH_MS</code> / <code>AUTO_END_SILENCE_MS</code> 由 segmenter 模块拥有；所有模式使用同一静音阈值，<code>max_segment_ms</code> 来自模型 manifest，达到上限时强制结束。</td></tr>
   <tr><td>最长段</td><td><code>MAX_SEGMENT_MS</code> 固定 30 s 上限，推荐值 <code>30_000</code>；manifest 的 <code>max_segment_ms</code> 与长段测试使用同一上限。</td></tr>
-  <tr><td>模型校验</td><td>加载 manifest 时校验 schema 5、id 等于目录名、kind 匹配；<code>verify</code> 校验文件存在、大小、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。</td></tr>
+  <tr><td>模型校验</td><td>加载 manifest 时校验 schema 5、id 等于目录名、kind 匹配；<code>verify</code> 校验文件存在、非空与 SHA-256；<code>rebase</code> 拒绝绝对路径与 <code>..</code>。</td></tr>
   <tr><td>错误边界</td><td>库内部使用 <code>anyhow::Result</code> + 上下文；音频错误类型保留 <code>AudioError</code>；pipeline 把可恢复错误转为 <code>SegmentDropped</code>。</td></tr>
   <tr><td>无 OS 依赖</td><td>不直接使用 Unix socket、named pipe、Fcitx、Win32 或 TUI API；<code>config</code> 只保留模型目录的平台默认值回退（Windows 读 <code>LOCALAPPDATA</code>，Unix 走 XDG / HOME）。</td></tr>
 </table>
@@ -136,7 +136,7 @@ impl ModelManifest {
 }
 
 pub fn load_models(root: &amp;Path) -&gt; anyhow::Result&lt;ModelSet&gt;; // 见 USER §4.3
-fn ensure_file(path: &amp;Path, expected_size: u64) -&gt; anyhow::Result&lt;()&gt;;
+fn ensure_file(path: &amp;Path) -&gt; anyhow::Result&lt;()&gt;;
 fn verify_file(path: &amp;Path, expected: &amp;str) -&gt; anyhow::Result&lt;()&gt;;
 pub fn resolve_inside(dir: &amp;Path, relative: &amp;Path) -&gt; anyhow::Result&lt;PathBuf&gt;; // 见 USER §4.3</code></pre>
 
@@ -224,7 +224,7 @@ fn shape_usize(shape: &amp;[i64]) -&gt; anyhow::Result&lt;Vec&lt;usize&gt;&gt;;<
   <li>状态张量必须声明固定形状；动态维会在初始化时拒绝。</li>
   <li>输入 / 输出张量名、dtype 与 shape 由会话 introspection 读取；manifest 只提供 ONNX 文件路径，不提供张量声明。</li>
   <li>每次 <code>push</code> 用上一帧状态输入，并用模型输出更新状态；<code>reset</code> 重建流式 fbank 并清零状态。</li>
-  <li>VAD CMVN 参数取自 manifest 文件列表中的可选 <code>cmvn.ark</code>；manifest 只记录该文件的路径、大小与 SHA-256。</li>
+  <li>VAD CMVN 参数取自 manifest 文件列表中的可选 <code>cmvn.ark</code>；manifest 只记录该文件的路径与 SHA-256。</li>
 </ul>
 
 <h3 id="c4-9">4.9 vad/segmenter.rs <a class="backlink" href="#c1">文件树</a></h3>

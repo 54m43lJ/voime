@@ -192,8 +192,8 @@
   "version": "&lt;发布清单冻结值&gt;",
   "license": "Apache-2.0",
   "files": [
-    { "path": "Qwen3-ASR-1.7B-bf16.gguf", "sha256": "...", "size": 4069674944 },
-    { "path": "mmproj-Qwen3-ASR-1.7B-bf16.gguf", "sha256": "...", "size": 641773984 }
+    { "path": "Qwen3-ASR-1.7B-bf16.gguf", "sha256": "..." },
+    { "path": "mmproj-Qwen3-ASR-1.7B-bf16.gguf", "sha256": "..." }
   ],
   "runtime": {
     "backend": "qwen3",
@@ -205,7 +205,7 @@
 
 <ul class="note">
   <li>worker 只接受 daemon 传入的模型目录，不从全局配置或环境变量猜路径；目录外文件、绝对路径与 <code>..</code> 一律拒绝。</li>
-  <li>启动时逐文件校验 SHA-256 与大小；任一文件缺失、被修改或精度声明不是 <code>bf16</code>，按 <a href="#u4-3">§4.3</a> 的 <code>load_failed</code> 处理。</li>
+  <li>启动时逐文件校验 SHA-256；任一文件缺失、被修改或精度声明不是 <code>bf16</code>，按 <a href="#u4-3">§4.3</a> 的 <code>load_failed</code> 处理。</li>
   <li>目录内不允许可执行文件、脚本或系统库；安装脚本用同盘临时目录 + rename 原子替换，失败不留下半成品。</li>
   <li>具体来源、revision 与 SHA-256 见 <a href="PROVIDER.html#p4-1">PROVIDER §4.1</a> / <a href="PROVIDER.html#p4-2">§4.2</a>。</li>
 </ul>

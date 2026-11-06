@@ -250,7 +250,7 @@ python3 scripts/install-core-models.py --model-root /path/to/models --force</cod
 
 <ul class="note">
   <li>模型根目录下是一模型一目录；目录名是稳定标识，版本写在 <code>manifest.json</code>，不拼进目录名。</li>
-  <li>运行期只读；启动时校验 schema 5、目录 id、kind、文件大小与 SHA-256。</li>
+  <li>运行期只读；启动时校验 schema 5、目录 id、kind 与 SHA-256。</li>
   <li>仓库不提交权重文件，安装脚本也不从仓库根目录的 <code>models/</code> 取模型；默认下载会生成 schema 5 <code>manifest.json</code>。离线源目录中的每个模型目录必须自带同版本 manifest。</li>
 </ul>
 

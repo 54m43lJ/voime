@@ -39,7 +39,7 @@
   <tr><td>硬切分</td><td><code>FinishSegment</code>：排空音频、强制结束当前段并停止采集；之后不再产生下一段，直到新的 <code>StartSegment</code>。</td></tr>
   <tr><td>活动段</td><td>分段器当前正在累积的语音段；Preview 只读取活动段末尾。</td></tr>
   <tr><td>模型清单（<code>ModelManifest</code>）</td><td>单个模型目录的权威描述：schema、id、kind、version、license、文件列表与 runtime 声明；不承载 ONNX 张量形状、fbank / LFR / CMVN 参数或词表内容。</td></tr>
-  <tr><td>文件条目（<code>FileSpec</code>）</td><td>manifest 中一个文件的相对路径、SHA-256 与字节大小。</td></tr>
+  <tr><td>文件条目（<code>FileSpec</code>）</td><td>manifest 中一个文件的相对路径与 SHA-256。</td></tr>
   <tr><td>runtime 声明（<code>RuntimeSpec</code>）</td><td>模型要求的 backend、format、precision 与 <code>max_segment_ms</code>；核心只读。</td></tr>
   <tr><td>模型集合（<code>ModelSet</code>）</td><td>模型根目录下的 <code>firered-vad</code> 与 <code>sensevoice-small</code> 两个模型清单。</td></tr>
   <tr><td>会话工厂（<code>SessionFactory</code>）</td><td>创建 CPU ONNX 会话并按模型目录校验输入 / 输出张量。</td></tr>
@@ -162,7 +162,6 @@ impl CaptureHandle {
 pub struct FileSpec {
     pub path: PathBuf,
     pub sha256: String,
-    pub size: u64,
 }
 
 pub struct RuntimeSpec {
@@ -290,7 +289,7 @@ impl Final {
   <tr><td><code>StreamLost</code> / 流错误哨兵</td><td>运行期音频流错误。</td><td>丢弃当前段；连续失败达到上限后 daemon 退出。</td></tr>
   <tr><td>模型目录 / manifest 缺失</td><td><code>firered-vad</code> 或 <code>sensevoice-small</code> 不存在、缺 <code>manifest.json</code>。</td><td>启动失败；重新安装核心模型。</td></tr>
   <tr><td>schema / id / kind 不匹配</td><td>schema 5 之外的 manifest、目录名不符或模型类型错误。</td><td>启动失败；不接受 schema 5 之外的布局。</td></tr>
-  <tr><td>文件缺失 / 大小或 SHA-256 不匹配</td><td>模型文件被删除、截断或修改。</td><td>启动失败；重新安装对应模型。</td></tr>
+  <tr><td>文件缺失 / SHA-256 不匹配</td><td>模型文件被删除或修改。</td><td>启动失败；重新安装对应模型。</td></tr>
   <tr><td>张量 / 会话错误</td><td>ONNX 输入输出与核心预期不符或会话创建失败。</td><td>启动失败；检查模型来源与 ONNX 文件。</td></tr>
   <tr><td><code>SegmentDropped</code></td><td>单段音频过短、SenseVoice 推理失败或结果为空。</td><td>丢弃该段；继续监听。</td></tr>
   <tr><td><code>Fatal</code></td><td>不可恢复的音频 / pipeline 错误。</td><td>daemon 退出并记录日志。</td></tr>

@@ -192,7 +192,6 @@ def file_ok(path: Path, spec: FileSpec) -> bool:
     return (
         path.is_file()
         and not path.is_symlink()
-        and path.stat().st_size == spec.size
         and sha256_file(path).lower() == spec.sha256.lower()
     )
 
@@ -237,14 +236,10 @@ def manifest_matches(root: Path, spec: ModelSpec, *, check_hash: bool) -> bool:
         entry = by_path.get(file_spec.name)
         if entry is None:
             return False
-        if entry.get("size") != file_spec.size:
-            return False
         if str(entry.get("sha256", "")).lower() != file_spec.sha256.lower():
             return False
         path = root / file_spec.name
         if path.is_symlink() or not path.is_file():
-            return False
-        if path.stat().st_size != file_spec.size:
             return False
         if check_hash and sha256_file(path).lower() != file_spec.sha256.lower():
             return False
@@ -262,10 +257,7 @@ def manifest_matches(root: Path, spec: ModelSpec, *, check_hash: bool) -> bool:
         path = root / relative_path
         if path.is_symlink() or not path.is_file():
             return False
-        size = entry.get("size")
         digest = entry.get("sha256")
-        if not isinstance(size, int) or path.stat().st_size != size:
-            return False
         if not isinstance(digest, str) or len(digest) != 64:
             return False
         if check_hash and sha256_file(path).lower() != digest.lower():
@@ -447,7 +439,6 @@ def write_manifest(stage: Path, spec: ModelSpec) -> None:
             {
                 "path": file_spec.name,
                 "sha256": file_spec.sha256,
-                "size": file_spec.size,
             }
             for file_spec in spec.files
         ],

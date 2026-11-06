@@ -16,7 +16,7 @@ fn write_manifest(dir: &std::path::Path, id: &str, kind: &str, file: &str, data:
         "kind": kind,
         "version": "test",
         "license": "Apache-2.0",
-        "files": [{"path": file, "sha256": sha256(data), "size": data.len()}],
+        "files": [{"path": file, "sha256": sha256(data)}],
         "runtime": {
             "backend": "cpu",
             "format": "onnx",
@@ -96,6 +96,18 @@ fn verify_detects_modified_weights() {
 }
 
 #[test]
+fn ignores_legacy_size_field() {
+    let directory = tempfile::tempdir().unwrap();
+    write_core_models(directory.path());
+    let manifest_path = directory.path().join("firered-vad").join(MANIFEST_FILE);
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    value["files"][0]["size"] = serde_json::json!(999);
+    fs::write(&manifest_path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(load_models(directory.path()).is_ok());
+}
+
+#[test]
 fn manifest_rejects_parent_paths() {
     let directory = tempfile::tempdir().unwrap();
     let manifest: ModelManifest = serde_json::from_value(serde_json::json!({
@@ -104,7 +116,7 @@ fn manifest_rejects_parent_paths() {
         "kind": "vad",
         "version": "test",
         "license": "Apache-2.0",
-        "files": [{"path": "../escape.onnx", "sha256": "0".repeat(64), "size": 1}],
+        "files": [{"path": "../escape.onnx", "sha256": "0".repeat(64)}],
         "runtime": {
             "backend": "cpu", "format": "onnx",
             "precision": "fp32", "max_segment_ms": 30000

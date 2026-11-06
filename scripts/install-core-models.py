@@ -141,7 +141,6 @@ def manifest(
             {
                 "path": relative,
                 "sha256": sha256_file(source),
-                "size": source.stat().st_size,
             }
         )
     return {
@@ -172,7 +171,7 @@ def valid_target(target: Path, model_id: str) -> bool:
         return False
     for file in value.get("files", []):
         path = target / file.get("path", "")
-        if not path.is_file() or path.stat().st_size != file.get("size"):
+        if not path.is_file():
             return False
         if sha256_file(path) != file.get("sha256"):
             return False

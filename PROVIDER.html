@@ -69,7 +69,7 @@
   <tr><td>核心只 CPU ORT</td><td>核心安装只加载 CPU Execution Provider；核心二进制不链接、不探测任何 GPU runtime。</td></tr>
   <tr><td>GPU runtime 隔离</td><td>Qwen 的 llama.cpp 放在独立 worker 的 runtime 目录；不写全局 <code>LD_LIBRARY_PATH</code>。</td></tr>
   <tr><td>GPU backend 归属</td><td>每个 GPU worker 只使用其组件 PROVIDER 声明的 runtime 与 backend；不使用、不探测其它 runtime。</td></tr>
-  <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest、SHA-256 与文件大小，失败不进入运行态。</td></tr>
+  <tr><td>模型不可变</td><td>模型目录运行期只读；启动时校验 manifest 与 SHA-256，失败不进入运行态。</td></tr>
   <tr><td>模型布局</td><td>一模型一目录；目录名是稳定标识，版本写在 <code>manifest.json</code>，不把版本号拼进目录名。</td></tr>
   <tr><td>运行期不联网</td><td>不下载、不转换、不量化、不改写模型；这些只发生在安装脚本与发布流程。</td></tr>
   <tr><td>下载失败</td><td>安装脚本非零退出并清理临时目录；不写 manifest、不做 rename，不留下半成品模型目录。</td></tr>

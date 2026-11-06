@@ -173,7 +173,6 @@ pub const SAMPLE_RATE: u32;
 pub struct FileSpec {
     pub path: PathBuf,
     pub sha256: String,
-    pub size: u64,
 }
 
 pub struct RuntimeSpec {
@@ -204,7 +203,7 @@ impl Manifest {
 }</code></pre>
 <ul class="note">
   <li>通用 schema、字段与合法 <code>kind</code> 见 <a href="../../CORE.html#c4-8">根 CORE §4.8</a>；<code>load</code> 校验 <code>id</code> 与目录名一致、<code>kind == "asr"</code>、<code>runtime.backend == "qwen3"</code>、<code>format == "gguf"</code>、<code>precision == "bf16"</code>。</li>
-  <li><code>verify</code> 逐文件检查存在、非空、大小与 SHA-256；拒绝绝对路径、<code>..</code> 与目录外路径。</li>
+  <li><code>verify</code> 逐文件检查存在、非空与 SHA-256；拒绝绝对路径、<code>..</code> 与目录外路径。</li>
   <li><code>max_segment_ms</code> 必须大于 0 且不超过 30_000；超出范围拒绝 manifest。<code>max_segment_samples</code> 按 <code>max_segment_ms * SAMPLE_RATE / 1000</code> 计算；超出时 worker 返回 <code>inference_failed</code>，不截断音频。</li>
 </ul>
 
