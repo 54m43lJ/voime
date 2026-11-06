@@ -288,6 +288,7 @@ pub enum CheckResult {
 ├── 判断 Ctrl+X → Client::send(ClearHistory)
 ├── 判断 q（无修饰）→ Detach
 ├── 判断 Space
+│   ├── 判断 addon == Connected → Continue（前端连接期间 TUI 只观察）
 │   ├── 判断 mode == Continuous &amp;&amp; recording → Client::send(Stop { source: Tui })
 │   ├── 判断 mode == Continuous → Client::send(Start { source: Tui })
 │   └── 判断 mode == Ptt / Toggle → Client::send(Toggle { source: Tui })
@@ -295,6 +296,9 @@ pub enum CheckResult {
 ├── 判断 PageDown → ScrollState::page_down(viewport_height - 1)
 ├── 判断 Home → ScrollState::home()
 └── 判断 End → ScrollState::end()</code></pre>
+<ul class="note">
+  <li>TUI 是调试工具：<code>frontend</code> 连接期间 Space 不发送会话命令；daemon 对 TUI 的 <code>Start</code> / <code>Stop</code> / <code>Toggle</code> 也返回 <code>busy</code>。TUI 不绑定输入目标、不提交文本。</li>
+</ul>
 
 <h3 id="c5-3">5.3 TUI 事件与绘制</h3>
 <pre><code>App::on_event(event)

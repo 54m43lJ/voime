@@ -99,6 +99,12 @@ impl App {
         match key.code {
             KeyCode::Char('q') if key.modifiers.is_empty() => Control::Detach,
             KeyCode::Char(' ') if key.modifiers.is_empty() => {
+                // The TUI is a debug/monitor client. While a platform frontend
+                // owns the input-method target, session commands must not be
+                // sent; the daemon enforces the same rule.
+                if self.addon == FrontendState::Connected {
+                    return Control::Continue;
+                }
                 if self.mode == Some(Mode::Continuous) {
                     if self.recording {
                         self.send(&ClientMessage::Stop {

@@ -6,7 +6,7 @@ use voime_core::pipeline::{Pipeline, PipelineEvent};
 use voime_core::r#final::Final;
 use voime_core::vad::segmenter::Segment;
 use voime_ipc::{
-    ClientMessage, ErrorCode, FrontendState, Mode, Phase, ServerMessage, TriggerSource,
+    ClientMessage, ErrorCode, FrontendState, Mode, Phase, Role, ServerMessage, TriggerSource,
     WorkerDiagnostics, WorkerState,
 };
 use voime_log::vlog;
@@ -147,6 +147,11 @@ impl Daemon {
             return;
         }
 
+        // TUI is a debug/monitor client. It may drive daemon sessions only
+        // while no platform frontend (and therefore no input-method target)
+        // is connected; otherwise it is observe-only.
+        let tui_session_blocked = tui_session_commands_blocked(role, self.state.addon);
+
         match message {
             ClientMessage::Hello {
                 role: requested,
@@ -186,9 +191,25 @@ impl Daemon {
                 self.apply_frontend_config(mode, hotkey);
                 self.broadcast_snapshot();
             }
-            ClientMessage::Start { source, .. } => self.request_start(client_id, source),
-            ClientMessage::Stop { segment_id, .. } => self.request_stop(client_id, segment_id),
+            ClientMessage::Start { source, .. } => {
+                if tui_session_blocked {
+                    self.send_error(client_id, ErrorCode::Busy);
+                    return;
+                }
+                self.request_start(client_id, source);
+            }
+            ClientMessage::Stop { segment_id, .. } => {
+                if tui_session_blocked {
+                    self.send_error(client_id, ErrorCode::Busy);
+                    return;
+                }
+                self.request_stop(client_id, segment_id);
+            }
             ClientMessage::Toggle { segment_id, source } => {
+                if tui_session_blocked {
+                    self.send_error(client_id, ErrorCode::Busy);
+                    return;
+                }
                 if !matches!(self.effective_mode(), Mode::Ptt | Mode::Toggle) {
                     self.send_error(client_id, ErrorCode::Busy);
                     return;
@@ -720,6 +741,10 @@ fn listens(mode: Mode, session_active: bool) -> bool {
     mode == Mode::Continuous || session_active
 }
 
+fn tui_session_commands_blocked(role: Option<Role>, addon: FrontendState) -> bool {
+    role == Some(Role::Tui) && addon == FrontendState::Connected
+}
+
 fn continuation_source(mode: Option<Mode>) -> TriggerSource {
     match mode {
         Some(Mode::Continuous) => TriggerSource::Continuous,
@@ -767,6 +792,30 @@ mod tests {
         assert!(listens(Mode::Ptt, true));
         assert!(!listens(Mode::Toggle, false));
         assert!(listens(Mode::Toggle, true));
+    }
+
+    #[test]
+    fn tui_session_commands_blocked_while_frontend_connected() {
+        assert!(!tui_session_commands_blocked(
+            Some(Role::Tui),
+            FrontendState::Disconnected
+        ));
+        assert!(tui_session_commands_blocked(
+            Some(Role::Tui),
+            FrontendState::Connected
+        ));
+        assert!(!tui_session_commands_blocked(
+            Some(Role::Control),
+            FrontendState::Connected
+        ));
+        assert!(!tui_session_commands_blocked(
+            Some(Role::Frontend),
+            FrontendState::Connected
+        ));
+        assert!(!tui_session_commands_blocked(
+            None,
+            FrontendState::Connected
+        ));
     }
 
     #[test]

@@ -1,28 +1,34 @@
 # IMPL — 开发实施与文档修订清单
 
-本清单记录开发过程中发现的文档错误、文档未写明的细节与其它技术坑。每个主题只在一个大块中出现；修订建议里的“不动”用于避免在多个文档之间重复定义或互相覆盖。
+本清单记录开发过程中发现的文档错误、文档未写明的细节与其它技术坑。每个主题只在一个大块中出现；修订建议里的“不动”用于避免在多个文档之间重复定义或互相覆盖。动作只约束该条目自身的修改范围：同一章节可能被多个条目引用，按各条内容合并执行；后一条的“不动（本主题）”不撤销其它条目在该章节的增改。“不动（已写明）/（已更新）”表示目标文档已经包含该内容，无需再改。
 
-## 1. 开发中发现文档的错误
+## 1. 开发中发现的文档问题与核对结论
 
-### E1. TUI 的 Space 键在两个文档里语义不同
+### E1. TUI 只是调试工具，不能作为输入法操作入口
 
 1. **问题描述**
 
-`crates/voime/README.html` §2 把 TUI 的操作概括为 Start / Stop，而 `crates/voime/USER.html` §2、§4.2 与 `crates/voime/CORE.html` §5.2 都规定：PTT / Toggle 模式下 Space 发送 `Toggle`，只有 Continuous 模式才按录音状态发送 Start / Stop。按 README 实现会让 PTT / Toggle 的 TUI 调试路径与 daemon 会话状态机不一致。
+`crates/voime/README.html` §1.1 用“手动开始 / 停止”概括 TUI 能力，`crates/voime/USER.html` §1 把 TUI 定义为“终端监视器；只读展示并发送控制命令”，§2 把 Space 标为“手动录音”，§4.2 再给出具体按键。这些表述会让读者把 TUI 当成平台前端之外的输入法操作入口。TUI 以 `tui` 角色连接 daemon，只用于观察状态和调试会话；它不绑定输入目标、不处理平台热键、不提交文本，也不能替代 Fcitx / Windows 前端操作输入法。Space 只应作为 daemon 调试控制。
 
 2. **解决方法**
 
-- TUI 的 Space 在 `ptt` / `toggle` 下统一发送 `Toggle`，在 `continuous` 下 recording 时发送 `Stop`、否则发送 `Start`。
-- TUI 的 Finalizing 状态不拦截 Toggle；daemon 允许 Toggle 在 Finalizing 关闭会话。
-- 补充 TUI 手工验证：PTT / Toggle 下 Space 开启会话，再按一次关闭；Continuous 下分别 Stop / Start。
+- TUI 保持调试工具定位：只显示 daemon 状态、Partial / Final 与历史，并发送调试控制消息；不绑定输入目标、不提交文本、不模拟平台前端。
+- 仅在 `addon=disconnected` 时允许 TUI 发送会话命令；`frontend` 连接期间 TUI 只观察，daemon 对 `Start` / `Stop` / `Toggle` 返回 `busy`。
+- Space 仅用于调试 daemon 会话：`ptt` / `toggle` 下发送 `Toggle`，`continuous` 下 recording 时发送 `Stop`、否则发送 `Start`；文档不得把它写成“手动录音 / 操作输入法”。
+- 平台输入仍只由 Fcitx / Windows 前端的热键、目标绑定与提交路径触发。
 
 3. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime/README.html` | §2 | 改 | 删除“`voime ctl start` / `voime ctl stop` 式 TUI 操作”的概括，改为“PTT / Toggle 下 Space 发送 Toggle，Continuous 下按录音状态 Start / Stop”。 |
-| `crates/voime/USER.html` | §2、§4.2 | 不动 | 已定义 TUI 按键语义；README 链接到本处即可。 |
-| `crates/voime/CORE.html` | §5.2 | 不动 | 调用栈已按 Toggle / Start / Stop 分支描述。 |
+| `crates/voime/README.html` | §1.1、§2 | 不动（已更新） | 已改为调试 TUI：只观察 daemon 状态与历史，不操作输入法、不提交文本。 |
+| `crates/voime/USER.html` | §1、§2、§4.2 | 不动（已更新） | 已定义为调试工具；Space 仅在无 frontend 连接时发送调试会话命令，不绑定输入目标、不提交文本。 |
+| `crates/voime/CORE.html` | §5.2 | 不动（已更新） | 调用栈已加入 `addon == Connected` 时 Space 不发送命令的分支。 |
+| `crates/voime-ipc/USER.html` | §2 | 不动（已更新） | 角色约定已写明：frontend 连接期间 TUI 的 Start / Stop / Toggle 返回 `busy`。 |
+| `crates/voimed/CORE.html` | §2、§5.3、§5.4 | 不动（已更新） | 已加入 TUI 调试控制约定与 on_client 的角色守卫。 |
+| `crates/voimed/README.html` | §2 | 不动（已更新） | TUI 行已标明无 frontend 时才能发送调试会话命令。 |
+| `README.html` | §2 | 不动（已更新） | TUI 行已标明调试用途、不操作输入法。 |
+| `USER.html` | §4.2 | 不动（已更新） | TUI 入口已标明调试用途、不操作输入法。 |
 
 ### E2. `voimed` 启动顺序在 CORE 的两个章节中互相矛盾
 
@@ -54,7 +60,7 @@
 
 - 采用 CORE §5.7：先 `Worker::shutdown`，再广播 `Bye`，给 writer 线程短暂 flush 时间，然后关闭 IPC、pipeline 与音频。
 - pipeline shutdown 失败不能让音频 `stop` 被跳过；音频停止放在无条件执行的收尾路径。
-- 退出路径统一走 `Daemon::request_shutdown`，避免各分支自行置位。
+- 退出路径统一由 `Daemon::run` 的收尾代码执行；`request_shutdown` / `fail` 只置位关闭标志，不各自清理资源，避免各分支重复或跳过清理。
 
 3. **修订建议**
 
@@ -67,7 +73,7 @@
 
 1. **问题描述**
 
-`crates/voime-gpu-common/USER.html` §4.7 规定：daemon 未发送 `Shutdown` 就关闭 stdin / stdout 时，worker 视为异常关闭并以非零退出。但 `crates/voime-gpu-firered/CORE.html` §4.6 写“EOF 按 Shutdown 处理”，会让 FireRed worker 在管道异常断开时发送 `Bye` 并以成功退出，daemon 无法区分正常关闭和崩溃。
+`crates/voime-gpu-common/USER.html` §4.7 规定：daemon 未发送 `Shutdown` 就关闭 stdin / stdout 时，worker 视为异常关闭并以非零退出。但 `crates/voime-gpu-firered/CORE.html` §4.6 写“EOF 按 Shutdown 处理”，会让 FireRed worker 在管道异常断开时发送 `Bye` 并以成功退出，daemon 无法区分正常关闭和崩溃。FireRed worker 已由 P13 移除；本条只保留为历史记录。
 
 2. **解决方法**
 
@@ -79,8 +85,8 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-firered/CORE.html` | §4.6、§5.5 | 改 | 删除“EOF 按 Shutdown 处理”，改为“EOF 不产生 `Bye`，释放资源后非零退出”。 |
-| `crates/voime-gpu-common/USER.html` | §4.7 | 不动 | 已定义 EOF 为异常关闭；FireRed CORE 对齐本处。 |
+| `crates/voime-gpu-firered/CORE.html` | §4.6、§5.5 | 不动（P13 删除 FireRed） | 文档已删除。 |
+| `crates/voime-gpu-common/USER.html` | §4.7 | 不动 | 已定义 EOF 为异常关闭；Qwen worker 对齐本处。 |
 | `crates/voime-gpu-qwen3/CORE.html` | §5.6 | 不动 | Qwen 的关闭 / 异常退出语义已与 common 一致。 |
 
 ### E5. `reset_after_segment` 在软切分与 `FinishSegment` 两处含义冲突
@@ -99,8 +105,8 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §5.3 | 改 | 把 `FinishSegment` 的“reset_after_segment”改为“reset_after_finish（硬重置）”，并说明软切分仍使用 `reset_after_segment`。 |
-| `crates/voime-core/CORE.html` | §2、§5.2 | 不动 | 已定义软切分继续采集与 `Recording(true)` 续段；硬切分引用 §5.3。 |
+| `crates/voime-core/CORE.html` | §5.3 | 改 | `FinishSegment` 的 note 与调用栈改为 `reset_after_finish`（硬重置）：清空 listening / collecting、关闭 Preview、清空完成段队列；`prepare_command` 先排空音频并 `drain_queue`，再交付段、发送 `Recording(false)`。 |
+| `crates/voime-core/CORE.html` | §2、§5.2 | 不动（本主题） | 软切分继续使用 `reset_after_segment` 并发送下一段 `Recording(true)`；`Segmenter::push` 签名、阈值与 fbank 的修改按 P9 合并，音频错误回调和哨兵按 P7 合并，均不改变本主题的软 / 硬切分语义。 |
 
 ### E6. 模型清单示例把 `size` 写成 0，但契约要求校验字节大小
 
@@ -118,26 +124,26 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `CORE.html` | §4.8 | 改 | 将示例中的 `"size": 0` 改为真实字节数，并在字段表明确“0 不是通配符”。 |
+| `CORE.html` | §4.8 | 改 | 把示例改成具体文件与真实字节数（例如 `model.onnx` 及其实际大小），并在字段表明确“0 不是通配符”。 |
 | `crates/voime-core/USER.html` | §4.3 | 不动 | 已要求文件存在、非空、大小与 SHA-256 校验；根 CORE 示例对齐即可。 |
 
-### E7. `voime-core` 文件树中的 `pub mod final;` 不是合法 Rust
+### E7. `voime-core` 的 `lib.rs` 中 `pub mod final;` 不是合法 Rust
 
 1. **问题描述**
 
-`crates/voime-core/CORE.html` §1 写 `pub mod final;`，但 `final` 是 Rust 关键字，直接声明无法编译。实现使用 `pub mod r#final;` 并在 `lib.rs` 重导出 `Final`，而根 `CORE.html` §5.2 又直接使用 `voime_core::Final`，文档与代码的模块可见性不一致。
+`crates/voime-core/CORE.html` §4.1（lib.rs）写 `pub mod final;`，但 `final` 是 Rust 关键字，直接声明无法编译。实现使用 `pub mod r#final;` 并在 `lib.rs` 重导出 `Final`，而根 `CORE.html` §5.2 又直接使用 `voime_core::Final`，文档与代码的模块可见性不一致。
 
 2. **解决方法**
 
 - `lib.rs` 使用 `pub mod r#final;`，并 `pub use r#final::Final;` 保持根 CORE 的 `voime_core::Final` 调用名。
-- 其它模块继续通过 `crate::final::Final` 或重导出访问；不新增第二套类型。
-- 在核心 CORE 的文件树里注明 `r#final` 的转义写法。
+- 其它模块继续通过 `crate::r#final::Final` 或重导出访问；不新增第二套类型。
+- 在核心 CORE 的 §4.1 签名与 §4.14 文件说明中注明 `r#final` 的转义写法；文件本身仍名为 `final.rs`。
 
 3. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §1、§4.14 | 改 | 将 `pub mod final;` 改为 `pub mod r#final;`，并注明 `Final` 通过 `lib.rs` 重导出。 |
+| `crates/voime-core/CORE.html` | §4.1、§4.14 | 改 | 将 §4.1 的 `pub mod final;` 改为 `pub mod r#final;`，并注明 `pub use r#final::Final;`；§4.14 的文件标题保持 `final.rs`，注明模块路径为 `r#final`。 |
 | `CORE.html` | §4.1、§5.2 | 不动 | 继续使用 `voime_core::Final`；核心 CORE 负责解释模块转义。 |
 
 ## 2. 开发中发现文档没写明的细节
@@ -163,37 +169,34 @@
 | `crates/voime-ipc/CORE.html` | §2 | 不动 | 序列化策略由 USER 定义；CORE 只说明使用外部标签。 |
 | `frontends/fcitx/PROVIDER.html` | §4.5 | 不动 | 解析兼容窗口由 IPC USER 统一描述，不在前端重复线格式。 |
 
-### M2. 可选 `cmvn.ark` 的文件格式没有定义
+### M2. 可选 `cmvn.ark` 的文件格式与统计量布局
 
 1. **问题描述**
 
-`crates/voime-core/CORE.html` §4.8 与 `PROVIDER.html` §4.2 只说 VAD 的 CMVN 来自可选的 `cmvn.ark`，没有说明它是 Kaldi 二进制 `FM` / `DM` 矩阵、`FV` / `DV` 向量还是文本，也没有说明统计量的布局与读取约定。FireRed 的 `cmvn.ark` 实际是 `2 x (80 + 1)` 的 Kaldi 二进制 `DM` 矩阵：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和。原实现按裸 `u32` 读取矩阵头（漏掉 Kaldi 整数的 1 字节宽度标记），并假设 count 在首元素，启动时报 `解析 VAD CMVN 文件失败 ... Kaldi CMVN 文件被截断`。
+开发初期，`crates/voime-core/CORE.html` §4.8 与 `crates/voime-core/PROVIDER.html` §4.2 只说 VAD 的 CMVN 来自可选的 `cmvn.ark`，没有说明它是 Kaldi 二进制 `FM` / `DM` 矩阵、`FV` / `DV` 向量还是文本，也没有说明统计量的布局与读取约定；该格式现已写入核心 PROVIDER。VAD 的 `cmvn.ark` 实际是 `2 x (80 + 1)` 的 Kaldi 二进制 `DM` 矩阵：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和。原实现按裸 `u32` 读取矩阵头（漏掉 Kaldi 整数的 1 字节宽度标记），并假设 count 在首元素，启动时报 `解析 VAD CMVN 文件失败 ... Kaldi CMVN 文件被截断`。FireRed worker 的对应实现已由 P13 移除。
 
 2. **解决方法**
 
 - 按 Kaldi 二进制格式解析矩阵 / 向量：整数头先读 1 字节宽度标记（`4` / `8`，有符号为正），再读小端数据；矩阵 / 向量使用 `FM` / `DM` / `FV` / `DV`，保留 `F` / `D` 兼容。
 - 统计量按 FireRed / Kaldi 的 `2 x (dim + 1)` 布局读取：第一行前 `dim` 列为 sum、末列为 count，第二行前 `dim` 列为平方和；按 count 计算 mean / inverse stddev，variance floor 取 `1e-20`。
 - 保留“count + sums + squares”扁平布局与预计算 mean / inverse stddev 的兼容路径；维度必须与 fbank bin 数一致，缺失或解析失败按模型加载失败处理。
-- 核心 `crates/voime-core/src/vad/firered.rs` 与 FireRed worker `crates/voime-gpu-firered/src/asr/cmvn.rs` 使用同一解析约定；增加 parser 单测，覆盖二进制 f32 / f64 矩阵、二进制 f64 向量、文本输入与截断文件。
+- 核心 `crates/voime-core/src/vad/firered.rs` 使用该解析约定；增加 parser 单测，覆盖二进制 f32 / f64 矩阵、二进制 f64 向量、文本输入与截断文件。
 
 3. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/PROVIDER.html` | §4.2 | 改 | 明确 `cmvn.ark` 为 Kaldi 二进制 `DM` / `FM` 矩阵，布局为 `2 x (80 + 1)`：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和；按 count 计算 mean / inverse stddev。 |
+| `crates/voime-core/PROVIDER.html` | §4.2 | 不动（已写明） | 已写明 `cmvn.ark` 为 Kaldi 二进制 `DM` / `FM` 矩阵，布局为 `2 x (80 + 1)`：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和；按 count 计算 mean / inverse stddev。 |
 | `crates/voime-core/CORE.html` | §4.8 | 不动 | 只说明文件来源与校验；格式细节归 PROVIDER。 |
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.1.3 | 改 | 增加同样的 `cmvn.ark` 格式说明；与核心共用同一 Kaldi 约定。 |
-| `crates/voime-gpu-firered/CORE.html` | §4.10 | 不动 | 已说明读取统计并计算 mean / inverse stddev；格式引用 PROVIDER。 |
 
 ### M3. daemon 传给 Qwen worker 的 `model_dir` 是模型根还是模型子目录
 
 1. **问题描述**
 
-`crates/voime-gpu-common/USER.html` §1 只规定 `model_dir` 是“模型目录绝对路径”，布局由 worker 定义；`crates/voime-gpu-qwen3/USER.html` §4.1 把模型放在 `models/qwen3-asr-1.7b/`，但 `voimed` 的 Worker 章节没有写明 Hello 里传根目录还是子目录。Qwen worker 的 `Manifest::load(model_dir)` 需要子目录，否则找不到 `manifest.json`。
+`crates/voime-gpu-common/USER.html` §1 只规定 `model_dir` 是“模型目录绝对路径”，布局由 worker 定义；`crates/voime-gpu-qwen3/USER.html` §4.1 把模型放在 `~/.local/share/voime/models/qwen3-asr-1.7b/`（Windows 为 `%LOCALAPPDATA%\voime\models\qwen3-asr-1.7b\`），但 `voimed` 的 Worker 章节没有写明 Hello 里传根目录还是子目录。Qwen worker 的 `Manifest::load(model_dir)` 需要子目录，否则找不到 `manifest.json`。
 
 2. **解决方法**
 
-- daemon 对 FireRed 传模型根目录（内部再找 `fireredasr2-aed/` 与 `fireredpunc/`）。
 - daemon 对 Qwen3 传 `model_root/qwen3-asr-1.7b`，因为 Qwen worker 的模型目录本身就是 manifest 目录。
 - worker 仍只接受绝对路径；daemon 在启动前把 model root 规范化为绝对路径。
 
@@ -201,7 +204,7 @@
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voimed/CORE.html` | §4.6 | 增 | 写明 `Worker::spawn` 按 backend 计算 Hello 的 `model_dir`：FireRed 传根目录，Qwen3 传 `qwen3-asr-1.7b` 子目录。 |
+| `crates/voimed/CORE.html` | §4.6 | 增 | 写明 `Worker::spawn` 对 Qwen3 传 `model_root/qwen3-asr-1.7b` 子目录。 |
 | `crates/voime-gpu-qwen3/USER.html` | §4.1 | 增 | 明确 Hello `model_dir` 指向包含 manifest 的 `qwen3-asr-1.7b/` 目录。 |
 | `crates/voime-gpu-common/USER.html` | §4.2 | 不动 | `model_dir` 的布局归 worker 定义；本处只保留绝对路径与透传契约。 |
 
@@ -209,29 +212,28 @@
 
 1. **问题描述**
 
-FireRed 文档说 EP 在编译时固定，daemon 文档说 worker 由 `voimed` 启动，但没有写清 daemon 是否传 `--runtime`、`--log-level`，以及 `VOIME_GPU_DEVICE` / `VOIME_FIRERED_RUNTIME` 的优先级。实现时容易出现 daemon 用环境变量、worker 用 Hello 字段、安装脚本又用第三个来源的三套来源。
+Qwen 文档已写 `device` 来自 Hello，但没有说明 daemon 是否为 Qwen 传 runtime / 日志参数，也没有写全 `VOIME_GPU_DEVICE` 与 Hello 字段的优先级。实现时容易形成 daemon 环境变量、worker 的 Hello 字段与安装脚本三套来源。
 
 2. **解决方法**
 
-- EP 以 worker 编译 feature 为准；daemon 只在显式设置 `VOIME_FIRERED_RUNTIME` 时传递 `--runtime`，worker 发现与编译 feature 不一致就拒绝。
+- EP 以 worker 编译 feature 为准；daemon 不向 Qwen 传 `--runtime` / `--log-level`。
 - 设备只通过 Hello 的 `device` 字段传递；daemon 可用 `VOIME_GPU_DEVICE` 提供默认值，空串表示 backend 默认设备。
-- `--log-level` 只影响 worker stderr 日志级别，不改变协议 stdout；模型目录只从 Hello 取，不从环境变量猜。
+- 模型目录只从 Hello 取，不从环境变量猜。
 - 启动失败只标记 backend 不可用，不阻塞 CPU Final。
 
 3. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voimed/CORE.html` | §4.6 | 增 | 列出 `Worker::spawn` 的 runtime / device / log level 来源与优先级。 |
-| `crates/voime-gpu-firered/CORE.html` | §4.3 | 增 | 写明 `--runtime`、`VOIME_FIRERED_RUNTIME` 与编译 feature 的关系；模型路径只来自 Hello。 |
-| `crates/voime-gpu-qwen3/CORE.html` | §4.2 | 增 | 写明 Qwen 只使用编译 feature，`device` 来自 Hello，`log_level` 只写 stderr。 |
+| `crates/voimed/CORE.html` | §4.6 | 增 | 列出 `Worker::spawn` 的 device 来源与优先级；与 M3 的 `model_dir` 说明合并到同一小节。 |
+| `crates/voime-gpu-qwen3/CORE.html` | §4.2 | 增 | 写明 Qwen 只使用编译 feature，`device` 来自 Hello，daemon 不向 Qwen 传 runtime / log-level 参数，启动日志只写 stderr。 |
 | `crates/voime-gpu-common/USER.html` | §4.2 | 不动 | Hello 字段语义已定义；进程参数不属于帧协议。 |
 
 ### M5. doctor 读取的 worker 日志行格式没有定义
 
 1. **问题描述**
 
-`crates/voime/USER.html` §4.4 说 doctor 从 daemon 日志读取 worker ready / running；`crates/voime/CORE.html` §4.8 也把日志作为状态来源，但没有规定日志行的稳定格式。实现只能靠字符串搜索，日志文案一改 doctor 就失明。
+`crates/voime/USER.html` §4.4 曾让 doctor 从 daemon 日志读取 worker ready / running；`crates/voime/CORE.html` §4.8 也把日志作为状态来源，但没有规定日志行的稳定格式。P10 已改为只读 `Diagnostics`，日志行不再作为 doctor 的状态来源；以下只保留当时的日志格式约定。
 
 2. **解决方法**
 
@@ -243,9 +245,9 @@ FireRed 文档说 EP 在编译时固定，daemon 文档说 worker 由 `voimed` �
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voimed/CORE.html` | §2 | 增 | 定义 worker 状态日志的稳定行格式（ready / running / failed / unavailable）。 |
-| `crates/voime/CORE.html` | §4.8、§5.5 | 改 | 把“读取日志中的 ready / running”改为引用固定行格式，避免文案耦合。 |
-| `crates/voime/USER.html` | §4.4 | 不动 | 已说明状态来源；格式归 voimed CORE。 |
+| `crates/voimed/CORE.html` | §2 | 不动（P10 取代） | 日志行仍按该格式写，但 worker 状态源已改为 `Diagnostics`。 |
+| `crates/voime/CORE.html` | §4.8、§5.5 | 不动（P10 取代） | doctor 已改为请求 `Diagnostics`，不再要求引用日志行格式。 |
+| `crates/voime/USER.html` | §4.4 | 不动 | 状态来源已改为 `Diagnostics`。 |
 
 ### M6. GPU 安装的离线包 / 预编译 worker 目录布局没有定义
 
@@ -255,7 +257,7 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 2. **解决方法**
 
-- 约定 `--source-dir/bin/voime-gpu-firered` 与 `--source-dir/bin/voime-gpu-qwen3` 为可选预编译 worker；存在时直接安装，否则在对应 crate 内按 feature 构建。
+- 约定 `--source-dir/bin/voime-gpu-qwen3` 为可选预编译 worker；存在时直接安装，否则在 Qwen crate 内按 feature 构建。FireRed worker 已由 P13 移除。
 - 离线源模型仍按 `--source-dir/<model-id>/` 复制；默认在线获取与下载确认由 M10 的安装器负责，两者共用同一 `<model-id>/` 布局与 schema 5 manifest。runtime 目录由安装包自行放置，不由 worker 从全局库路径查找。
 - Windows 使用同名 `.exe`。
 
@@ -263,15 +265,15 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-firered/USER.html` | §4.4 | 增 | 写明 `--source-dir/bin/` 预编译 worker 布局与缺失时的构建回退。 |
-| `crates/voime-gpu-qwen3/USER.html` | §4.4 | 增 | 同上，并区分 Vulkan / CUDA 预编译包。 |
+| `crates/voime-gpu-firered/USER.html` | §4.4 | 不动（P13 删除 FireRed） | 文档已删除。 |
+| `crates/voime-gpu-qwen3/USER.html` | §4.4 | 增 | 写明 `--source-dir/bin/` 预编译 worker 布局、缺失时的构建回退，并区分 Vulkan / CUDA 预编译包。 |
 | `README.html` | §2 | 不动 | 根 README 只保留安装入口；布局细节归 GPU 组件 USER。 |
 
 ### M7. Windows 核心安装如何获得模型没有写明
 
 1. **问题描述**
 
-根 README 与 Windows 文档说 `scripts/install-core.ps1` 安装核心模型，但没有说明它从网络下载、从仓库 `models/` 复制，还是要求用户先准备离线目录。实现如果没有 Python 或 `-SourceDir`，无法凭空得到两个核心模型。
+根 README 只列安装入口；`frontends/windows/README.html` §2 与 `frontends/windows/PROVIDER.html` §4.5 说 `scripts/install-core.ps1` 安装核心模型，但没有说明它从网络下载、从仓库 `models/` 复制，还是要求用户先准备离线目录。实现如果没有 Python 或 `-SourceDir`，无法凭空得到两个核心模型。
 
 2. **解决方法**
 
@@ -292,22 +294,22 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 1. **问题描述**
 
-`frontends/fcitx/CORE.html` §4.6 与 `PROVIDER.html` §4.3 要求 doctor 检查系统 addon 路径与 ABI，但没有说明 ABI 是编译期版本、`pkg-config` 版本、动态库依赖还是 addon 描述文件。实现如果只检查文件存在，会把 ABI 不匹配的库误报为正常。
+`frontends/fcitx/CORE.html` §4.6 与 `frontends/fcitx/PROVIDER.html` §4.3 要求 doctor 检查系统 addon 路径与 ABI，但没有说明 ABI 是编译期版本、`pkg-config` 版本、动态库依赖还是 addon 描述文件。实现如果只检查文件存在，会把 ABI 不匹配的库误报为正常。
 
 2. **解决方法**
 
-- 系统 addon 路径从 `pkg-config --variable=libdir Fcitx5Core` 解析，再拼 `/fcitx5`。
+- 系统 addon 路径从 `pkg-config --variable=libdir Fcitx5Core` 解析，再拼 `/fcitx5`；`voime doctor` 另保留 `/usr/lib` / `/usr/local/lib` 回退。
 - 描述文件固定检查 `/usr/share/fcitx5/addon/voime.conf`（以及 `/usr/local` 回退）。
-- ABI 检查 `pkg-config --atleast-version=5.1.23 Fcitx5Core` 并用 `ldd` 检查动态依赖；不检查 `inputmethod` 条目与 `FCITX_ADDON_DIRS`。
-- `voime doctor` 与 addon 自身的 diagnostics 使用同一规则。
+- ABI 检查 `pkg-config --atleast-version=5.1.23 Fcitx5Core` 并用 `ldd` 检查未解析依赖；不检查 `inputmethod` 条目与 `FCITX_ADDON_DIRS`。这是 `voime doctor` 的规则。
+- addon 自身的 `checkAddonAbi` 只检查库与描述文件存在；文档不得写成与 doctor 相同的版本 / 依赖检查，除非实现补齐该逻辑。
 
 3. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `frontends/fcitx/CORE.html` | §4.6 | 增 | 写明 ABI 检查由 `pkg-config` 最低版本 + `ldd` 依赖解析组成。 |
-| `frontends/fcitx/PROVIDER.html` | §4.3 | 增 | 在系统路径表中补充 libdir 解析与 ABI 判定规则。 |
-| `crates/voime/CORE.html` | §4.8 | 不动 | doctor 的检查项已定义；具体 ABI 方法归 fcitx 文档。 |
+| `frontends/fcitx/CORE.html` | §4.6 | 改 | 写明 ABI 检查由 `pkg-config` 最低版本 + `ldd` 依赖解析组成，并区分 `voime doctor` 与 addon 自身 `checkAddonAbi` 的当前职责。 |
+| `frontends/fcitx/PROVIDER.html` | §4.3 | 改 | 在系统路径表中补充 libdir 解析与 ABI 判定规则；注明 addon 侧只做路径存在性检查。 |
+| `crates/voime/CORE.html` | §4.8 | 不动（本主题） | doctor 的检查项已定义；worker 日志行格式的修改见 M5。 |
 
 ### M9. `voime ctl backend` 与全局 `--endpoint` 的 CLI 行为没有写清
 
@@ -317,7 +319,7 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 2. **解决方法**
 
-- 保留全局 `--endpoint` 以复用其它子命令，但在 `ctl backend` 动作入口显式检查；出现该参数时打印错误并以退出码 2 结束。
+- 保留全局 `--endpoint` 以复用其它子命令，但在 `main.rs` 解析后、进入 `run_ctl` 前检查 `ctl backend`；出现该参数时打印错误并以退出码 2 结束。
 - `ctl backend` 只写 `[final].backend`，不连接 daemon、不读取端点。
 - 帮助文本继续说明该动作不需要端点。
 
@@ -326,7 +328,7 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
 | `crates/voime/USER.html` | §4.1 | 改 | 明确 `ctl backend` 即使全局解析到 `--endpoint` 也会拒绝并以退出码 2 结束。 |
-| `crates/voime/CORE.html` | §4.1 | 增 | 在 `run_ctl` 分流说明中补一句：Backend 分支先检查 endpoint，再写配置。 |
+| `crates/voime/CORE.html` | §4.1、§5.4 | 改 | 把 Backend 分流写到 `main.rs`：在构造 `Endpoint` / 进入 `run_ctl` 前检查 `--endpoint` 并返回 2；`run_ctl` 只处理需要端点的动作。 |
 
 ### M10. GPU 模型默认下载、下载确认与仓库根目录回退没有定义
 
@@ -359,7 +361,7 @@ GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型�
 
 1. **问题描述**
 
-ORT 默认允许未分配到 GPU EP 的节点回退到 CPU。FireRed worker 即使注册 CUDA / MIGraphX / DirectML，也可能在 CPU 上执行部分算子，而 `Ready.runtime` 仍显示 GPU，导致性能与“GPU only”契约都被破坏，且很难从结果判断。
+ORT 默认允许未分配到 GPU EP 的节点回退到 CPU。FireRed worker 即使注册 CUDA / MIGraphX / DirectML，也可能在 CPU 上执行部分算子，而 `Ready.runtime` 仍显示 GPU，导致性能与“GPU only”契约都被破坏，且很难从结果判断。FireRed worker 已由 P13 移除；本条只保留为历史记录。
 
 2. **解决方法**
 
@@ -371,14 +373,14 @@ ORT 默认允许未分配到 GPU EP 的节点回退到 CPU。FireRed worker 即�
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 增 | 明确 session 必须禁用 CPU fallback，不能只依赖 EP 注册列表。 |
-| `crates/voime-gpu-firered/CORE.html` | §2、§4.5 | 不动 | 已声明“不注册 CPU EP、不回退 CPU ORT”；PROVIDER 补充实现约束。 |
+| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 不动（P13 删除 FireRed） | session 禁用 CPU fallback 的约束已随 worker 移除。 |
+| `crates/voime-gpu-firered/CORE.html` | §2、§4.5 | 不动（P13 删除 FireRed） | worker 已移除，相关约束仅保留为历史记录。 |
 
 ### P2. `llama-cpp-4` 0.11.0 的实际类型与文档草案签名有差异
 
 1. **问题描述**
 
-Qwen CORE 的草案签名使用较旧的 `LlamaContextParams` / `LlamaBatch` 路径，实际 0.11.0 的类型主要由 `prelude` 导出；BF16 判断是 `LlamaFtype::MostlyBF16`，`ftype()` 返回 `Option<LlamaFtype>`。此外默认 `n_ctx` 只有 512，30 s 音频加输出 token 很容易不够。
+Qwen CORE 的草案签名只列 `LlamaContextParams` / `LlamaBatch` 类型名，没有说明它们由 `llama_cpp_4::prelude` 导出；BF16 判断只写 `LlamaModel::ftype()`，没有写返回 `Option<LlamaFtype>` 与 `MostlyBF16`；上下文只写按 30 s 音频设置，没有给 `n_ctx` / `n_batch` 值。默认 `n_ctx` 只有 512，30 s 音频加输出 token 很容易不够。
 
 2. **解决方法**
 
@@ -391,14 +393,14 @@ Qwen CORE 的草案签名使用较旧的 `LlamaContextParams` / `LlamaBatch` 路
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-qwen3/CORE.html` | §4.4、§4.6 | 改 | 用实际 0.11.0 类型路径、`MostlyBF16` 与 `n_ctx = 4096` 更新草案签名。 |
+| `crates/voime-gpu-qwen3/CORE.html` | §4.4、§4.6 | 改 | 用 `llama_cpp_4::prelude::*`、`MostlyBF16`、`n_ctx = 4096` 与 `n_batch = 2048` 更新草案签名。 |
 | `crates/voime-gpu-qwen3/PROVIDER.html` | §4.3 | 不动 | 已锁定 `llama-cpp-4` 0.11.0；类型细节归 CORE。 |
 
 ### P3. `tokenizers` 的 WordPiece 不会自动补 `[CLS]` / `[SEP]`
 
 1. **问题描述**
 
-FireRedPunc 导出的 ONNX 需要 BERT 风格的 `input_ids`，其中包含 `[CLS]` 101 与 `[SEP]` 102。只用 `WordPiece` + BERT normalizer / pre-tokenizer 时，`encode(text, true)` 并不会自动添加这两个特殊 token；同时 `get_offsets()` 返回的是原文字节偏移，不能按字符下标插入标点。
+FireRedPunc 导出的 ONNX 需要 BERT 风格的 `input_ids`，其中包含 `[CLS]` 101 与 `[SEP]` 102。只用 `WordPiece` + BERT normalizer / pre-tokenizer 时，`encode(text, true)` 并不会自动添加这两个特殊 token；同时 `get_offsets()` 返回的是原文字节偏移，不能按字符下标插入标点。FireRedPunc 已由 P13 移除；本条只保留为历史记录。
 
 2. **解决方法**
 
@@ -411,8 +413,8 @@ FireRedPunc 导出的 ONNX 需要 BERT 风格的 `input_ids`，其中包含 `[CL
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-firered/CORE.html` | §4.13、§4.14 | 增 | 说明 WordPiece 需要手动补 `[CLS]` / `[SEP]`，分块按 token 边界，插入使用字节偏移。 |
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.2.1 | 不动 | 已定义输入包含特殊 token；编码细节归 CORE。 |
+| `crates/voime-gpu-firered/CORE.html` | §2、§4.13、§4.14 | 不动（P13 删除 FireRed） | FireRedPunc 与相关 tokenizer 已随 worker 移除。 |
+| `crates/voime-gpu-firered/PROVIDER.html` | §4.2.1 | 不动（P13 删除 FireRed） | 文档已删除。 |
 
 ### P4. `rubato` 的流式重采样器会缓存不足一个块的数据
 
@@ -430,14 +432,14 @@ FireRedPunc 导出的 ONNX 需要 BERT 风格的 `input_ids`，其中包含 `[CL
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §4.6、§5.3 | 增 | 说明 `FinishSegment` 必须 flush 重采样器；`SetMode` / Start 需要重建重采样器。 |
+| `crates/voime-core/CORE.html` | §4.6、§5.3 | 增 | 说明 `FinishSegment` 必须 flush 重采样器；`SetMode` / Start 需要重建重采样器；与 E5 的 §5.3 修改合并。 |
 | `crates/voime-core/USER.html` | §4.4 | 不动 | 已定义硬切分排空音频；具体重采样器实现归 CORE。 |
 
 ### P5. Windows 登录启动项在安装器与托盘中使用不同名称
 
 1. **问题描述**
 
-`scripts/install-core.ps1` 最初写入 `HKCU\...\Run\Voime`，而 Windows 托盘 `Config::set_start_at_login` 写入 / 删除 `VoimeTray`。首次安装后会出现两个启动项；卸载只能删掉其中一个，关闭 `StartAtLogin` 也删不掉安装器写的那条。
+`scripts/install-core.ps1` 最初写入 `HKCU\...\Run\Voime`，而 Windows 托盘 `Config::set_start_at_login` 最初写入 / 删除 `VoimeTray`。两处值名不一致时首次安装后会出现两个启动项；卸载只能删掉其中一个，关闭 `StartAtLogin` 也删不掉安装器写的那条。当前实现已统一为 `Voime`，文档仍需写明该固定值名。
 
 2. **解决方法**
 
@@ -488,14 +490,14 @@ FireRedPunc 导出的 ONNX 需要 BERT 风格的 `input_ids`，其中包含 `[CL
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §2、§5.6 | 增 | 明确数据回调用 `try_send`、错误回调用阻塞 `send` 写哨兵，哨兵不可丢。 |
+| `crates/voime-core/CORE.html` | §2、§5.6 | 改 | 明确数据回调用 `try_send`、错误回调用阻塞 `send` 写哨兵，哨兵不可丢；与 P9 的 §2 修改合并。 |
 | `crates/voime-core/PROVIDER.html` | §4.1 | 不动 | 已定义 cpal 错误回调；具体队列策略归 CORE。 |
 
 ### P8. DirectML 的线协议设备前缀是 `dml`，EP 名称却是 `directml`
 
 1. **问题描述**
 
-GPU common 的示例与 FireRed 文档使用 `dml:0` 作为 DirectML 设备标识，而 `OrtEp::Directml` 的显示字符串是 `directml`。直接用 EP 名称生成默认设备会得到 `directml:0`，worker 的 Hello 校验与 `Ready.device` 不一致；反过来只校验 `cuda` / `migraphx` / `dml` 又会漏掉构建 feature 与设备前缀的匹配。
+GPU common 的示例使用 `dml:0` 作为 DirectML 设备标识，而 `OrtEp::Directml` 的显示字符串是 `directml`；FireRed CORE 也没有写明两者的映射。直接用 EP 名称生成默认设备会得到 `directml:0`，worker 的 Hello 校验与 `Ready.device` 不一致；反过来只校验 `cuda` / `migraphx` / `dml` 又会漏掉构建 feature 与设备前缀的匹配。FireRed/ORT GPU worker 已由 P13 移除；本条只保留为历史记录。
 
 2. **解决方法**
 
@@ -507,14 +509,14 @@ GPU common 的示例与 FireRed 文档使用 `dml:0` 作为 DirectML 设备标�
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-firered/CORE.html` | §4.3、§4.6 | 增 | 区分 provider 名称 `directml` 与设备前缀 `dml`，并说明设备前缀必须匹配编译 EP。 |
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 不动 | 已按 EP 平台矩阵定义能力；命名映射归 CORE。 |
+| `crates/voime-gpu-firered/CORE.html` | §4.3、§4.6 | 不动（P13 删除 FireRed） | 相关 worker 与文档已删除。 |
+| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 不动（P13 删除 FireRed） | 文档已删除。 |
 
 ### P9. Continuous 自动分段在自然停顿处过早收句
 
 1. **问题描述**
 
-Continuous 模式由 `Segmenter` 的静音阈值直接决定收句：原实现使用 `MIN_SILENCE_MS = 200`，而 PTT / Toggle 使用 `PTT_AUTO_END_MS = 1_200`，且通常由松键 / 再按结束，因此只有 Continuous 会在自然停顿处把一句话切成多段。FireRed 官方 `hello_zh.wav` 句中有一处约 120 ms 的静音，200 ms 阈值离它过近，语速稍慢或停顿稍长就会越界。另一个问题是 rework 把核心 fbank 的窗函数统一固定为 `hamming`，但 FireRed VAD 的上游实现和 `voime-gpu-firered` 都使用 Kaldi 默认的 `povey`；`FbankConfig` 由 VAD 与 SenseVoice 共用，窗函数不匹配会让 VAD 概率边界不稳定，放大提前收句。
+Continuous 模式由 `Segmenter` 的静音阈值直接决定收句：原实现使用 `MIN_SILENCE_MS = 200`，而 PTT / Toggle 使用 `PTT_AUTO_END_MS = 1_200`，且通常由松键 / 再按结束，因此只有 Continuous 会在自然停顿处把一句话切成多段。FireRed 官方 `hello_zh.wav` 句中有一处约 120 ms 的静音，200 ms 阈值离它过近，语速稍慢或停顿稍长就会越界。另一个问题是修复前的 `FbankConfig` 把所有模型统一固定为 `hamming`，但 FireRed VAD 的上游实现使用 Kaldi 默认的 `povey`；`FbankConfig` 由 VAD 与 SenseVoice 共用，窗函数不匹配会让 VAD 概率边界不稳定，放大提前收句。
 
 2. **解决方法**
 
@@ -527,8 +529,8 @@ Continuous 模式由 `Segmenter` 的静音阈值直接决定收句：原实现�
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §2、§4.9、§4.11、§5.2 | 改 | 统一为 `AUTO_END_SILENCE_MS` 并删除 `Segmenter::push` 的 `mode` 参数；`FbankConfig` 增加 `WindowType`，明确 VAD 用 `povey`、SenseVoice 用 `hamming`。 |
-| `crates/voime-core/PROVIDER.html` | §2、§4.2 | 改 | 明确 VAD / SenseVoice 的 fbank 窗函数分别为 `povey` / `hamming`，不再写“共用默认值”。 |
+| `crates/voime-core/CORE.html` | §2、§4.9、§4.11、§5.2 | 不动（已更新） | 已统一为 `AUTO_END_SILENCE_MS`，`Segmenter::push` 已删除 `mode` 参数；`FbankConfig` 已增加 `WindowType`，明确 VAD 用 `povey`、SenseVoice 用 `hamming`。 |
+| `crates/voime-core/PROVIDER.html` | §2、§4.2 | 不动（已更新） | 已写明 VAD / SenseVoice 的 fbank 窗函数分别为 `povey` / `hamming`。 |
 | `crates/voime-core/USER.html` | §2 | 不动 | 仍只说明 Continuous 由 VAD 自动分段；阈值与窗函数细节归 CORE / PROVIDER。 |
 | `README.html` | §2 | 不动 | 仍描述“每次停顿后自动结束当前输入”；具体阈值归核心 CORE。 |
 
@@ -560,7 +562,7 @@ M5 曾把 daemon 日志中的 ready / running 作为 `voime doctor` 的唯一 wo
 
 1. **问题描述**
 
-在 AMD RX 9070（gfx1201）、ROCm 7.2 / MIGraphX 2.15、ONNX Runtime 1.29 上实测：
+FireRed GPU Final 后端已由 P13 移除；本条只保留为历史记录。在 AMD RX 9070（gfx1201）、ROCm 7.2 / MIGraphX 2.15、ONNX Runtime 1.29 上实测：
 - MIGraphX 会话可创建，首次 encoder 运行在 `simplify_reshapes` 编译阶段失败（`Dimensions do not match`）；`migraphx-driver compile` 直接编译也复现，关闭相关 pass 后编译超过 5 分钟。
 - 使用带 ROCm EP 的 ORT 1.22 动态库可以执行，但 encoder 输出与 CPU 参考差异巨大，识别结果退化为重复字符；ROCm EP 自 1.23 起已从 ORT 移除。
 - FireRed worker 的模型校验、fbank、CMVN、decoder cache、tokenizer 与标点逻辑在 CPU ORT 上可输出正确文本，说明问题在 AMD GPU EP，不在业务代码。
@@ -576,11 +578,10 @@ M5 曾把 daemon 日志中的 ready / running 作为 `voime doctor` 的唯一 wo
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-firered/USER.html` | §4.2、§4.4 | 改 | 标注 AMD MIGraphX 当前不可用；补充 runtime 目录与自检。 |
-| `crates/voime-gpu-firered/CORE.html` | §2、§4.6、§5.1 | 改 | 说明启动自检、Punc CPU 例外与 runtime 加载顺序。 |
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 改 | 记录 EP 验证结论与 CPU 节点例外。 |
-| `BUILD.html` | §3.3、§3.4 | 改 | 补充 runtime 目录与 AMD 警告。 |
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.1.3 | 不动 | GPU FireRed 的 fbank 已使用 Kaldi 默认 `povey`，与核心 VAD 对齐。 |
+| `crates/voime-gpu-firered/USER.html` | §4.2、§4.4 | 不动（P13 删除 FireRed） | 文档已删除。 |
+| `crates/voime-gpu-firered/CORE.html` | §2、§4.6、§5.1 | 不动（P13 删除 FireRed） | 文档已删除。 |
+| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 不动（P13 删除 FireRed） | 文档已删除。 |
+| `BUILD.html` | §3.3、§3.4 | 不动（P13 删除 FireRed） | FireRed 构建与 runtime 已移除。 |
 
 ### P12. Qwen3 中文输出清洗按字节切分导致 worker panic
 

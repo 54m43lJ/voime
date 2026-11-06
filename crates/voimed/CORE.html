@@ -48,6 +48,7 @@
   <tr><td>客户端线程</td><td>accept 线程接受连接；每个客户端一个 reader 线程与一个 writer 线程；daemon 主线程只处理事件与状态。</td></tr>
   <tr><td>客户端队列</td><td>每个客户端一个有界发送队列；Final / State 满时移除客户端，Partial 满时只丢该条。</td></tr>
   <tr><td>角色表</td><td><code>clients: HashMap&lt;u64, ClientEntry&gt;</code> 由互斥锁保护；<code>set_role</code> 只允许一个 <code>Frontend</code>（线协议同时接受 <code>fcitx</code> 别名）。</td></tr>
+  <tr><td>TUI 调试控制</td><td>TUI 只在 <code>FrontendState::Disconnected</code> 时发送 <code>Start</code> / <code>Stop</code> / <code>Toggle</code>；<code>frontend</code> 连接期间这些命令返回 <code>busy</code>，TUI 仅观察。</td></tr>
   <tr><td>状态机</td><td><code>State.phase</code> 只由 daemon 主线程修改；pipeline 事件与客户端命令都在同一线程串行处理。</td></tr>
   <tr><td>段 ID</td><td><code>next_segment</code> 单调递增，wrapping 后跳过 0；当前段在 Final / 丢弃后清空。</td></tr>
   <tr><td>模式生效</td><td>Configure 检测到 Mode 变化：Idle 且无活动会话时立即 <code>pipeline.set_mode</code>；否则暂存 <code>pending_mode</code> 并立即 <code>finish_segment</code>，当前段 Final / 丢弃后应用。</td></tr>
@@ -246,8 +247,7 @@ impl Daemon {
     pub fn run(mut self) -&gt; anyhow::Result&lt;()&gt;;
     fn on_server_event(&amp;mut self, event: ServerEvent);
     fn on_client(&amp;mut self, client_id: u64, message: ClientMessage);
-    fn request_start(&amp;mut self, client_id: u64, segment_id: u64,
-                     source: TriggerSource);
+    fn request_start(&amp;mut self, client_id: u64, source: TriggerSource);
     fn request_stop(&amp;mut self, client_id: u64, segment_id: u64);
     fn on_pipeline(&amp;mut self, event: PipelineEvent);
     fn finalize(&amp;mut self, segment: Segment) -&gt; anyhow::Result&lt;()&gt;;
@@ -271,7 +271,8 @@ impl Daemon {
 }
 
 fn listens(mode: Mode, session_active: bool) -&gt; bool;
-fn continuation_source(mode: Option&lt;Mode&gt;) -&gt; TriggerSource;</code></pre>
+fn continuation_source(mode: Option&lt;Mode&gt;) -&gt; TriggerSource;
+fn tui_session_commands_blocked(role: Option&lt;Role&gt;, addon: FrontendState) -&gt; bool;</code></pre>
 <ul class="note">
   <li><code>finalize</code> 只由 <code>SegmentReady</code> 触发；<code>backend</code> 在启动时固定。</li>
   <li><code>transcribe_gpu</code> 失败时调用 <code>fallback_cpu</code>；成功后记录错误码并继续尝试所选后端。</li>
@@ -412,7 +413,8 @@ Daemon::on_client(client_id, Configure { mode, hotkey })
 
 <h3 id="c5-3">5.3 Start 与 SegmentStarted</h3>
 <pre><code>Daemon::on_client(client_id, Start { segment_id, source })
-└── Daemon::request_start(client_id, segment_id, source)
+├── 判断 role == Tui &amp;&amp; state.addon == Connected → Daemon::send_error(client_id, busy)
+└── Daemon::request_start(client_id, source)
     ├── 判断 state.phase != Idle || session_active → Daemon::send_error(client_id, busy)
     ├── CaptureHandle::play()
     ├── Daemon::allocate_segment()
@@ -422,6 +424,7 @@ Daemon::on_client(client_id, Configure { mode, hotkey })
 
 <h3 id="c5-4">5.4 会话开始、软切分与硬切分</h3>
 <pre><code>Daemon::on_client(client_id, Stop { segment_id, source })
+├── 判断 role == Tui &amp;&amp; state.addon == Connected → Daemon::send_error(client_id, busy)
 └── Daemon::request_stop(client_id, segment_id)
     ├── 判断 mode == Continuous
     │   ├── 判断 segment_id != 0 &amp;&amp; segment_id != current_segment → Daemon::send_error(client_id, busy)
@@ -440,6 +443,7 @@ Daemon::on_client(client_id, Configure { mode, hotkey })
         └── Daemon::sync_audio()
 
 Daemon::on_client(client_id, Toggle { segment_id, source })
+├── 判断 role == Tui &amp;&amp; state.addon == Connected → Daemon::send_error(client_id, busy)
 ├── 判断 mode != Ptt / Toggle → Daemon::send_error(client_id, busy)
 ├── 判断 session_active
 │   ├── Daemon::request_stop(...)

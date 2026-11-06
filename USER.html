@@ -243,7 +243,7 @@
 <table>
   <tr><th>入口</th><th>用途</th><th>详细契约</th></tr>
   <tr><td><code>voimed</code></td><td>常驻 daemon；模式与热键由前端通过 IPC 提供，Final 后端从配置文件读取；不提供 <code>--backend</code>。</td><td><a href="crates/voimed/USER.html#u4-1">voimed USER §4.1</a></td></tr>
-  <tr><td><code>voime</code></td><td>可选 TUI；连接 daemon，显示模式、热键、临时结果与历史。</td><td><a href="crates/voime/USER.html#u4-2">voime USER §4.2</a></td></tr>
+  <tr><td><code>voime</code></td><td>可选调试 TUI；连接 daemon，显示模式、热键、临时结果与历史；不操作输入法、不提交文本。</td><td><a href="crates/voime/USER.html#u4-2">voime USER §4.2</a></td></tr>
   <tr><td><code>voime ctl</code></td><td>一次性控制客户端：start / stop / toggle / status / clear / quit；<code>backend</code> 写 Final 后端配置。</td><td><a href="crates/voime/USER.html#u4-1">voime USER §4.1</a></td></tr>
   <tr><td><code>voime doctor</code></td><td>检查端点、daemon、模型、音频、平台前端、所选 Final 后端与 GPU worker 状态；只读。</td><td><a href="crates/voime/USER.html#u4-4">voime USER §4.4</a></td></tr>
 </table>

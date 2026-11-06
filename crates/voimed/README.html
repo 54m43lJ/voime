@@ -73,7 +73,7 @@ pipeline、会话历史与 Final 后端选择，通过本机 IPC 向平台前端
 <table>
   <tr><th>角色 / 入口</th><th>交互</th><th>契约</th></tr>
   <tr><td>平台前端</td><td>连接 daemon，发送 Hello / Configure / Start / Stop / Toggle，接收 SegmentStarted / State / Partial / Final。</td><td><a href="USER.html#u4-2">USER §4.2</a> · <a href="../voime-ipc/USER.html">voime-ipc USER</a></td></tr>
-  <tr><td>TUI（<code>voime</code>）</td><td>连接为 <code>tui</code>，读取 Snapshot / Partial / Final，发送 Start / Stop / ClearHistory。</td><td><a href="../voime/USER.html#u4-2">voime USER §4.2</a></td></tr>
+  <tr><td>TUI（<code>voime</code>）</td><td>连接为 <code>tui</code>，读取 Snapshot / Partial / Final；无 <code>frontend</code> 连接时可发送 Start / Stop / Toggle / ClearHistory 调试命令，<code>frontend</code> 连接期间只观察；不操作输入法。</td><td><a href="../voime/USER.html#u4-2">voime USER §4.2</a></td></tr>
   <tr><td><code>voime ctl</code></td><td>连接为 <code>control</code>，发送 Start / Stop / Toggle / Status / ClearHistory / Quit；<code>backend</code> 直接写配置，不通过 daemon。</td><td><a href="../voime/USER.html#u4-1">voime USER §4.1</a></td></tr>
   <tr><td>systemd / 登录启动</td><td>启动 / 重启 / 停止 daemon；Linux 使用 systemd 用户服务，Windows 由托盘托管 daemon，随托盘启动和退出。</td><td>本组件 §2</td></tr>
   <tr><td><code>voimed</code> CLI</td><td>指定模型根目录、输入设备、线程数、端点路径与日志；Final 后端只从配置文件读取。</td><td><a href="USER.html#u4-1">USER §4.1</a></td></tr>

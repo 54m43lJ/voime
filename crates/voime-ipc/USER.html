@@ -32,7 +32,7 @@
   <tr><td>消息（message）</td><td>一个 JSON 对象，带唯一外部标签；一行一个消息。</td></tr>
   <tr><td>frame</td><td>消息 JSON + 一个换行符 <code>\n</code>；换行是唯一的消息边界。</td></tr>
   <tr><td>外部标签</td><td>消息类型作为 JSON 对象的唯一键，例如 <code>{"Hello": {...}}</code>。</td></tr>
-  <tr><td>角色（Role）</td><td>客户端身份：<code>frontend</code>（平台前端；线协议同时接受 <code>fcitx</code> 别名）、<code>tui</code>（监视器）或 <code>control</code>（一次性控制）。</td></tr>
+  <tr><td>角色（Role）</td><td>客户端身份：<code>frontend</code>（平台前端；线协议同时接受 <code>fcitx</code> 别名）、<code>tui</code>（调试监视器）或 <code>control</code>（一次性控制）。</td></tr>
   <tr><td>模式（Mode）</td><td><code>ptt</code> / <code>toggle</code> / <code>continuous</code>；产品级定义见 <a href="../../USER.html#u1">根 USER §1</a>。</td></tr>
   <tr><td>会话（session）</td><td>PTT / Toggle 从开始到硬切分之间的一段交互；一个会话包含一个或多个语音段。</td></tr>
   <tr><td>软切分 / 硬切分</td><td>软切分由 VAD 终点触发，结束当前段并继续下一段；硬切分由 <code>Stop</code> / <code>Toggle</code> 关闭会话，结束当前段后不再续段。</td></tr>
@@ -56,7 +56,7 @@
   <tr><td>外部标签</td><td>消息类型是对象的唯一键；字段平铺在标签对象内。</td></tr>
   <tr><td>枚举值</td><td><code>Mode</code> / <code>Role</code> / <code>TriggerSource</code> / <code>Phase</code> / <code>FrontendState</code> 使用小写；<code>ErrorCode</code> 使用 snake_case。</td></tr>
   <tr><td>握手顺序</td><td>连接后第一条消息必须是 <code>Hello</code>；版本或角色不合法时 daemon 发送 <code>Error</code> 并断开。</td></tr>
-  <tr><td>角色</td><td>只允许一个 <code>frontend</code> 连接；<code>configure</code> 只接受 <code>frontend</code>；<code>quit</code> 只接受 <code>control</code>。</td></tr>
+  <tr><td>角色</td><td>只允许一个 <code>frontend</code> 连接；<code>configure</code> 只接受 <code>frontend</code>；<code>quit</code> 只接受 <code>control</code>。<code>tui</code> 在 <code>frontend</code> 连接期间只观察，<code>Start</code> / <code>Stop</code> / <code>Toggle</code> 返回 <code>busy</code>；无 <code>frontend</code> 连接时可发送调试会话命令。</td></tr>
   <tr><td>配置</td><td><code>Hello.config</code> 可选；只有平台前端携带 <code>mode</code> / <code>hotkey</code>。daemon 不解析命令行模式。</td></tr>
   <tr><td><code>segment_id</code></td><td>daemon 分配；<code>Start</code> / <code>Toggle</code> 的 ID 只是提示；<code>Stop</code> 在 PTT / Toggle 下忽略 ID，在 Continuous 下非零 ID 需匹配当前段（0 表示当前段）。</td></tr>
   <tr><td>会话命令</td><td><code>Start</code> 打开 PTT / Toggle 会话；<code>Stop</code> 硬切分会话；<code>Toggle</code> 按当前状态打开或硬切分。会话内 VAD 软切分多个段，不需要重复 <code>Start</code>。</td></tr>
@@ -246,6 +246,9 @@ pub struct Status {
   <tr><td><code>Error</code></td><td>daemon → client</td><td>协议、角色、忙碌、整段丢弃或其它推理错误；<code>segment_dropped</code> 时 <code>segment_id</code> 指向被丢弃的段。</td><td>按 <code>code</code> 处理；<code>segment_dropped</code> 时由前端决定是否清理 / 提示，后端不规定 UI 行为。</td></tr>
   <tr><td><code>Bye</code></td><td>daemon → clients</td><td>daemon 即将退出。</td><td>客户端清理并退出 / 等待重连。</td></tr>
 </table>
+<ul class="note">
+  <li><code>tui</code> 角色在 <code>frontend</code> 连接期间发送 <code>Start</code> / <code>Stop</code> / <code>Toggle</code> 会收到 <code>busy</code>；这些命令只用于无前端连接时的调试会话。</li>
+</ul>
 
 <h3 id="u4-6">4.6 JSON 示例</h3>
 <pre><code>// client → daemon
