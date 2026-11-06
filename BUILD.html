@@ -192,6 +192,8 @@ powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1 -Uninstall</co
 
 <ul class="note">
   <li>安装脚本写入当前用户 <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code> 的 <code>Voime</code> 值，启动 <code>voime-tray.exe</code>；不使用 Session 0 服务。</li>
+  <li>升级时安装脚本先向运行中的托盘发送关闭消息以释放可执行文件；安装完成后不自动启动托盘，登录或手动启动生效。</li>
+  <li>未签名的本地构建可能被 Defender 误报为 <code>Behavior:Win32/Persistence.A!ml</code>（托盘管理 Run 键登录启动项）。发布构建应签名并向 Microsoft 提交误报，不要关闭 Defender 或添加排除项。</li>
   <li>未提供 <code>-SourceDir</code> 时，模型安装需要 Python 3.10+；运行期仍不需要 Python。</li>
 </ul>
 
@@ -203,6 +205,7 @@ powershell -ExecutionPolicy Bypass -File scripts/install-core.ps1 -Uninstall</co
   <tr><td>Qwen runtime</td><td><code>--qwen-runtime vulkan|cuda</code>；AMD Linux 只接受 <code>vulkan</code>。</td><td><code>-QwenRuntime vulkan|cuda</code>。</td></tr>
   <tr><td>后端选择</td><td><code>--backend cpu|qwen3</code>；只写配置，不热切换。</td><td><code>-Backend cpu|qwen3</code>；只写配置。</td></tr>
   <tr><td>模型</td><td>默认下载并缓存；开始前显示体积并要求确认。选项：<code>--yes</code> / <code>--model-dir</code> / <code>--source-dir</code> / <code>--no-models</code>。</td><td>默认下载并缓存；开始前显示体积并要求确认。选项：<code>-Yes</code> / <code>-ModelDir</code> / <code>-SourceDir</code> / <code>-NoModels</code>。</td></tr>
+  <tr><td>LLVM</td><td>构建依赖；缺失时提示安装。</td><td>源码构建缺少 <code>libclang.dll</code> 时自动安装 LLVM：默认 <code>-LlvmScope user</code> 解压到 <code>%LOCALAPPDATA%\Programs\LLVM</code>（无需管理员）；<code>-LlvmScope system</code> 经 UAC 安装到系统；<code>-NoLlvmInstall</code> 只提示不安装。</td></tr>
   <tr><td>卸载</td><td><code>--uninstall</code>；删除 Qwen 后端、runtime 与模型目录。</td><td><code>-Uninstall</code>；同样删除 Qwen 后端。</td></tr>
 </table>
 
@@ -227,6 +230,8 @@ scripts/install-gpu.sh --qwen3 --uninstall</code></pre>
   <li>安装 GPU 模块不会自动切换 <code>final.backend</code>；必须显式使用 <code>--backend</code> 或 <code>voime ctl backend</code>。</li>
   <li>未指定 <code>--source-dir</code> 时，模型由 <code>scripts/install-gpu-models.py</code> 从固定上游 revision 下载并缓存；存在同文件的 ModelScope 镜像时优先 ModelScope，否则回退 Hugging Face。公开模型使用匿名直链，不需要账号；也可通过 <code>MODELSCOPE_API_TOKEN</code> / <code>HF_TOKEN</code>（及常见别名）提供 token，交互安装缺失时会提示输入，可回车跳过。开始前显示体积并要求确认，<code>--yes</code> 跳过确认与 token 提示。指定 <code>--source-dir</code> 时只复制离线包，不联网。</li>
   <li>离线模型包放在 <code>--source-dir/&lt;model-id&gt;/</code>，可选预编译 worker 放在 <code>--source-dir/bin/</code>。没有预编译包时脚本会在对应 crate 内按 runtime feature 构建；安装脚本不再回退到仓库根目录的 <code>models/</code>。</li>
+  <li>Windows 从源码构建 Qwen worker 需要 LLVM（bindgen / <code>libclang.dll</code>）和对应 runtime 的 SDK：Vulkan 需要 Vulkan SDK（<code>glslc.exe</code> 与 Vulkan 头文件），CUDA 需要 CUDA Toolkit。安装脚本检测 <code>LIBCLANG_PATH</code> / LLVM、<code>VULKAN_SDK</code> / <code>C:\VulkanSDK</code>、<code>CUDA_PATH</code>；LLVM 缺失时默认自动安装到用户目录（<code>-LlvmScope user</code>），也可用 <code>-LlvmScope system</code> 经 UAC 安装到系统。Vulkan / CUDA SDK 仍需用户自行安装；也可在 <code>-SourceDir/bin/</code> 放预编译 <code>voime-gpu-qwen3.exe</code> 跳过源码构建。</li>
+  <li>Windows 源码构建还会为 C/C++ 编译补 <code>/utf-8</code>（llama.cpp 源码包含 UTF-8 字符），并由 <code>crates/voime-gpu-qwen3/build.rs</code> 补充 <code>llama-common</code> 依赖的 <code>cpp-httplib</code> / <code>vendor-hash</code> 静态库链接。</li>
 </ul>
 
 <h3 id="b3-4">3.4 模型准备</h3>

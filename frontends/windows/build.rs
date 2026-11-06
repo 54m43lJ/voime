@@ -9,22 +9,32 @@ fn main() {
         return;
     }
 
-    let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let icon = manifest.join("../../assets/icons/voime.ico");
-    if !icon.is_file() {
-        return;
-    }
+    let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let icon = crate_dir.join("../../assets/icons/voime.ico");
+    let manifest = crate_dir.join("../../packaging/windows/voime-tray.manifest");
     println!("cargo:rerun-if-changed={}", icon.display());
+    println!("cargo:rerun-if-changed={}", manifest.display());
 
     let Some(rc) = find_rc() else {
-        println!("cargo:warning=rc.exe not found; executable icon skipped");
+        println!("cargo:warning=rc.exe not found; executable icon and manifest skipped");
         return;
     };
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let rc_file = out.join("voime.rc");
     let res_file = out.join("voime.res");
-    let icon = icon.to_string_lossy().replace('\\', "\\\\");
-    fs::write(&rc_file, format!("1 ICON \"{icon}\"\n")).expect("write icon resource script");
+    let mut script = String::new();
+    if icon.is_file() {
+        let icon = icon.to_string_lossy().replace('\\', "\\\\");
+        script.push_str(&format!("1 ICON \"{icon}\"\n"));
+    }
+    if manifest.is_file() {
+        let manifest = manifest.to_string_lossy().replace('\\', "\\\\");
+        script.push_str(&format!("1 24 \"{manifest}\"\n"));
+    }
+    if script.is_empty() {
+        return;
+    }
+    fs::write(&rc_file, script).expect("write resource script");
 
     match Command::new(rc)
         .arg("/nologo")

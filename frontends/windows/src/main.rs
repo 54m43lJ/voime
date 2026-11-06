@@ -96,6 +96,21 @@ fn status_from_arg(value: &str) -> FrontendStatus {
     }
 }
 
+fn error_code_name(code: ErrorCode) -> &'static str {
+    match code {
+        ErrorCode::InvalidMessage => "invalid_message",
+        ErrorCode::VersionMismatch => "version_mismatch",
+        ErrorCode::RoleConflict => "role_conflict",
+        ErrorCode::Busy => "busy",
+        ErrorCode::NoInputContext => "no_input_context",
+        ErrorCode::DaemonUnavailable => "daemon_unavailable",
+        ErrorCode::Unavailable => "unavailable",
+        ErrorCode::SegmentDropped => "segment_dropped",
+        ErrorCode::Inference => "inference",
+        ErrorCode::Internal => "internal",
+    }
+}
+
 fn status_arg(status: FrontendStatus) -> &'static str {
     match status {
         FrontendStatus::Connected => "connected",
@@ -205,6 +220,7 @@ pub struct Frontend {
     daemon: Option<control::Daemon>,
     daemon_started: Option<Instant>,
     settings_child: Option<Child>,
+    last_error: Option<&'static str>,
 }
 
 impl Frontend {
@@ -231,7 +247,12 @@ impl Frontend {
             daemon: None,
             daemon_started: None,
             settings_child: None,
+            last_error: None,
         }
+    }
+
+    pub fn last_error(&self) -> Option<&'static str> {
+        self.last_error
     }
 
     fn attach_window(&mut self, hwnd: HWND) {
@@ -285,15 +306,18 @@ impl Frontend {
         }
         self.hotkey_down = hotkey_down;
 
-        if self.target.is_some()
-            && now.duration_since(self.last_focus_check) >= Duration::from_millis(50)
-        {
+        if now.duration_since(self.last_focus_check) >= Duration::from_millis(50) {
             self.last_focus_check = now;
-            if let Some(target) = self.target.as_ref() {
-                if !target::focused(target) {
-                    self.on_target_lost();
-                }
-            }
+            self.on_focus_change();
+        }
+    }
+
+    fn on_focus_change(&mut self) {
+        let Some(target) = self.target.as_ref() else {
+            return;
+        };
+        if !target::focused(target) {
+            self.on_target_lost();
         }
     }
 
@@ -463,54 +487,58 @@ impl Frontend {
                 code,
                 segment_id: error_segment,
                 message,
-            } => match code {
-                ErrorCode::VersionMismatch
-                | ErrorCode::RoleConflict
-                | ErrorCode::InvalidMessage
-                | ErrorCode::DaemonUnavailable => {
-                    vlog!("daemon 拒绝连接（{code:?}）：{message}");
-                    self.on_disconnect();
-                }
-                ErrorCode::SegmentDropped => {
-                    vlog!("daemon 丢弃语音段（{error_segment:?}）：{message}");
-                    let current = error_segment.is_none()
-                        || error_segment == self.current_segment
-                        || error_segment == self.target.as_ref().map(|target| target.segment_id);
-                    if current {
-                        self.recording = false;
-                        self.finalizing = false;
-                        self.current_segment = None;
-                        if self.config.mode == Mode::Toggle && self.toggle_active {
-                            if let Some(target) = self.target.as_ref() {
-                                if target::focused(target) {
-                                    if let Some(overlay) = self.overlay.as_mut() {
-                                        overlay.show_empty(target);
+            } => {
+                self.last_error = Some(error_code_name(code));
+                match code {
+                    ErrorCode::VersionMismatch
+                    | ErrorCode::RoleConflict
+                    | ErrorCode::InvalidMessage
+                    | ErrorCode::DaemonUnavailable => {
+                        vlog!("daemon 拒绝连接（{code:?}）：{message}");
+                        self.on_disconnect();
+                    }
+                    ErrorCode::SegmentDropped => {
+                        vlog!("daemon 丢弃语音段（{error_segment:?}）：{message}");
+                        let current = error_segment.is_none()
+                            || error_segment == self.current_segment
+                            || error_segment
+                                == self.target.as_ref().map(|target| target.segment_id);
+                        if current {
+                            self.recording = false;
+                            self.finalizing = false;
+                            self.current_segment = None;
+                            if self.config.mode == Mode::Toggle && self.toggle_active {
+                                if let Some(target) = self.target.as_ref() {
+                                    if target::focused(target) {
+                                        if let Some(overlay) = self.overlay.as_mut() {
+                                            overlay.show_empty(target);
+                                        }
                                     }
                                 }
+                            } else if self.config.mode == Mode::Ptt && self.ptt_active {
+                                if let Some(overlay) = self.overlay.as_mut() {
+                                    overlay.hide();
+                                }
+                            } else {
+                                self.target = None;
+                                if let Some(overlay) = self.overlay.as_mut() {
+                                    overlay.hide();
+                                }
                             }
-                        } else if self.config.mode == Mode::Ptt && self.ptt_active {
-                            if let Some(overlay) = self.overlay.as_mut() {
-                                overlay.hide();
-                            }
-                        } else {
-                            self.target = None;
-                            if let Some(overlay) = self.overlay.as_mut() {
-                                overlay.hide();
-                            }
+                        } else if let Some(segment_id) = error_segment {
+                            self.pending_finals.remove(&segment_id);
                         }
-                    } else if let Some(segment_id) = error_segment {
-                        self.pending_finals.remove(&segment_id);
                     }
-                }
-                ErrorCode::Busy => {
-                    if self.pending_target.take().is_some() {
-                        self.recording = false;
-                        self.ptt_active = false;
-                        self.toggle_active = false;
+                    ErrorCode::Busy => {
+                        if self.pending_target.take().is_some() {
+                            self.recording = false;
+                            self.ptt_active = false;
+                            self.toggle_active = false;
+                        }
                     }
+                    _ => vlog!("daemon 错误（{code:?}）：{message}"),
                 }
-                _ => vlog!("daemon 错误（{code:?}）：{message}"),
-            },
+            }
             ServerMessage::Bye {} => self.on_disconnect(),
             ServerMessage::HistoryCleared {}
             | ServerMessage::Status { .. }
@@ -670,8 +698,10 @@ impl Frontend {
         if self.send(&ClientMessage::Stop { segment_id, source }) {
             self.recording = false;
             self.finalizing = active;
-            if source == TriggerSource::Hold {
-                self.ptt_active = false;
+            match source {
+                TriggerSource::Hold => self.ptt_active = false,
+                TriggerSource::Toggle => self.toggle_active = false,
+                _ => {}
             }
             if !active {
                 if let Some(overlay) = self.overlay.as_mut() {

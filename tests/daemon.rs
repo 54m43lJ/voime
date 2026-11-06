@@ -1,10 +1,26 @@
 use voime_transport::Endpoint;
 use voimed::ipc_server::{daemon_running, IpcServer};
 
+fn test_endpoint(label: &str) -> (tempfile::TempDir, Endpoint) {
+    let directory = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let endpoint = Endpoint::from_path(directory.path().join("voime").join("voimed.sock"));
+    #[cfg(windows)]
+    let endpoint = {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        Endpoint::from_name(format!(
+            "voime-test-daemon-{label}-{}-{id}",
+            std::process::id()
+        ))
+    };
+    (directory, endpoint)
+}
+
 #[test]
 fn bind_makes_endpoint_live_and_shutdown_removes_it() {
-    let directory = tempfile::tempdir().unwrap();
-    let endpoint = Endpoint::from_path(directory.path().join("voime").join("voimed.sock"));
+    let (_directory, endpoint) = test_endpoint("live");
     assert!(!daemon_running(&endpoint));
     let mut server = IpcServer::bind(&endpoint).unwrap();
     assert!(daemon_running(&endpoint));
@@ -19,8 +35,7 @@ fn frontend_role_is_released_after_disconnect() {
     use voime_transport::connect;
     use voimed::ipc_server::ServerEvent;
 
-    let directory = tempfile::tempdir().unwrap();
-    let endpoint = Endpoint::from_path(directory.path().join("voime").join("voimed.sock"));
+    let (_directory, endpoint) = test_endpoint("roles");
     let mut server = IpcServer::bind(&endpoint).unwrap();
     let first = connect(&endpoint).unwrap();
     let first_id = match server

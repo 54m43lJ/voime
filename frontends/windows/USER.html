@@ -189,7 +189,7 @@ Final 后端选择不进入前端。TSF 为可选扩展。平台 API 与安全�
 <h3 id="u4-6">4.6 daemon 生命周期</h3>
 <table>
   <tr><th>操作</th><th>契约</th></tr>
-  <tr><td>安装</td><td>核心安装脚本 <code>scripts/install-core.ps1</code> 每用户安装托盘与 daemon 到 <code>%LOCALAPPDATA%\Programs\Voime</code>，核心模型写入 <code>%LOCALAPPDATA%\voime\models</code>，并写入登录启动项。GPU 模块由独立 <code>scripts/install-gpu.ps1</code> 安装 worker、runtime 与 GPU 模型，前端不参与。</td></tr>
+  <tr><td>安装</td><td>核心安装脚本 <code>scripts/install-core.ps1</code> 每用户安装托盘与 daemon 到 <code>%LOCALAPPDATA%\Programs\Voime</code>，核心模型写入 <code>%LOCALAPPDATA%\voime\models</code>，并写入登录启动项。升级前脚本向运行中的托盘发送关闭消息，安装后不自动启动托盘。GPU 模块由独立 <code>scripts/install-gpu.ps1</code> 安装 worker、runtime 与 GPU 模型，前端不参与。</td></tr>
   <tr><td>登录启动</td><td>核心安装脚本写入当前用户 <code>Run</code> 项启动 <code>voime-tray.exe</code>；不使用 Session 0 服务。</td></tr>
   <tr><td>自动启动</td><td>托盘启动时先停止已有 daemon，再以子进程拉起同目录 <code>voimed.exe</code>；托盘是 daemon 的唯一所有者。连接失败按 2 s 间隔重连，daemon 重试按 10 s 间隔执行。</td></tr>
   <tr><td>GPU worker</td><td><code>voimed</code> 启动时按配置拉起并回收 GPU worker；托盘只托管 daemon，不启动、不停止、不重启 worker。前端不感知 worker 状态。</td></tr>

@@ -260,6 +260,10 @@ impl Tray {
             0,
             PCWSTR(status_text.as_ptr()),
         );
+        if let Some(code) = frontend.last_error() {
+            let label = to_wide(&format!("最近错误：{code}"));
+            append(menu, MF_STRING | MF_DISABLED, 0, PCWSTR(label.as_ptr()));
+        }
         append(menu, MF_SEPARATOR, 0, PCWSTR::null());
         append(menu, MF_STRING, ID_SETTINGS, w!("设置..."));
         append(menu, MF_SEPARATOR, 0, PCWSTR::null());

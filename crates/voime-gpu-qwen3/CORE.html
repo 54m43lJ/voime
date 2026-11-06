@@ -31,6 +31,7 @@
 
 <pre><code>crates/voime-gpu-qwen3/
 ├── Cargo.toml
+├── build.rs                 Windows：补充 llama-common 依赖的 vendor 静态库
 └── src/
     ├── <a href="#c4-1">main.rs</a>
     ├── <a href="#c4-2">worker.rs</a>
@@ -42,6 +43,7 @@
 
 <ul class="note">
   <li>本 crate 是独立 Cargo workspace / 独立二进制；不进入根 workspace，也不与其它组件共享链接单元或 runtime 目录。</li>
+  <li><code>build.rs</code> 只在 Windows 上运行：<code>llama-cpp-sys-4</code> 安装 <code>llama-common</code> 时未安装它依赖的 <code>cpp-httplib</code> / <code>vendor-hash</code> 静态库，本文件从 <code>%LOCALAPPDATA%\\llcb</code> 找到最新构建并补充链接搜索路径与库名；其它平台不输出任何链接指令。</li>
   <li><code>worker.rs</code> 负责帧循环、Hello / Ready 与取消标志；<code>engine.rs</code> 只封装 llama-cpp-4 的加载与推理；<code>mtmd.rs</code> 只处理音频 bitmap、prompt 与 chunks。</li>
   <li><code>decode.rs</code> 负责 greedy 采样、EOS / 上限 / 超时判断；<code>clean.rs</code> 是输出包装清洗的唯一入口。</li>
   <li>文档与图表不属于源码结构；模型目录由安装脚本写入，运行期由 daemon 通过 <code>Hello</code> 传入。</li>

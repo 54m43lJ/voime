@@ -10,8 +10,39 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $BinDir = $Prefix
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$TrayWasRunning = [bool](Get-Process -Name 'voime-tray' -ErrorAction SilentlyContinue)
+
+function Stop-Core {
+    if (Get-Process -Name 'voime-tray' -ErrorAction SilentlyContinue) {
+        if (-not ('VoimeInstallerNative' -as [type])) {
+            Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class VoimeInstallerNative {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindWindowW(string className, string windowName);
+    [DllImport("user32.dll")]
+    public static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+}
+"@
+        }
+        $hwnd = [VoimeInstallerNative]::FindWindowW('VoimeTrayWindow', $null)
+        if ($hwnd -ne [IntPtr]::Zero) {
+            [void][VoimeInstallerNative]::PostMessageW($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+            $deadline = (Get-Date).AddSeconds(3)
+            while ((Get-Date) -lt $deadline -and
+                   (Get-Process -Name 'voime-tray' -ErrorAction SilentlyContinue)) {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+    }
+    Get-Process -Name 'voime-tray', 'voimed' -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
+}
 
 function Remove-Core {
+    Stop-Core
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $BinDir 'voimed.exe')
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $BinDir 'voime.exe')
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $BinDir 'voime-tray.exe')
@@ -41,6 +72,7 @@ try {
 } finally { Pop-Location }
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+Stop-Core
 Copy-Item -Force (Join-Path $Root 'target\release\voimed.exe') $BinDir
 Copy-Item -Force (Join-Path $Root 'target\release\voime.exe') $BinDir
 Copy-Item -Force (Join-Path $Root 'frontends\windows\target\release\voime-tray.exe') $BinDir
@@ -67,6 +99,14 @@ if (-not $NoModels) {
     Write-Host "Core models installed under $ModelDir"
 }
 
+$trayPath = Join-Path $BinDir 'voime-tray.exe'
+$desiredRunValue = '"' + $trayPath + '"'
+$currentRunValue = (Get-ItemProperty -Path $RunKey -Name 'Voime' -ErrorAction SilentlyContinue).Voime
 New-Item -Path $RunKey -Force | Out-Null
-Set-ItemProperty -Path $RunKey -Name 'Voime' -Value ('"' + (Join-Path $BinDir 'voime-tray.exe') + '"')
+if ($currentRunValue -ne $desiredRunValue) {
+    Set-ItemProperty -Path $RunKey -Name 'Voime' -Value $desiredRunValue
+}
+if ($TrayWasRunning) {
+    Write-Host 'voime-tray was stopped for the upgrade; start it again when ready.'
+}
 Write-Host "Voime core installed. Run: $(Join-Path $BinDir 'voime.exe') doctor"
