@@ -135,6 +135,8 @@ void VoimeAddon::setConfig(const fcitx::RawConfig &config) {
         toggleCode_ = 0;
         holdCode_ = 0;
         if (!recording_ && !finalizing_) {
+            hasPartial_ = false;
+            partialText_.clear();
             target_.ref.unwatch();
             segmentId_.reset();
             clearPreview();
@@ -341,6 +343,8 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             pendingSegmentId_.reset();
             segmentId_ = message.segmentId;
             target_.segment_id = *message.segmentId;
+            hasPartial_ = false;
+            partialText_.clear();
             if ((holdActive_ || toggleActive_) && !target_.focused()) {
                 if (holdActive_) {
                     stopPtt();
@@ -356,6 +360,8 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
         }
         segmentId_ = message.segmentId;
         target_.segment_id = *message.segmentId;
+        hasPartial_ = false;
+        partialText_.clear();
         if (message.source == TriggerSource::Continuous) {
             auto *inputContext = instance_->mostRecentInputContext();
             if (inputContext && inputContext->hasFocus()) {
@@ -390,6 +396,8 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
         }
         if (!recording_ && !finalizing_) {
             starting_ = false;
+            hasPartial_ = false;
+            partialText_.clear();
             if (toggleActive_) {
                 refreshTogglePreview();
             } else if (holdActive_) {
@@ -412,6 +420,8 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             break;
         }
         if (target_.focused()) {
+            partialText_ = message.text;
+            hasPartial_ = true;
             preview_.show(target_.get(), message.text);
         } else {
             clearPreview();
@@ -430,6 +440,8 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             starting_ = false;
             recording_ = false;
             finalizing_ = false;
+            hasPartial_ = false;
+            partialText_.clear();
             if (toggleActive_) {
                 // Toggle keeps an empty window until the session is closed.
                 refreshTogglePreview();
@@ -447,9 +459,17 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
         if (pending != pendingFinals_.end()) {
             auto pendingTarget = pending->second;
             pendingFinals_.erase(pending);
+            const bool sameTarget = pendingTarget.get() == target_.get();
+            // Clear the preedit before committing so an old Final cannot
+            // commit the current segment's partial / empty Toggle marker.
             preview_.clear(pendingTarget.get());
             if (pendingTarget.focused() && !message.text.empty()) {
                 pendingTarget.get()->commitString(message.text);
+            }
+            if (sameTarget && (holdActive_ || toggleActive_)) {
+                // commitString can clear the input panel; restore the current
+                // segment's empty Toggle window or last Partial.
+                restoreCurrentPreview();
             }
         }
         break;
@@ -476,6 +496,8 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
                 starting_ = false;
                 recording_ = false;
                 finalizing_ = false;
+                hasPartial_ = false;
+                partialText_.clear();
                 if (toggleActive_) {
                     refreshTogglePreview();
                 } else {
@@ -501,6 +523,8 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             finalizing_ = *message.phase == Phase::Finalizing;
             if (!recording_ && !finalizing_) {
                 starting_ = false;
+                hasPartial_ = false;
+                partialText_.clear();
                 if (toggleActive_) {
                     refreshTogglePreview();
                 } else if (holdActive_) {
@@ -527,6 +551,8 @@ void VoimeAddon::onDaemonDisconnected() {
     pendingTarget_.reset();
     pendingSegmentId_.reset();
     pendingFinals_.clear();
+    partialText_.clear();
+    hasPartial_ = false;
     holdActive_ = false;
     starting_ = false;
     toggleCode_ = 0;
@@ -551,6 +577,20 @@ void VoimeAddon::refreshTogglePreview() {
         preview_.showEmpty(target_.get());
     } else {
         clearPreview();
+    }
+}
+
+void VoimeAddon::restoreCurrentPreview() {
+    if (!target_.focused()) {
+        clearPreview();
+        return;
+    }
+    if (hasPartial_ && !partialText_.empty()) {
+        preview_.show(target_.get(), partialText_);
+    } else if (toggleActive_) {
+        preview_.showEmpty(target_.get());
+    } else {
+        preview_.clear(target_.get());
     }
 }
 

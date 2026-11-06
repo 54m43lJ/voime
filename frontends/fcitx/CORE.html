@@ -124,6 +124,7 @@ private:
     void stopToggle();
     void clearPreview();
     void refreshTogglePreview();
+    void restoreCurrentPreview();
     IpcConfig currentConfig() const;
 
     fcitx::Instance *instance_;
@@ -138,6 +139,8 @@ private:
     std::optional&lt;TargetRef&gt; pendingTarget_;
     std::optional&lt;uint64_t&gt; pendingSegmentId_;
     std::unordered_map&lt;uint64_t, TargetRef&gt; pendingFinals_;
+    std::string partialText_;
+    bool hasPartial_ = false;
     bool holdActive_ = false;
     bool starting_ = false;
     bool recording_ = false;
@@ -403,6 +406,7 @@ VoimeAddon::onIpcMessage(Final)
 <ul class="note">
   <li>Finalizing 门禁只停止刷新，不清空最后 Partial；Final 到达后才调用 <code>Preview::clear</code> 并提交。</li>
   <li>旧段 Final 可能晚于新段 <code>SegmentStarted</code>；该旧目标保存在 <code>pendingFinals_</code>，仍按原 <code>segment_id</code> 提交。</li>
+  <li>旧 Final 与当前段共用输入框时，提交后调用 <code>restoreCurrentPreview()</code> 恢复当前段的最后 Partial；没有 Partial 的 Toggle 会话恢复空白窗口。</li>
   <li>Finalizing 期间到达的迟到 Partial 在 §5.4 被忽略。</li>
 </ul>
 

@@ -42,6 +42,7 @@ private:
     void stopToggle();
     void clearPreview();
     void refreshTogglePreview();
+    void restoreCurrentPreview();
     IpcConfig currentConfig() const;
 
     fcitx::Instance *instance_;
@@ -56,6 +57,8 @@ private:
     std::optional<TargetRef> pendingTarget_;
     std::optional<uint64_t> pendingSegmentId_;
     std::unordered_map<uint64_t, TargetRef> pendingFinals_;
+    std::string partialText_;
+    bool hasPartial_ = false;
     bool holdActive_ = false;
     bool starting_ = false;
     bool recording_ = false;

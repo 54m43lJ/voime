@@ -561,6 +561,7 @@ PTT / Toggle 硬切分后，daemon 立即把 `session_active` 置为 false；旧
 - Finalizing 期间新的 Start 立即开启新会话，不等待旧段结果；硬切分后若 `SegmentReady` 尚未到达，旧段 ID 先移入 `awaiting_segments`，新段可以立即分配新 ID。
 - `FinalizeResult` 回到 daemon 后按 `segment_id` 广播 `Final` / `SegmentDropped`；旧段 Final 可能晚于新段 `SegmentStarted`。
 - Fcitx 与 Windows 前端不再在 Finalizing 时忽略 Start；旧目标按旧 `segment_id` 存入 `pendingFinals_` / `pending_finals`，新段使用新目标，旧 Final 到达后仍提交到原目标。
+- Fcitx 在旧 Final 提交后恢复当前段的空白 Toggle 窗口或最后 Partial；同一输入上下文的旧目标不再清空新段预览。
 - GPU worker 状态通过 `WorkerShared` 快照供 `Diagnostics` 读取；Finalizer 线程在空闲轮询时更新 worker 存活状态。
 - 增加 `FinalizeQueue` 上界 / 丢弃单测；Fcitx C++ 测试、Windows 交叉编译与根 workspace 测试通过。
 
