@@ -557,6 +557,7 @@ PTT / Toggle 硬切分后，daemon 立即把 `session_active` 置为 false；旧
 2. **解决方法**
 
 - daemon 增加独立 Finalizer 线程与 `FinalizeQueue`：`SegmentReady` 只把段放入队列，Finalizer 串行执行 CPU / GPU Final；录音、IPC 与 Final 完全解耦。
+- daemon 在 Finalizing 期间保持音频采集（`capture_needed`）；pipeline 未监听时丢弃这些音频，因此不会把旧语音带入下一段。
 - 等待队列上限 5；满时丢弃最旧任务并广播 `segment_dropped`。正常连续说话时通常只有 0–1 条等待。
 - Finalizing 期间新的 Start 立即开启新会话，不等待旧段结果；硬切分后若 `SegmentReady` 尚未到达，旧段 ID 先移入 `awaiting_segments`，新段可以立即分配新 ID。
 - `FinalizeResult` 回到 daemon 后按 `segment_id` 广播 `Final` / `SegmentDropped`；旧段 Final 可能晚于新段 `SegmentStarted`。
@@ -571,8 +572,8 @@ PTT / Toggle 硬切分后，daemon 立即把 `session_active` 置为 false；旧
 |---|---|---|---|
 | `crates/voimed/USER.html` | §1、§2、§4.2 | 不动（已更新） | Start 在 Finalizing 且无活动会话时立即开始；Finalize 后台串行，队列上限 5；Toggle 无活动会话时同样进入 Start 路径。 |
 | `crates/voimed/CORE.html` | §2、§4.7、§5.3、§5.4、§5.5、§5.7 | 不动（已更新） | 增加 `Finalizer` / `FinalizeQueue` / `WorkerShared`、`awaiting_segments` 与 `on_finalize_result`；写明 Final 与录音解耦、旧 Final 可晚于新 SegmentStarted。 |
-| `crates/voime-core/USER.html` | §2、§4.4 | 不动 | pipeline 语义不变；StartSegment 仍丢弃按键前音频，不再做预录重放。 |
-| `crates/voime-core/CORE.html` | §2、§4.17、§5.3 | 不动 | pipeline 保持原有采集 / 分段契约；Final 解耦属于 daemon。 |
+| `crates/voime-core/USER.html` | §2、§4.4 | 不动 | pipeline 采集 / 分段契约不变；`StartSegment` 仍丢弃按键前音频；Preview / Final 会话见 P15。 |
+| `crates/voime-core/CORE.html` | §2、§4.17、§5.3 | 不动 | pipeline 采集 / 分段契约不变；Final 解耦属于 daemon；Preview / Final 会话见 P15。 |
 | `frontends/fcitx/CORE.html`、`frontends/fcitx/USER.html` | §2、§5.2、§5.3、§5.4、§5.6 | 不动（已更新） | Finalizing 允许 Start；旧目标存入 `pendingFinals_`，按旧 `segment_id` 提交。 |
 | `frontends/windows/CORE.html`、`frontends/windows/USER.html` | §2、§5.2、§5.3 | 不动（已更新） | Finalizing 允许 Start；旧目标存入 `pending_finals`，按旧 `segment_id` 提交。 |
 | `USER.html`、`CORE.html` | §3.2、§5.2 | 不动（已更新） | 说明 Finalize 后台队列与录音解耦，旧 Final 可晚于新段到达。 |
@@ -581,21 +582,22 @@ PTT / Toggle 硬切分后，daemon 立即把 `session_active` 置为 false；旧
 
 1. **问题描述**
 
-Preview 与 CPU Final 都需要 SenseVoice，但 `ort` 的 `Session::run` 需要 `&mut self`，且同一 Session 不支持并发 `Run`。如果为两者各建一个 Session，实测常驻内存从约 444 MiB 升到约 757 MiB（+313 MiB），不符合最小资源占用的目标。另一方面，完整 Final 不会复用 Partial 的 fbank、LFR、解码状态或 logits；每次 Final 都从完整 PCM 重新计算特征并执行一次完整推理，因此不存在“利用 Partial 加速 Final”的路径。
+Preview 与 CPU Final 都需要 SenseVoice。`ort` 的 `Session::run` 需要 `&mut self`，同一 Session 不支持并发 Run；曾评估为两者各建一个 Session，但实测常驻内存从约 444 MiB 升到约 757 MiB（+313 MiB），不符合最小资源占用的目标。另一方面，完整 Final 不会复用 Partial 的 fbank、LFR、解码状态或 logits；每次 Final 都从完整 PCM 重新计算特征并执行一次完整推理，因此不存在“利用 Partial 加速 Final”的路径。
 
 2. **解决方法**
 
-- 只创建一个 `SenseVoice` 会话，用 `Arc<Mutex<SenseVoice>>` 同时提供给 Preview 与 CPU Final；不重复加载模型。
+- 只创建一个 `SenseVoice` 会话，用 `Arc<Mutex<SenseVoice>>` 同时提供给 Preview 与 CPU Final；不重复加载模型，恢复后实测常驻内存约 440 MiB。
 - Finalizer 队列、录音与最终文本调度保持不变；CPU Final 与 Preview 共用同一会话时按锁串行执行。
 - Preview 的 `emit_partial` 改用 `try_lock`：Final 正在推理时直接跳过本次 Partial 并重排下一次，不让 pipeline 线程阻塞在推理锁上。
 - Final 仍使用阻塞 `lock`；如果 Preview 正在推理，Final 等待其结束后执行，不影响录音、IPC 或新段采集。
+- Continuous 的静音间隔不触发 SenseVoice Partial：只有 VAD 按批次持续运行；两段之间没有活动段时 `emit_partial` 直接返回，因此不会因空音频持续做推理。
 - 恢复核心 USER / CORE / PROVIDER 的单会话描述，并写明 Preview / Final 推理不并发、Partial 会让步于 Final。
 
 3. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-core/CORE.html` | §2、§4.14、§5.1、§5.5 | 不动（已更新） | 恢复单 SenseVoice 会话；说明 `Final` 持有 `Arc<Mutex<SenseVoice>>`、Preview 使用 `try_lock`、Final 等待锁但不阻塞 pipeline。 |
+| `crates/voime-core/CORE.html` | §2、§4.14、§5.1、§5.5 | 不动（已更新） | 恢复单 SenseVoice 会话；说明 `Final` 持有 `Arc<Mutex<SenseVoice>>`、Preview 使用 `try_lock`、Final 等待锁但不阻塞 pipeline；静音间隔不触发 Partial。 |
 | `crates/voime-core/USER.html` | §2、§4.4 | 不动（已更新） | 模型生命周期恢复为单一常驻会话；说明 Preview / CPU Final 串行、Partial 可被跳过。 |
 | `crates/voime-core/PROVIDER.html` | §4.2 | 不动（已更新） | SenseVoice 单会话；Preview 与 CPU Final 共用，不并发 Run。 |
 | `crates/voime-core/src/final.rs`、`src/pipeline.rs` | — | 不动（已完成） | `Final` 恢复 `Arc<Mutex<SenseVoice>>`；pipeline 只创建一个会话，Preview 使用 `try_lock`。 |
