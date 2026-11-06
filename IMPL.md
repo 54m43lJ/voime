@@ -1,142 +1,10 @@
 # IMPL — 开发实施与文档修订清单
 
-本清单记录开发过程中发现的文档错误、文档未写明的细节与其它技术坑。每个主题只在一个大块中出现；修订建议里的“不动”用于避免在多个文档之间重复定义或互相覆盖。动作只约束该条目自身的修改范围：同一章节可能被多个条目引用，按各条内容合并执行；后一条的“不动（本主题）”不撤销其它条目在该章节的增改。“不动（已写明）/（已更新）”表示目标文档已经包含该内容，无需再改。
+本清单记录本轮 Windows 前端适配与 GPU 安装开发中的心得。每个主题只在一个大块中出现；修订建议里的“不动”用于避免在多个文档之间重复定义或互相覆盖。动作只约束该条目自身的修改范围：同一章节可能被多个条目引用，按各条内容合并执行；后一条的“不动（本主题）”不撤销其它条目在该章节的增改。“不动（已写明）/（已更新）”表示目标文档已经包含该内容，无需再改。
 
 ## 1. 开发中发现文档的错误
 
-### E1. TUI 只是调试工具，不能作为输入法操作入口
-
-1. **问题描述**
-
-`crates/voime/README.html` §1.1 用“手动开始 / 停止”概括 TUI 能力，`crates/voime/USER.html` §1 把 TUI 定义为“终端监视器；只读展示并发送控制命令”，§2 把 Space 标为“手动录音”，§4.2 再给出具体按键。这些表述会让读者把 TUI 当成平台前端之外的输入法操作入口。TUI 以 `tui` 角色连接 daemon，只用于观察状态和调试会话；它不绑定输入目标、不处理平台热键、不提交文本，也不能替代 Fcitx / Windows 前端操作输入法。Space 只应作为 daemon 调试控制。
-
-2. **解决方法**
-
-- TUI 保持调试工具定位：只显示 daemon 状态、Partial / Final 与历史，并发送调试控制消息；不绑定输入目标、不提交文本、不模拟平台前端。
-- 仅在 `addon=disconnected` 时允许 TUI 发送会话命令；`frontend` 连接期间 TUI 只观察，daemon 对 `Start` / `Stop` / `Toggle` 返回 `busy`。
-- Space 仅用于调试 daemon 会话：`ptt` / `toggle` 下发送 `Toggle`，`continuous` 下 recording 时发送 `Stop`、否则发送 `Start`；文档不得把它写成“手动录音 / 操作输入法”。
-- 平台输入仍只由 Fcitx / Windows 前端的热键、目标绑定与提交路径触发。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime/README.html` | §1.1、§2 | 不动（已更新） | 已改为调试 TUI：只观察 daemon 状态与历史，不操作输入法、不提交文本。 |
-| `crates/voime/USER.html` | §1、§2、§4.2 | 不动（已更新） | 已定义为调试工具；Space 仅在无 frontend 连接时发送调试会话命令，不绑定输入目标、不提交文本。 |
-| `crates/voime/CORE.html` | §5.2 | 不动（已更新） | 调用栈已加入 `addon == Connected` 时 Space 不发送命令的分支。 |
-| `crates/voime-ipc/USER.html` | §2 | 不动（已更新） | 角色约定已写明：frontend 连接期间 TUI 的 Start / Stop / Toggle 返回 `busy`。 |
-| `crates/voimed/CORE.html` | §2、§5.3、§5.4 | 不动（已更新） | 已加入 TUI 调试控制约定与 on_client 的角色守卫。 |
-| `crates/voimed/README.html` | §2 | 不动（已更新） | TUI 行已标明无 frontend 时才能发送调试会话命令。 |
-| `README.html` | §2 | 不动（已更新） | TUI 行已标明调试用途、不操作输入法。 |
-| `USER.html` | §4.2 | 不动（已更新） | TUI 入口已标明调试用途、不操作输入法。 |
-
-### E2. `voimed` 启动顺序在 CORE 的两个章节中互相矛盾
-
-1. **问题描述**
-
-`crates/voimed/CORE.html` §4.2 写初始化顺序为“配置 → 核心 → worker → pipeline → 音频 → IPC → daemon”，而 §5.1 的冷启动调用栈是“配置 → pipeline → 判断 worker → 音频 → IPC → daemon”。两处顺序不同，开发者无法判断 GPU worker 与 pipeline 谁先创建，也无法确定失败时先清理谁。
-
-2. **解决方法**
-
-- 以 §5.1 为准：先完成核心配置与 pipeline，再启动选中的 GPU worker，最后打开音频并绑定 IPC。
-- 初始化失败按逆序释放已创建资源；worker 增加 `Drop`，音频或 IPC 绑定失败时不会留下孤儿 worker。
-- 启动日志记录 model root、backend、endpoint 与 worker ready 状态。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voimed/CORE.html` | §4.2 | 不动（已更新） | 将初始化顺序改为与 §5.1 一致：配置 → core → pipeline → worker → audio → IPC → daemon。 |
-| `crates/voimed/CORE.html` | §5.1 | 不动 | 已是实际顺序，作为启动顺序的权威调用栈。 |
-| `CORE.html` | §5.1 | 不动 | 根 CORE 的冷启动调用栈与 §5.1 一致。 |
-
-### E3. `voimed` 退出顺序在 README 与 CORE 中不一致
-
-1. **问题描述**
-
-`crates/voimed/README.html` §1.2 写 daemon 退出时先停 worker，再停止 pipeline、音频与 IPC；`crates/voimed/CORE.html` §5.7 的顺序是 worker → 广播 `Bye` → IPC shutdown → pipeline shutdown → audio stop。两处都涉及“先停 worker”，但 `Bye`、IPC、pipeline、音频的相对顺序不同，退出时可能出现客户端收不到 `Bye` 或音频流先于 pipeline 停止。
-
-2. **解决方法**
-
-- 采用 CORE §5.7：先 `Worker::shutdown`，再广播 `Bye`，给 writer 线程短暂 flush 时间，然后关闭 IPC、pipeline 与音频。
-- pipeline shutdown 失败不能让音频 `stop` 被跳过；音频停止放在无条件执行的收尾路径。
-- 退出路径统一由 `Daemon::run` 的收尾代码执行；`request_shutdown` / `fail` 只置位关闭标志，不各自清理资源，避免各分支重复或跳过清理。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voimed/README.html` | §1.2 | 不动（已更新） | 将退出顺序改为链接 `crates/voimed/CORE.html` §5.7，不再用一句“先停 worker，再停 pipeline / 音频 / IPC”概括。 |
-| `crates/voimed/CORE.html` | §5.7 | 不动 | 已定义完整退出顺序；README 引用本处。 |
-
-### E5. `reset_after_segment` 在软切分与 `FinishSegment` 两处含义冲突
-
-1. **问题描述**
-
-`crates/voime-core/CORE.html` §2 说 `reset_after_segment` 保持 `collecting=true` 并重新打开 Preview 门禁；§5.3 的 note 又说 `FinishSegment` 的 VAD / 分段器由 `reset_after_segment` 重置。软切分要“继续采集下一段”，硬切分要“停止采集”，同一个函数无法同时满足两种语义。
-
-2. **解决方法**
-
-- 拆成两个内部路径：软切分使用 `reset_after_segment`（保持 listening / collecting、重开 Preview、发送下一段 `Recording(true)`）。
-- 硬切分使用 `reset_after_finish`（清空 listening / collecting、关闭 Preview、清空完成段队列），之后只接受新的 `StartSegment`。
-- `FinishSegment` 先排空音频、取消 Preview、`force_end`、交付 `SegmentReady` / `SegmentDropped`，再发送 `Recording(false)` 并走硬重置。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-core/CORE.html` | §5.3 | 不动（已更新） | `FinishSegment` 的 note 与调用栈改为 `reset_after_finish`（硬重置）：清空 listening / collecting、关闭 Preview、清空完成段队列；`prepare_command` 先排空音频并 `drain_queue`，再交付段、发送 `Recording(false)`。 |
-| `crates/voime-core/CORE.html` | §2、§5.2 | 不动（本主题） | 软切分继续使用 `reset_after_segment` 并发送下一段 `Recording(true)`；`Segmenter::push` 签名、阈值与 fbank 的修改按 P9 合并，音频错误回调和哨兵按 P7 合并，均不改变本主题的软 / 硬切分语义。 |
-
-### E6. 模型清单不应把文件大小作为完整性契约
-
-1. **问题描述**
-
-根 `CORE.html` §4.8 的 schema 5 示例使用 `"size": 0`，同节字段表却要求逐文件校验“大小与摘要”。文件大小对完整性校验没有额外价值：SHA-256 已经覆盖全部内容，再维护一份字节数只会让安装脚本、示例与运行期校验对“0 是占位还是真实大小”产生分歧，并让截断或改写后的文件在哈希校验外多一条重复判断。
-
-2. **解决方法**
-
-- manifest 的 `files[]` 只声明 `path` 与 `sha256`；`size` 不再属于 schema 5 契约。
-- 运行期 `verify` 只校验路径安全、文件存在、非空、普通文件 / 非符号链接、扩展名限制与 SHA-256；不比较字节大小。
-- 安装脚本生成的 manifest 不再写 `size`，也不按 manifest 的 `size` 判定已安装；下载器内部的固定字节数只用于进度、断点续传与下载长度控制，不属于 manifest 契约。
-- 旧 manifest 中多余的 `size` 字段由 serde 忽略；测试覆盖旧 `size` 字段不参与校验与 SHA-256 不匹配。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `CORE.html` | §4.8 | 不动（已更新） | schema 示例与字段表去掉 `size`；`files` 只要求路径与 SHA-256，运行期校验存在、非空与摘要，不校验字节大小。 |
-| `crates/voime-core/USER.html` | §4.3 | 不动（已更新） | `FileSpec` 去掉 `size`；错误表改为只按 SHA-256 判定文件被修改。 |
-| `crates/voime-core/CORE.html` | §2、§4.3 | 不动（已更新） | `ensure_file` 去掉 `expected_size` 参数；模型校验说明只保留 SHA-256。 |
-| `crates/voime-core/PROVIDER.html` | §1、§2、§4.2、§4.5 | 不动（已更新） | 去掉 `FileSpec`、manifest、VAD CMVN 与错误表中的字节大小校验。 |
-| `crates/voime-gpu-qwen3/USER.html` | §4.1 | 不动（已更新） | manifest 示例去掉 `size`；启动校验只写 SHA-256。 |
-| `crates/voime-gpu-qwen3/CORE.html` | §4.3 | 不动（已更新） | `FileSpec` 去掉 `size`；`verify` 说明只写 SHA-256。 |
-| `crates/voime-gpu-qwen3/PROVIDER.html` | §2、§3.1 | 不动（已更新） | 模型不可变与加载边界只校验 SHA-256。 |
-| `crates/voime-gpu-qwen3/diagram/runtime-load.puml` / `.svg` | — | 不动（已完成） | 加载边界改为只校验 SHA-256，并重新导出 SVG。 |
-| `PROVIDER.html` | §2 | 不动（已更新） | 模型不可变只校验 manifest 与 SHA-256。 |
-| `BUILD.html` | §3.4 | 不动（已更新） | 启动校验只列 schema、id、kind 与 SHA-256。 |
-| `crates/voime-core/src/model.rs`、`crates/voime-gpu-qwen3/src/manifest.rs`、`crates/voime/src/doctor.rs`、`scripts/install-core-models.py`、`scripts/install-gpu-models.py`、`tests/manifest.rs` | — | 不动（已完成） | 删除 manifest `size` 字段与比较；安装器只把内部固定大小用于下载进度 / 断点续传，不写入或校验 manifest `size`。 |
-
-### E7. `voime-core` 的 `lib.rs` 中 `pub mod final;` 不是合法 Rust
-
-1. **问题描述**
-
-`crates/voime-core/CORE.html` §4.1（lib.rs）写 `pub mod final;`，但 `final` 是 Rust 关键字，直接声明无法编译。实现使用 `pub mod r#final;` 并在 `lib.rs` 重导出 `Final`，而根 `CORE.html` §5.2 又直接使用 `voime_core::Final`，文档与代码的模块可见性不一致。
-
-2. **解决方法**
-
-- `lib.rs` 使用 `pub mod r#final;`，并 `pub use r#final::Final;` 保持根 CORE 的 `voime_core::Final` 调用名。
-- 其它模块继续通过 `crate::r#final::Final` 或重导出访问；不新增第二套类型。
-- 在核心 CORE 的 §4.1 签名与 §4.14 文件说明中注明 `r#final` 的转义写法；文件本身仍名为 `final.rs`。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-core/CORE.html` | §4.1、§4.14 | 不动（已更新） | 将 §4.1 的 `pub mod final;` 改为 `pub mod r#final;`，并注明 `pub use r#final::Final;`；§4.14 的文件标题保持 `final.rs`，注明模块路径为 `r#final`。 |
-| `CORE.html` | §4.1、§5.2 | 不动 | 继续使用 `voime_core::Final`；核心 CORE 负责解释模块转义。 |
-
-### E8. Windows `TrayCommand` / `send_command` 的文档签名与实现不一致
+### 1.1 Windows `TrayCommand` / `send_command` 的文档签名与实现不一致
 
 1. **问题描述**
 
@@ -155,7 +23,7 @@
 | `frontends/windows/CORE.html` | §4.8 | 不动（已更新） | 已改为 `StartDaemon / StopDaemon`；`send_command` 返回 `bool`；已说明 `TrayEvent` 承载菜单动作。 |
 | `frontends/windows/USER.html` | §4.6 | 不动（已写明） | 设置窗口通过托盘命令启动 / 停止服务的语义不变。 |
 
-### E9. Windows CORE 列出的 `on_focus_change` 在源码中不存在
+### 1.2 Windows CORE 列出的 `on_focus_change` 在源码中不存在
 
 1. **问题描述**
 
@@ -175,212 +43,7 @@
 
 ## 2. 开发中发现文档没写明的细节
 
-### M1. IPC 无字段消息的线格式没有唯一写法
-
-1. **问题描述**
-
-`crates/voime-ipc/USER.html` §2 说“消息类型是 JSON 对象的唯一键”，§4.2 / §4.3 却用 Rust unit variant 列出 `ClearHistory`、`Status`、`Quit`、`HistoryCleared`、`Bye`；按 serde 默认会编码成 JSON 字符串，按“对象唯一键”又会编码成 `{"Name":{}}`。Rust 客户端与 C++ 前端对同一条消息可能生成两种线格式。
-
-2. **解决方法**
-
-- Rust 枚举使用空结构体变体 `ClearHistory {}`、`Status {}`、`Quit {}`、`HistoryCleared {}`、`Bye {}`，统一编码为 `{"Name":{}}`。
-- C++ 解析器同时接受 JSON 字符串和对象两种形式，兼容旧客户端。
-- 协议测试固定无字段消息的文本，避免后续回退。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-ipc/USER.html` | §2、§4.2、§4.3 | 不动（已更新） | 明确无字段消息写作 `{"Name":{}}`，并在枚举定义中使用空结构体变体。 |
-| `crates/voime-ipc/USER.html` | §4.6 | 不动（已更新） | 增加 `ClearHistory` / `Bye` 的对象形式 JSON 示例。 |
-| `crates/voime-ipc/CORE.html` | §2 | 不动 | 序列化策略由 USER 定义；CORE 只说明使用外部标签。 |
-| `frontends/fcitx/PROVIDER.html` | §4.5 | 不动 | 解析兼容窗口由 IPC USER 统一描述，不在前端重复线格式。 |
-
-### M2. 可选 `cmvn.ark` 的文件格式与统计量布局
-
-1. **问题描述**
-
-开发初期，`crates/voime-core/CORE.html` §4.8 与 `crates/voime-core/PROVIDER.html` §4.2 只说 VAD 的 CMVN 来自可选的 `cmvn.ark`，没有说明它是 Kaldi 二进制 `FM` / `DM` 矩阵、`FV` / `DV` 向量还是文本，也没有说明统计量的布局与读取约定；该格式现已写入核心 PROVIDER。VAD 的 `cmvn.ark` 实际是 `2 x (80 + 1)` 的 Kaldi 二进制 `DM` 矩阵：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和。原实现按裸 `u32` 读取矩阵头（漏掉 Kaldi 整数的 1 字节宽度标记），并假设 count 在首元素，启动时报 `解析 VAD CMVN 文件失败 ... Kaldi CMVN 文件被截断`。
-
-2. **解决方法**
-
-- 按 Kaldi 二进制格式解析矩阵 / 向量：整数头先读 1 字节宽度标记（`4` / `8`，有符号为正），再读小端数据；矩阵 / 向量使用 `FM` / `DM` / `FV` / `DV`，保留 `F` / `D` 兼容。
-- 统计量按 FireRedVAD / Kaldi 的 `2 x (dim + 1)` 布局读取：第一行前 `dim` 列为 sum、末列为 count，第二行前 `dim` 列为平方和；按 count 计算 mean / inverse stddev，variance floor 取 `1e-20`。
-- 保留“count + sums + squares”扁平布局与预计算 mean / inverse stddev 的兼容路径；维度必须与 fbank bin 数一致，缺失或解析失败按模型加载失败处理。
-- 核心 `crates/voime-core/src/vad/firered.rs` 使用该解析约定；增加 parser 单测，覆盖二进制 f32 / f64 矩阵、二进制 f64 向量、文本输入与截断文件。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-core/PROVIDER.html` | §4.2 | 不动（已写明） | 已写明 `cmvn.ark` 为 Kaldi 二进制 `DM` / `FM` 矩阵，布局为 `2 x (80 + 1)`：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和；按 count 计算 mean / inverse stddev。 |
-| `crates/voime-core/CORE.html` | §4.8 | 不动 | 只说明文件来源与校验；格式细节归 PROVIDER。 |
-
-### M3. daemon 传给 Qwen worker 的 `model_dir` 是模型根还是模型子目录
-
-1. **问题描述**
-
-`crates/voime-gpu-common/USER.html` §1 只规定 `model_dir` 是“模型目录绝对路径”，布局由 worker 定义；`crates/voime-gpu-qwen3/USER.html` §4.1 把模型放在 `~/.local/share/voime/models/qwen3-asr-1.7b/`（Windows 为 `%LOCALAPPDATA%\voime\models\qwen3-asr-1.7b\`），但 `voimed` 的 Worker 章节没有写明 Hello 里传根目录还是子目录。Qwen worker 的 `Manifest::load(model_dir)` 需要子目录，否则找不到 `manifest.json`。
-
-2. **解决方法**
-
-- daemon 对 Qwen3 传 `model_root/qwen3-asr-1.7b`，因为 Qwen worker 的模型目录本身就是 manifest 目录。
-- worker 仍只接受绝对路径；daemon 在启动前把 model root 规范化为绝对路径。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voimed/CORE.html` | §4.6 | 不动（已更新） | 写明 `Worker::spawn` 对 Qwen3 传 `model_root/qwen3-asr-1.7b` 子目录。 |
-| `crates/voime-gpu-qwen3/USER.html` | §4.1 | 不动（已更新） | 明确 Hello `model_dir` 指向包含 manifest 的 `qwen3-asr-1.7b/` 目录。 |
-| `crates/voime-gpu-common/USER.html` | §4.2 | 不动 | `model_dir` 的布局归 worker 定义；本处只保留绝对路径与透传契约。 |
-
-### M4. worker 的 runtime / device / 日志参数由谁传递没有写全
-
-1. **问题描述**
-
-Qwen 文档已写 `device` 来自 Hello，但没有说明 daemon 是否为 Qwen 传 runtime / 日志参数，也没有写全 `VOIME_GPU_DEVICE` 与 Hello 字段的优先级。实现时容易形成 daemon 环境变量、worker 的 Hello 字段与安装脚本三套来源。
-
-2. **解决方法**
-
-- EP 以 worker 编译 feature 为准；daemon 不向 Qwen 传 `--runtime` / `--log-level`。
-- 设备只通过 Hello 的 `device` 字段传递；daemon 可用 `VOIME_GPU_DEVICE` 提供默认值，空串表示 backend 默认设备。
-- 模型目录只从 Hello 取，不从环境变量猜。
-- 启动失败只标记 backend 不可用，不阻塞 CPU Final。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voimed/CORE.html` | §4.6 | 不动（已更新） | 列出 `Worker::spawn` 的 device 来源与优先级；与 M3 的 `model_dir` 说明合并到同一小节。 |
-| `crates/voime-gpu-qwen3/CORE.html` | §4.2 | 不动（已更新） | 写明 Qwen 只使用编译 feature，`device` 来自 Hello，daemon 不向 Qwen 传 runtime / log-level 参数，启动日志只写 stderr。 |
-| `crates/voime-gpu-common/USER.html` | §4.2 | 不动 | Hello 字段语义已定义；进程参数不属于帧协议。 |
-
-### M5. doctor 读取的 worker 日志行格式没有定义
-
-1. **问题描述**
-
-`crates/voime/USER.html` §4.4 曾让 doctor 从 daemon 日志读取 worker ready / running；`crates/voime/CORE.html` §4.8 也把日志作为状态来源，但没有规定日志行的稳定格式。P10 已改为只读 `Diagnostics`，日志行不再作为 doctor 的状态来源；以下只保留当时的日志格式约定。
-
-2. **解决方法**
-
-- daemon 固定写 `gpu worker <backend> ready`、`gpu worker <backend> running`、`gpu worker <backend> failed` / `unavailable`。
-- doctor 只匹配 backend 名与这些状态词，不解析识别文本。
-- `VOIME_LOG` 自定义目录时，doctor 用同一目录读取 `voimed.log`。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voimed/CORE.html` | §2 | 不动（P10 取代） | 日志行仍按该格式写，但 worker 状态源已改为 `Diagnostics`。 |
-| `crates/voime/CORE.html` | §4.8、§5.5 | 不动（P10 取代） | doctor 已改为请求 `Diagnostics`，不再要求引用日志行格式。 |
-| `crates/voime/USER.html` | §4.4 | 不动 | 状态来源已改为 `Diagnostics`。 |
-
-### M6. GPU 安装的离线包 / 预编译 worker 目录布局没有定义
-
-1. **问题描述**
-
-GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列出 `--source-dir`，但没有说明 source dir 内的目录结构、worker 二进制放在哪里、runtime 与模型如何分目录。实现只能自行约定，导致 `--source-dir` 在不同脚本里含义不同。
-
-2. **解决方法**
-
-- 约定 `--source-dir/bin/voime-gpu-qwen3` 为可选预编译 worker；存在时直接安装，否则在 Qwen crate 内按 feature 构建。
-- 离线源模型仍按 `--source-dir/<model-id>/` 复制；默认在线获取与下载确认由 M10 的安装器负责，两者共用同一 `<model-id>/` 布局与 schema 5 manifest。runtime 目录由安装包自行放置，不由 worker 从全局库路径查找。
-- Windows 使用同名 `.exe`。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-qwen3/USER.html` | §4.4 | 不动（已更新） | 写明 `--source-dir/bin/` 预编译 worker 布局、缺失时的构建回退，并区分 Vulkan / CUDA 预编译包。 |
-| `README.html` | §2 | 不动 | 根 README 只保留安装入口；布局细节归 GPU 组件 USER。 |
-
-### M7. Windows 核心安装如何获得模型没有写明
-
-1. **问题描述**
-
-根 README 只列安装入口；`frontends/windows/README.html` §2 与 `frontends/windows/PROVIDER.html` §4.5 说 `scripts/install-core.ps1` 安装核心模型，但没有说明它从网络下载、从仓库 `models/` 复制，还是要求用户先准备离线目录。实现如果没有 Python 或 `-SourceDir`，无法凭空得到两个核心模型。
-
-2. **解决方法**
-
-- `install-core.ps1` 在未指定 `-SourceDir` 时调用 `scripts/install-core-models.py`，由它下载 / 缓存并生成 schema 5 manifest。
-- 指定 `-SourceDir` 时同样通过 Python 安装器做校验与 manifest 生成，不直接复制未校验目录。
-- 没有 Python 且没有 `-SourceDir` 时明确失败，提示传 `-SourceDir` 或 `-NoModels`。
-- GPU 模型由独立的 `scripts/install-gpu-models.py` 处理，不复用核心模型安装器；见 M10。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `frontends/windows/README.html` | §2 | 不动（已更新） | 写明核心模型的两种来源：Python 安装器下载 / 缓存，或 `-SourceDir` 离线源；运行期不需要 Python。 |
-| `frontends/windows/PROVIDER.html` | §4.5 | 不动（已更新） | 在安装权限与路径表中补充 Python 模型安装器的调用关系。 |
-| `README.html` | §2 | 不动 | 根 README 只列安装入口；模型来源细节归 Windows 文档。 |
-
-### M8. Fcitx 系统 addon 的 ABI 诊断具体检查什么没有写明
-
-1. **问题描述**
-
-`frontends/fcitx/CORE.html` §4.6 与 `frontends/fcitx/PROVIDER.html` §4.3 要求 doctor 检查系统 addon 路径与 ABI，但没有说明 ABI 是编译期版本、`pkg-config` 版本、动态库依赖还是 addon 描述文件。实现如果只检查文件存在，会把 ABI 不匹配的库误报为正常。
-
-2. **解决方法**
-
-- 系统 addon 路径从 `pkg-config --variable=libdir Fcitx5Core` 解析，再拼 `/fcitx5`；`voime doctor` 另保留 `/usr/lib` / `/usr/local/lib` 回退。
-- 描述文件固定检查 `/usr/share/fcitx5/addon/voime.conf`（以及 `/usr/local` 回退）。
-- ABI 检查 `pkg-config --atleast-version=5.1.23 Fcitx5Core` 并用 `ldd` 检查未解析依赖；不检查 `inputmethod` 条目与 `FCITX_ADDON_DIRS`。这是 `voime doctor` 的规则。
-- addon 自身的 `checkAddonAbi` 只检查库与描述文件存在；文档不得写成与 doctor 相同的版本 / 依赖检查，除非实现补齐该逻辑。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `frontends/fcitx/CORE.html` | §4.6 | 不动（已更新） | 写明 ABI 检查由 `pkg-config` 最低版本 + `ldd` 依赖解析组成，并区分 `voime doctor` 与 addon 自身 `checkAddonAbi` 的当前职责。 |
-| `frontends/fcitx/PROVIDER.html` | §4.3 | 不动（已更新） | 在系统路径表中补充 libdir 解析与 ABI 判定规则；注明 addon 侧只做路径存在性检查。 |
-| `crates/voime/CORE.html` | §4.8 | 不动（本主题） | doctor 的检查项已定义；worker 日志行格式的修改见 M5。 |
-
-### M9. `voime ctl backend` 与全局 `--endpoint` 的 CLI 行为没有写清
-
-1. **问题描述**
-
-`crates/voime/USER.html` §4.1 规定 `ctl backend` 不接受 `--endpoint`，但 CLI 把 `--endpoint` 定义为全局参数，clap 会在任意子命令下解析成功。文档没有说明“解析后拒绝”还是“从语法上不提供”，实现容易把它静默忽略。
-
-2. **解决方法**
-
-- 保留全局 `--endpoint` 以复用其它子命令，但在 `main.rs` 解析后、进入 `run_ctl` 前检查 `ctl backend`；出现该参数时打印错误并以退出码 2 结束。
-- `ctl backend` 只写 `[final].backend`，不连接 daemon、不读取端点。
-- 帮助文本继续说明该动作不需要端点。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime/USER.html` | §4.1 | 不动（已更新） | 明确 `ctl backend` 即使全局解析到 `--endpoint` 也会拒绝并以退出码 2 结束。 |
-| `crates/voime/CORE.html` | §4.1、§5.4 | 不动（已更新） | 把 Backend 分流写到 `main.rs`：在构造 `Endpoint` / 进入 `run_ctl` 前检查 `--endpoint` 并返回 2；`run_ctl` 只处理需要端点的动作。 |
-
-### M10. GPU 模型默认下载、下载确认与仓库根目录回退没有定义
-
-1. **问题描述**
-
-GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型下载失败时脚本非零退出并清理临时目录”；但修复前 `scripts/install-gpu.sh` 与 `scripts/install-gpu.ps1` 只从 `--source-dir` 或仓库根 `models/` 复制，没有下载器。干净 checkout 默认必然报模型缺失，与文档描述不符；`BUILD.html` §3.4 当时也写成“从离线源复制”，与组件 USER 的下载要求冲突。M6 只定义了离线源布局，没有覆盖默认在线获取、下载前确认和仓库根目录回退。
-
-2. **解决方法**
-
-- 新增 `scripts/install-gpu-models.py`，由 `install-gpu.sh` / `install-gpu.ps1` 调用：默认按固定上游 revision 下载 `qwen3-asr-1.7b`（BF16 GGUF 主模型与 BF16 mmproj），缓存到平台缓存目录。
-- Qwen3-ASR 主模型与 mmproj 都有与产品固定文件同 SHA-256、可匿名访问的 ModelScope 镜像，因此优先使用 ModelScope；镜像不可用时回退 Hugging Face。ModelScope 公开模型通过 `resolve` 直链下载，不需要登录。
-- Token 从环境变量读取：ModelScope 支持 `MODELSCOPE_API_TOKEN` / `MODELSCOPE_SDK_TOKEN` / `MODELSCOPE_API_KEY` 等别名，Hugging Face 支持 `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` 等别名。交互安装且 token 缺失时提示输入，可回车跳过公开模型；服务端返回 401/403 时按 provider 提示并重试一次。Token 只保存在进程内存，不写盘、不输出。
-- 下载前按模型列出本次需要的体积并要求确认；非交互安装使用 `--yes` / `-Yes`（同时跳过 token 提示）。`--source-dir` 只读离线源，不联网；`--no-models` 跳过；安装脚本不再从仓库根目录 `models/` 取模型。
-- 下载器按固定 size 控制进度与 `.part` 断点续传，完整性只按 SHA-256 校验（网络中断保留 `.part`，校验失败删除）；同盘临时目录写完后替换目标，失败不替换目标目录。安装器生成 schema 5 manifest；Qwen 的 `LICENSE` 作为额外文件写入目录，不参与推理。
-- 安装脚本在需要模型时要求 Python 3；`--no-models` 时不需要 Python。
-- M6 的离线源布局保持不变；默认下载生成的目录与离线源共用 `<model-id>/` 布局和同一份 manifest 契约。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-qwen3/USER.html` | §4.4 | 不动（已更新） | 已写明默认下载、下载前确认、`--yes`、`--source-dir` 只读离线源、优先 ModelScope / HF 回退、token 环境变量与交互提示，以及不再回退仓库根 `models/`。 |
-| `BUILD.html` | §3.3、§3.4 | 不动（已更新） | 已写明默认下载 + 确认 + 缓存、优先 ModelScope / 不可用时 HF、`--source-dir` 离线复制、`--yes` / `-Yes`、Python 依赖与 token 环境变量 / 交互提示。 |
-| `README.html` | §2 | 不动 | 根 README 只保留安装入口；模型来源细节归 GPU 组件 USER / BUILD。 |
-
-### M11. 托盘“最近错误码”的展示位置、格式与生命周期
+### 2.1 托盘“最近错误码”的展示位置、格式与生命周期
 
 1. **问题描述**
 
@@ -399,7 +62,7 @@ GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型�
 | `frontends/windows/USER.html` | §4.4 | 增 | 明确最近错误码显示在托盘菜单、使用 snake_case、成功重连不清空。 |
 | `frontends/windows/CORE.html` | §4.1、§4.8 | 增 | 增加 `last_error` 字段与 `last_error()`；托盘菜单展示。 |
 
-### M12. 登录启动 Run 键的写入时机与幂等性
+### 2.2 登录启动 Run 键的写入时机与幂等性
 
 1. **问题描述**
 
@@ -419,7 +82,7 @@ GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型�
 | `BUILD.html` | §3.2 | 增 | 安装脚本仅当 Run 值变化时写入。 |
 | `packaging/windows/README.md` | 安装 | 不动（已更新） | 已写明 Run 值不同时才写入。 |
 
-### M13. 安装 / 升级时托盘正在运行的处理与安装后是否启动
+### 2.3 安装 / 升级时托盘正在运行的处理与安装后是否启动
 
 1. **问题描述**
 
@@ -439,7 +102,7 @@ GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型�
 | `frontends/windows/USER.html` | §4.6 | 不动（已更新） | 已写明升级前关闭托盘、安装后不自动启动。 |
 | `packaging/windows/README.md` | 安装 | 不动（已更新） | 已写明 `WM_CLOSE` + force fallback 与不自动启动。 |
 
-### M14. 构建资源：manifest 嵌入与 `rc.exe` 缺失时的行为
+### 2.4 构建资源：manifest 嵌入与 `rc.exe` 缺失时的行为
 
 1. **问题描述**
 
@@ -458,7 +121,7 @@ GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型�
 | `packaging/windows/README.md` | Manifest | 不动（已更新） | 已写明 `build.rs` 在 `rc.exe` 可用时嵌入 manifest / icon，缺失时 warning 跳过；运行期 DPI 兜底。 |
 | `frontends/windows/CORE.html` | §4.1 | 增 | 说明 `build.rs` 资源嵌入与 `rc.exe` 依赖。 |
 
-### M15. `config.json` 的 UTF-8 / BOM 契约
+### 2.5 `config.json` 的 UTF-8 / BOM 契约
 
 1. **问题描述**
 
@@ -479,274 +142,7 @@ GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型�
 
 ## 3. 其它技术上踩的坑
 
-### P2. `llama-cpp-4` 0.11.0 的实际类型与文档草案签名有差异
-
-1. **问题描述**
-
-Qwen CORE 的草案签名只列 `LlamaContextParams` / `LlamaBatch` 类型名，没有说明它们由 `llama_cpp_4::prelude` 导出；BF16 判断只写 `LlamaModel::ftype()`，没有写返回 `Option<LlamaFtype>` 与 `MostlyBF16`；上下文只写按 30 s 音频设置，没有给 `n_ctx` / `n_batch` 值。默认 `n_ctx` 只有 512，30 s 音频加输出 token 很容易不够。
-
-2. **解决方法**
-
-- 统一使用 `llama_cpp_4::prelude::*`；版本固定 `=0.11.0`。
-- 用 `matches!(model.ftype(), Some(LlamaFtype::MostlyBF16))` 判断主模型精度。
-- 上下文固定 `n_ctx = 4096`、`n_batch = 2048`；解码每轮 `batch.clear()` 后只 add 一个新 token。
-- 不启用采样温度 / top-p，使用 `LlamaSampler::greedy()`，遇 EOG 或 256 token 上限停止。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-qwen3/CORE.html` | §4.4、§4.6 | 不动（已更新） | 用 `llama_cpp_4::prelude::*`、`MostlyBF16`、`n_ctx = 4096` 与 `n_batch = 2048` 更新草案签名。 |
-| `crates/voime-gpu-qwen3/PROVIDER.html` | §4.3 | 不动 | 已锁定 `llama-cpp-4` 0.11.0；类型细节归 CORE。 |
-
-### P4. `rubato` 的流式重采样器会缓存不足一个块的数据
-
-1. **问题描述**
-
-`FastFixedIn` 只在 `pending` 达到固定块大小时产出样本；会话结束或设备块不足时，最后几十毫秒会留在重采样器内部。若只在 pipeline 侧清 `resample_pending`，这些样本不会进入 `FinishSegment`，导致硬切分尾部丢失；跨会话复用同一个重采样器还会把旧样本带进新会话。
-
-2. **解决方法**
-
-- 增加 `StreamResampler::flush()`，在 `FinishSegment` 的 `process_pending_audio(true)` 中用 `process_partial` 处理剩余块。
-- `StartSegment`、`FinishSegment`、`SetMode` 与音频错误路径重建 / 丢弃 resampler，避免跨会话残留。
-- pipeline 只保留自己的 `resample_pending`，并同时清空 resampler 内部状态。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-core/CORE.html` | §4.6、§5.3 | 不动（已更新） | 说明 `FinishSegment` 必须 flush 重采样器；`SetMode` / Start 需要重建重采样器；与 E5 的 §5.3 修改合并。 |
-| `crates/voime-core/USER.html` | §4.4 | 不动 | 已定义硬切分排空音频；具体重采样器实现归 CORE。 |
-
-### P5. Windows 登录启动项在安装器与托盘中使用不同名称
-
-1. **问题描述**
-
-`scripts/install-core.ps1` 最初写入 `HKCU\...\Run\Voime`，而 Windows 托盘 `Config::set_start_at_login` 最初写入 / 删除 `VoimeTray`。两处值名不一致时首次安装后会出现两个启动项；卸载只能删掉其中一个，关闭 `StartAtLogin` 也删不掉安装器写的那条。当前实现已统一为 `Voime`，文档仍需写明该固定值名。
-
-2. **解决方法**
-
-- 安装器与托盘统一使用 `Voime` 值名。
-- 托盘保存配置后调用同一注册表写入函数；安装器卸载删除同名值。
-- `Config::save` 保持临时文件 + 原子替换，避免写到一半留下损坏 JSON。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `frontends/windows/CORE.html` | §4.2 | 不动（已更新） | 写明登录启动项固定使用 `HKCU\...\Run\Voime`，安装器与托盘共用同一个值名。 |
-| `frontends/windows/USER.html` | §4.6 | 不动 | 已定义登录启动行为；值名细节归 CORE。 |
-
-### P6. 独立 Cargo workspace 的产物路径与根 workspace 不同
-
-1. **问题描述**
-
-根 `cargo build` 只产出 `target/` 下的核心二进制；Qwen3 与 Windows 前端是独立 workspace，产物分别在各自 crate 的 `target/`。安装脚本如果从根 `target/release` 找 worker 或托盘，会复制失败或复制到旧文件。
-
-2. **解决方法**
-
-- 安装脚本进入对应 crate 目录构建，并从该 crate 的 `target/release` 复制。
-- GPU 预编译包优先从 `--source-dir/bin/` 读取；没有时才构建。
-- Windows 安装从 `frontends/windows/target/release` 取 `voime-tray.exe`。
-- 根测试只覆盖根 workspace；GPU / Windows 使用各自的 runner。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `CORE.html` | §1、§2 | 不动 | 已说明独立 workspace 与独立 Cargo.lock；安装脚本按本约束实现。 |
-| `crates/voime-gpu-qwen3/README.html` | §2 | 不动 | 组件文档不需要重复根构建路径；BUILD 负责完整命令。 |
-
-### P7. 音频错误回调使用 `try_send` 会在队列满时丢掉流错误哨兵
-
-1. **问题描述**
-
-音频数据回调按契约使用 `try_send` 丢弃当前块，避免阻塞设备线程；但错误回调如果也使用 `try_send`，在队列满时会丢掉零采样率哨兵，pipeline 永远不知道音频流已经失效，daemon 也就不会丢弃当前段或累计致命错误。
-
-2. **解决方法**
-
-- 错误回调改用阻塞 `send` 写哨兵；正常数据回调继续 `try_send`。
-- 哨兵保持 `sample_rate = 0`、`channels = 0`、空样本，pipeline 用 `is_stream_error()` 识别。
-- pipeline 对哨兵执行重置、取消 Preview、`Recording(false)` 与 `SegmentDropped`；连续达到上限后 `Fatal`。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-core/CORE.html` | §2、§5.6 | 不动（已更新） | 明确数据回调用 `try_send`、错误回调用阻塞 `send` 写哨兵，哨兵不可丢；与 P9 的 §2 修改合并。 |
-| `crates/voime-core/PROVIDER.html` | §4.1 | 不动 | 已定义 cpal 错误回调；具体队列策略归 CORE。 |
-
-### P9. Continuous 自动分段在自然停顿处过早收句
-
-1. **问题描述**
-
-Continuous 模式由 `Segmenter` 的静音阈值直接决定收句：原实现使用 `MIN_SILENCE_MS = 200`，而 PTT / Toggle 使用 `PTT_AUTO_END_MS = 1_200`，且通常由松键 / 再按结束，因此只有 Continuous 会在自然停顿处把一句话切成多段。FireRedVAD 上游的 `hello_zh.wav` 句中有一处约 120 ms 的静音，200 ms 阈值离它过近，语速稍慢或停顿稍长就会越界。另一个问题是修复前的 `FbankConfig` 把所有模型统一固定为 `hamming`，但 FireRedVAD 的上游实现使用 Kaldi 默认的 `povey`；`FbankConfig` 由 VAD 与 SenseVoice 共用，窗函数不匹配会让 VAD 概率边界不稳定，放大提前收句。
-
-2. **解决方法**
-
-- 将 `MIN_SILENCE_MS` / `PTT_AUTO_END_MS` 合并为 `AUTO_END_SILENCE_MS = 800`（最初取 1_200，后按交互体感下调），所有模式共用；`Segmenter::push` 删除 `mode` 参数，避免再次按模式分叉。
-- `FbankConfig` 增加 `WindowType` 与 `window` 字段：默认 `povey` 服务 FireRedVAD，`FbankConfig::sensevoice()` 显式返回 `hamming` 服务 SenseVoice。
-- `pipeline::spawn` 用同一份 `FbankConfig::sensevoice()` 创建 SenseVoice 与 Preview fbank；VAD 继续使用默认 povey。
-- 增加 VAD / SenseVoice 窗函数与 800 ms 分段边界单测；同步更新 CORE / PROVIDER 中的阈值、`push` 签名与 fbank 说明。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-core/CORE.html` | §2、§4.9、§4.11、§5.2 | 不动（已更新） | 已统一为 `AUTO_END_SILENCE_MS`，`Segmenter::push` 已删除 `mode` 参数；`FbankConfig` 已增加 `WindowType`，明确 VAD 用 `povey`、SenseVoice 用 `hamming`。 |
-| `crates/voime-core/PROVIDER.html` | §2、§4.2 | 不动（已更新） | 已写明 VAD / SenseVoice 的 fbank 窗函数分别为 `povey` / `hamming`。 |
-| `crates/voime-core/USER.html` | §2 | 不动 | 仍只说明 Continuous 由 VAD 自动分段；阈值与窗函数细节归 CORE / PROVIDER。 |
-| `README.html` | §2 | 不动 | 仍描述“每次停顿后自动结束当前输入”；具体阈值归核心 CORE。 |
-
-### P10. doctor 通过日志判断 worker 状态不可靠
-
-1. **问题描述**
-
-M5 曾把 daemon 日志中的 ready / running 作为 `voime doctor` 的唯一 worker 状态来源。日志默认关闭，日志轮转 / 文案变化 / 多实例都会让结果失真；`VOIME_LOG` 未启用时 doctor 只能把已加载的 worker 报成未就绪。
-
-2. **解决方法**
-
-- 在 `voime-ipc` 增加只读 `ClientMessage::Diagnostics {}` 与 `ServerMessage::Diagnostics { backend, worker }`；`worker` 携带 `WorkerState`、runtime、device、vram_mb、punc 与最近错误。
-- daemon 在内存中维护 `ReadyInfo`、`WorkerStatus`、`worker_error`；`Diagnostics` 只读当前快照，并用 `Child::try_wait` 识别空闲期退出的 worker，不启动 / 重启 / 探测 worker。
-- doctor 先读 Snapshot，再请求 `Diagnostics`；daemon 离线或旧 daemon 不支持时只报告“无法读取 worker 状态”，不再读日志。
-- `Status` / `Snapshot` 形状保持不变；新增消息不提升 `PROTOCOL_VERSION`，客户端忽略未知 `ServerMessage`。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-ipc/USER.html` | §4.2、§4.3、§4.4、§4.5、§4.6、§4.8 | 不动（已更新） | 增加 `Diagnostics`、`WorkerState`、`WorkerDiagnostics` 与 JSON 示例；增量消息不提升版本，客户端忽略未知服务端消息。 |
-| `crates/voime/USER.html` | §1、§2、§4.4 | 不动（已更新） | worker 状态来源改为 daemon `Diagnostics`，删除日志读取描述。 |
-| `crates/voime/CORE.html` | §2、§4.8、§5.5 | 不动（已更新） | 增加 `Client::diagnostics()`，删除 `worker_log_status` 与 `WorkerStatus`。 |
-| `crates/voimed/USER.html` | §4.2、§4.3 | 不动（已更新） | 增加 Control 角色的 `Diagnostics` 请求 / 响应。 |
-| `crates/voimed/CORE.html` | §2、§4.6、§4.7、§5.1 | 不动（已更新） | 增加 `ready` / `last_error` / `is_alive` 与 `Daemon::diagnostics`。 |
-| `BUILD.html` | §5 | 不动（已更新） | 删除“worker 状态来自日志与进程状态”。 |
-
-### P12. Qwen3 中文输出清洗按字节切分导致 worker panic
-
-1. **问题描述**
-
-Qwen3 worker 在 `clean_text` 中用固定字节长度检查 `"language "` 前缀：`trimmed[..9]`。当模型原始输出不是预期的 `language xx<asr_text>` 包装，而是 `"language"` 后直接跟中文等多字节字符时，字节 9 可能落在 UTF-8 字符内部，触发：
-
-```text
-thread 'main' panicked at src/clean.rs:23:46:
-end byte index 9 is not a char boundary; it is inside '现'
-```
-
-worker 进程退出，daemon 看到 `GPU worker 已关闭连接` 后重启 worker（约 2.8 s），再对当前段回退 CPU SenseVoice。用户感知为约 3.8 s 的偶发高延迟；同一时段的后续段仍由 GPU 正常识别。
-
-2. **解决方法**
-
-- 前缀检查改为 `trimmed.get(..prefix.len())`，非字符边界返回 `None`，不再切片 panic。
-- 增加多字节中文输出回归测试。
-- daemon 日志增加 `gpu worker qwen3 result latency_ms=... rtf=...` 与 `cpu fallback result latency_ms=...`，用于区分 worker 推理耗时和回退耗时。
-- 日志不记录识别文本；worker 的 panic 信息仍由 stderr 转发到 `voime-log`。
-
-3. **验证**
-
-- 修复前：16.16 s 段在 `clean.rs:23` panic，worker 退出；daemon 重启 worker 约 2.8 s 后 CPU 回退 207 ms，段结束到 Final 共约 3.78 s。
-- 同一轮后续 GPU 段：25.64 s → 645 ms（RTF 0.025），10.30 s → 342 ms（RTF 0.033），说明不是 GPU 推理普遍变慢。
-- 修复后：16.71 s 段 GPU `latency_ms=573`、`rtf=0.034`，日志无 `panicked` / `cpu fallback` / `gpu worker qwen3 failed`。
-- 结论：偶发高延迟由 Qwen3 输出清洗 panic 导致的 worker 重启 + CPU 回退解释；修复后未再复现。
-
-4. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-qwen3/CORE.html` | §4.7 | 不动（已更新） | 说明 `clean_text` 必须按 UTF-8 字符边界处理多字节输出，禁止按固定字节切片。 |
-| `crates/voimed/CORE.html` | §2 | 不动（已更新） | 说明 worker 推理耗时与 CPU 回退耗时会写入日志，便于诊断偶发回退。 |
-
-### P13. 移除 FireRed GPU Final 后端
-
-1. **问题描述**
-
-产品 Final 后端收敛为 `cpu` / `qwen3` 两个值。FireRed GPU Final 曾由独立 `voime-gpu-firered` worker、FireRedASR2-AED + FireRedPunc 模型与 ORT GPU runtime 组成；继续保留 worker crate、配置枚举、doctor 分支、安装参数与模型下载项，会让文档、安装器和 daemon 暴露已经不在产品路径内的后端。
-
-2. **解决方法**
-
-- 删除 `crates/voime-gpu-firered` 整个独立 workspace，包括源码、文档、图表与 `Cargo.lock`；从根 `Cargo.toml` 的 `exclude` 中移除。
-- `voimed::backend::BackendId` 与 `voime_gpu_common::GpuBackend` 删除 `Firered`；`final.backend` 只接受 `cpu` / `qwen3`。
-- `voimed::worker` 删除 FireRed 专用的 `VOIME_FIRERED_RUNTIME`、`ORT_DYLIB_PATH` / 动态库查找与 `--runtime` / `--log-level` 参数；`Worker::spawn` 简化为 `(backend, model_root)`，`restart` 不再保存日志级别。
-- `voime doctor` 的 GPU 检查只保留 Qwen；删除 FireRed 模型目录、manifest 校验条目与可执行文件分支。
-- `scripts/install-gpu.sh` / `install-gpu.ps1` 只安装、卸载 Qwen；`install-gpu-models.py` 删除 FireRed 模型、revision 常量与 `--firered` 选项。
-- 根 README / USER / PROVIDER / CORE / BUILD、`voimed`、`voime`、`voime-gpu-common`、`voime-gpu-qwen3`、`voime-core` 与平台前端文档删除 FireRed 后端内容；根架构、provider 与推理图重新导出 SVG。
-- FireRedVAD 是核心 VAD，不属于本次移除范围；`firered-vad` 模型、核心 VAD 代码与安装脚本保持不动。
-- 更新 `tests/final_backend.rs` 与 `tests/ipc.rs` 中的后端枚举和 Diagnostics 样例。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-firered/` | 全部 | 删（已完成） | 已删除 FireRed worker 的 README / USER / CORE / PROVIDER、源码与图表。 |
-| `README.html` | §1、§2、§3、§4 | 不动（已更新） | 已删除 FireRed 组件链接、GPU 后端说明、crate 索引与 Credits；GPU Final 只保留 Qwen。 |
-| `USER.html` | §1、§2、§3、§4 | 不动（已更新） | Final 后端已只列 `cpu` / `qwen3`；GPU 模块只描述 Qwen worker。 |
-| `PROVIDER.html` | §1、§3、§4 | 不动（已更新） | 已删除 FireRed ORT GPU、FireRed 模型目录与相关 provider 链接。 |
-| `CORE.html` | §1、§2、§4、§5 | 不动（已更新） | 已删除 FireRed crate、BackendId 成员、模型表条目与 Final 调度分支。 |
-| `BUILD.html` | §1、§2、§3、§4、§5、§6 | 不动（已更新） | 已删除 FireRed 构建、runtime、模型、测试、卸载与排查内容；安装参数只保留 Qwen。 |
-| `crates/voimed/{README,USER,CORE}.html` | 相关章节 | 不动（已更新） | 后端枚举、worker 生命周期、启动默认值与调用栈已只保留 CPU / Qwen。 |
-| `crates/voime/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 不动（已更新） | `ctl backend` 已只接受 `cpu|qwen3`；doctor 的 GPU 检查已只保留 Qwen。 |
-| `crates/voime-gpu-common/{README,USER,CORE}.html` | 相关章节 | 不动（已更新） | `GpuBackend` 已只保留 `qwen3`；协议示例与术语已改为 Qwen worker。 |
-| `crates/voime-gpu-qwen3/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 不动（已更新） | 已删除 FireRed worker / FireRedPunc 引用；保留 Qwen 自身“不链接 ORT / ONNX”的边界说明。 |
-| `crates/voime-core/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 不动（已更新） | 已删除 FireRedPunc 与 GPU Final 引用；FireRedVAD 与 `firered-vad` 保持不变。 |
-| `frontends/fcitx/{README,USER,PROVIDER}.html`、`frontends/windows/{CORE,PROVIDER}.html` | 相关章节 | 不动（已更新） | 后端枚举与 GPU runtime 说明已只保留 Qwen 的 Vulkan / CUDA。 |
-| `crates/voime-ipc/USER.html` | §4.6 | 不动（已更新） | Diagnostics 示例已改为 `qwen3` + Vulkan。 |
-| `diagram/*.puml`、`crates/voime-core/diagram/inference-boundary.puml` | 全部 | 不动（已更新） | 已删除 FireRed Final worker 组件、模型与推理分支并重新导出 SVG。 |
-
-### P14. Finalizing 期间开始下一句会丢失开头音频
-
-1. **问题描述**
-
-PTT / Toggle 硬切分后，daemon 立即把 `session_active` 置为 false；旧实现又在主线程同步执行 `Final`，导致事件循环在 0.5–1 秒内无法处理新的 Start。Windows / Fcitx 前端同时忽略 Finalizing 期间的 Start，因此下一句的开头既没有被采集，也没有进入任何语音段。
-
-2. **解决方法**
-
-- daemon 增加独立 Finalizer 线程与 `FinalizeQueue`：`SegmentReady` 只把段放入队列，Finalizer 串行执行 CPU / GPU Final；录音、IPC 与 Final 完全解耦。
-- daemon 在 Finalizing 期间保持音频采集（`capture_needed`）；pipeline 未监听时丢弃这些音频，因此不会把旧语音带入下一段。
-- 等待队列上限 5；满时丢弃最旧任务并广播 `segment_dropped`。正常连续说话时通常只有 0–1 条等待。
-- Finalizing 期间新的 Start 立即开启新会话，不等待旧段结果；硬切分后若 `SegmentReady` 尚未到达，旧段 ID 先移入 `awaiting_segments`，新段可以立即分配新 ID。
-- `FinalizeResult` 回到 daemon 后按 `segment_id` 广播 `Final` / `SegmentDropped`；旧段 Final 可能晚于新段 `SegmentStarted`。
-- Fcitx 与 Windows 前端不再在 Finalizing 时忽略 Start；旧目标按旧 `segment_id` 存入 `pendingFinals_` / `pending_finals`，新段使用新目标，旧 Final 到达后仍提交到原目标。
-- Fcitx 在旧 Final 提交后恢复当前段的空白 Toggle 窗口或最后 Partial；同一输入上下文的旧目标不再清空新段预览。
-- GPU worker 状态通过 `WorkerShared` 快照供 `Diagnostics` 读取；Finalizer 线程在空闲轮询时更新 worker 存活状态。
-- 增加 `FinalizeQueue` 上界 / 丢弃单测；Fcitx C++ 测试、Windows 交叉编译与根 workspace 测试通过。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voimed/USER.html` | §1、§2、§4.2 | 不动（已更新） | Start 在 Finalizing 且无活动会话时立即开始；Finalize 后台串行，队列上限 5；Toggle 无活动会话时同样进入 Start 路径。 |
-| `crates/voimed/CORE.html` | §2、§4.7、§5.3、§5.4、§5.5、§5.7 | 不动（已更新） | 增加 `Finalizer` / `FinalizeQueue` / `WorkerShared`、`awaiting_segments` 与 `on_finalize_result`；写明 Final 与录音解耦、旧 Final 可晚于新 SegmentStarted。 |
-| `crates/voime-core/USER.html` | §2、§4.4 | 不动 | pipeline 采集 / 分段契约不变；`StartSegment` 仍丢弃按键前音频；Preview / Final 会话见 P15。 |
-| `crates/voime-core/CORE.html` | §2、§4.17、§5.3 | 不动 | pipeline 采集 / 分段契约不变；Final 解耦属于 daemon；Preview / Final 会话见 P15。 |
-| `frontends/fcitx/CORE.html`、`frontends/fcitx/USER.html` | §2、§5.2、§5.3、§5.4、§5.6 | 不动（已更新） | Finalizing 允许 Start；旧目标存入 `pendingFinals_`，按旧 `segment_id` 提交。 |
-| `frontends/windows/CORE.html`、`frontends/windows/USER.html` | §2、§5.2、§5.3 | 不动（已更新） | Finalizing 允许 Start；旧目标存入 `pending_finals`，按旧 `segment_id` 提交。 |
-| `USER.html`、`CORE.html` | §3.2、§5.2 | 不动（已更新） | 说明 Finalize 后台队列与录音解耦，旧 Final 可晚于新段到达。 |
-
-### P15. Preview 与 CPU Final 共用单一 SenseVoice 会话
-
-1. **问题描述**
-
-Preview 与 CPU Final 都需要 SenseVoice。`ort` 的 `Session::run` 需要 `&mut self`，同一 Session 不支持并发 Run；曾评估为两者各建一个 Session，但实测常驻内存从约 444 MiB 升到约 757 MiB（+313 MiB），不符合最小资源占用的目标。另一方面，完整 Final 不会复用 Partial 的 fbank、LFR、解码状态或 logits；每次 Final 都从完整 PCM 重新计算特征并执行一次完整推理，因此不存在“利用 Partial 加速 Final”的路径。
-
-2. **解决方法**
-
-- 只创建一个 `SenseVoice` 会话，用 `Arc<Mutex<SenseVoice>>` 同时提供给 Preview 与 CPU Final；不重复加载模型，恢复后实测常驻内存约 440 MiB。
-- Finalizer 队列、录音与最终文本调度保持不变；CPU Final 与 Preview 共用同一会话时按锁串行执行。
-- Preview 的 `emit_partial` 改用 `try_lock`：Final 正在推理时直接跳过本次 Partial 并重排下一次，不让 pipeline 线程阻塞在推理锁上。
-- Final 仍使用阻塞 `lock`；如果 Preview 正在推理，Final 等待其结束后执行，不影响录音、IPC 或新段采集。
-- Continuous 的静音间隔不触发 SenseVoice Partial：只有 VAD 按批次持续运行；两段之间没有活动段时 `emit_partial` 直接返回，因此不会因空音频持续做推理。
-- 恢复核心 USER / CORE / PROVIDER 的单会话描述，并写明 Preview / Final 推理不并发、Partial 会让步于 Final。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-core/CORE.html` | §2、§4.14、§5.1、§5.5 | 不动（已更新） | 恢复单 SenseVoice 会话；说明 `Final` 持有 `Arc<Mutex<SenseVoice>>`、Preview 使用 `try_lock`、Final 等待锁但不阻塞 pipeline；静音间隔不触发 Partial。 |
-| `crates/voime-core/USER.html` | §2、§4.4 | 不动（已更新） | 模型生命周期恢复为单一常驻会话；说明 Preview / CPU Final 串行、Partial 可被跳过。 |
-| `crates/voime-core/PROVIDER.html` | §4.2 | 不动（已更新） | SenseVoice 单会话；Preview 与 CPU Final 共用，不并发 Run。 |
-| `crates/voime-core/src/final.rs`、`src/pipeline.rs` | — | 不动（已完成） | `Final` 恢复 `Arc<Mutex<SenseVoice>>`；pipeline 只创建一个会话，Preview 使用 `try_lock`。 |
-
-### P16. Windows 集成测试使用 Unix-only `Endpoint::from_path`
+### 3.1 Windows 集成测试使用 Unix-only `Endpoint::from_path`
 
 1. **问题描述**
 
@@ -764,7 +160,7 @@ Preview 与 CPU Final 都需要 SenseVoice。`ort` 的 `Session::run` 需要 `&m
 | `CORE.html` | §2（测试）、§5（验证） | 增 | 平台 transport 测试必须通过 `Endpoint` 抽象创建端点，不得直接调用 Unix-only API。 |
 | `tests/daemon.rs` | — | 已完成 | 增加 `cfg(unix)` / `cfg(windows)` 端点辅助。 |
 
-### P17. GPU 源码构建的三连坑：libclang、UTF-8、vendor 静态库
+### 3.2 GPU 源码构建的三连坑：libclang、UTF-8、vendor 静态库
 
 1. **问题描述**
 
@@ -775,7 +171,7 @@ Preview 与 CPU Final 都需要 SenseVoice。`ort` 的 `Session::run` 需要 `&m
 - `install-gpu.ps1` 检测 `LIBCLANG_PATH` / LLVM / VS LLVM；缺失时默认把 LLVM MSI 以 `msiexec /a` 解压到 `%LOCALAPPDATA%\Programs\LLVM`（仅保留 `libclang.dll` 与 `lib\clang\<ver>\include`），无需管理员；`-LlvmScope system` 走 UAC 安装；`-NoLlvmInstall` 只提示。
 - 构建前设置 `CFLAGS` / `CXXFLAGS` 追加 `/utf-8`，覆盖 llama.cpp 的 UTF-8 字符。
 - 新增 `crates/voime-gpu-qwen3/build.rs`：Windows 下从 `%LOCALAPPDATA%\llcb` 选最新的 `cpp-httplib.lib` / `vendor-hash.lib`，补充 link-search 与 link-lib；其他平台不输出。
-- 同时检测 Vulkan SDK（`VULKAN_SDK` 或 `C:\VulkanSDK\<ver>`，需要 `glslc.exe`）与 CUDA Toolkit（`CUDA_PATH` / `nvcc.exe`），缺失时在构建前失败并给出安装提示；预编译 worker 走 `-SourceDir/bin/`（布局见 M6）可跳过全部源码构建。
+- 同时检测 Vulkan SDK（`VULKAN_SDK` 或 `C:\VulkanSDK\<ver>`，需要 `glslc.exe`）与 CUDA Toolkit（`CUDA_PATH` / `nvcc.exe`），缺失时在构建前失败并给出安装提示；预编译 worker 走 `-SourceDir/bin/`（Windows 为 `bin\voime-gpu-qwen3.exe`）可跳过全部源码构建。
 
 3. **修订建议**
 
@@ -785,7 +181,7 @@ Preview 与 CPU Final 都需要 SenseVoice。`ort` 的 `Session::run` 需要 `&m
 | `crates/voime-gpu-qwen3/USER.html` | §4.4 | 不动（已更新） | 已增加 `-LlvmScope` / `-NoLlvmInstall` 与源码构建依赖说明。 |
 | `crates/voime-gpu-qwen3/CORE.html` | §1 | 不动（已更新） | 文件树已增加 `build.rs`，并说明补齐 vendor 静态库。 |
 
-### P18. Defender 把安装链识别为 `Behavior:Win32/Persistence.A!ml`
+### 3.3 Defender 把安装链识别为 `Behavior:Win32/Persistence.A!ml`
 
 1. **问题描述**
 
@@ -794,7 +190,7 @@ Preview 与 CPU Final 都需要 SenseVoice。`ort` 的 `Session::run` 需要 `&m
 2. **解决方法**
 
 - 移除安装后自动启动；安装只复制 + 写 Run 键。
-- Run 键改为仅值变化时写入（见 M12），减少重复持久化写。
+- Run 键改为仅值变化时写入（见 2.2），减少重复持久化写。
 - 不关闭 Defender、不加排除项；本地未签名构建的误报通过签名 + 向 Microsoft 提交解决。
 - 文档记录该误报与合规处理方式。
 
@@ -802,11 +198,11 @@ Preview 与 CPU Final 都需要 SenseVoice。`ort` 的 `Session::run` 需要 `&m
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `BUILD.html` | §3.2 | 不动（已更新） | 已说明安装后不自动启动；未签名构建可能触发 Defender 行为误报，发布需签名 / 提交误报。 |
-| `packaging/windows/README.md` | 安装 | 不动（已更新） | 已记录误报名称、触发行为与合规处理。 |
-| `frontends/windows/CORE.html` | §4.9 | 不动（重叠见 M13） | 安装后不启动的契约已在 M13 写明，此处不重复。 |
+| `BUILD.html` | §3.2 | 不动（已更新） | 已补充未签名构建的 Defender 误报说明；安装后不启动见 2.3。 |
+| `packaging/windows/README.md` | 安装 | 不动（已更新） | 已记录误报名称与合规处理；停止 / 启动流程见 2.3。 |
+| `frontends/windows/CORE.html` | §4.9 | 不动（重叠见 2.3） | 安装后不启动的契约已在 2.3 写明，此处不重复。 |
 
-### P19. 误判 VAD 长停顿：耳机漏音让 VAD 一直判 speech
+### 3.4 误判 VAD 长停顿：耳机漏音让 VAD 一直判 speech
 
 1. **问题描述**
 
