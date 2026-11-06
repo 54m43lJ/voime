@@ -190,6 +190,7 @@ pub struct Frontend {
     hotkey: Option<HotkeyHandle>,
     overlay: Option<Overlay>,
     target: Option<Target>,
+    pending_target: Option<Target>,
     current_segment: Option<u64>,
     recording: bool,
     finalizing: bool,
@@ -214,6 +215,7 @@ impl Frontend {
             hotkey: None,
             overlay: None,
             target: None,
+            pending_target: None,
             current_segment: None,
             recording: false,
             finalizing: false,
@@ -489,6 +491,13 @@ impl Frontend {
                         }
                     }
                 }
+                ErrorCode::Busy => {
+                    if self.pending_target.take().is_some() {
+                        self.recording = false;
+                        self.ptt_active = false;
+                        self.toggle_active = false;
+                    }
+                }
                 _ => vlog!("daemon 错误（{code:?}）：{message}"),
             },
             ServerMessage::Bye {} => self.on_disconnect(),
@@ -499,6 +508,25 @@ impl Frontend {
     }
 
     fn on_segment_started(&mut self, segment_id: u64, source: TriggerSource) {
+        if self.pending_target.is_some() && self.current_segment.is_none() {
+            let mut target = self.pending_target.take().expect("pending target checked");
+            target.segment_id = segment_id;
+            self.target = Some(target);
+            self.current_segment = Some(segment_id);
+            if let Some(target) = self.target.as_ref() {
+                if !target::focused(target) {
+                    self.on_target_lost();
+                    return;
+                }
+            }
+            if self.config.mode == Mode::Toggle && self.toggle_active {
+                if let (Some(overlay), Some(target)) = (self.overlay.as_mut(), self.target.as_ref())
+                {
+                    overlay.show_empty(target);
+                }
+            }
+            return;
+        }
         let ptt_continuation =
             self.config.mode == Mode::Ptt && self.ptt_active && source == TriggerSource::Hold;
         let toggle_continuation = self.config.mode == Mode::Toggle
@@ -567,7 +595,7 @@ impl Frontend {
         match self.config.mode {
             Mode::Continuous => {}
             Mode::Ptt => {
-                if self.finalizing || self.recording {
+                if self.recording {
                     return;
                 }
                 self.start_segment(TriggerSource::Hold);
@@ -577,9 +605,6 @@ impl Frontend {
                     self.toggle_active = false;
                     self.stop_segment(TriggerSource::Toggle);
                 } else {
-                    if self.finalizing {
-                        return;
-                    }
                     self.start_segment(TriggerSource::Toggle);
                     self.toggle_active = self.recording;
                 }
@@ -599,13 +624,20 @@ impl Frontend {
         }) {
             return;
         }
-        self.target = Some(target);
+        let starts_during_finalize = self.finalizing;
+        if starts_during_finalize {
+            // Keep the old target until its Final has been committed; the new
+            // target becomes active on SegmentStarted.
+            self.pending_target = Some(target);
+        } else {
+            self.target = Some(target);
+            self.current_segment = None;
+        }
         self.recording = true;
         self.finalizing = false;
         self.ptt_active = source == TriggerSource::Hold;
-        self.current_segment = None;
         vlog!("请求开始语音段 source={source:?}");
-        if source == TriggerSource::Toggle {
+        if source == TriggerSource::Toggle && !starts_during_finalize {
             if let (Some(overlay), Some(target)) = (self.overlay.as_mut(), self.target.as_ref()) {
                 overlay.show_empty(target);
             }
@@ -652,6 +684,13 @@ impl Frontend {
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.hide();
         }
+        if self.pending_target.is_some() {
+            // The lost target belongs to the old segment; keep the pending
+            // target for the session that will start after its Final.
+            self.target = None;
+            self.current_segment = None;
+            return;
+        }
         let ptt = self.config.mode == Mode::Ptt && (self.ptt_active || self.recording);
         let toggle = self.config.mode == Mode::Toggle && (self.toggle_active || self.recording);
         if ptt || toggle {
@@ -684,6 +723,7 @@ impl Frontend {
             overlay.hide();
         }
         self.target = None;
+        self.pending_target = None;
         self.current_segment = None;
         self.recording = false;
         self.finalizing = false;

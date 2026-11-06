@@ -36,6 +36,7 @@ private:
     void onDaemonDisconnected();
     void connectDaemon();
     void bindTarget(fcitx::InputContext *inputContext);
+    void bindPendingTarget(fcitx::InputContext *inputContext);
     void stopPtt();
     void stopToggle();
     void clearPreview();
@@ -51,6 +52,8 @@ private:
     std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>> focusWatcher_;
     std::unique_ptr<fcitx::EventSourceTime> reconnectTimer_;
     std::optional<uint64_t> segmentId_;
+    std::optional<TargetRef> pendingTarget_;
+    std::optional<uint64_t> pendingSegmentId_;
     bool holdActive_ = false;
     bool starting_ = false;
     bool recording_ = false;

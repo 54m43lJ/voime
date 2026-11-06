@@ -63,7 +63,7 @@
   <tr><td>SenseVoice 预处理</td><td>80-bin fbank、25 / 10 ms、hamming 窗、默认 LFR 7 / 6 与 560 维 CMVN、<code>use_itn=true</code>；fbank 参数取 <code>FbankConfig::sensevoice()</code>，LFR / CMVN / ITN token id / 语言 id 与 <code>vocab_size</code> 取 ONNX metadata（缺失时回退常量）。manifest 只声明身份、文件与 runtime，不承载这些参数。</td></tr>
   <tr><td>LFR 唯一应用</td><td>LFR 只能应用一次：正常链路只传 80-bin fbank，由 <code>SenseVoice::transcribe_features</code> 恰好展开为 <code>80 * lfr_window</code> 维（默认 560）；输入已是该维度时视为已 LFR，跳过展开。该方法是 LFR + CMVN 的唯一入口，调用方与 <code>transcribe</code> 都不得再应用 LFR。</td></tr>
   <tr><td>Preview 门禁</td><td>pipeline 持有 <code>preview_gate</code>；<code>FinishSegment</code> / <code>CancelPreview</code> 关闭门禁并丢弃未开始的预览任务；<code>StartSegment</code> 与软切分后的 <code>reset_after_segment</code> 重新打开。</td></tr>
-  <tr><td>模式切换清理</td><td><code>SetMode</code> 只在旧段 Final / 丢弃后由 daemon 调用，到达时不得有活动段。Worker 设置新 mode 后，无论目标模式都清空 <code>collecting</code>、<code>resample_pending</code>、<code>frame_audio</code> 与 partial 调度；旧段的 VAD / 分段器由 <code>FinishSegment</code> 的 <code>reset_after_segment</code> 重置，完成段队列由 <code>FinishSegment</code> 的 <code>drain_queue</code> 交付。不得把旧模式的 Partial、待处理音频、完成段或会话标志带入新会话。</td></tr>
+  <tr><td>模式切换清理</td><td><code>SetMode</code> 只在旧段 Final / 丢弃后由 daemon 调用，到达时不得有活动段。Worker 设置新 mode 后，无论目标模式都清空 <code>collecting</code>、<code>resample_pending</code>、<code>frame_audio</code>、<code>preroll</code> 与 partial 调度；旧段的 VAD / 分段器由 <code>FinishSegment</code> 的 <code>reset_after_finish</code> 重置，完成段队列由 <code>FinishSegment</code> 的 <code>drain_queue</code> 交付。不得把旧模式的 Partial、待处理音频、完成段或会话标志带入新会话。</td></tr>
   <tr><td>Partial 门槛</td><td>最小间隔、最小新增音频与尾部长度由 pipeline 模块常量拥有；一次慢推理会推迟下一次 Partial，避免立即重跑。</td></tr>
   <tr><td>分段</td><td><code>MIN_SPEECH_MS</code> / <code>AUTO_END_SILENCE_MS</code> 由 segmenter 模块拥有；所有模式使用同一静音阈值，<code>max_segment_ms</code> 来自模型 manifest，达到上限时强制结束。</td></tr>
   <tr><td>最长段</td><td><code>MAX_SEGMENT_MS</code> 固定 30 s 上限，推荐值 <code>30_000</code>；manifest 的 <code>max_segment_ms</code> 与长段测试使用同一上限。</td></tr>
@@ -407,6 +407,8 @@ pub const PARTIAL_MAX_MS: u64;
 pub const VAD_BATCH_MS: u64;
 pub const SEGMENT_QUEUE_CAPACITY: usize;
 pub const AUDIO_STREAM_ERROR_LIMIT: u32;
+pub const PREROLL_MAX_MS: u64;
+pub const PREROLL_MAX_AGE_MS: u64;
 
 pub enum PipelineCommand { /* 见 USER §4.4 */ }
 pub enum PipelineEvent { /* 见 USER §4.4 */ }
@@ -424,7 +426,7 @@ impl Pipeline {
 }
 impl Drop for Pipeline { /* 发送 Shutdown 并 join */ }
 
-struct Worker { /* mode + vad + segmenter + sensevoice + preview_gate + queues */ }
+struct Worker { /* mode + vad + segmenter + sensevoice + preview_gate + preroll + queues */ }
 impl Worker {
     fn new(manifest: &amp;ModelSet, factory: &amp;SessionFactory,
            events: Sender&lt;PipelineEvent&gt;) -&gt; anyhow::Result&lt;Self&gt;;
@@ -433,6 +435,10 @@ impl Worker {
     fn should_process(&amp;self) -&gt; bool;
     fn handle_audio(&amp;mut self, chunk: &amp;AudioChunk) -&gt; anyhow::Result&lt;()&gt;;
     fn record_audio_error(&amp;mut self);
+    fn clear_pending_audio(&amp;mut self);
+    fn remember_preroll(&amp;mut self, chunk: &amp;AudioChunk);
+    fn take_preroll(&amp;mut self) -&gt; Vec&lt;AudioChunk&gt;;
+    fn clear_preroll(&amp;mut self);
     fn process_pending_audio(&amp;mut self, flush: bool) -&gt; anyhow::Result&lt;()&gt;;
     fn process_vad_batch(&amp;mut self, batch: &amp;[f32], frame_samples: usize)
         -&gt; anyhow::Result&lt;()&gt;;
@@ -448,6 +454,7 @@ impl Worker {
     fn reset_partial_schedule(&amp;mut self);
     fn emit_segment(&amp;mut self, segment: Segment) -&gt; anyhow::Result&lt;()&gt;;
     fn reset_after_segment(&amp;mut self);
+    fn reset_after_finish(&amp;mut self);
     fn enqueue(&amp;mut self, segment: Segment);
     fn drain_queue(&amp;mut self) -&gt; anyhow::Result&lt;()&gt;;
     fn send(&amp;self, event: PipelineEvent);
@@ -525,22 +532,26 @@ Worker::handle_audio(chunk)
 <h3 id="c5-3">5.3 会话采集、软切分与硬切分</h3>
 <pre><code>Pipeline::start_segment()
 └── PipelineCommand::StartSegment
+    ├── Worker::prepare_command(StartSegment)
+    │   └── 把 audio_rx 中剩余块加入 preroll
     └── Worker::handle_command(StartSegment)
-        ├── 判断 mode != Continuous &amp;&amp; !collecting &amp;&amp; !segmenter.is_active()
+        ├── Worker::take_preroll()
         ├── FireRedVad::reset()
         ├── Segmenter::reset()
-        └── PipelineEvent::Recording(true)
+        ├── PipelineEvent::Recording(true)
+        └── 对每个预录块 Worker::handle_audio()
 
 Pipeline::finish_segment()
 └── PipelineCommand::FinishSegment
     ├── Worker::prepare_command(FinishSegment)
-    │   ├── 排空 audio_rx
+    │   ├── Worker::handle_audio(排空 audio_rx)
     │   └── Worker::process_pending_audio(true)
     └── Worker::handle_command(FinishSegment)
         ├── Worker::cancel_preview()
         ├── Segmenter::force_end()
         ├── Worker::emit_segment(segment)
-        └── PipelineEvent::Recording(false)
+        ├── PipelineEvent::Recording(false)
+        └── Worker::reset_after_finish()
 
 Pipeline::cancel_preview()
 └── PipelineCommand::CancelPreview
@@ -552,13 +563,15 @@ Pipeline::set_mode(mode)
     └── Worker::handle_command(SetMode)
         ├── resample_pending.clear()
         ├── frame_audio.clear()
+        ├── preroll.clear()
         └── Worker::reset_partial_schedule()</code></pre>
 <ul class="note">
   <li>调用栈只列调用与判断；<code>collecting</code> / <code>preview_gate</code> / <code>mode</code> 等字段赋值见 §2 与类型定义。</li>
   <li><code>FinishSegment</code> 与 <code>CancelPreview</code> 都幂等；重复取消不会产生新事件。</li>
+  <li>非监听状态收到的音频进入有界 <code>preroll</code>（最长约 5 秒）；<code>StartSegment</code> 只在预录仍新鲜（约 1.5 秒内）时重放，避免把陈旧音频带入新会话。</li>
   <li>软切分不调用 <code>FinishSegment</code>：<code>reset_after_segment</code> 保持 <code>collecting=true</code>，重置当前段状态并重新打开 Preview 门禁。</li>
   <li>当前段 Finalizing 期间 <code>emit_partial</code> 直接返回；硬切分后直到下一次 <code>StartSegment</code> 才重新打开。</li>
-  <li>存在旧段时，<code>SetMode</code> 到达前 daemon 已通过 <code>FinishSegment</code> 结束旧段；<code>FinishSegment</code> 的 <code>prepare_command</code> 先排空音频并 <code>drain_queue</code>，VAD / 分段器由 <code>reset_after_segment</code> 重置。此路径不再截断活动段，但必须完成上述清理，避免旧音频、完成段或 Partial 进入新会话。</li>
+  <li>存在旧段时，<code>SetMode</code> 到达前 daemon 已通过 <code>FinishSegment</code> 结束旧段；<code>FinishSegment</code> 的 <code>prepare_command</code> 先排空音频并 <code>drain_queue</code>，VAD / 分段器由 <code>reset_after_finish</code> 重置。此路径不再截断活动段，但必须完成上述清理，避免旧音频、完成段或 Partial 进入新会话。</li>
 </ul>
 
 <h3 id="c5-4">5.4 Preview</h3>

@@ -547,3 +547,29 @@ worker 进程退出，daemon 看到 `GPU worker 已关闭连接` 后重启 worke
 | `frontends/fcitx/{README,USER,PROVIDER}.html`、`frontends/windows/{CORE,PROVIDER}.html` | 相关章节 | 不动（已更新） | 后端枚举与 GPU runtime 说明已只保留 Qwen 的 Vulkan / CUDA。 |
 | `crates/voime-ipc/USER.html` | §4.6 | 不动（已更新） | Diagnostics 示例已改为 `qwen3` + Vulkan。 |
 | `diagram/*.puml`、`crates/voime-core/diagram/inference-boundary.puml` | 全部 | 不动（已更新） | 已删除 FireRed Final worker 组件、模型与推理分支并重新导出 SVG。 |
+
+### P14. Finalizing 期间开始下一句会丢失开头音频
+
+1. **问题描述**
+
+PTT / Toggle 硬切分后，daemon 立即把 `session_active` 置为 false 并暂停音频采集；pipeline 在 `FinishSegment` 后也不再监听。若用户在上一段仍在 Finalizing 时再次按热键开始下一句，Windows / Fcitx 前端会直接忽略这次的 Start，daemon 的 `finalize` 又同步占用事件循环，导致新语音的前 0.5–1 秒既没有被采集，也没有进入任何语音段。
+
+2. **解决方法**
+
+- daemon 在 `state.phase == Finalizing` 期间保持音频采集；`audio_should_play` 改为 `listens(mode, session_active) || phase == Finalizing`。
+- pipeline 增加有界 `PrerollBuffer`：非监听状态收到的音频按原始块保存在最近约 5 秒内；`StartSegment` 仅在预录仍新鲜（约 1.5 秒）时重放，避免把陈旧音频带入新会话。
+- daemon 增加 `pending_start` / `pending_start_stop`：Finalizing 期间收到 Start 时只记录，旧段 Final / 丢弃并应用 `pending_mode` 后由 `start_pending` 调用 `start_session`。Start 与 Stop 都落在 Finalizing 窗口时，新段启动后立即结束，预录音频仍参与识别。
+- Fcitx 与 Windows 前端不再在 Finalizing 时忽略 Start；新目标暂存在 `pendingTarget_` / `pending_target`，等旧段 Final 提交后才在 `SegmentStarted` 切换，避免旧 Final 因段 ID 已被覆盖而丢弃。
+- 增加 pipeline 预录边界 / 过期单测；Fcitx C++ 测试、Windows 交叉编译与根 workspace 测试通过。
+
+3. **修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `crates/voimed/USER.html` | §1、§2、§4.2 | 不动（已更新） | Start 在 Finalizing 且无活动会话时排队；Finalizing 保持采集；Toggle 无活动会话时同样进入 Start 路径。 |
+| `crates/voimed/CORE.html` | §2、§4.7、§5.3、§5.4、§5.5 | 不动（已更新） | 增加 `pending_start` / `start_session` / `start_pending`；写明 Finalizing 采集、预录与旧 Final 先于新 SegmentStarted。 |
+| `crates/voime-core/USER.html` | §2、§4.4 | 不动（已更新） | `StartSegment` 重放新鲜预录；说明预录上限与 Finalizing 场景。 |
+| `crates/voime-core/CORE.html` | §2、§4.17、§5.3 | 不动（已更新） | 增加 `PREROLL_MAX_MS` / `PREROLL_MAX_AGE_MS` 与 `PrerollBuffer`；更新 Start / Finish / SetMode 调用栈。 |
+| `frontends/fcitx/CORE.html`、`frontends/fcitx/USER.html` | §2、§5.2、§5.3、§5.4 | 不动（已更新） | Finalizing 允许 Start；目标存入 `pendingTarget_`，旧 Final 后切换。 |
+| `frontends/windows/CORE.html`、`frontends/windows/USER.html` | §2、§5.2、§5.3 | 不动（已更新） | Finalizing 允许 Start；目标存入 `pending_target`，旧 Final 后切换。 |
+| `USER.html` | §3.2 | 不动（已更新） | 说明 Finalizing 期间开始下一句会保留开头音频，旧段 Final 先提交。 |

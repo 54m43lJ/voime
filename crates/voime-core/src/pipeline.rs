@@ -27,6 +27,71 @@ pub const PARTIAL_MAX_MS: u64 = 6_000;
 pub const VAD_BATCH_MS: u64 = 100;
 pub const SEGMENT_QUEUE_CAPACITY: usize = 2;
 pub const AUDIO_STREAM_ERROR_LIMIT: u32 = 3;
+/// Audio captured while the pipeline is idle is kept for the next segment.
+pub const PREROLL_MAX_MS: u64 = 5_000;
+/// A stale pre-roll must not be prepended to a much later session.
+pub const PREROLL_MAX_AGE_MS: u64 = 1_500;
+
+struct PrerollBuffer {
+    chunks: VecDeque<AudioChunk>,
+    duration_ms: u64,
+    last_at: Option<Instant>,
+}
+
+impl PrerollBuffer {
+    fn new() -> Self {
+        Self {
+            chunks: VecDeque::new(),
+            duration_ms: 0,
+            last_at: None,
+        }
+    }
+
+    fn push(&mut self, chunk: &AudioChunk, now: Instant) {
+        if chunk.is_stream_error() || chunk.samples.is_empty() {
+            return;
+        }
+        let channels = chunk.channels.max(1) as usize;
+        let frames = chunk.samples.len() / channels;
+        if frames == 0 {
+            return;
+        }
+        let chunk_ms = ((frames as u64 * 1000) / u64::from(chunk.sample_rate.max(1))).max(1);
+        self.chunks.push_back(chunk.clone());
+        self.duration_ms = self.duration_ms.saturating_add(chunk_ms);
+        self.last_at = Some(now);
+        while self.duration_ms > PREROLL_MAX_MS {
+            let Some(old) = self.chunks.pop_front() else {
+                break;
+            };
+            let channels = old.channels.max(1) as usize;
+            let frames = old.samples.len() / channels;
+            let old_ms = ((frames as u64 * 1000) / u64::from(old.sample_rate.max(1))).max(1);
+            self.duration_ms = self.duration_ms.saturating_sub(old_ms);
+        }
+    }
+
+    fn take(&mut self, now: Instant) -> Vec<AudioChunk> {
+        let fresh = self.last_at.is_some_and(|at| {
+            now.saturating_duration_since(at) <= Duration::from_millis(PREROLL_MAX_AGE_MS)
+        });
+        let chunks = if fresh {
+            self.chunks.drain(..).collect()
+        } else {
+            self.chunks.clear();
+            Vec::new()
+        };
+        self.duration_ms = 0;
+        self.last_at = None;
+        chunks
+    }
+
+    fn clear(&mut self) {
+        self.chunks.clear();
+        self.duration_ms = 0;
+        self.last_at = None;
+    }
+}
 
 pub enum PipelineCommand {
     StartSegment,
@@ -164,6 +229,7 @@ struct Worker {
     listening: bool,
     frame_audio: VecDeque<Vec<f32>>,
     resample_pending: Vec<f32>,
+    preroll: PrerollBuffer,
     audio_error_streak: u32,
 }
 
@@ -201,6 +267,7 @@ impl Worker {
             listening: false,
             frame_audio: VecDeque::new(),
             resample_pending: Vec::new(),
+            preroll: PrerollBuffer::new(),
             audio_error_streak: 0,
         })
     }
@@ -258,6 +325,7 @@ impl Worker {
 
     fn handle_audio(&mut self, chunk: &AudioChunk) -> anyhow::Result<()> {
         if chunk.is_stream_error() {
+            self.clear_preroll();
             if !self.should_process() {
                 return Ok(());
             }
@@ -277,6 +345,7 @@ impl Worker {
 
         if !self.should_process() {
             self.clear_pending_audio();
+            self.remember_preroll(chunk);
             return Ok(());
         }
 
@@ -316,12 +385,25 @@ impl Worker {
         self.resampler = None;
     }
 
+    fn remember_preroll(&mut self, chunk: &AudioChunk) {
+        self.preroll.push(chunk, Instant::now());
+    }
+
+    fn take_preroll(&mut self) -> Vec<AudioChunk> {
+        self.preroll.take(Instant::now())
+    }
+
+    fn clear_preroll(&mut self) {
+        self.preroll.clear();
+    }
+
     fn reset_stream_state(&mut self) {
         self.segmenter.reset();
         self.vad.reset();
         self.frame_audio.clear();
         self.resample_pending.clear();
         self.resampler = None;
+        self.clear_preroll();
         self.reset_partial_schedule();
     }
 
@@ -425,10 +507,13 @@ impl Worker {
     ) -> anyhow::Result<()> {
         match command {
             PipelineCommand::StartSegment => {
-                // StartSegment discards audio captured before the keypress.
-                // An ignored Start must not consume the active session's audio.
+                // Audio captured while finalizing is replayed into the new
+                // segment; keep it instead of discarding it with the old
+                // session state.
                 if self.can_start() {
-                    while audio_rx.try_recv().is_ok() {}
+                    while let Ok(chunk) = audio_rx.try_recv() {
+                        self.remember_preroll(&chunk);
+                    }
                 }
             }
             PipelineCommand::FinishSegment => {
@@ -456,6 +541,7 @@ impl Worker {
         match command {
             PipelineCommand::StartSegment => {
                 if self.can_start() {
+                    let preroll = self.take_preroll();
                     self.vad.reset();
                     self.segmenter.reset();
                     self.clear_pending_audio();
@@ -464,6 +550,9 @@ impl Worker {
                     self.preview_gate = true;
                     self.reset_partial_schedule();
                     self.send(PipelineEvent::Recording(true));
+                    for chunk in &preroll {
+                        self.handle_audio(chunk)?;
+                    }
                 }
             }
             PipelineCommand::FinishSegment => {
@@ -488,6 +577,7 @@ impl Worker {
                 self.collecting = false;
                 self.listening = mode == Mode::Continuous;
                 self.clear_pending_audio();
+                self.clear_preroll();
                 self.segmenter.reset();
                 self.vad.reset();
                 self.queue.clear();
@@ -589,6 +679,7 @@ impl Worker {
         self.frame_audio.clear();
         self.resample_pending.clear();
         self.resampler = None;
+        self.clear_preroll();
         self.queue.clear();
         self.reset_partial_schedule();
         self.listening = false;
@@ -656,5 +747,39 @@ mod tests {
             Mode::Continuous,
             SegmentEndReason::Silence
         ));
+    }
+
+    fn chunk(samples: usize) -> AudioChunk {
+        AudioChunk {
+            sample_rate: 16_000,
+            channels: 1,
+            samples: vec![0.0; samples],
+        }
+    }
+
+    #[test]
+    fn preroll_is_fresh_and_bounded() {
+        let now = Instant::now();
+        let mut preroll = PrerollBuffer::new();
+        for _ in 0..(PREROLL_MAX_MS / 10 + 20) {
+            preroll.push(&chunk(160), now);
+        }
+        let kept = preroll.take(now + Duration::from_millis(100));
+        assert!(!kept.is_empty());
+        let total_ms: u64 = kept
+            .iter()
+            .map(|chunk| chunk.samples.len() as u64 * 1000 / chunk.sample_rate as u64)
+            .sum();
+        assert!(total_ms <= PREROLL_MAX_MS);
+    }
+
+    #[test]
+    fn stale_preroll_is_dropped() {
+        let now = Instant::now();
+        let mut preroll = PrerollBuffer::new();
+        preroll.push(&chunk(160), now);
+        assert!(preroll
+            .take(now + Duration::from_millis(PREROLL_MAX_AGE_MS + 1))
+            .is_empty());
     }
 }

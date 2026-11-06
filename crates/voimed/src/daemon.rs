@@ -33,6 +33,8 @@ pub struct Daemon {
     next_segment: u64,
     pending_mode: Option<Mode>,
     pending_stop: bool,
+    pending_start: Option<(u64, TriggerSource)>,
+    pending_start_stop: bool,
     session_active: bool,
     shutdown: bool,
     fatal: Option<anyhow::Error>,
@@ -69,6 +71,8 @@ impl Daemon {
             next_segment: 1,
             pending_mode: None,
             pending_stop: false,
+            pending_start: None,
+            pending_start_stop: false,
             session_active: false,
             shutdown: false,
             fatal: None,
@@ -218,11 +222,11 @@ impl Daemon {
                     self.request_stop(client_id, segment_id);
                     return;
                 }
-                if self.state.phase == Phase::Idle {
-                    self.request_start(client_id, source);
-                } else {
-                    self.send_error(client_id, ErrorCode::Busy);
+                if self.pending_start.is_some() {
+                    self.pending_start_stop = true;
+                    return;
                 }
+                self.request_start(client_id, source);
             }
             ClientMessage::ClearHistory {} => {
                 self.state.clear_history();
@@ -297,34 +301,59 @@ impl Daemon {
     }
 
     fn request_start(&mut self, client_id: u64, source: TriggerSource) {
-        if self.state.phase != Phase::Idle || self.session_active {
+        if self.session_active || self.state.phase == Phase::Recording {
             self.send_error(client_id, ErrorCode::Busy);
             return;
         }
+        if self.state.phase == Phase::Finalizing {
+            // The previous segment is still being finalized. Audio capture
+            // stays active and the pipeline keeps a bounded pre-roll; start
+            // the new session as soon as the old Final / drop is delivered.
+            if self.pending_start.is_none() {
+                self.pending_start = Some((client_id, source));
+            } else {
+                self.send_error(client_id, ErrorCode::Busy);
+            }
+            return;
+        }
+        if self.state.phase != Phase::Idle {
+            self.send_error(client_id, ErrorCode::Busy);
+            return;
+        }
+        self.pending_start = None;
+        self.pending_start_stop = false;
+        if let Err(error) = self.start_session(source) {
+            self.fail(error);
+        }
+    }
+
+    fn start_session(&mut self, source: TriggerSource) -> anyhow::Result<()> {
         let mode = self.effective_mode();
         self.pending_stop = false;
         if mode != Mode::Continuous {
             self.session_active = true;
         }
-        if let Err(error) = self.audio.play().context("启动音频采集失败") {
-            self.fail(error);
-            return;
-        }
+        self.audio.play().context("启动音频采集失败")?;
         let segment_id = self.allocate_segment();
         self.current_segment = Some(segment_id);
         self.state.phase = Phase::Recording;
         self.state.partial = None;
-        if let Err(error) = self.pipeline.start_segment() {
-            self.fail(error);
-            return;
-        }
+        self.pipeline.start_segment()?;
         self.ipc
             .broadcast(&ServerMessage::SegmentStarted { segment_id, source });
         self.broadcast_state();
         self.sync_audio();
+        Ok(())
     }
 
     fn request_stop(&mut self, client_id: u64, segment_id: u64) {
+        if self.pending_start.is_some() {
+            // Start and Stop both arrived while the previous segment was
+            // finalizing; start the captured pre-roll and finish it once the
+            // old result has been delivered.
+            self.pending_start_stop = true;
+            return;
+        }
         let mode = self.effective_mode();
         if mode == Mode::Continuous {
             if segment_id != 0 && Some(segment_id) != self.current_segment {
@@ -371,6 +400,21 @@ impl Daemon {
             self.apply_pending_mode();
         }
         self.sync_audio();
+    }
+
+    fn start_pending(&mut self) -> bool {
+        let Some((_, source)) = self.pending_start.take() else {
+            return false;
+        };
+        let stop_after = std::mem::take(&mut self.pending_start_stop);
+        if let Err(error) = self.start_session(source) {
+            self.fail(error);
+            return true;
+        }
+        if stop_after {
+            self.request_stop(0, 0);
+        }
+        true
     }
 
     fn on_pipeline(&mut self, event: PipelineEvent) {
@@ -430,8 +474,12 @@ impl Daemon {
                     if self.state.phase == Phase::Finalizing {
                         self.state.phase = Phase::Idle;
                         self.broadcast_state();
-                        self.apply_pending_mode();
-                        self.sync_audio();
+                        if !self.session_active {
+                            self.apply_pending_mode();
+                        }
+                        if !self.start_pending() {
+                            self.sync_audio();
+                        }
                     }
                     return;
                 }
@@ -489,7 +537,9 @@ impl Daemon {
         if !self.session_active {
             self.apply_pending_mode();
         }
-        self.sync_audio();
+        if !self.start_pending() {
+            self.sync_audio();
+        }
         Ok(())
     }
 
@@ -572,7 +622,9 @@ impl Daemon {
         if !self.session_active {
             self.apply_pending_mode();
         }
-        self.sync_audio();
+        if !self.start_pending() {
+            self.sync_audio();
+        }
     }
 
     fn on_frontend_disconnected(&mut self) {
@@ -581,6 +633,8 @@ impl Daemon {
         self.session_active = false;
         self.pending_stop = false;
         self.pending_mode = None;
+        self.pending_start = None;
+        self.pending_start_stop = false;
         if self.state.mode != Some(Mode::Ptt) {
             self.state.apply_mode(Mode::Ptt);
         }
@@ -631,7 +685,9 @@ impl Daemon {
             self.session_active = false;
             self.state.apply_mode(mode);
             self.apply_pipeline_mode();
-            self.sync_audio();
+            if self.pending_start.is_none() {
+                self.sync_audio();
+            }
         }
     }
 
@@ -644,7 +700,7 @@ impl Daemon {
     }
 
     fn audio_should_play(&self) -> bool {
-        listens(self.effective_mode(), self.session_active)
+        capture_needed(self.effective_mode(), self.session_active, self.state.phase)
     }
 
     fn sync_audio(&mut self) {
@@ -741,6 +797,10 @@ fn listens(mode: Mode, session_active: bool) -> bool {
     mode == Mode::Continuous || session_active
 }
 
+fn capture_needed(mode: Mode, session_active: bool, phase: Phase) -> bool {
+    listens(mode, session_active) || phase == Phase::Finalizing
+}
+
 fn tui_session_commands_blocked(role: Option<Role>, addon: FrontendState) -> bool {
     role == Some(Role::Tui) && addon == FrontendState::Connected
 }
@@ -792,6 +852,15 @@ mod tests {
         assert!(listens(Mode::Ptt, true));
         assert!(!listens(Mode::Toggle, false));
         assert!(listens(Mode::Toggle, true));
+    }
+
+    #[test]
+    fn finalizing_keeps_capture_alive() {
+        assert!(capture_needed(Mode::Ptt, false, Phase::Finalizing));
+        assert!(capture_needed(Mode::Toggle, false, Phase::Finalizing));
+        assert!(!capture_needed(Mode::Ptt, false, Phase::Idle));
+        assert!(capture_needed(Mode::Ptt, true, Phase::Recording));
+        assert!(capture_needed(Mode::Continuous, false, Phase::Idle));
     }
 
     #[test]

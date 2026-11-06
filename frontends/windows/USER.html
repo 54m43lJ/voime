@@ -43,7 +43,7 @@ Final 后端选择不进入前端。TSF 为可选扩展。平台 API 与安全�
   <tr><td>UIPI</td><td>用户界面特权隔离；普通完整性进程不能向高完整性窗口注入。</td></tr>
   <tr><td>命名管道</td><td>Windows 本机字节流端点；Voime 的默认 IPC 传输。</td></tr>
   <tr><td>UIA RuntimeId</td><td>UI Automation 焦点元素的稳定标识；用于提交前复核同一目标。</td></tr>
-  <tr><td>Finalizing</td><td>语音段结束到 Final 或丢弃结果到达之间的状态；前端保留最后一条 Partial，不再更新，Final 到达后提交。</td></tr>
+  <tr><td>Finalizing</td><td>语音段结束到 Final 或丢弃结果到达之间的状态；前端保留最后一条 Partial，不再更新，Final 到达后提交。Finalizing 期间再次按下热键可开始下一句：新目标先暂存，旧段 Final 提交后才切换。</td></tr>
 </table>
 
 <h2 id="u2">2. CONVENTIONS</h2>

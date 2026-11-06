@@ -58,7 +58,7 @@
   <tr><th>约定</th><th>内容</th></tr>
   <tr><td>音频格式</td><td>进入核心内部后统一为 16 kHz、单声道、<code>f32</code>；设备原生格式在核心内转换。</td></tr>
   <tr><td>单活动段</td><td>同一时刻只有一个语音段处于采集或收尾状态；调用方通过 <code>Recording</code> / <code>SegmentReady</code> 事件跟踪段边界。</td></tr>
-  <tr><td>段边界</td><td><code>StartSegment</code> 丢弃按键前已采集的音频；VAD <code>SpeechEnd</code> 在 PTT / Toggle 中执行软切分；<code>FinishSegment</code> 结束当前段（硬切分）。</td></tr>
+  <tr><td>段边界</td><td><code>StartSegment</code> 默认丢弃按键前已采集的音频；但 Finalizing 期间短时保持的采集会作为有界预录进入新段，旧段结果仍先交付。VAD <code>SpeechEnd</code> 在 PTT / Toggle 中执行软切分；<code>FinishSegment</code> 结束当前段（硬切分）。</td></tr>
   <tr><td>Partial</td><td>活动段的临时文本；可能滞后或丢弃；不进入历史、不提交。</td></tr>
   <tr><td>Preview 中断</td><td><code>FinishSegment</code> 与 <code>CancelPreview</code> 后不再产生新的 Partial；软切分只冻结当前段，下一段继续。</td></tr>
   <tr><td>CPU Final</td><td>只对 <code>SegmentReady</code> 的完整段执行一次 SenseVoice；空音频或空文本不产生 Final 文本。</td></tr>
@@ -247,7 +247,7 @@ impl Final {
 
 <table>
   <tr><th>消息 / 方法</th><th>语义</th><th>调用方处理</th></tr>
-  <tr><td><code>StartSegment</code></td><td>打开采集会话；非 Continuous 模式下重置 VAD / 分段器并开始 Preview。已在采集时忽略。</td><td>daemon 进入 Recording。</td></tr>
+  <tr><td><code>StartSegment</code></td><td>打开采集会话；非 Continuous 模式下重置 VAD / 分段器并开始 Preview。已在采集时忽略。Finalizing 期间采集到的音频会作为有界预录进入新段。</td><td>daemon 进入 Recording。</td></tr>
   <tr><td><code>FinishSegment</code></td><td>硬切分：结束当前段并停止 Preview；产生 <code>SegmentReady</code> 或 <code>SegmentDropped</code>，之后不再采集下一段。</td><td>daemon 进入 Finalizing。</td></tr>
   <tr><td><code>CancelPreview</code></td><td>立即停止 Preview 并丢弃未开始的任务；幂等。下一个 <code>StartSegment</code> 重新开始。</td><td>daemon 在 Final 触发时调用。</td></tr>
   <tr><td><code>SetMode</code></td><td>切换 <code>ptt</code> / <code>toggle</code> / <code>continuous</code>；存在活动段时 daemon 必须先 <code>FinishSegment</code>，旧段 Final / 丢弃后才调用。切换清理旧会话的待处理音频与 Partial 调度，不得截断活动段。</td><td>daemon 在旧段收尾后同步配置。</td></tr>
@@ -261,6 +261,7 @@ impl Final {
 </table>
 <ul class="note">
   <li>Preview 与 CPU Final 的特征链路都只应用一次 LFR / CMVN；调用方不预先应用 LFR。</li>
+  <li>pipeline 在非监听状态保留最近约 5 秒音频；仅当新 <code>StartSegment</code> 到达且预录仍新鲜时重放，避免 Finalizing 期间开始下一句时丢失开头。</li>
   <li>Mode 切换不截断活动段：daemon 先 <code>FinishSegment</code>，旧段 Final / 丢弃后才调用 <code>SetMode</code>；切换清理旧会话的采样与 Partial 调度，不把旧状态带入新会话。</li>
   <li><code>Final</code> 与 Preview 共用同一 SenseVoice 模型与会话；核心内部串行化推理，Finalizing 期间不会有 Preview 推理并发。</li>
   <li><code>SegmentReady</code> 之后由 daemon 决定走 CPU 还是 GPU；核心不读取 <code>final.backend</code>。</li>

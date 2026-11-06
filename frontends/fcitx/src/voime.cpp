@@ -68,6 +68,13 @@ VoimeAddon::VoimeAddon(fcitx::Instance *instance)
             if (target_.get() != event.inputContext()) {
                 return;
             }
+            if (pendingTarget_) {
+                // The target that lost focus belongs to the old segment.
+                // Keep the pending target for the session that will start
+                // after its Final.
+                preview_.clear(target_.get());
+                return;
+            }
             if (holdActive_) {
                 stopPtt();
             } else if (toggleActive_) {
@@ -196,18 +203,25 @@ void VoimeAddon::handlePtt(fcitx::KeyEvent &event, bool matches) {
         return;
     }
     event.filterAndAccept();
-    if (holdActive_ || starting_ || recording_ || finalizing_) {
+    if (holdActive_ || starting_ || recording_) {
         return;
     }
     auto *inputContext = event.inputContext();
     if (!inputContext) {
         return;
     }
-    bindTarget(inputContext);
+    const bool startsDuringFinalize = finalizing_;
+    if (startsDuringFinalize) {
+        bindPendingTarget(inputContext);
+    } else {
+        bindTarget(inputContext);
+    }
     holdCode_ = static_cast<uint32_t>(event.rawKey().code());
     holdActive_ = true;
     starting_ = true;
-    client_.start(segmentId_.value_or(0), TriggerSource::Hold);
+    client_.start(startsDuringFinalize ? pendingSegmentId_.value_or(0)
+                                      : segmentId_.value_or(0),
+                  TriggerSource::Hold);
 }
 
 void VoimeAddon::stopPtt() {
@@ -251,16 +265,23 @@ void VoimeAddon::handleToggle(fcitx::KeyEvent &event, bool matches) {
         // A second press closes the session even while the previous segment
         // is still finalizing.
         stopToggle();
-    } else if (!starting_ && !recording_ && !finalizing_) {
+    } else if (!starting_ && !recording_) {
         auto *inputContext = event.inputContext();
         if (!inputContext) {
             return;
         }
-        bindTarget(inputContext);
+        const bool startsDuringFinalize = finalizing_;
+        if (startsDuringFinalize) {
+            bindPendingTarget(inputContext);
+        } else {
+            bindTarget(inputContext);
+        }
         toggleActive_ = true;
         starting_ = true;
         refreshTogglePreview();
-        client_.start(segmentId_.value_or(0), TriggerSource::Toggle);
+        client_.start(startsDuringFinalize ? pendingSegmentId_.value_or(0)
+                                          : segmentId_.value_or(0),
+                      TriggerSource::Toggle);
     }
 }
 
@@ -292,10 +313,39 @@ void VoimeAddon::bindTarget(fcitx::InputContext *inputContext) {
     segmentId_ = nextLocalId_++;
 }
 
+void VoimeAddon::bindPendingTarget(fcitx::InputContext *inputContext) {
+    TargetRef target;
+    target.ref = inputContext->watch();
+    target.segment_id = nextLocalId_;
+    pendingSegmentId_ = nextLocalId_++;
+    pendingTarget_ = target;
+}
+
 void VoimeAddon::onIpcMessage(const ServerMessage &message) {
     switch (message.type) {
     case ServerMessageType::SegmentStarted: {
         if (!message.segmentId) {
+            break;
+        }
+        if (pendingTarget_ && !finalizing_) {
+            // A Start sent while the previous segment was finalizing must not
+            // replace the old target until the old Final has been committed.
+            target_ = *pendingTarget_;
+            pendingTarget_.reset();
+            pendingSegmentId_.reset();
+            segmentId_ = message.segmentId;
+            target_.segment_id = *message.segmentId;
+            if ((holdActive_ || toggleActive_) && !target_.focused()) {
+                if (holdActive_) {
+                    stopPtt();
+                } else {
+                    stopToggle();
+                }
+                return;
+            }
+            if (toggleActive_) {
+                refreshTogglePreview();
+            }
             break;
         }
         segmentId_ = message.segmentId;
@@ -395,6 +445,12 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             message.errorCode == "invalid_message") {
             // The daemon rejected the handshake/socket; retry from scratch.
             client_.disconnect();
+        } else if (message.errorCode == "busy") {
+            // A Start sent during Finalizing was rejected; drop its pending
+            // target so it cannot leak into a later session.
+            pendingTarget_.reset();
+            pendingSegmentId_.reset();
+            starting_ = false;
         } else if (message.errorCode == "segment_dropped") {
             if (!message.segmentId || !segmentId_ ||
                 *message.segmentId != *segmentId_) {
@@ -448,6 +504,8 @@ void VoimeAddon::onDaemonDisconnected() {
     clearPreview();
     target_.ref.unwatch();
     segmentId_.reset();
+    pendingTarget_.reset();
+    pendingSegmentId_.reset();
     holdActive_ = false;
     starting_ = false;
     toggleCode_ = 0;
