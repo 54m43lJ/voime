@@ -69,26 +69,6 @@
 | `crates/voimed/README.html` | §1.2 | 改 | 将退出顺序改为链接 `crates/voimed/CORE.html` §5.7，不再用一句“先停 worker，再停 pipeline / 音频 / IPC”概括。 |
 | `crates/voimed/CORE.html` | §5.7 | 不动 | 已定义完整退出顺序；README 引用本处。 |
 
-### E4. FireRed 的 EOF 语义与 GPU 协议总则冲突
-
-1. **问题描述**
-
-`crates/voime-gpu-common/USER.html` §4.7 规定：daemon 未发送 `Shutdown` 就关闭 stdin / stdout 时，worker 视为异常关闭并以非零退出。但 `crates/voime-gpu-firered/CORE.html` §4.6 写“EOF 按 Shutdown 处理”，会让 FireRed worker 在管道异常断开时发送 `Bye` 并以成功退出，daemon 无法区分正常关闭和崩溃。FireRed worker 已由 P13 移除；本条只保留为历史记录。
-
-2. **解决方法**
-
-- FireRed 读帧线程在干净 EOF 时发送 `Abort` 命令，不发送 `Bye`，`run` 返回 `RunExit::Abort` 后以非零退出。
-- 只有收到完整 `Request::Shutdown` 才发 `Bye` 并以 0 退出。
-- Qwen worker 保持同一语义：EOF 与帧级错误均走 `Abort`。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-firered/CORE.html` | §4.6、§5.5 | 不动（P13 删除 FireRed） | 文档已删除。 |
-| `crates/voime-gpu-common/USER.html` | §4.7 | 不动 | 已定义 EOF 为异常关闭；Qwen worker 对齐本处。 |
-| `crates/voime-gpu-qwen3/CORE.html` | §5.6 | 不动 | Qwen 的关闭 / 异常退出语义已与 common 一致。 |
-
 ### E5. `reset_after_segment` 在软切分与 `FinishSegment` 两处含义冲突
 
 1. **问题描述**
@@ -173,12 +153,12 @@
 
 1. **问题描述**
 
-开发初期，`crates/voime-core/CORE.html` §4.8 与 `crates/voime-core/PROVIDER.html` §4.2 只说 VAD 的 CMVN 来自可选的 `cmvn.ark`，没有说明它是 Kaldi 二进制 `FM` / `DM` 矩阵、`FV` / `DV` 向量还是文本，也没有说明统计量的布局与读取约定；该格式现已写入核心 PROVIDER。VAD 的 `cmvn.ark` 实际是 `2 x (80 + 1)` 的 Kaldi 二进制 `DM` 矩阵：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和。原实现按裸 `u32` 读取矩阵头（漏掉 Kaldi 整数的 1 字节宽度标记），并假设 count 在首元素，启动时报 `解析 VAD CMVN 文件失败 ... Kaldi CMVN 文件被截断`。FireRed worker 的对应实现已由 P13 移除。
+开发初期，`crates/voime-core/CORE.html` §4.8 与 `crates/voime-core/PROVIDER.html` §4.2 只说 VAD 的 CMVN 来自可选的 `cmvn.ark`，没有说明它是 Kaldi 二进制 `FM` / `DM` 矩阵、`FV` / `DV` 向量还是文本，也没有说明统计量的布局与读取约定；该格式现已写入核心 PROVIDER。VAD 的 `cmvn.ark` 实际是 `2 x (80 + 1)` 的 Kaldi 二进制 `DM` 矩阵：第一行前 80 列为 sum、末列为 count，第二行前 80 列为平方和。原实现按裸 `u32` 读取矩阵头（漏掉 Kaldi 整数的 1 字节宽度标记），并假设 count 在首元素，启动时报 `解析 VAD CMVN 文件失败 ... Kaldi CMVN 文件被截断`。
 
 2. **解决方法**
 
 - 按 Kaldi 二进制格式解析矩阵 / 向量：整数头先读 1 字节宽度标记（`4` / `8`，有符号为正），再读小端数据；矩阵 / 向量使用 `FM` / `DM` / `FV` / `DV`，保留 `F` / `D` 兼容。
-- 统计量按 FireRed / Kaldi 的 `2 x (dim + 1)` 布局读取：第一行前 `dim` 列为 sum、末列为 count，第二行前 `dim` 列为平方和；按 count 计算 mean / inverse stddev，variance floor 取 `1e-20`。
+- 统计量按 FireRedVAD / Kaldi 的 `2 x (dim + 1)` 布局读取：第一行前 `dim` 列为 sum、末列为 count，第二行前 `dim` 列为平方和；按 count 计算 mean / inverse stddev，variance floor 取 `1e-20`。
 - 保留“count + sums + squares”扁平布局与预计算 mean / inverse stddev 的兼容路径；维度必须与 fbank bin 数一致，缺失或解析失败按模型加载失败处理。
 - 核心 `crates/voime-core/src/vad/firered.rs` 使用该解析约定；增加 parser 单测，覆盖二进制 f32 / f64 矩阵、二进制 f64 向量、文本输入与截断文件。
 
@@ -257,7 +237,7 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 2. **解决方法**
 
-- 约定 `--source-dir/bin/voime-gpu-qwen3` 为可选预编译 worker；存在时直接安装，否则在 Qwen crate 内按 feature 构建。FireRed worker 已由 P13 移除。
+- 约定 `--source-dir/bin/voime-gpu-qwen3` 为可选预编译 worker；存在时直接安装，否则在 Qwen crate 内按 feature 构建。
 - 离线源模型仍按 `--source-dir/<model-id>/` 复制；默认在线获取与下载确认由 M10 的安装器负责，两者共用同一 `<model-id>/` 布局与 schema 5 manifest。runtime 目录由安装包自行放置，不由 worker 从全局库路径查找。
 - Windows 使用同名 `.exe`。
 
@@ -265,7 +245,6 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-firered/USER.html` | §4.4 | 不动（P13 删除 FireRed） | 文档已删除。 |
 | `crates/voime-gpu-qwen3/USER.html` | §4.4 | 增 | 写明 `--source-dir/bin/` 预编译 worker 布局、缺失时的构建回退，并区分 Vulkan / CUDA 预编译包。 |
 | `README.html` | §2 | 不动 | 根 README 只保留安装入口；布局细节归 GPU 组件 USER。 |
 
@@ -334,47 +313,27 @@ GPU 文档要求安装脚本部署“预编译 worker / runtime 包”，也列�
 
 1. **问题描述**
 
-GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型下载失败时脚本非零退出并清理临时目录”；但 `scripts/install-gpu.sh` 与 `scripts/install-gpu.ps1` 实际只从 `--source-dir` 或仓库根 `models/` 复制，没有下载器。干净 checkout 默认必然报 `FireRed models not found`，与文档描述不符。`BUILD.html` §3.4 又写成“从离线源复制”，与组件 USER 的下载要求冲突。M6 只定义了离线源布局，没有覆盖默认在线获取、下载前确认和仓库根目录回退。
+GPU USER §4.4 要求“支持断点续传 / 离线源”，并规定“模型下载失败时脚本非零退出并清理临时目录”；但修复前 `scripts/install-gpu.sh` 与 `scripts/install-gpu.ps1` 只从 `--source-dir` 或仓库根 `models/` 复制，没有下载器。干净 checkout 默认必然报模型缺失，与文档描述不符；`BUILD.html` §3.4 当时也写成“从离线源复制”，与组件 USER 的下载要求冲突。M6 只定义了离线源布局，没有覆盖默认在线获取、下载前确认和仓库根目录回退。
 
 2. **解决方法**
 
-- 新增 `scripts/install-gpu-models.py`，由 `install-gpu.sh` / `install-gpu.ps1` 调用：默认按固定上游 revision 下载 `fireredasr2-aed`、`fireredpunc`、`qwen3-asr-1.7b`，缓存到平台缓存目录。
-- 有与产品固定文件完全一致、且可匿名访问的 ModelScope 镜像时优先使用 ModelScope，否则回退 Hugging Face。ModelScope 公开模型通过 `resolve` 直链下载，不需要登录；`fireredpunc` 与 `qwen3-asr-1.7b` 均有同 SHA-256 镜像，`fireredasr2-aed` 的固定 ONNX 导出目前只有 HF 同文件集，因此继续使用 HF。
+- 新增 `scripts/install-gpu-models.py`，由 `install-gpu.sh` / `install-gpu.ps1` 调用：默认按固定上游 revision 下载 `qwen3-asr-1.7b`（BF16 GGUF 主模型与 BF16 mmproj），缓存到平台缓存目录。
+- Qwen3-ASR 主模型与 mmproj 都有与产品固定文件同 SHA-256、可匿名访问的 ModelScope 镜像，因此优先使用 ModelScope；镜像不可用时回退 Hugging Face。ModelScope 公开模型通过 `resolve` 直链下载，不需要登录。
 - Token 从环境变量读取：ModelScope 支持 `MODELSCOPE_API_TOKEN` / `MODELSCOPE_SDK_TOKEN` / `MODELSCOPE_API_KEY` 等别名，Hugging Face 支持 `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` 等别名。交互安装且 token 缺失时提示输入，可回车跳过公开模型；服务端返回 401/403 时按 provider 提示并重试一次。Token 只保存在进程内存，不写盘、不输出。
 - 下载前按模型列出本次需要的体积并要求确认；非交互安装使用 `--yes` / `-Yes`（同时跳过 token 提示）。`--source-dir` 只读离线源，不联网；`--no-models` 跳过；安装脚本不再从仓库根目录 `models/` 取模型。
-- 每个文件按固定 size / SHA-256 校验，支持 `.part` 断点续传；同盘临时目录写完后替换目标，失败不留下半成品。安装器生成 schema 5 manifest；Qwen 的 `LICENSE` 作为额外文件写入目录，不参与推理。
-- 安装脚本在需要模型时要求 `python3`；`--no-models` 时不需要 Python。
+- 每个文件按固定 size / SHA-256 校验，支持 `.part` 断点续传（网络中断保留 `.part`，校验失败删除）；同盘临时目录写完后替换目标，失败不替换目标目录。安装器生成 schema 5 manifest；Qwen 的 `LICENSE` 作为额外文件写入目录，不参与推理。
+- 安装脚本在需要模型时要求 Python 3；`--no-models` 时不需要 Python。
 - M6 的离线源布局保持不变；默认下载生成的目录与离线源共用 `<model-id>/` 布局和同一份 manifest 契约。
 
 3. **修订建议**
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-firered/USER.html` | §4.4 | 改 | 写明默认下载、下载前确认、`--yes`、`--source-dir` 只读离线源、优先 ModelScope（`fireredpunc`）/ HF（`fireredasr2-aed`）、token 环境变量与交互提示，以及不再回退仓库根 `models/`。 |
-| `crates/voime-gpu-qwen3/USER.html` | §4.4 | 改 | 同上；明确 ModelScope 优先、HF 回退，保留断点续传 / 离线源与 token 提示描述。 |
-| `BUILD.html` | §3.3、§3.4 | 改 | 把“从离线源复制”改为“默认下载 + 确认 + 缓存；优先 ModelScope，缺失时 HF；`--source-dir` 才离线复制”，补 `--yes` / `-Yes`、Python 依赖与 token 环境变量 / 交互提示。 |
+| `crates/voime-gpu-qwen3/USER.html` | §4.4 | 不动（已更新） | 已写明默认下载、下载前确认、`--yes`、`--source-dir` 只读离线源、优先 ModelScope / HF 回退、token 环境变量与交互提示，以及不再回退仓库根 `models/`。 |
+| `BUILD.html` | §3.3、§3.4 | 不动（已更新） | 已写明默认下载 + 确认 + 缓存、优先 ModelScope / 不可用时 HF、`--source-dir` 离线复制、`--yes` / `-Yes`、Python 依赖与 token 环境变量 / 交互提示。 |
 | `README.html` | §2 | 不动 | 根 README 只保留安装入口；模型来源细节归 GPU 组件 USER / BUILD。 |
 
 ## 3. 其它技术上踩的坑
-
-### P1. ONNX Runtime 在 GPU session 中会静默回退 CPU
-
-1. **问题描述**
-
-ORT 默认允许未分配到 GPU EP 的节点回退到 CPU。FireRed worker 即使注册 CUDA / MIGraphX / DirectML，也可能在 CPU 上执行部分算子，而 `Ready.runtime` 仍显示 GPU，导致性能与“GPU only”契约都被破坏，且很难从结果判断。FireRed worker 已由 P13 移除；本条只保留为历史记录。
-
-2. **解决方法**
-
-- 创建 session 时显式调用 `with_disable_cpu_fallback()`；失败按 `load_failed` 处理。
-- 进程只注册编译时选中的单一 GPU EP，不注册 CPU EP。
-- 启动自检失败只让当前 backend 不可用；daemon 回退 CPU SenseVoice，不在 worker 内回退 CPU ORT。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 不动（P13 删除 FireRed） | session 禁用 CPU fallback 的约束已随 worker 移除。 |
-| `crates/voime-gpu-firered/CORE.html` | §2、§4.5 | 不动（P13 删除 FireRed） | worker 已移除，相关约束仅保留为历史记录。 |
 
 ### P2. `llama-cpp-4` 0.11.0 的实际类型与文档草案签名有差异
 
@@ -395,26 +354,6 @@ Qwen CORE 的草案签名只列 `LlamaContextParams` / `LlamaBatch` 类型名，
 |---|---|---|---|
 | `crates/voime-gpu-qwen3/CORE.html` | §4.4、§4.6 | 改 | 用 `llama_cpp_4::prelude::*`、`MostlyBF16`、`n_ctx = 4096` 与 `n_batch = 2048` 更新草案签名。 |
 | `crates/voime-gpu-qwen3/PROVIDER.html` | §4.3 | 不动 | 已锁定 `llama-cpp-4` 0.11.0；类型细节归 CORE。 |
-
-### P3. `tokenizers` 的 WordPiece 不会自动补 `[CLS]` / `[SEP]`
-
-1. **问题描述**
-
-FireRedPunc 导出的 ONNX 需要 BERT 风格的 `input_ids`，其中包含 `[CLS]` 101 与 `[SEP]` 102。只用 `WordPiece` + BERT normalizer / pre-tokenizer 时，`encode(text, true)` 并不会自动添加这两个特殊 token；同时 `get_offsets()` 返回的是原文字节偏移，不能按字符下标插入标点。FireRedPunc 已由 P13 移除；本条只保留为历史记录。
-
-2. **解决方法**
-
-- 在 `PuncTokenizer::encode` 中手动插入 101 / 102，并同步给 `lengths`。
-- 分块按 tokenizer 的 token 边界切，不再按字符数切；每块重新编码后推理。
-- `PuncLabels::insert` 使用 `Piece.end` 的字节偏移插入；跳过 label 0 与特殊 token。
-- `[CLS]` / `[SEP]` 的 `Piece` 使用 0 / 文本长度作为插入边界，保证不会被当作正常标点位置。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-firered/CORE.html` | §2、§4.13、§4.14 | 不动（P13 删除 FireRed） | FireRedPunc 与相关 tokenizer 已随 worker 移除。 |
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.2.1 | 不动（P13 删除 FireRed） | 文档已删除。 |
 
 ### P4. `rubato` 的流式重采样器会缓存不足一个块的数据
 
@@ -458,7 +397,7 @@ FireRedPunc 导出的 ONNX 需要 BERT 风格的 `input_ids`，其中包含 `[CL
 
 1. **问题描述**
 
-根 `cargo build` 只产出 `target/` 下的核心二进制；FireRed / Qwen3 与 Windows 前端是独立 workspace，产物分别在各自 crate 的 `target/`。安装脚本如果从根 `target/release` 找 worker 或托盘，会复制失败或复制到旧文件。
+根 `cargo build` 只产出 `target/` 下的核心二进制；Qwen3 与 Windows 前端是独立 workspace，产物分别在各自 crate 的 `target/`。安装脚本如果从根 `target/release` 找 worker 或托盘，会复制失败或复制到旧文件。
 
 2. **解决方法**
 
@@ -472,7 +411,7 @@ FireRedPunc 导出的 ONNX 需要 BERT 风格的 `input_ids`，其中包含 `[CL
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
 | `CORE.html` | §1、§2 | 不动 | 已说明独立 workspace 与独立 Cargo.lock；安装脚本按本约束实现。 |
-| `crates/voime-gpu-firered/README.html` | §2 | 不动 | 组件文档不需要重复根构建路径；BUILD 负责完整命令。 |
+| `crates/voime-gpu-qwen3/README.html` | §2 | 不动 | 组件文档不需要重复根构建路径；BUILD 负责完整命令。 |
 
 ### P7. 音频错误回调使用 `try_send` 会在队列满时丢掉流错误哨兵
 
@@ -493,35 +432,16 @@ FireRedPunc 导出的 ONNX 需要 BERT 风格的 `input_ids`，其中包含 `[CL
 | `crates/voime-core/CORE.html` | §2、§5.6 | 改 | 明确数据回调用 `try_send`、错误回调用阻塞 `send` 写哨兵，哨兵不可丢；与 P9 的 §2 修改合并。 |
 | `crates/voime-core/PROVIDER.html` | §4.1 | 不动 | 已定义 cpal 错误回调；具体队列策略归 CORE。 |
 
-### P8. DirectML 的线协议设备前缀是 `dml`，EP 名称却是 `directml`
-
-1. **问题描述**
-
-GPU common 的示例使用 `dml:0` 作为 DirectML 设备标识，而 `OrtEp::Directml` 的显示字符串是 `directml`；FireRed CORE 也没有写明两者的映射。直接用 EP 名称生成默认设备会得到 `directml:0`，worker 的 Hello 校验与 `Ready.device` 不一致；反过来只校验 `cuda` / `migraphx` / `dml` 又会漏掉构建 feature 与设备前缀的匹配。FireRed/ORT GPU worker 已由 P13 移除；本条只保留为历史记录。
-
-2. **解决方法**
-
-- `OrtEp` 分开 `as_str()`（provider 名称）与 `device_prefix()`（线协议前缀）：DirectML 的后者为 `dml`。
-- `Runtime::load` 先检查请求设备前缀与编译时 EP 匹配，再解析设备序号。
-- `Ready.device` 默认用 `device_prefix:index`，不直接拼 `as_str`。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-firered/CORE.html` | §4.3、§4.6 | 不动（P13 删除 FireRed） | 相关 worker 与文档已删除。 |
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 不动（P13 删除 FireRed） | 文档已删除。 |
-
 ### P9. Continuous 自动分段在自然停顿处过早收句
 
 1. **问题描述**
 
-Continuous 模式由 `Segmenter` 的静音阈值直接决定收句：原实现使用 `MIN_SILENCE_MS = 200`，而 PTT / Toggle 使用 `PTT_AUTO_END_MS = 1_200`，且通常由松键 / 再按结束，因此只有 Continuous 会在自然停顿处把一句话切成多段。FireRed 官方 `hello_zh.wav` 句中有一处约 120 ms 的静音，200 ms 阈值离它过近，语速稍慢或停顿稍长就会越界。另一个问题是修复前的 `FbankConfig` 把所有模型统一固定为 `hamming`，但 FireRed VAD 的上游实现使用 Kaldi 默认的 `povey`；`FbankConfig` 由 VAD 与 SenseVoice 共用，窗函数不匹配会让 VAD 概率边界不稳定，放大提前收句。
+Continuous 模式由 `Segmenter` 的静音阈值直接决定收句：原实现使用 `MIN_SILENCE_MS = 200`，而 PTT / Toggle 使用 `PTT_AUTO_END_MS = 1_200`，且通常由松键 / 再按结束，因此只有 Continuous 会在自然停顿处把一句话切成多段。FireRedVAD 上游的 `hello_zh.wav` 句中有一处约 120 ms 的静音，200 ms 阈值离它过近，语速稍慢或停顿稍长就会越界。另一个问题是修复前的 `FbankConfig` 把所有模型统一固定为 `hamming`，但 FireRedVAD 的上游实现使用 Kaldi 默认的 `povey`；`FbankConfig` 由 VAD 与 SenseVoice 共用，窗函数不匹配会让 VAD 概率边界不稳定，放大提前收句。
 
 2. **解决方法**
 
 - 将 `MIN_SILENCE_MS` / `PTT_AUTO_END_MS` 合并为 `AUTO_END_SILENCE_MS = 800`（最初取 1_200，后按交互体感下调），所有模式共用；`Segmenter::push` 删除 `mode` 参数，避免再次按模式分叉。
-- `FbankConfig` 增加 `WindowType` 与 `window` 字段：默认 `povey` 服务 FireRed VAD，`FbankConfig::sensevoice()` 显式返回 `hamming` 服务 SenseVoice。
+- `FbankConfig` 增加 `WindowType` 与 `window` 字段：默认 `povey` 服务 FireRedVAD，`FbankConfig::sensevoice()` 显式返回 `hamming` 服务 SenseVoice。
 - `pipeline::spawn` 用同一份 `FbankConfig::sensevoice()` 创建 SenseVoice 与 Preview fbank；VAD 继续使用默认 povey。
 - 增加 VAD / SenseVoice 窗函数与 800 ms 分段边界单测；同步更新 CORE / PROVIDER 中的阈值、`push` 签名与 fbank 说明。
 
@@ -558,31 +478,6 @@ M5 曾把 daemon 日志中的 ready / running 作为 `voime doctor` 的唯一 wo
 | `crates/voimed/CORE.html` | §2、§4.6、§4.7、§5.1 | 改 | 增加 `ready` / `last_error` / `is_alive` 与 `Daemon::diagnostics`。 |
 | `BUILD.html` | §5 | 改 | 删除“worker 状态来自日志与进程状态”。 |
 
-### P11. FireRed 的 AMD GPU EP 与固定 ONNX 图不兼容
-
-1. **问题描述**
-
-FireRed GPU Final 后端已由 P13 移除；本条只保留为历史记录。在 AMD RX 9070（gfx1201）、ROCm 7.2 / MIGraphX 2.15、ONNX Runtime 1.29 上实测：
-- MIGraphX 会话可创建，首次 encoder 运行在 `simplify_reshapes` 编译阶段失败（`Dimensions do not match`）；`migraphx-driver compile` 直接编译也复现，关闭相关 pass 后编译超过 5 分钟。
-- 使用带 ROCm EP 的 ORT 1.22 动态库可以执行，但 encoder 输出与 CPU 参考差异巨大，识别结果退化为重复字符；ROCm EP 自 1.23 起已从 ORT 移除。
-- FireRed worker 的模型校验、fbank、CMVN、decoder cache、tokenizer 与标点逻辑在 CPU ORT 上可输出正确文本，说明问题在 AMD GPU EP，不在业务代码。
-
-2. **解决方法**
-
-- FireRed worker 在发送 `Ready` 前用固定短音频执行一次 ASR 与标点自检；会话创建成功但首次运行失败时返回 `load_failed`，不报告假 ready。
-- 新增 `ORT_DYLIB_PATH` 查找与安装脚本 runtime 复制：安装到 `<prefix>/lib/voime/firered/`，daemon 只对子进程设置库路径。
-- AMD Linux 默认导向 Qwen3（Vulkan）；安装脚本在 AMD + MIGraphX 时打印警告，文档把 MIGraphX 从“验收基线”改为“等待 EP / 模型修复”。
-- 保留 CUDA / DirectML 构建路径；这两条路径需要在对应硬件上复验。
-
-3. **修订建议**
-
-| 文档名 | 章节 | 动作 | 内容 |
-|---|---|---|---|
-| `crates/voime-gpu-firered/USER.html` | §4.2、§4.4 | 不动（P13 删除 FireRed） | 文档已删除。 |
-| `crates/voime-gpu-firered/CORE.html` | §2、§4.6、§5.1 | 不动（P13 删除 FireRed） | 文档已删除。 |
-| `crates/voime-gpu-firered/PROVIDER.html` | §4.3 | 不动（P13 删除 FireRed） | 文档已删除。 |
-| `BUILD.html` | §3.3、§3.4 | 不动（P13 删除 FireRed） | FireRed 构建与 runtime 已移除。 |
-
 ### P12. Qwen3 中文输出清洗按字节切分导致 worker panic
 
 1. **问题描述**
@@ -617,7 +512,7 @@ worker 进程退出，daemon 看到 `GPU worker 已关闭连接` 后重启 worke
 | `crates/voime-gpu-qwen3/CORE.html` | §4.7 | 改 | 说明 `clean_text` 必须按 UTF-8 字符边界处理多字节输出，禁止按固定字节切片。 |
 | `crates/voimed/CORE.html` | §2 | 改 | 说明 worker 推理耗时与 CPU 回退耗时会写入日志，便于诊断偶发回退。 |
 
-### P13. 取消 FireRed GPU Final 后端
+### P13. 移除 FireRed GPU Final 后端
 
 1. **问题描述**
 
@@ -628,7 +523,7 @@ worker 进程退出，daemon 看到 `GPU worker 已关闭连接` 后重启 worke
 - 删除 `crates/voime-gpu-firered` 整个独立 workspace，包括源码、文档、图表与 `Cargo.lock`；从根 `Cargo.toml` 的 `exclude` 中移除。
 - `voimed::backend::BackendId` 与 `voime_gpu_common::GpuBackend` 删除 `Firered`；`final.backend` 只接受 `cpu` / `qwen3`。
 - `voimed::worker` 删除 FireRed 专用的 `VOIME_FIRERED_RUNTIME`、`ORT_DYLIB_PATH` / 动态库查找与 `--runtime` / `--log-level` 参数；`Worker::spawn` 简化为 `(backend, model_root)`，`restart` 不再保存日志级别。
-- `voime doctor` 只检查 CPU / Qwen 的 worker 与模型；删除 FireRed 模型目录、manifest 校验条目与可执行文件分支。
+- `voime doctor` 的 GPU 检查只保留 Qwen；删除 FireRed 模型目录、manifest 校验条目与可执行文件分支。
 - `scripts/install-gpu.sh` / `install-gpu.ps1` 只安装、卸载 Qwen；`install-gpu-models.py` 删除 FireRed 模型、revision 常量与 `--firered` 选项。
 - 根 README / USER / PROVIDER / CORE / BUILD、`voimed`、`voime`、`voime-gpu-common`、`voime-gpu-qwen3`、`voime-core` 与平台前端文档删除 FireRed 后端内容；根架构、provider 与推理图重新导出 SVG。
 - FireRedVAD 是核心 VAD，不属于本次移除范围；`firered-vad` 模型、核心 VAD 代码与安装脚本保持不动。
@@ -638,17 +533,17 @@ worker 进程退出，daemon 看到 `GPU worker 已关闭连接` 后重启 worke
 
 | 文档名 | 章节 | 动作 | 内容 |
 |---|---|---|---|
-| `crates/voime-gpu-firered/` | 全部 | 删 | 删除 FireRed worker 的 README / USER / CORE / PROVIDER、源码与图表。 |
-| `README.html` | §1、§2、§3、§4 | 改 | 删除 FireRed 组件链接、GPU 后端说明、crate 索引与 Credits；GPU Final 只保留 Qwen。 |
-| `USER.html` | §1、§2、§3、§4 | 改 | Final 后端只列 `cpu` / `qwen3`；GPU 模块只描述 Qwen worker。 |
-| `PROVIDER.html` | §1、§3、§4 | 改 | 删除 FireRed ORT GPU、FireRed 模型目录与相关 provider 链接。 |
-| `CORE.html` | §1、§2、§4、§5 | 改 | 删除 FireRed crate、BackendId 成员、模型表条目与 Final 调度分支。 |
-| `BUILD.html` | §1、§2、§3、§4、§5、§6 | 改 | 删除 FireRed 构建、runtime、模型、测试、卸载与排查内容；安装参数只保留 Qwen。 |
-| `crates/voimed/{README,USER,CORE}.html` | 相关章节 | 改 | 后端枚举、worker 生命周期、启动默认值与调用栈只保留 CPU / Qwen。 |
-| `crates/voime/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 改 | `ctl backend` 只接受 `cpu|qwen3`；doctor 只检查 CPU / Qwen。 |
-| `crates/voime-gpu-common/{README,USER,CORE}.html` | 相关章节 | 改 | `GpuBackend` 只保留 `qwen3`；协议示例与术语改为 Qwen worker。 |
-| `crates/voime-gpu-qwen3/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 改 | 删除与 FireRed worker / FireRedPunc / ORT 路径的对比描述，保留 Qwen 自身边界。 |
-| `crates/voime-core/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 改 | 删除 FireRedPunc 与 GPU Final 引用；FireRedVAD 与 `firered-vad` 保持不变。 |
-| `frontends/fcitx/{README,USER,PROVIDER}.html`、`frontends/windows/{CORE,PROVIDER}.html` | 相关章节 | 改 | 后端枚举与 GPU runtime 说明只保留 Qwen 的 Vulkan / CUDA。 |
-| `crates/voime-ipc/USER.html` | §4.6 | 改 | Diagnostics 示例改为 `qwen3` + Vulkan。 |
-| `diagram/*.puml`、`crates/voime-core/diagram/inference-boundary.puml` | 全部 | 改 | 删除 FireRed 组件、模型与推理分支；重新导出对应 SVG。 |
+| `crates/voime-gpu-firered/` | 全部 | 删（已完成） | 已删除 FireRed worker 的 README / USER / CORE / PROVIDER、源码与图表。 |
+| `README.html` | §1、§2、§3、§4 | 不动（已更新） | 已删除 FireRed 组件链接、GPU 后端说明、crate 索引与 Credits；GPU Final 只保留 Qwen。 |
+| `USER.html` | §1、§2、§3、§4 | 不动（已更新） | Final 后端已只列 `cpu` / `qwen3`；GPU 模块只描述 Qwen worker。 |
+| `PROVIDER.html` | §1、§3、§4 | 不动（已更新） | 已删除 FireRed ORT GPU、FireRed 模型目录与相关 provider 链接。 |
+| `CORE.html` | §1、§2、§4、§5 | 不动（已更新） | 已删除 FireRed crate、BackendId 成员、模型表条目与 Final 调度分支。 |
+| `BUILD.html` | §1、§2、§3、§4、§5、§6 | 不动（已更新） | 已删除 FireRed 构建、runtime、模型、测试、卸载与排查内容；安装参数只保留 Qwen。 |
+| `crates/voimed/{README,USER,CORE}.html` | 相关章节 | 不动（已更新） | 后端枚举、worker 生命周期、启动默认值与调用栈已只保留 CPU / Qwen。 |
+| `crates/voime/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 不动（已更新） | `ctl backend` 已只接受 `cpu|qwen3`；doctor 的 GPU 检查已只保留 Qwen。 |
+| `crates/voime-gpu-common/{README,USER,CORE}.html` | 相关章节 | 不动（已更新） | `GpuBackend` 已只保留 `qwen3`；协议示例与术语已改为 Qwen worker。 |
+| `crates/voime-gpu-qwen3/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 不动（已更新） | 已删除 FireRed worker / FireRedPunc 引用；保留 Qwen 自身“不链接 ORT / ONNX”的边界说明。 |
+| `crates/voime-core/{README,USER,CORE,PROVIDER}.html` | 相关章节 | 不动（已更新） | 已删除 FireRedPunc 与 GPU Final 引用；FireRedVAD 与 `firered-vad` 保持不变。 |
+| `frontends/fcitx/{README,USER,PROVIDER}.html`、`frontends/windows/{CORE,PROVIDER}.html` | 相关章节 | 不动（已更新） | 后端枚举与 GPU runtime 说明已只保留 Qwen 的 Vulkan / CUDA。 |
+| `crates/voime-ipc/USER.html` | §4.6 | 不动（已更新） | Diagnostics 示例已改为 `qwen3` + Vulkan。 |
+| `diagram/*.puml`、`crates/voime-core/diagram/inference-boundary.puml` | 全部 | 不动（已更新） | 已删除 FireRed Final worker 组件、模型与推理分支并重新导出 SVG。 |
