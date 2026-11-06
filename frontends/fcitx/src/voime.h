@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 #include <fcitx-utils/handlertable.h>
 #include <fcitx/inputmethodengine.h>
@@ -54,6 +55,7 @@ private:
     std::optional<uint64_t> segmentId_;
     std::optional<TargetRef> pendingTarget_;
     std::optional<uint64_t> pendingSegmentId_;
+    std::unordered_map<uint64_t, TargetRef> pendingFinals_;
     bool holdActive_ = false;
     bool starting_ = false;
     bool recording_ = false;

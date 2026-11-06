@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use crate::asr::SenseVoice;
 
 /// CPU Final: one SenseVoice pass over the complete segment.
+#[derive(Clone)]
 pub struct Final {
     asr: Arc<Mutex<SenseVoice>>,
 }

@@ -92,7 +92,7 @@ fn run(cli: cli::Cli) -> anyhow::Result<()> {
         ipc,
         worker,
         worker_error,
-    )
+    )?
     .run()
 }
 

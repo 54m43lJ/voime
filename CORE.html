@@ -284,22 +284,26 @@ pub fn default_directory() -&gt; PathBuf;
     ├── voime_ipc::write_message(Start)
     └── voimed::daemon::Daemon::on_client(Start)
         └── Daemon::request_start(...)
-            ├── 判断 Finalizing &amp;&amp; 无活动会话 → pending_start
-            └── 否则
-                ├── voime_core::audio::capture::CaptureHandle::play()
-                └── voime_core::pipeline::Pipeline::start_segment()
+            ├── 判断活动会话 → busy
+            ├── 判断旧段尚未交付 SegmentReady → awaiting_segments.push(旧 ID)
+            ├── voime_core::audio::capture::CaptureHandle::play()
+            └── voime_core::pipeline::Pipeline::start_segment()
 
 voime_core::pipeline::PipelineEvent::Recording / Partial
 └── voimed::ipc_server → voime_ipc::write_message(...)
 
 voime_core::pipeline::PipelineEvent::SegmentReady
-└── voimed::daemon::Daemon::finalize(segment)
-    ├── 判断 backend == Cpu → voime_core::Final::transcribe()
-    ├── 判断 backend == Qwen3 → voimed::worker::Worker::transcribe()
-    └── voime_ipc::write_message(Final)
+└── voimed::daemon::Daemon::enqueue_finalize(segment)
+    ├── FinalizeQueue::push(job)（最多 5 条等待）
+    └── Finalizer::submit(job)
+
+Finalizer 线程
+├── 判断 backend == Cpu → voime_core::Final::transcribe()
+├── 判断 backend == Qwen3 → voimed::worker::Worker::transcribe()
+└── FinalizeResult → voime_ipc::write_message(Final)
 
 voime_core::pipeline::PipelineEvent::SegmentDropped
-└── voimed::daemon::Daemon::drop_current(reason)
+└── voimed::daemon::Daemon::broadcast_dropped(segment_id, reason)
     └── voime_ipc::write_message(Error { code: SegmentDropped, segment_id })
 
 平台前端
@@ -307,8 +311,8 @@ voime_core::pipeline::PipelineEvent::SegmentDropped
 └── 判断目标失效 → 不提交</code></pre>
 <ul class="note">
   <li>PTT / Toggle 的 Start 只开启会话；会话内的软切分、目标延续与提交顺序见 <a href="frontends/fcitx/CORE.html#c5-2">fcitx-addon CORE §5.2</a> 与 <a href="frontends/windows/CORE.html#c5-2">windows CORE §5.2</a>。</li>
-  <li>硬切分后的 Finalizing 期间再次 Start 不立即分配段：daemon 保持采集并记录 <code>pending_start</code>，旧段 Final 后启动新段；pipeline 会重放这段时间的有界预录。</li>
-  <li>上一段的 Final 先于下一段的 <code>SegmentStarted</code> 广播；Finalizing、失败与回退细节见 <a href="crates/voimed/CORE.html#c5-5">voimed CORE §5.5</a>。</li>
+  <li>Finalize 在独立线程串行执行，不阻塞 Start / 录音；等待队列最多 5 条，正常连续说话时通常只有 0–1 条。队列满时丢弃最旧任务并广播 <code>segment_dropped</code>。</li>
+  <li>旧段 Final 可能晚于新段 <code>SegmentStarted</code>；平台前端按 <code>segment_id</code> 保留旧目标，收到旧 Final 后仍提交到原目标。</li>
   <li>整段丢弃通过 <code>Error{code:"segment_dropped", segment_id}</code> 通知；前端是否清理临时文本或提示用户由前端决定。</li>
   <li>核心内部的音频、VAD、Preview 与 CPU Final 顺序见 <a href="crates/voime-core/CORE.html#c5">voime-core CORE §5</a>。</li>
 </ul>

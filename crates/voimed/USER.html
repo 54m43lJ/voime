@@ -39,7 +39,7 @@
   <tr><td>阶段（Phase）</td><td><code>idle</code> / <code>recording</code> / <code>finalizing</code>；由 daemon 维护并广播。</td></tr>
   <tr><td>Final 后端</td><td><code>cpu</code> / <code>qwen3</code>，由 <code>final.backend</code> 配置决定；默认 <code>cpu</code>。</td></tr>
   <tr><td>GPU worker</td><td>Qwen 的独立 Final 推理进程；daemon 只在配置选中 <code>qwen3</code> 时启动。</td></tr>
-  <tr><td>Finalizing</td><td>语音段结束到 Final 或丢弃结果到达之间的状态；期间不再产生新的 Partial。PTT / Toggle 硬切分后的 Finalizing 保持音频采集，新的 Start 可以排队并复用这段预录。</td></tr>
+  <tr><td>Finalizing</td><td>语音段结束到 Final 或丢弃结果到达之间的状态；期间不再产生新的 Partial。Finalize 在后台线程串行执行，不阻塞新的 Start / 录音；等待队列最多 5 条。</td></tr>
   <tr><td>广播</td><td>向所有已连接客户端发送 <code>ServerMessage</code>。</td></tr>
   <tr><td>Snapshot</td><td>连接时返回的全量状态；字段见 <a href="../voime-ipc/USER.html#u4-3">voime-ipc USER §4.3</a>。</td></tr>
   <tr><td>历史（transcript）</td><td>daemon 内存中的最终结果列表；TUI 重连可恢复，daemon 退出丢失。</td></tr>
@@ -55,7 +55,7 @@
   <tr><td>模式所有权</td><td>Mode / Hotkey 来自前端 <code>Hello</code> / <code>Configure</code>；daemon 只保存并消费，不解析命令行模式。</td></tr>
   <tr><td>Final 后端所有权</td><td><code>final.backend</code> 只来自配置文件；daemon 不提供 <code>--backend</code>，也不接受 IPC 热切换。默认 <code>cpu</code>，安装 GPU 不自动切换。</td></tr>
   <tr><td>配置读取时机</td><td>daemon 启动时读取一次 <code>final.backend</code>；切换配置后必须重启 daemon，运行中不重新读取。</td></tr>
-  <tr><td>单活动段</td><td>同一时刻只有一个 <code>current_segment</code>；会话可以有多个段，但段之间由 daemon 串行分配和收尾。活动会话期间新的 Start 返回 <code>busy</code>；硬切分后的 Finalizing 期间没有活动会话，新的 Start 排队到旧段收尾后开始。</td></tr>
+  <tr><td>单活动段</td><td>同一时刻只有一个正在录音的 <code>current_segment</code>；已结束段的 Final 在后台队列中串行执行，可与新录音重叠。活动会话期间新的 Start 返回 <code>busy</code>；硬切分后的 Finalizing 期间没有活动会话，新的 Start 立即开始新录音。</td></tr>
   <tr><td>ID 分配</td><td>daemon 递增分配 <code>segment_id</code>；客户端传入的 ID 只是提示；<code>SegmentStarted</code> 是权威值。</td></tr>
   <tr><td>Stop 匹配</td><td><code>Stop</code> 在 PTT / Toggle 下是会话硬切分，忽略 ID；Continuous 下非零 ID 必须匹配当前段，0 表示当前段。</td></tr>
   <tr><td>PTT / Toggle 会话</td><td>VAD 在会话中连续软切分多个段；每段 Final 后会话保持，直到 PTT 松开、Toggle 再按、目标失焦或 daemon 断线。</td></tr>
@@ -131,9 +131,9 @@ backend = "cpu"       # cpu | qwen3</code></pre>
   <tr><th>消息</th><th>前置条件</th><th>daemon 行为</th></tr>
   <tr><td><code>Hello</code></td><td>连接后的第一条消息。</td><td>校验版本与角色；<code>frontend</code> 连接更新前端状态 / Mode / Hotkey 并广播 Snapshot；其他角色返回 Snapshot。</td></tr>
   <tr><td><code>Configure</code></td><td>客户端角色为 <code>frontend</code>。</td><td>更新 Mode / Hotkey；Mode 变化时，Idle 且无活动会话立即应用，否则结束当前段并暂存新模式，Final / 丢弃后应用；切换清空旧会话的临时文本、待处理音频与 Preview；广播 Snapshot。不处理 Final 后端。</td></tr>
-  <tr><td><code>Start</code></td><td>无活动会话，且 Phase=Idle 或 Finalizing。</td><td>Idle 立即开启会话、分配 <code>segment_id</code>、进入 Recording、启动 pipeline 并广播 <code>SegmentStarted</code> / <code>State</code>。Finalizing 时记录 <code>pending_start</code>，旧段 Final / 丢弃后立即开启；Finalizing 期间保持音频采集，pipeline 的有界预录会进入新段。</td></tr>
+  <tr><td><code>Start</code></td><td>无活动会话；Phase=Idle 或 Finalizing。</td><td>立即开启会话、分配 <code>segment_id</code>、进入 Recording、启动 pipeline 并广播 <code>SegmentStarted</code> / <code>State</code>。Finalizing 时旧段 Final 已在后台队列中执行，不等待结果；旧 Final 可能晚于新 <code>SegmentStarted</code> 到达。</td></tr>
   <tr><td><code>Stop</code></td><td>PTT / Toggle 会话活动；或 Continuous 正在 Recording。</td><td>PTT / Toggle：硬切分，忽略 ID；Recording 时结束当前段并进入 Finalizing，Finalizing 时不产生下一段。Continuous：校验 ID 后停止当前段。</td></tr>
-  <tr><td><code>Toggle</code></td><td>Mode=ptt / toggle；无活动会话，或会话活动。</td><td>无活动会话时等同 Start（Finalizing 期间同样排队到旧段收尾后）；会话活动时等同 Stop；Finalizing 也可关闭会话，不返回 <code>busy</code>。</td></tr>
+  <tr><td><code>Toggle</code></td><td>Mode=ptt / toggle；无活动会话，或会话活动。</td><td>无活动会话时等同 Start（Finalizing 时也立即开始新会话）；会话活动时等同 Stop；Finalizing 也可关闭会话，不返回 <code>busy</code>。</td></tr>
   <tr><td><code>ClearHistory</code></td><td>任意角色。</td><td>清空历史，保留当前段 / partial；广播 <code>HistoryCleared</code>。</td></tr>
   <tr><td><code>Status</code></td><td>任意角色。</td><td>返回 <code>Status</code> 快照；字段形状保持不变，不新增 backend / worker 字段。</td></tr>
   <tr><td><code>Diagnostics</code></td><td>客户端角色为 <code>control</code>。</td><td>只读返回所选 Final 后端与 worker 状态；不启动 / 重启 worker，不读日志，不修改配置；其他角色返回 <code>invalid_message</code>。</td></tr>

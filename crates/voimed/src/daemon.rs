@@ -1,3 +1,7 @@
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -15,26 +19,347 @@ use crate::backend::BackendId;
 use crate::config::Config;
 use crate::ipc_server::{IpcServer, ServerEvent};
 use crate::state::State;
-use crate::worker::{Worker, WorkerStatus};
+use crate::worker::{ReadyInfo, Worker, WorkerStatus};
+
+pub const FINALIZE_QUEUE_CAPACITY: usize = 5;
+
+struct FinalizeJob {
+    segment_id: u64,
+    segment: Segment,
+}
+
+struct FinalizeResult {
+    segment_id: u64,
+    result: Result<String, String>,
+}
+
+struct FinalizeQueue {
+    jobs: VecDeque<FinalizeJob>,
+    inflight: bool,
+}
+
+impl FinalizeQueue {
+    fn new() -> Self {
+        Self {
+            jobs: VecDeque::new(),
+            inflight: false,
+        }
+    }
+
+    fn pending(&self) -> usize {
+        self.jobs.len() + usize::from(self.inflight)
+    }
+
+    fn push(&mut self, job: FinalizeJob) -> Option<FinalizeJob> {
+        let dropped = if self.jobs.len() >= FINALIZE_QUEUE_CAPACITY {
+            self.jobs.pop_front()
+        } else {
+            None
+        };
+        self.jobs.push_back(job);
+        dropped
+    }
+
+    fn next(&mut self) -> Option<FinalizeJob> {
+        if self.inflight {
+            return None;
+        }
+        let job = self.jobs.pop_front();
+        if job.is_some() {
+            self.inflight = true;
+        }
+        job
+    }
+
+    fn complete(&mut self) {
+        self.inflight = false;
+    }
+}
+
+#[derive(Clone)]
+struct WorkerShared {
+    status: Arc<Mutex<WorkerStatus>>,
+    ready: Arc<Mutex<Option<ReadyInfo>>>,
+    error: Arc<Mutex<Option<String>>>,
+}
+
+impl WorkerShared {
+    fn new(status: WorkerStatus, ready: Option<ReadyInfo>, error: Option<String>) -> Self {
+        Self {
+            status: Arc::new(Mutex::new(status)),
+            ready: Arc::new(Mutex::new(ready)),
+            error: Arc::new(Mutex::new(error)),
+        }
+    }
+
+    fn update(&self, status: WorkerStatus, ready: Option<ReadyInfo>, error: Option<String>) {
+        *lock(&self.status) = status;
+        *lock(&self.ready) = ready;
+        *lock(&self.error) = error;
+    }
+
+    fn snapshot(&self) -> (WorkerStatus, Option<ReadyInfo>, Option<String>) {
+        (
+            *lock(&self.status),
+            lock(&self.ready).clone(),
+            lock(&self.error).clone(),
+        )
+    }
+}
+
+struct Finalizer {
+    jobs: Option<crossbeam_channel::Sender<FinalizeJob>>,
+    results: crossbeam_channel::Receiver<FinalizeResult>,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Finalizer {
+    fn spawn(
+        backend: BackendId,
+        finalizer: Final,
+        worker: Option<Worker>,
+        shared: WorkerShared,
+    ) -> anyhow::Result<Self> {
+        let (jobs_tx, jobs_rx) = crossbeam_channel::unbounded();
+        let (results_tx, results_rx) = crossbeam_channel::unbounded();
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread = std::thread::Builder::new()
+            .name("voime-finalizer".to_string())
+            .spawn(move || {
+                finalize_loop(
+                    backend,
+                    finalizer,
+                    worker,
+                    shared,
+                    jobs_rx,
+                    results_tx,
+                    thread_stop,
+                );
+            })
+            .context("创建 Finalizer 线程失败")?;
+        Ok(Self {
+            jobs: Some(jobs_tx),
+            results: results_rx,
+            stop,
+            thread: Some(thread),
+        })
+    }
+
+    fn submit(&self, job: FinalizeJob) -> anyhow::Result<()> {
+        let sender = self.jobs.as_ref().context("Finalizer 已关闭")?;
+        sender
+            .send(job)
+            .map_err(|_| anyhow::anyhow!("Finalizer 线程已退出"))
+    }
+
+    fn results(&self) -> &crossbeam_channel::Receiver<FinalizeResult> {
+        &self.results
+    }
+
+    fn shutdown(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.jobs.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn finalize_loop(
+    backend: BackendId,
+    mut finalizer: Final,
+    mut worker: Option<Worker>,
+    shared: WorkerShared,
+    jobs: crossbeam_channel::Receiver<FinalizeJob>,
+    results: crossbeam_channel::Sender<FinalizeResult>,
+    stop: Arc<AtomicBool>,
+) {
+    let mut worker_status = worker
+        .as_ref()
+        .map(Worker::status)
+        .unwrap_or(WorkerStatus::Unavailable);
+    let mut worker_error = shared.snapshot().2;
+    let mut worker_failures = 0;
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        match jobs.recv_timeout(Duration::from_millis(500)) {
+            Ok(job) => {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let result = transcribe(
+                    backend,
+                    &mut finalizer,
+                    &mut worker,
+                    &mut worker_status,
+                    &mut worker_error,
+                    &mut worker_failures,
+                    &job.segment.samples,
+                );
+                let ready = if worker_status == WorkerStatus::Unavailable {
+                    None
+                } else {
+                    worker
+                        .as_ref()
+                        .and_then(|worker| worker.ready_info().cloned())
+                };
+                shared.update(worker_status, ready, worker_error.clone());
+                if results
+                    .send(FinalizeResult {
+                        segment_id: job.segment_id,
+                        result: result.map_err(|error| format!("{error:#}")),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                if let Some(worker) = worker.as_mut() {
+                    let alive = worker.is_alive();
+                    if !alive {
+                        worker_status = worker.status();
+                        worker_error = worker.last_error().map(str::to_string);
+                    }
+                    let ready = if alive {
+                        worker.ready_info().cloned()
+                    } else {
+                        None
+                    };
+                    shared.update(worker_status, ready, worker_error.clone());
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    if let Some(worker) = worker.take() {
+        worker.shutdown();
+    }
+}
+
+fn transcribe(
+    backend: BackendId,
+    finalizer: &mut Final,
+    worker: &mut Option<Worker>,
+    worker_status: &mut WorkerStatus,
+    worker_error: &mut Option<String>,
+    worker_failures: &mut u32,
+    samples: &[f32],
+) -> anyhow::Result<String> {
+    match backend {
+        BackendId::Cpu => finalizer.transcribe(samples),
+        BackendId::Qwen3 => transcribe_gpu(
+            backend,
+            finalizer,
+            worker,
+            worker_status,
+            worker_error,
+            worker_failures,
+            samples,
+        ),
+    }
+}
+
+fn transcribe_gpu(
+    backend: BackendId,
+    finalizer: &mut Final,
+    worker: &mut Option<Worker>,
+    worker_status: &mut WorkerStatus,
+    worker_error: &mut Option<String>,
+    worker_failures: &mut u32,
+    samples: &[f32],
+) -> anyhow::Result<String> {
+    if worker.is_none() || *worker_status == WorkerStatus::Unavailable {
+        return fallback_cpu(
+            finalizer,
+            samples,
+            anyhow::anyhow!("{} worker 不可用", backend),
+        );
+    }
+    let Some(worker) = worker.as_mut() else {
+        unreachable!("worker checked");
+    };
+    match worker.transcribe(samples) {
+        Ok(text) => {
+            *worker_status = worker.status();
+            *worker_error = None;
+            *worker_failures = 0;
+            Ok(text)
+        }
+        Err(error) => {
+            vlog!("gpu worker {} failed: {error:#}", backend);
+            *worker_error = Some(format!("{error:#}"));
+            *worker_failures = worker_failures.saturating_add(1);
+            if *worker_failures >= crate::worker::MAX_RESTARTS {
+                vlog!(
+                    "gpu worker {} unavailable: {} consecutive failures",
+                    backend,
+                    *worker_failures
+                );
+                *worker_status = WorkerStatus::Unavailable;
+            } else {
+                let backoff = Duration::from_millis(
+                    100u64.saturating_mul(1 << (*worker_failures - 1).min(4)),
+                );
+                std::thread::sleep(backoff);
+                if let Err(restart) = worker.restart() {
+                    vlog!("gpu worker {} restart failed: {restart:#}", backend);
+                    *worker_status = WorkerStatus::Unavailable;
+                    *worker_error = Some(format!("{restart:#}"));
+                } else {
+                    *worker_status = worker.status();
+                    *worker_error = None;
+                }
+            }
+            fallback_cpu(finalizer, samples, error)
+        }
+    }
+}
+
+fn fallback_cpu(
+    finalizer: &mut Final,
+    samples: &[f32],
+    error: anyhow::Error,
+) -> anyhow::Result<String> {
+    vlog!("cpu fallback: {error:#}");
+    let started = Instant::now();
+    let result = finalizer.transcribe(samples);
+    let elapsed = started.elapsed().as_millis() as u64;
+    match &result {
+        Ok(text) => vlog!(
+            "cpu fallback result latency_ms={elapsed} chars={}",
+            text.chars().count()
+        ),
+        Err(cpu_error) => vlog!("cpu fallback failed after {elapsed} ms: {cpu_error:#}"),
+    }
+    result
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 pub struct Daemon {
     _config: Config,
     state: State,
     pipeline: Pipeline,
-    finalizer: Final,
+    finalizer: Finalizer,
+    worker_shared: WorkerShared,
     audio: CaptureHandle,
     ipc: IpcServer,
     backend: BackendId,
-    worker: Option<Worker>,
-    worker_status: WorkerStatus,
-    worker_error: Option<String>,
-    worker_failures: u32,
     current_segment: Option<u64>,
+    awaiting_segments: VecDeque<u64>,
+    finalize: FinalizeQueue,
     next_segment: u64,
     pending_mode: Option<Mode>,
     pending_stop: bool,
-    pending_start: Option<(u64, TriggerSource)>,
-    pending_start_stop: bool,
     session_active: bool,
     shutdown: bool,
     fatal: Option<anyhow::Error>,
@@ -49,39 +374,42 @@ impl Daemon {
         ipc: IpcServer,
         worker: Option<Worker>,
         worker_error: Option<String>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let backend = config.final_config.backend;
         let worker_status = worker
             .as_ref()
             .map(|worker| worker.status())
             .unwrap_or(WorkerStatus::Unavailable);
-        Self {
+        let ready = worker
+            .as_ref()
+            .and_then(|worker| worker.ready_info().cloned());
+        let worker_shared = WorkerShared::new(worker_status, ready, worker_error);
+        let finalizer = Finalizer::spawn(backend, finalizer, worker, worker_shared.clone())?;
+        Ok(Self {
             _config: config,
             state: State::default(),
             pipeline,
             finalizer,
+            worker_shared,
             audio,
             ipc,
             backend,
-            worker,
-            worker_status,
-            worker_error,
-            worker_failures: 0,
             current_segment: None,
+            awaiting_segments: VecDeque::new(),
+            finalize: FinalizeQueue::new(),
             next_segment: 1,
             pending_mode: None,
             pending_stop: false,
-            pending_start: None,
-            pending_start_stop: false,
             session_active: false,
             shutdown: false,
             fatal: None,
-        }
+        })
     }
 
     pub fn run(mut self) -> anyhow::Result<()> {
         let ipc_events = self.ipc.events().clone();
         let pipeline_events = self.pipeline.events.clone();
+        let finalize_events = self.finalizer.results().clone();
         if let Err(error) = self.sync_audio_result() {
             self.fail(error);
         }
@@ -96,13 +424,15 @@ impl Daemon {
                     Ok(event) => self.on_pipeline(event),
                     Err(_) => break,
                 },
+                recv(finalize_events) -> message => match message {
+                    Ok(result) => self.on_finalize_result(result),
+                    Err(_) => break,
+                },
                 default(Duration::from_millis(100)) => {}
             }
         }
 
-        if let Some(worker) = self.worker.take() {
-            worker.shutdown();
-        }
+        self.finalizer.shutdown();
         self.ipc.broadcast(&ServerMessage::Bye {});
         // Give the writer threads a chance to flush the final frame before
         // the streams are shut down.
@@ -222,10 +552,6 @@ impl Daemon {
                     self.request_stop(client_id, segment_id);
                     return;
                 }
-                if self.pending_start.is_some() {
-                    self.pending_start_stop = true;
-                    return;
-                }
                 self.request_start(client_id, source);
             }
             ClientMessage::ClearHistory {} => {
@@ -301,27 +627,20 @@ impl Daemon {
     }
 
     fn request_start(&mut self, client_id: u64, source: TriggerSource) {
-        if self.session_active || self.state.phase == Phase::Recording {
+        if self.session_active {
             self.send_error(client_id, ErrorCode::Busy);
             return;
         }
-        if self.state.phase == Phase::Finalizing {
-            // The previous segment is still being finalized. Audio capture
-            // stays active and the pipeline keeps a bounded pre-roll; start
-            // the new session as soon as the old Final / drop is delivered.
-            if self.pending_start.is_none() {
-                self.pending_start = Some((client_id, source));
-            } else {
-                self.send_error(client_id, ErrorCode::Busy);
-            }
-            return;
-        }
-        if self.state.phase != Phase::Idle {
+        if self.state.phase == Phase::Recording {
             self.send_error(client_id, ErrorCode::Busy);
             return;
         }
-        self.pending_start = None;
-        self.pending_start_stop = false;
+        // A hard stop may have ended the session before the pipeline has
+        // delivered the old SegmentReady. Detach its ID so the new session can
+        // start recording while finalization continues in the background.
+        if let Some(segment_id) = self.current_segment.take() {
+            self.awaiting_segments.push_back(segment_id);
+        }
         if let Err(error) = self.start_session(source) {
             self.fail(error);
         }
@@ -347,13 +666,6 @@ impl Daemon {
     }
 
     fn request_stop(&mut self, client_id: u64, segment_id: u64) {
-        if self.pending_start.is_some() {
-            // Start and Stop both arrived while the previous segment was
-            // finalizing; start the captured pre-roll and finish it once the
-            // old result has been delivered.
-            self.pending_start_stop = true;
-            return;
-        }
         let mode = self.effective_mode();
         if mode == Mode::Continuous {
             if segment_id != 0 && Some(segment_id) != self.current_segment {
@@ -402,21 +714,6 @@ impl Daemon {
         self.sync_audio();
     }
 
-    fn start_pending(&mut self) -> bool {
-        let Some((_, source)) = self.pending_start.take() else {
-            return false;
-        };
-        let stop_after = std::mem::take(&mut self.pending_start_stop);
-        if let Err(error) = self.start_session(source) {
-            self.fail(error);
-            return true;
-        }
-        if stop_after {
-            self.request_stop(0, 0);
-        }
-        true
-    }
-
     fn on_pipeline(&mut self, event: PipelineEvent) {
         match event {
             PipelineEvent::Recording(true) => {
@@ -441,9 +738,7 @@ impl Daemon {
                         source: continuation_source(self.state.mode),
                     });
                 }
-                if self.state.phase != Phase::Finalizing {
-                    self.state.phase = Phase::Recording;
-                }
+                self.state.phase = Phase::Recording;
                 self.broadcast_state();
             }
             PipelineEvent::Recording(false) => {
@@ -464,33 +759,36 @@ impl Daemon {
                 }
             }
             PipelineEvent::SegmentReady(segment) => {
+                let Some(segment_id) = self.take_ready_segment() else {
+                    vlog!("pipeline segment-ready without active segment");
+                    self.refresh_finalize_phase();
+                    return;
+                };
                 vlog!(
-                    "pipeline segment-ready samples={} {}..{}",
+                    "pipeline segment-ready segment={segment_id} samples={} {}..{}",
                     segment.samples.len(),
                     segment.start_ms,
                     segment.end_ms
                 );
-                if self.current_segment.is_none() {
-                    if self.state.phase == Phase::Finalizing {
-                        self.state.phase = Phase::Idle;
-                        self.broadcast_state();
-                        if !self.session_active {
-                            self.apply_pending_mode();
-                        }
-                        if !self.start_pending() {
-                            self.sync_audio();
-                        }
-                    }
+                if segment.samples.is_empty() {
+                    self.broadcast_dropped(segment_id, "空语音段");
+                    self.refresh_finalize_phase();
                     return;
                 }
-                self.state.phase = Phase::Finalizing;
-                if let Err(error) = self.finalize(segment) {
-                    self.drop_current(&format!("{error:#}"));
-                }
+                self.enqueue_finalize(FinalizeJob {
+                    segment_id,
+                    segment,
+                });
             }
             PipelineEvent::SegmentDropped { reason } => {
                 vlog!("pipeline segment-dropped: {reason}");
-                self.drop_current(&reason);
+                if let Some(segment_id) = self.take_ready_segment() {
+                    self.broadcast_dropped(segment_id, &reason);
+                }
+                if self.current_segment.is_none() {
+                    self.state.partial = None;
+                }
+                self.refresh_finalize_phase();
             }
             PipelineEvent::Fatal(reason) => self.fatal = Some(anyhow::anyhow!(reason)),
         }
@@ -499,132 +797,85 @@ impl Daemon {
         }
     }
 
-    fn finalize(&mut self, segment: Segment) -> anyhow::Result<()> {
-        let Some(segment_id) = self.current_segment else {
-            return Ok(());
-        };
-        if segment.samples.is_empty() {
-            self.drop_current("空语音段");
-            return Ok(());
+    fn take_ready_segment(&mut self) -> Option<u64> {
+        self.awaiting_segments
+            .pop_front()
+            .or_else(|| self.current_segment.take())
+    }
+
+    fn enqueue_finalize(&mut self, job: FinalizeJob) {
+        if let Some(dropped) = self.finalize.push(job) {
+            self.broadcast_dropped(dropped.segment_id, "Final 队列已满");
         }
-        if self.state.phase != Phase::Finalizing {
-            return Ok(());
-        }
-        let text = match self.backend {
-            BackendId::Cpu => self.transcribe_cpu(&segment.samples),
-            BackendId::Qwen3 => self.transcribe_gpu(&segment.samples),
-        };
-        let text = match text {
-            Ok(text) => text,
-            Err(error) => {
-                vlog!("segment {segment_id} inference failed: {error:#}");
-                self.drop_current("推理失败");
-                return Ok(());
+        self.start_next_finalize();
+        self.refresh_finalize_phase();
+    }
+
+    fn start_next_finalize(&mut self) {
+        if let Some(job) = self.finalize.next() {
+            if let Err(error) = self.finalizer.submit(job) {
+                self.fail(error);
             }
-        };
-        if text.trim().is_empty() {
-            self.drop_current("空识别结果");
-            return Ok(());
         }
-        vlog!("final segment {segment_id} chars={}", text.chars().count());
-        self.state.transcript.push(text.clone());
-        self.state.partial = None;
-        self.ipc
-            .broadcast(&ServerMessage::Final { segment_id, text });
-        self.current_segment = None;
-        self.state.phase = Phase::Idle;
-        self.broadcast_state();
+    }
+
+    fn on_finalize_result(&mut self, result: FinalizeResult) {
+        self.finalize.complete();
+        match result.result {
+            Ok(text) if !text.trim().is_empty() => {
+                vlog!(
+                    "final segment {} chars={}",
+                    result.segment_id,
+                    text.chars().count()
+                );
+                self.state.transcript.push(text.clone());
+                self.ipc.broadcast(&ServerMessage::Final {
+                    segment_id: result.segment_id,
+                    text,
+                });
+            }
+            Ok(_) => self.broadcast_dropped(result.segment_id, "空识别结果"),
+            Err(error) => self.broadcast_dropped(result.segment_id, &format!("推理失败：{error}")),
+        }
+        if self.current_segment.is_none() {
+            self.state.partial = None;
+        }
+        self.start_next_finalize();
+        self.refresh_finalize_phase();
+    }
+
+    fn broadcast_dropped(&mut self, segment_id: u64, reason: &str) {
+        vlog!("segment {segment_id} dropped: {reason}");
+        self.ipc.broadcast(&ServerMessage::Error {
+            code: ErrorCode::SegmentDropped,
+            segment_id: Some(segment_id),
+            message: reason.to_string(),
+        });
+    }
+
+    fn refresh_finalize_phase(&mut self) {
+        if self.current_segment.is_some() {
+            if self.state.phase != Phase::Recording {
+                self.state.phase = Phase::Recording;
+                self.broadcast_state();
+            }
+            return;
+        }
+        if self.finalize.pending() > 0 {
+            if self.state.phase != Phase::Finalizing {
+                self.state.phase = Phase::Finalizing;
+                self.broadcast_state();
+            }
+            return;
+        }
+        if self.state.phase != Phase::Idle {
+            self.state.phase = Phase::Idle;
+            self.broadcast_state();
+        }
         if !self.session_active {
             self.apply_pending_mode();
         }
-        if !self.start_pending() {
-            self.sync_audio();
-        }
-        Ok(())
-    }
-
-    fn transcribe_cpu(&mut self, samples: &[f32]) -> anyhow::Result<String> {
-        self.finalizer.transcribe(samples)
-    }
-
-    fn transcribe_gpu(&mut self, samples: &[f32]) -> anyhow::Result<String> {
-        if self.worker.is_none() || self.worker_status == WorkerStatus::Unavailable {
-            return self.fallback_cpu(samples, &anyhow::anyhow!("{} worker 不可用", self.backend));
-        }
-        let Some(worker) = self.worker.as_mut() else {
-            return self.fallback_cpu(samples, &anyhow::anyhow!("{} worker 不可用", self.backend));
-        };
-        match worker.transcribe(samples) {
-            Ok(text) => {
-                self.worker_status = worker.status();
-                self.worker_error = None;
-                self.worker_failures = 0;
-                Ok(text)
-            }
-            Err(error) => {
-                vlog!("gpu worker {} failed: {error:#}", self.backend);
-                self.worker_error = Some(format!("{error:#}"));
-                self.worker_failures = self.worker_failures.saturating_add(1);
-                if self.worker_failures >= crate::worker::MAX_RESTARTS {
-                    vlog!(
-                        "gpu worker {} unavailable: {} consecutive failures",
-                        self.backend,
-                        self.worker_failures
-                    );
-                    self.worker_status = WorkerStatus::Unavailable;
-                } else {
-                    let backoff = std::time::Duration::from_millis(
-                        100u64.saturating_mul(1 << (self.worker_failures - 1).min(4)),
-                    );
-                    std::thread::sleep(backoff);
-                    if let Err(restart) = worker.restart() {
-                        vlog!("gpu worker {} restart failed: {restart:#}", self.backend);
-                        self.worker_status = WorkerStatus::Unavailable;
-                        self.worker_error = Some(format!("{restart:#}"));
-                    } else {
-                        self.worker_status = worker.status();
-                        self.worker_error = None;
-                    }
-                }
-                self.fallback_cpu(samples, &error)
-            }
-        }
-    }
-
-    fn fallback_cpu(&mut self, samples: &[f32], error: &anyhow::Error) -> anyhow::Result<String> {
-        vlog!("cpu fallback: {error:#}");
-        let started = Instant::now();
-        let result = self.finalizer.transcribe(samples);
-        let elapsed = started.elapsed().as_millis() as u64;
-        match &result {
-            Ok(text) => vlog!(
-                "cpu fallback result latency_ms={elapsed} chars={}",
-                text.chars().count()
-            ),
-            Err(cpu_error) => vlog!("cpu fallback failed after {elapsed} ms: {cpu_error:#}"),
-        }
-        result
-    }
-
-    fn drop_current(&mut self, reason: &str) {
-        let segment_id = self.current_segment.take();
-        if let Some(segment_id) = segment_id {
-            vlog!("segment {segment_id} dropped: {reason}");
-            self.ipc.broadcast(&ServerMessage::Error {
-                code: ErrorCode::SegmentDropped,
-                segment_id: Some(segment_id),
-                message: reason.to_string(),
-            });
-        }
-        self.state.partial = None;
-        self.state.phase = Phase::Idle;
-        self.broadcast_state();
-        if !self.session_active {
-            self.apply_pending_mode();
-        }
-        if !self.start_pending() {
-            self.sync_audio();
-        }
+        self.sync_audio();
     }
 
     fn on_frontend_disconnected(&mut self) {
@@ -633,8 +884,6 @@ impl Daemon {
         self.session_active = false;
         self.pending_stop = false;
         self.pending_mode = None;
-        self.pending_start = None;
-        self.pending_start_stop = false;
         if self.state.mode != Some(Mode::Ptt) {
             self.state.apply_mode(Mode::Ptt);
         }
@@ -676,7 +925,7 @@ impl Daemon {
     }
 
     fn apply_pending_mode(&mut self) {
-        if self.state.phase != Phase::Idle {
+        if self.state.phase != Phase::Idle || self.finalize.pending() > 0 {
             return;
         }
         if let Some(mode) = self.pending_mode.take() {
@@ -685,9 +934,7 @@ impl Daemon {
             self.session_active = false;
             self.state.apply_mode(mode);
             self.apply_pipeline_mode();
-            if self.pending_start.is_none() {
-                self.sync_audio();
-            }
+            self.sync_audio();
         }
     }
 
@@ -727,32 +974,11 @@ impl Daemon {
                 worker: None,
             };
         }
-        let (state, ready, error) = match self.worker.as_mut() {
-            Some(worker) => {
-                let alive = worker.is_alive();
-                let state = if alive {
-                    worker_state(worker.status())
-                } else {
-                    WorkerState::Unavailable
-                };
-                if !alive {
-                    self.worker_status = WorkerStatus::Unavailable;
-                }
-                (
-                    state,
-                    worker.ready_info().cloned(),
-                    worker
-                        .last_error()
-                        .map(str::to_string)
-                        .or_else(|| self.worker_error.clone()),
-                )
-            }
-            None => (WorkerState::Unavailable, None, self.worker_error.clone()),
-        };
+        let (status, ready, error) = self.worker_shared.snapshot();
         ServerMessage::Diagnostics {
             backend,
             worker: Some(WorkerDiagnostics {
-                state,
+                state: worker_state(status),
                 runtime: ready.as_ref().map(|info| info.runtime.clone()),
                 device: ready.as_ref().map(|info| info.device.clone()),
                 vram_mb: ready.as_ref().map(|info| info.vram_mb).unwrap_or(0),
@@ -843,6 +1069,32 @@ mod tests {
             TriggerSource::Toggle
         );
         assert_eq!(continuation_source(None), TriggerSource::Hold);
+    }
+
+    fn finalize_job(segment_id: u64) -> FinalizeJob {
+        FinalizeJob {
+            segment_id,
+            segment: Segment {
+                samples: vec![0.0; 1],
+                start_ms: 0,
+                end_ms: 10,
+            },
+        }
+    }
+
+    #[test]
+    fn finalize_queue_keeps_at_most_five_waiting() {
+        let mut queue = FinalizeQueue::new();
+        for segment_id in 1..=6 {
+            queue.push(finalize_job(segment_id));
+        }
+        assert_eq!(queue.pending(), 5);
+        let first = queue.next().expect("queue not empty");
+        assert_eq!(first.segment_id, 2);
+        assert_eq!(queue.pending(), 5);
+        queue.complete();
+        let second = queue.next().expect("queue not empty");
+        assert_eq!(second.segment_id, 3);
     }
 
     #[test]

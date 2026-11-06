@@ -135,7 +135,7 @@
   </tr>
   <tr>
     <td>Finalizing 计算</td>
-    <td>Final 触发后不再进行 Preview 推理；<code>cpu</code> Final 只执行一次 CPU 推理，<code>qwen3</code> Final 不再调用 SenseVoice ASR。硬切分后的 Finalizing 保持采集，下一次 Start 会复用有界预录。</td>
+    <td>Final 触发后不再进行 Preview 推理；<code>cpu</code> Final 只执行一次 CPU 推理，<code>qwen3</code> Final 不再调用 SenseVoice ASR。Finalize 在后台队列中串行执行，不阻塞下一次录音；队列最多等待 5 条。</td>
   </tr>
   <tr>
     <td>前端不加载模型</td>
@@ -200,7 +200,7 @@
 <ul class="note">
   <li><code>ptt</code> 按下开启会话、松开硬切分；<code>toggle</code> 按一下开启、再按一下硬切分。</li>
   <li>会话保持期间，VAD 每次语音终点都是软切分：当前段进入 Finalizing 并提交，同时开始监听下一段；会话不结束。</li>
-  <li>硬切分后的 Finalizing 期间再次按下开始键可以直接开始下一句：daemon 保持采集并保存有界预录，旧段 Final 先提交，新段随后带着这段预录开始。</li>
+  <li>硬切分后的 Finalizing 不再阻塞新 Start：录音立即继续，Final 在后台队列中串行执行；旧段 Final 到达后仍提交到旧目标。等待队列最多 5 条，正常连续说话时通常只有 0–1 条。</li>
   <li>录音期间 SenseVoice 产生 Partial；Final 触发后停止产生新的 Partial 并取消未开始的 Preview 推理，保留最后一条 Partial。</li>
   <li>所选 Final 后端完成识别；GPU 失败时当前段回退 CPU SenseVoice。Final 产生后先清空临时文本，再提交。</li>
   <li>Toggle 会话在提交后保留空白临时窗口，直到 Toggle 关闭、目标失焦或断线；PTT 每段 Final 后清空，按住期间可继续下一段；Continuous 在 Final 后清空。</li>

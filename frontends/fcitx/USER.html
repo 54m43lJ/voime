@@ -65,7 +65,7 @@
   <tr><td>热键冲突</td><td>热键不得与 Fcitx trigger / alt-trigger / enumerate / preedit 切换键或合成器常用绑定重叠。</td></tr>
   <tr><td>目标绑定</td><td>PTT / Toggle 在按键事件中绑定会话目标，续段沿用；原目标失效则停止会话。Continuous 每段绑定当时聚焦的输入框。段内不再改变。</td></tr>
   <tr><td>目标失焦</td><td>目标失焦或销毁时不提交；清空临时窗口；PTT / Toggle 会话同时停止录音；最终结果保留在 daemon / TUI。</td></tr>
-  <tr><td>Finalizing</td><td>每段结束、进入 Finalizing 后停止刷新临时文本，保留最后一条 Partial，不清空、不提交；直到该段 Final 到达才清空并提交。软切分后继续下一段。Finalizing 期间可按下热键开始下一句：addon 先记下新目标，旧段 Final 提交后才切换，避免旧结果按新段 ID 丢弃。最终文本只来自所选 Final 后端。</td></tr>
+  <tr><td>Finalizing</td><td>每段结束、进入 Finalizing 后停止刷新临时文本，保留最后一条 Partial，不清空、不提交；直到该段 Final 到达才清空并提交。软切分后继续下一段。Finalizing 期间可按下热键立即开始下一句：旧目标按旧 <code>segment_id</code> 保留，旧 Final 到达后仍提交到原目标，新段目标不受影响。最终文本只来自所选 Final 后端。</td></tr>
   <tr><td>临时窗口</td><td>录音与 Finalizing 期间显示当前段文本；Finalizing 不再更新。Toggle 会话在 Final、空段或 ASR 错误后显示空白窗口，直到再次按热键关闭；PTT 每段 Final 后清空但按住期间继续下一段；目标失焦与 daemon 断线时清空。</td></tr>
   <tr><td>最终提交</td><td>Final 到达后先清空临时窗口，再调用 <code>commitString</code>；提交到目标输入框，不向其他窗口注入。</td></tr>
   <tr><td>不感知 GPU 后端</td><td>addon 不读取 <code>final.backend</code>，不区分 <code>cpu</code> / <code>qwen3</code>，不加载模型或 GPU runtime；只消费 daemon 广播的 Partial / Final。</td></tr>

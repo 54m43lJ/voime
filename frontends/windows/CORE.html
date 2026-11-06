@@ -352,28 +352,33 @@ frontend::on_message(Partial)
 
 frontend::on_message(Final)
 ├── 判断 message.segment_id == target.segment_id
-├── 判断 target::focused(&amp;target) → 否则 on_target_lost()
-├── 判断 Toggle 会话 active → Overlay::show_empty(&amp;target)
-├── 其他模式 → Overlay::hide()
-└── commit::commit(&amp;target, &amp;text)
+│   ├── 判断 target::focused(&amp;target) → 否则 on_target_lost()
+│   ├── 判断 Toggle 会话 active → Overlay::show_empty(&amp;target)
+│   ├── 其他模式 → Overlay::hide()
+│   └── commit::commit(&amp;target, &amp;text)
+└── 否则判断 pending_finals.remove(message.segment_id) → 对旧目标 commit::commit()
 
 frontend::on_message(Error)
-├── 判断 segment_dropped &amp;&amp; message.segment_id == target.segment_id
+├── 判断 segment_dropped &amp;&amp; message.segment_id 对应当前段
 │   ├── 判断 Toggle 会话 active → Overlay::show_empty(&amp;target)
 │   ├── 其他模式 → Overlay::hide()
 │   └── 清理当前段 / target
+├── 判断 segment_dropped &amp;&amp; pending_finals.contains(message.segment_id)
+│   └── pending_finals.remove(message.segment_id)
 ├── 判断 role_conflict / version_mismatch / invalid_message → on_disconnect()
 └── 判断 其他 code → 记录日志</code></pre>
 <ul class="note">
   <li>PTT 的 key-up 不依赖低级键盘钩子，由主循环用 <code>GetAsyncKeyState</code> 轮询；松开是硬切分，即使当前处于 Finalizing 也发送 Stop 关闭会话。</li>
-  <li>会话内 VAD 软切分续段不重新发送 Start；<code>SegmentStarted</code> 更新段 ID，目标沿用会话目标。Finalizing 期间允许再次按热键开始下一句：新目标先存入 <code>pending_target</code>，旧段 Final 提交后才在 <code>SegmentStarted</code> 切换，避免旧结果按新段 ID 丢弃。</li>
+  <li>会话内 VAD 软切分续段不重新发送 Start；<code>SegmentStarted</code> 把旧目标按旧 <code>segment_id</code> 存入 <code>pending_finals</code>，再切换到新目标。Finalizing 期间允许再次按热键立即开始下一句。</li>
+  <li>旧段 Final 可能晚于新段 <code>SegmentStarted</code>；从 <code>pending_finals</code> 取出旧目标后仍按原段提交。</li>
   <li>Finalizing 期间保留最后一条 Partial，不再更新；Final 或丢弃结果到达后清空浮层，Final 按模式提交。Final 的来源是 CPU 还是 GPU 不影响本路径。</li>
   <li>Configure 改变 Mode 时，前端清除 <code>ptt_active</code> / <code>toggle_active</code> / 热键按下标志；目标保留到旧段 Final / Error 后再清理，避免旧会话残留空白浮层或吞掉下一次热键。</li>
 </ul>
 
 <h3 id="c5-3">5.3 Continuous 与目标失效</h3>
 <pre><code>frontend::on_message(SegmentStarted)
-├── 判断 pending_target 且 current_segment.is_none() → target = pending_target
+├── 判断 current_segment 为旧 ID → pending_finals[旧 ID] = target
+├── 判断 pending_target.is_some() → target = pending_target
 ├── 判断 source == Continuous → target::capture()
 ├── 判断 PTT / Toggle 续段且原 target 失焦 → on_target_lost()
 └── 判断 target::focused → 保留会话目标；否则 on_target_lost()

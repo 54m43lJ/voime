@@ -13,6 +13,7 @@ mod settings;
 mod target;
 mod tray;
 
+use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -191,6 +192,7 @@ pub struct Frontend {
     overlay: Option<Overlay>,
     target: Option<Target>,
     pending_target: Option<Target>,
+    pending_finals: HashMap<u64, Target>,
     current_segment: Option<u64>,
     recording: bool,
     finalizing: bool,
@@ -216,6 +218,7 @@ impl Frontend {
             overlay: None,
             target: None,
             pending_target: None,
+            pending_finals: HashMap::new(),
             current_segment: None,
             recording: false,
             finalizing: false,
@@ -400,51 +403,57 @@ impl Frontend {
                 }
             }
             ServerMessage::Final { segment_id, text } => {
-                let Some(target) = self.target.clone() else {
-                    vlog!("Final seg={segment_id} 无目标，忽略");
-                    return;
-                };
-                if target.segment_id != segment_id {
-                    vlog!(
-                        "Final seg={segment_id} 与目标段 {:?} 不匹配",
-                        target.segment_id
-                    );
-                    if self.config.mode == Mode::Toggle && !self.toggle_active {
+                let current = self
+                    .target
+                    .as_ref()
+                    .is_some_and(|target| target.segment_id == segment_id);
+                if current {
+                    let target = self.target.clone().expect("current target checked");
+                    let keep_toggle_preview =
+                        self.config.mode == Mode::Toggle && self.toggle_active;
+                    let keep_ptt_target = self.config.mode == Mode::Ptt && self.ptt_active;
+                    self.current_segment = None;
+                    self.recording = false;
+                    self.finalizing = false;
+                    if !target::focused(&target) {
+                        vlog!("目标已失效，未提交 segment {segment_id}");
+                        self.on_target_lost();
+                        return;
+                    }
+                    if keep_toggle_preview {
+                        if let Some(overlay) = self.overlay.as_mut() {
+                            overlay.show_empty(&target);
+                        }
+                        self.target = Some(target.clone());
+                    } else if keep_ptt_target {
+                        if let Some(overlay) = self.overlay.as_mut() {
+                            overlay.hide();
+                        }
+                        self.target = Some(target.clone());
+                    } else {
                         self.target = None;
                         if let Some(overlay) = self.overlay.as_mut() {
                             overlay.hide();
                         }
                     }
+                    if !text.is_empty() {
+                        vlog!("提交文本 seg={segment_id} chars={}", text.len());
+                        if let Err(error) = commit(&target, &text) {
+                            vlog!("提交失败（segment {segment_id}）：{error:#}");
+                        }
+                    }
                     return;
                 }
-                let keep_toggle_preview = self.config.mode == Mode::Toggle && self.toggle_active;
-                let keep_ptt_target = self.config.mode == Mode::Ptt && self.ptt_active;
-                self.current_segment = None;
-                self.recording = false;
-                self.finalizing = false;
+                let Some(target) = self.pending_finals.remove(&segment_id) else {
+                    vlog!("Final seg={segment_id} 无匹配目标，忽略");
+                    return;
+                };
                 if !target::focused(&target) {
-                    vlog!("目标已失效，未提交 segment {segment_id}");
-                    self.on_target_lost();
+                    vlog!("旧段目标已失效，未提交 segment {segment_id}");
                     return;
-                }
-                if keep_toggle_preview {
-                    if let Some(overlay) = self.overlay.as_mut() {
-                        overlay.show_empty(&target);
-                    }
-                    self.target = Some(target.clone());
-                } else if keep_ptt_target {
-                    if let Some(overlay) = self.overlay.as_mut() {
-                        overlay.hide();
-                    }
-                    self.target = Some(target.clone());
-                } else {
-                    self.target = None;
-                    if let Some(overlay) = self.overlay.as_mut() {
-                        overlay.hide();
-                    }
                 }
                 if !text.is_empty() {
-                    vlog!("提交文本 seg={segment_id} chars={}", text.len());
+                    vlog!("提交旧段文本 seg={segment_id} chars={}", text.len());
                     if let Err(error) = commit(&target, &text) {
                         vlog!("提交失败（segment {segment_id}）：{error:#}");
                     }
@@ -464,10 +473,10 @@ impl Frontend {
                 }
                 ErrorCode::SegmentDropped => {
                     vlog!("daemon 丢弃语音段（{error_segment:?}）：{message}");
-                    if error_segment.is_none()
+                    let current = error_segment.is_none()
                         || error_segment == self.current_segment
-                        || error_segment == self.target.as_ref().map(|target| target.segment_id)
-                    {
+                        || error_segment == self.target.as_ref().map(|target| target.segment_id);
+                    if current {
                         self.recording = false;
                         self.finalizing = false;
                         self.current_segment = None;
@@ -489,6 +498,8 @@ impl Frontend {
                                 overlay.hide();
                             }
                         }
+                    } else if let Some(segment_id) = error_segment {
+                        self.pending_finals.remove(&segment_id);
                     }
                 }
                 ErrorCode::Busy => {
@@ -508,8 +519,16 @@ impl Frontend {
     }
 
     fn on_segment_started(&mut self, segment_id: u64, source: TriggerSource) {
-        if self.pending_target.is_some() && self.current_segment.is_none() {
-            let mut target = self.pending_target.take().expect("pending target checked");
+        if let Some(old_id) = self.current_segment {
+            if old_id != segment_id {
+                if let Some(target) = self.target.clone() {
+                    if target.segment_id == old_id {
+                        self.pending_finals.entry(old_id).or_insert(target);
+                    }
+                }
+            }
+        }
+        if let Some(mut target) = self.pending_target.take() {
             target.segment_id = segment_id;
             self.target = Some(target);
             self.current_segment = Some(segment_id);
@@ -724,6 +743,7 @@ impl Frontend {
         }
         self.target = None;
         self.pending_target = None;
+        self.pending_finals.clear();
         self.current_segment = None;
         self.recording = false;
         self.finalizing = false;

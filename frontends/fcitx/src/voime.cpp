@@ -327,9 +327,15 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
         if (!message.segmentId) {
             break;
         }
-        if (pendingTarget_ && !finalizing_) {
+        if (segmentId_ && *segmentId_ != *message.segmentId &&
+            target_.segment_id == *segmentId_) {
+            // The old segment may still have a Final in flight. Keep its
+            // target addressable by segment ID before switching to the new one.
+            pendingFinals_.try_emplace(*segmentId_, target_);
+        }
+        if (pendingTarget_) {
             // A Start sent while the previous segment was finalizing must not
-            // replace the old target until the old Final has been committed.
+            // replace the old target until its Final has been committed.
             target_ = *pendingTarget_;
             pendingTarget_.reset();
             pendingSegmentId_.reset();
@@ -412,28 +418,39 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
         }
         break;
     case ServerMessageType::Final: {
-        if (!message.segmentId || !segmentId_ ||
-            *message.segmentId != *segmentId_) {
+        if (!message.segmentId) {
             break;
         }
-        auto *inputContext = target_.get();
-        preview_.clear(inputContext);
-        if (inputContext && inputContext->hasFocus() && !message.text.empty()) {
-            inputContext->commitString(message.text);
-        }
-        starting_ = false;
-        recording_ = false;
-        finalizing_ = false;
-        if (toggleActive_) {
-            // Toggle keeps an empty window until the session is closed.
-            refreshTogglePreview();
-        } else if (holdActive_) {
-            // PTT is still held; the next SegmentStarted will reuse the
-            // session target.
-            clearPreview();
-        } else {
-            target_.ref.unwatch();
+        if (segmentId_ && *message.segmentId == *segmentId_) {
+            auto *inputContext = target_.get();
+            preview_.clear(inputContext);
+            if (inputContext && inputContext->hasFocus() && !message.text.empty()) {
+                inputContext->commitString(message.text);
+            }
+            starting_ = false;
+            recording_ = false;
+            finalizing_ = false;
+            if (toggleActive_) {
+                // Toggle keeps an empty window until the session is closed.
+                refreshTogglePreview();
+            } else if (holdActive_) {
+                // PTT is still held; the next SegmentStarted will reuse the
+                // session target.
+                clearPreview();
+            } else {
+                target_.ref.unwatch();
+            }
             segmentId_.reset();
+            break;
+        }
+        auto pending = pendingFinals_.find(*message.segmentId);
+        if (pending != pendingFinals_.end()) {
+            auto pendingTarget = pending->second;
+            pendingFinals_.erase(pending);
+            preview_.clear(pendingTarget.get());
+            if (pendingTarget.focused() && !message.text.empty()) {
+                pendingTarget.get()->commitString(message.text);
+            }
         }
         break;
     }
@@ -452,21 +469,24 @@ void VoimeAddon::onIpcMessage(const ServerMessage &message) {
             pendingSegmentId_.reset();
             starting_ = false;
         } else if (message.errorCode == "segment_dropped") {
-            if (!message.segmentId || !segmentId_ ||
-                *message.segmentId != *segmentId_) {
+            if (!message.segmentId) {
                 break;
             }
-            starting_ = false;
-            recording_ = false;
-            finalizing_ = false;
-            if (toggleActive_) {
-                refreshTogglePreview();
-            } else {
-                clearPreview();
-                if (!holdActive_) {
-                    target_.ref.unwatch();
-                    segmentId_.reset();
+            if (segmentId_ && *message.segmentId == *segmentId_) {
+                starting_ = false;
+                recording_ = false;
+                finalizing_ = false;
+                if (toggleActive_) {
+                    refreshTogglePreview();
+                } else {
+                    clearPreview();
+                    if (!holdActive_) {
+                        target_.ref.unwatch();
+                    }
                 }
+                segmentId_.reset();
+            } else {
+                pendingFinals_.erase(*message.segmentId);
             }
         }
         // Other codes are diagnostic only; they must not tear down an active
@@ -506,6 +526,7 @@ void VoimeAddon::onDaemonDisconnected() {
     segmentId_.reset();
     pendingTarget_.reset();
     pendingSegmentId_.reset();
+    pendingFinals_.clear();
     holdActive_ = false;
     starting_ = false;
     toggleCode_ = 0;
