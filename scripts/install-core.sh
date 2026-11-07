@@ -21,7 +21,7 @@ Options:
   --no-models           Skip copying core models.
   --no-service          Do not install the systemd user service.
   --model-dir <dir>     Model root (default: $XDG_DATA_HOME/voime/models).
-  --source-dir <dir>    Offline source containing firered-vad/ and sensevoice-small/.
+  --source-dir <dir>    Offline source containing firered-vad/ (model.onnx + cmvn.ark) and sensevoice-small/.
   --prefix <dir>        Install prefix (default: $HOME/.local).
   --install-deps        Install missing Arch Linux packages with pacman.
   --uninstall           Remove the core installation.

@@ -26,6 +26,11 @@ VAD_URLS = [
     "pretrained_models/onnx_models/fireredvad_stream_vad_with_cache.onnx",
 ]
 VAD_CACHE_NAME = "fireredvad_stream_vad_with_cache.onnx"
+VAD_CMVN_NAME = "cmvn.ark"
+VAD_CMVN_URLS = [
+    "https://raw.githubusercontent.com/FireRedTeam/FireRedVAD/main/"
+    "pretrained_models/onnx_models/cmvn.ark",
+]
 
 SENSEVOICE_ID = "sensevoice-small"
 SENSEVOICE_PACKAGE = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
@@ -159,7 +164,11 @@ def manifest(
     }
 
 
-def valid_target(target: Path, model_id: str) -> bool:
+def valid_target(
+    target: Path,
+    model_id: str,
+    required_files: tuple[str, ...] = (),
+) -> bool:
     manifest_path = target / "manifest.json"
     if not manifest_path.is_file():
         return False
@@ -168,6 +177,9 @@ def valid_target(target: Path, model_id: str) -> bool:
     except (OSError, ValueError):
         return False
     if value.get("schema") != SCHEMA or value.get("id") != model_id:
+        return False
+    listed = {file.get("path", "") for file in value.get("files", [])}
+    if any(name not in listed for name in required_files):
         return False
     for file in value.get("files", []):
         path = target / file.get("path", "")
@@ -222,10 +234,11 @@ def install_vad(
     force: bool,
 ) -> None:
     target = model_root / VAD_ID
-    if not force and valid_target(target, VAD_ID):
+    if not force and valid_target(target, VAD_ID, (VAD_CMVN_NAME,)):
         log(f"already installed {target}")
         return
     source = None
+    cmvn = None
     if source_dir is not None:
         source = find_file(
             source_dir / VAD_ID,
@@ -239,10 +252,21 @@ def install_vad(
             source_dir,
             ("model.onnx", VAD_CACHE_NAME, "stream-vad.onnx"),
         )
+        if source is not None:
+            cmvn = find_file(source.parent, (VAD_CMVN_NAME,)) or find_file(
+                source_dir / VAD_ID,
+                (VAD_CMVN_NAME,),
+            ) or find_file(source_dir, (VAD_CMVN_NAME,))
     if source is None:
         source = download(
             VAD_URLS,
             cache_dir / "vad" / VAD_CACHE_NAME,
+            allow_download,
+        )
+    if cmvn is None:
+        cmvn = download(
+            VAD_CMVN_URLS,
+            cache_dir / "vad" / VAD_CMVN_NAME,
             allow_download,
         )
     stage_dir = stage(
@@ -251,7 +275,7 @@ def install_vad(
         "vad",
         VAD_VERSION,
         "fp32",
-        [("model.onnx", source)],
+        [("model.onnx", source), (VAD_CMVN_NAME, cmvn)],
     )
     replace_target(stage_dir, target)
     log(f"installed -> {target}")

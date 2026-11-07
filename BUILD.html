@@ -238,7 +238,7 @@ scripts/install-gpu.sh --qwen3 --uninstall</code></pre>
 
 <table>
   <tr><th>模型目录</th><th>所属</th><th>安装来源 / 说明</th></tr>
-  <tr><td><code>firered-vad/</code></td><td>核心</td><td><code>install-core-models.py</code>；包含 <code>manifest.json</code>、ONNX 权重与可选 <code>cmvn.ark</code>。</td></tr>
+  <tr><td><code>firered-vad/</code></td><td>核心</td><td><code>install-core-models.py</code>；包含 <code>manifest.json</code>、ONNX 权重与必需的 <code>cmvn.ark</code>。</td></tr>
   <tr><td><code>sensevoice-small/</code></td><td>核心</td><td><code>install-core-models.py</code>；包含 <code>manifest.json</code>、int8 ONNX 与 <code>tokens.txt</code>。</td></tr>
   <tr><td><code>qwen3-asr-1.7b/</code></td><td>Qwen3</td><td>同上；BF16 主模型与 BF16 mmproj 必须同版本。</td></tr>
 </table>
@@ -256,7 +256,7 @@ python3 scripts/install-core-models.py --model-root /path/to/models --force</cod
 <ul class="note">
   <li>模型根目录下是一模型一目录；目录名是稳定标识，版本写在 <code>manifest.json</code>，不拼进目录名。</li>
   <li>运行期只读；启动时校验 schema 5、目录 id、kind 与 SHA-256。</li>
-  <li>仓库不提交权重文件，安装脚本也不从仓库根目录的 <code>models/</code> 取模型；默认下载会生成 schema 5 <code>manifest.json</code>。离线源目录中的每个模型目录必须自带同版本 manifest。</li>
+  <li>仓库不提交权重文件，安装脚本也不从仓库根目录的 <code>models/</code> 取模型；默认下载会生成 schema 5 <code>manifest.json</code>。离线源目录中的每个模型目录必须自带同版本 manifest；<code>firered-vad/</code> 还必须同时提供 <code>cmvn.ark</code>，否则安装失败。</li>
 </ul>
 
 <h2 id="b4">4. 运行目录、配置与端点</h2>
@@ -281,7 +281,7 @@ backend = "cpu"       # cpu | qwen3</code></pre>
 ├── firered-vad/
 │   ├── manifest.json
 │   ├── model.onnx
-│   └── cmvn.ark          # 可选
+│   └── cmvn.ark          # 必需（FireRedVAD 外部 CMVN）
 ├── sensevoice-small/
 │   ├── manifest.json
 │   ├── model.int8.onnx

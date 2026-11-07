@@ -228,7 +228,7 @@ fn shape_usize(shape: &amp;[i64]) -&gt; anyhow::Result&lt;Vec&lt;usize&gt;&gt;;<
   <li>状态张量必须声明固定形状；动态维会在初始化时拒绝。</li>
   <li>输入 / 输出张量名、dtype 与 shape 由会话 introspection 读取；manifest 只提供 ONNX 文件路径，不提供张量声明。</li>
   <li>每次 <code>push</code> 用上一帧状态输入，并用模型输出更新状态；<code>reset</code> 重建流式 fbank 并清零状态。</li>
-  <li>VAD CMVN 参数取自 manifest 文件列表中的可选 <code>cmvn.ark</code>；manifest 只记录该文件的路径与 SHA-256。</li>
+  <li>VAD CMVN 参数取自 manifest 文件列表中的 <code>cmvn.ark</code>；FireRedVAD 发行包必须提供该文件，缺失时不得安装。manifest 只记录该文件的路径与 SHA-256。</li>
 </ul>
 
 <h3 id="c4-9">4.9 vad/segmenter.rs <a class="backlink" href="#c1">文件树</a></h3>

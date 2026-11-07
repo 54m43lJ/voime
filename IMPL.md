@@ -214,6 +214,7 @@ Windows Toggle 会话中，停说话后等待十几秒仍不出 Final，浮层�
 - 复现方法：用 cpal 录一段“说话 + 静音”的麦克风原始音频，离线跑 VAD，观察静音段 `speech_prob` / `is_speech`；本机静音录音里仍出现长 SPEECH 段，确认是漏音 / 回声。
 - 规避属于音频环境问题：使用耳机时降低漏音、关闭外放 / 调低音量、换指向性麦克风或启用系统回声消除；不要通过改 core 阈值解决。
 - 文档补充“耳机 / 扬声器漏音可能导致 VAD 不结束”的排障提示。
+- 后续定位到主因是 VAD 的 CMVN 未安装（见 3.5）；漏音只是叠加因素，不能只按音频环境规避。
 
 3. **修订建议**
 
@@ -221,3 +222,27 @@ Windows Toggle 会话中，停说话后等待十几秒仍不出 Final，浮层�
 |---|---|---|---|
 | `frontends/windows/USER.html` | §4.5 | 增 | 在覆盖 / 错误表增加“耳机漏音 / 回声导致 VAD 持续判语音、无 Final”的排障说明。 |
 | `crates/voime-core/USER.html` | §3 | 不动（本主题） | core 的 VAD 分段契约不变；漏音属于采集环境，排障说明放 Windows USER。 |
+
+### 3.5 FireRedVAD 缺少 `cmvn.ark`：VAD 把底噪 / 媒体声判成 speech
+
+1. **问题描述**
+
+Windows 端偶发两类现象：长句结尾多出一次独立 Final（看起来像两次输入），以及该切分时 VAD 长时间不结束（甚至到 30 s 才强制切分）。日志中可见 `samples=480000`（30.00 s）的 MaxDuration 段，以及多条 5–17 s 长段只识别出 1 个字符；长段结束后几十毫秒又起一个 1 s 短段，形成额外的 `SegmentReady` / `Final`。离线用当前安装的 `firered-vad/model.onnx` 跑 fbank + VAD，发现缺少 CMVN 时任何非数字零输入（-90 dBFS 白噪声、正弦、和弦、真实录音尾部静音）的 `speech_prob` 都饱和到 0.9+；补上上游 `cmvn.ark` 后同一输入回落到 0.0 附近。根因是模型包只安装了 ONNX，VAD CMVN 从未落盘，运行时 `manifest.file("cmvn.ark")` 取不到文件后静默跳过归一化。
+
+2. **解决方法**
+
+- `install-core-models.py` 增加 `VAD_CMVN_NAME` / `VAD_CMVN_URLS`；`install_vad` 同时解析、下载并 stage `cmvn.ark`，写入 manifest。
+- `valid_target` 增加 `required_files`，VAD 安装要求 manifest 同时列出 `cmvn.ark`，旧的“只有 ONNX”安装会被判定为无效并自动重装。
+- 离线安装（`--source-dir`）从模型目录或源目录查找 `cmvn.ark`；找不到且禁止下载时直接失败，不再静默安装一个不可用的 VAD。
+- 用新脚本重装本机 `%LOCALAPPDATA%\voime\models\firered-vad`，确认 `cmvn.ark` 与 manifest 条目存在。
+- 文档同步把 FireRedVAD 的 `cmvn.ark` 从“可选”改为“必需”。
+
+3. **修订建议**
+
+| 文档名 | 章节 | 动作 | 内容 |
+|---|---|---|---|
+| `BUILD.html` | §3.4 | 不动（已更新） | 模型目录说明改为 `cmvn.ark` 必需；离线源必须包含 `cmvn.ark`。 |
+| `crates/voime-core/CORE.html` | §4.8 | 不动（已更新） | VAD CMVN 从可选改为 FireRedVAD 发行包必需。 |
+| `crates/voime-core/PROVIDER.html` | §4.1 / §4.2 | 不动（已更新） | VAD 文件、CMVN 与安装契约改为必需 `cmvn.ark`。 |
+| `scripts/install-core.sh` | `--source-dir` | 已更新 | 帮助文本要求离线源同时提供 `model.onnx` 与 `cmvn.ark`。 |
+| `scripts/install-core-models.py` | 安装 / 校验 | 已完成 | 下载、stage、manifest 与 `valid_target` 均覆盖 `cmvn.ark`。 |
